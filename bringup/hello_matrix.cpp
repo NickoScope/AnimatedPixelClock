@@ -4,6 +4,8 @@
  *
  * Target: Waveshare ESP32-S3-Zero driving 2x Waveshare P2.5 64x64 HUB75E
  *         panels chained (panel1 JOUT -> panel2 JIN) = 128x64 RGB.
+ *         Define BOARD_WAVESHARE_RGB_MATRIX for the Waveshare
+ *         ESP32-S3-RGB-Matrix driver board (env matrix-waveshare-rgb).
  *
  * Build / flash:  platformio run -e matrix-s3 --target upload
  *   (hold BOOT/GPIO0 while plugging USB to enter download mode on the S3-Zero)
@@ -38,7 +40,28 @@
 // If instead the FIRST column doubles or the image shifts, set this back to true.
 #define CLK_PHASE false
 
-// ---- ESP32-S3-Zero -> HUB75 pin map (locked; see docs/HUB75_WIRING.md) ----
+// ---- HUB75 pin map ----
+#if defined(BOARD_WAVESHARE_RGB_MATRIX)
+// Waveshare ESP32-S3-RGB-Matrix driver board (SKU 34422). Verified against the
+// vendor's own ESP-IDF BSP and Arduino example sources. Note this board carries
+// an SN74HC245 buffer on the HUB75 lines, so 3.3V drive is not a concern here.
+#define PIN_R1  4
+#define PIN_G1  5
+#define PIN_B1  6
+#define PIN_R2  7
+#define PIN_G2  15
+#define PIN_B2  16
+#define PIN_A   18
+#define PIN_B   8
+#define PIN_C   3
+#define PIN_D   42
+#define PIN_E   9    // mandatory for 64x64 (1/32 scan)
+#define PIN_CLK 41
+#define PIN_LAT 40
+#define PIN_OE  2
+#else
+// ESP32-S3-Zero / Super Mini / WROOM devkit, hand-wired
+// (locked; see docs/HUB75_WIRING.md)
 #define PIN_R1  1
 #define PIN_G1  2
 #define PIN_B1  4
@@ -53,6 +76,7 @@
 #define PIN_CLK 13
 #define PIN_LAT 14
 #define PIN_OE  38
+#endif
 
 static MatrixPanel_I2S_DMA *dma = nullptr;
 static const uint16_t TOTAL_W = PANEL_W * PANELS;   // 128 with PANELS=2

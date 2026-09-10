@@ -10,6 +10,9 @@
  *   - driver FM6126A, clkphase=false (fixes dropped rightmost column)
  *   - internal-SRAM DMA only (NOT PSRAM), double-buffered
  *   - pin map identical to bringup/hello_matrix.cpp
+ *
+ * Board variants: define BOARD_WAVESHARE_RGB_MATRIX to select the pin map of
+ * the Waveshare ESP32-S3-RGB-Matrix driver board instead of the hand-wired one.
  */
 
 #ifndef MATRIX_DISPLAY_H
@@ -25,11 +28,25 @@
 // no hardware is touched until display.begin() (called from initDisplay()).
 inline HUB75_I2S_CFG makeMatrixConfig() {
   // i2s_pins field order is FIXED: r1,g1,b1,r2,g2,b2,a,b,c,d,e,lat,oe,clk
+#if defined(BOARD_WAVESHARE_RGB_MATRIX)
+  // Waveshare ESP32-S3-RGB-Matrix driver board (SKU 34422).
+  // Verified against Waveshare's own sources: the ESP-IDF BSP
+  // (components/bsp/esp32_s3_matrix/include/bsp/config.h), sdkconfig.defaults,
+  // and the Arduino examples' platforms/esp32s3/esp32s3-default-pins.hpp.
+  // The board is laid out on this library's default ESP32-S3 pin map; the only
+  // deviation is E, unassigned upstream and routed to GPIO9 by Waveshare.
+  HUB75_I2S_CFG::i2s_pins pins = {
+      4, 5, 6,             // R1, G1, B1
+      7, 15, 16,           // R2, G2, B2
+      18, 8, 3, 42, 9,     // A, B, C, D, E
+      40, 2, 41};          // LAT, OE, CLK
+#else
   HUB75_I2S_CFG::i2s_pins pins = {
       1, 2, 4,             // R1, G1, B1
       5, 6, 7,             // R2, G2, B2
       8, 9, 10, 11, 12,    // A, B, C, D, E
       14, 38, 13};         // LAT, OE, CLK
+#endif
   HUB75_I2S_CFG cfg(HUB75_PANEL_W, HUB75_PANEL_H, HUB75_CHAIN, pins);
   cfg.driver = HUB75_I2S_CFG::FM6126A;  // verified Phase 1
   cfg.clkphase = false;                 // verified: fixes dropped rightmost column
