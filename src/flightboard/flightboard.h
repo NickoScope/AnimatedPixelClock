@@ -28,6 +28,7 @@
 #define FB_TM_LEN   6
 #define FB_CT_LEN   5
 #define FB_CY_LEN   15   // city name, or ct when HA sends no name
+#define FB_CITY_MAX 10   // characters shown in the destination column
 
 enum FbStatus : uint8_t {
   FB_SCHED = 0, FB_BOARD, FB_DEP, FB_LAND, FB_DELAY, FB_CANC, FB_UNKNOWN

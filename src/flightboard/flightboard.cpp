@@ -8,26 +8,30 @@
 
 #include "../config/config.h"
 #include "../display/display.h"
-#include <Fonts/TomThumb.h>
+#include <Fonts/Picopixel.h>
 
 // ── layout ──────────────────────────────────────────────────────────────────
-// TomThumb: 3x5 glyphs on a 4x6 cell. Four pixels of advance instead of the
-// built-in font's six buys 32 characters across 128 px and 9 rows down 64,
-// against 21 and 6. That is the difference between a 3-letter IATA code and a
-// spelled-out city name, and it costs nothing - the font ships with GFX.
+// Picopixel, not TomThumb. Both are 3x5-class faces that fit 32-ish characters
+// across 128 px, but TomThumb is monospaced at 3 px wide and there M and N
+// differ by a single pixel - fine for a 3-letter code, unreadable once the
+// column holds COPENHAGEN. Picopixel is proportional: M and W get 5 px, N gets
+// 4, narrow letters stay at 3. The whole row costs 3 px more and one row of
+// height, and the city names actually read.
 //
-// A GFX custom font positions from the BASELINE, not the top-left like the
-// built-in one. Glyph tops sit FB_ASCENT pixels above the cursor, so a row
-// whose top edge is at y is drawn with the cursor at y + FB_ASCENT.
-static const int16_t FB_ASCENT   = 5;
+// A GFX custom font positions from the BASELINE. Picopixel's glyphs sit 4 px
+// above it, so a row whose top edge is at y is drawn with the cursor at
+// y + FB_ASCENT.
+static const int16_t FB_ASCENT   = 4;
 static const int16_t FB_X_TIME   = 2;
-static const int16_t FB_X_FLIGHT = 32;
-static const int16_t FB_X_DEST   = 70;    // 14 chars to the right edge
+static const int16_t FB_X_FLIGHT = 24;
+static const int16_t FB_X_DEST   = 54;
+static const int16_t FB_X_RIGHT  = 126;   // status is right-aligned to here
+static const int16_t FB_GAP      = 3;     // minimum air between city and status
 static const int16_t FB_Y_HEADER = 1;
 static const int16_t FB_Y_RULE   = 8;
 static const int16_t FB_Y_ROW0   = 11;
-static const int16_t FB_ROW_H    = 6;
-static const uint8_t FB_VISIBLE  = 8;     // (64 - 11) / 6 = 8 whole rows
+static const int16_t FB_ROW_H    = 7;
+static const uint8_t FB_VISIBLE  = 7;     // (64 - 11) / 7 = 7 whole rows
 
 struct FbRow {
   char     fn[FB_FN_LEN];
@@ -49,9 +53,27 @@ static bool     s_haveData = false;
 // Whitelist enforced on the HA side; kept in the same canonical order so the
 // index means the same thing on both ends.
 static const char *const FB_AIRPORTS[] = {"LFMD","LFMN","LFPG","EGLL","EDDF","EHAM"};
+// Shown instead of the ICAO code. The list is closed and enforced on the Home
+// Assistant side, so a table here is enough and costs no round trip.
+static const char *const FB_AIRPORT_NAMES[] = {"CANNES","NICE","PARIS CDG",
+                                               "LONDON","FRANKFURT","AMSTERDAM"};
 static const uint8_t FB_AIRPORT_COUNT = sizeof(FB_AIRPORTS)/sizeof(FB_AIRPORTS[0]);
 static uint8_t s_aptIdx = 1;   // LFMN
 static bool    s_dirDep = false;
+
+// The same state means different things depending on which way you are looking.
+// For arrivals, "dep" means the aircraft has taken off and is on its way here.
+static const char *statusWord(FbStatus st, bool departures) {
+  switch (st) {
+  case FB_SCHED: return departures ? "ON TIME" : "EXPECT";
+  case FB_BOARD: return "BOARD";
+  case FB_DEP:   return departures ? "DEPART" : "ENROUTE";
+  case FB_LAND:  return "LANDED";
+  case FB_DELAY: return "DELAYED";
+  case FB_CANC:  return "CANCEL";
+  default:       return "";
+  }
+}
 
 static FbStatus parseStatus(const char *s) {
   if (!s) return FB_UNKNOWN;
@@ -75,6 +97,15 @@ static uint16_t statusColor(FbStatus st) {
   case FB_CANC:  return display.color565(255,  40,  40);  // red
   default:       return display.color565(120, 120, 120);
   }
+}
+
+// ICAO code to the name people actually use. Falls back to the code for
+// anything unexpected, so a widened whitelist degrades instead of breaking.
+static const char *airportName(const char *icao) {
+  for (uint8_t i = 0; i < FB_AIRPORT_COUNT; i++) {
+    if (!strcmp(icao, FB_AIRPORTS[i])) return FB_AIRPORT_NAMES[i];
+  }
+  return icao;
 }
 
 static void copyField(char *dst, size_t cap, const char *src) {
@@ -130,21 +161,28 @@ void flightboardStepAirport(int8_t delta) {
 void flightboardToggleDirection() { s_dirDep = !s_dirDep; }
 
 void flightboardRender() {
-  display.setFont(&TomThumb);
+  display.setFont(&Picopixel);
   display.setTextSize(1);
   display.setTextWrap(false);
 
   // ── header ────────────────────────────────────────────────────────────────
-  display.setCursor(FB_X_TIME, FB_Y_HEADER + FB_ASCENT);
-  display.setTextColor(display.color565(255, 255, 255));
-  display.print(s_apt);
+  const int16_t hbase = FB_Y_HEADER + FB_ASCENT;
+  int16_t bx, by; uint16_t bw, bh;
 
-  display.setCursor(FB_X_TIME + 22, FB_Y_HEADER + FB_ASCENT);
+  const char *apt = airportName(s_apt);
+  display.setCursor(FB_X_TIME, hbase);
+  display.setTextColor(display.color565(255, 255, 255));
+  display.print(apt);
+
+  // Direction sits a fixed gap after the name, which varies in width.
+  display.getTextBounds(apt, 0, 0, &bx, &by, &bw, &bh);
+  display.setCursor(FB_X_TIME + (int16_t)bw + 6, hbase);
   display.setTextColor(display.color565(255, 180, 0));
   display.print(strcmp(s_dir, "dep") == 0 ? "DEPARTURES" : "ARRIVALS");
 
   bool stale = flightboardAge() > 600;
-  display.setCursor(108, FB_Y_HEADER + FB_ASCENT);
+  display.getTextBounds(s_upd, 0, 0, &bx, &by, &bw, &bh);
+  display.setCursor(FB_X_RIGHT - (int16_t)bw, hbase);
   display.setTextColor(stale ? display.color565(150, 90, 0)
                              : display.color565(120, 132, 138));
   display.print(s_upd);
@@ -160,6 +198,8 @@ void flightboardRender() {
   }
 
   // ── window ────────────────────────────────────────────────────────────────
+  const bool departures = (strcmp(s_dir, "dep") == 0);
+
   int16_t start = (int16_t)s_nowIdx - 1;
   if (start + FB_VISIBLE > s_count) start = s_count - FB_VISIBLE;
   if (start < 0) start = 0;
@@ -181,8 +221,33 @@ void flightboardRender() {
     display.print(r.tm);
     display.setCursor(FB_X_FLIGHT, base);
     display.print(r.fn);
+    // Status word first: it is right-aligned and fixed, so it decides how much
+    // room the city has left. Colour alone says something is wrong; only the
+    // word says what.
+    const char *word = statusWord(r.st, departures);
+    uint16_t wordW = 0;
+    if (word[0]) {
+      display.getTextBounds(word, 0, 0, &bx, &by, &bw, &bh);
+      wordW = bw;
+      display.setCursor(FB_X_RIGHT - (int16_t)bw, base);
+      display.print(word);
+    }
+
+    // City, trimmed to the gap that actually remains rather than to a fixed
+    // character count - a proportional font makes those two different things,
+    // and COPENHAGEN against ENROUTE is exactly where they diverge.
+    const int16_t cityRoom =
+        (FB_X_RIGHT - (int16_t)wordW - FB_GAP) - FB_X_DEST;
+    char city[FB_CY_LEN];
+    strncpy(city, r.cy, sizeof(city) - 1);
+    city[sizeof(city) - 1] = '\0';
+    for (int16_t len = (int16_t)strlen(city); len > 0; len--) {
+      display.getTextBounds(city, 0, 0, &bx, &by, &bw, &bh);
+      if ((int16_t)bw <= cityRoom) break;
+      city[len - 1] = '\0';
+    }
     display.setCursor(FB_X_DEST, base);
-    display.print(r.cy);
+    display.print(city);
   }
 
   // Other pages draw with the built-in font and would inherit this one.
