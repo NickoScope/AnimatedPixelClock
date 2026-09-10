@@ -57,7 +57,10 @@ void clockStyleStep(int8_t delta) {
 }
 
 void clockStyleToggleRotation() {
-  const uint8_t ROTATION = 9;   // "Custom rotation" in the web UI
+  // Last in the generated table by construction: the web UI puts Custom
+  // rotation after the styles rather than in numeric order. Taken from the
+  // table so a renumbering upstream cannot silently point this elsewhere.
+  const uint8_t ROTATION = kClockStyles[CLOCK_STYLE_COUNT - 1].id;
   if (settings.clockStyle == ROTATION) {
     applyStyle(s_beforeRotation == 0xFF ? kClockStyles[0].id : s_beforeRotation);
     s_beforeRotation = 0xFF;
@@ -81,6 +84,10 @@ void clockStyleOverlay() {
   const char *name = nameOf(settings.clockStyle);
   display.setFont(&PicopixelFB);
   display.setTextWrap(false);
+  // setTextSize is sticky global state and the animated clocks leave it
+  // at 3 or 4. Without this the name is drawn three times too big, off
+  // the left edge, over the clock - breaking the one thing it is for.
+  display.setTextSize(1);
   int16_t bx, by; uint16_t bw, bh;
   display.getTextBounds(name, 0, 0, &bx, &by, &bw, &bh);
 

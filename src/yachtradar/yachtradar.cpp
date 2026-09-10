@@ -4,6 +4,7 @@
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
+#include <esp_task_wdt.h>
 #include <Preferences.h>
 #include <WebSocketsClient.h>
 #include <math.h>
@@ -44,8 +45,13 @@ static const int16_t YR_ROW_H   = 7;
 // stationary boat. Kept deliberately - a ghost of a departed vessel is worse.
 static const uint32_t YR_TTL_MS = 5UL * 60UL * 1000UL;
 
-// AIS ship types we care about: 36 sailing, 37 pleasure craft.
-static const uint16_t YR_MIN_LENGTH_M = 24;
+// AIS ship types: 36 sailing, 37 pleasure craft. Not an admission filter - type
+// and length arrive with ShipStaticData, minutes after the first position, so
+// filtering on them at the door is the empty-screen bug all over again. They
+// decide who gets evicted when the table is full instead.
+static const uint8_t  YR_TYPE_SAIL     = 36;
+static const uint8_t  YR_TYPE_PLEASURE = 37;
+static const uint16_t YR_MIN_LENGTH_M  = 24;
 
 struct YrVessel {
   uint32_t mmsi;
@@ -87,8 +93,17 @@ static float distDac(const YrVessel &v) {
   return sqrtf(dx * dx + dy * dy);
 }
 
-// Evict the vessel furthest from the centre once the table is full: the plot
-// is about what is in the bay, and the edge is where "in the bay" runs out.
+// Is this the kind of vessel the page exists for? Unknown counts as yes: a
+// vessel that has not sent static data yet must not lose its slot for it.
+static bool looksLikeYacht(const YrVessel &v) {
+  if (v.ship_type == YR_TYPE_SAIL || v.ship_type == YR_TYPE_PLEASURE) return true;
+  if (v.ship_type == 0) return true;                 // no static data yet
+  return v.length_m >= YR_MIN_LENGTH_M;              // big enough to be one anyway
+}
+
+// Evict the vessel furthest from the centre once the table is full - but a
+// ferry crossing the middle of the bay must not push out a yacht moored at the
+// edge, which is what pure distance would do. Non-yachts go first.
 static YrVessel *slotFor(uint32_t mmsi) {
   YrVessel *v = find(mmsi);
   if (v) return v;
@@ -102,7 +117,7 @@ static YrVessel *slotFor(uint32_t mmsi) {
   }
   uint8_t worst = 0; float worstD = -1.0f;
   for (uint8_t i = 0; i < s_count; i++) {
-    const float d = distDac(s_v[i]);
+    const float d = distDac(s_v[i]) + (looksLikeYacht(s_v[i]) ? 0.0f : 100000.0f);
     if (d > worstD) { worstD = d; worst = i; }
   }
   v = &s_v[worst];
@@ -225,7 +240,17 @@ bool yachtRadarBegin() {
 }
 
 void yachtRadarLoop() {
-  if (s_open) s_ws.loop();
+  if (!s_open) return;
+  // The websocket pump can block far longer than the task watchdog allows.
+  // arduinoWebSockets passes its 5 s timeout to the socket only; the TLS
+  // handshake loop inside WiFiClientSecure is bounded by handshake_timeout,
+  // which is 120 s and is never overridden. main.cpp arms a 15 s watchdog with
+  // panic=true, so an unreachable broker or a lossy handshake is a reboot loop
+  // rather than a slow page. Unsubscribe for the duration of the call.
+  esp_task_wdt_delete(NULL);
+  s_ws.loop();
+  esp_task_wdt_add(NULL);
+  esp_task_wdt_reset();
 }
 
 void yachtRadarStop() {
@@ -315,6 +340,7 @@ void yachtRadarRender() {
   display.fillScreen(0);
   display.setFont(&PicopixelFB);
   display.setTextWrap(false);
+  display.setTextSize(1);   // sticky: animated clocks leave it at 3
   int16_t bx, by; uint16_t bw, bh;
 
   const uint16_t white = display.color565(255, 255, 255);
@@ -322,8 +348,10 @@ void yachtRadarRender() {
 
   // --- left: the chart ---
   // Blitted, not drawn: sea shaded by measured depth, land by measured
-  // elevation with a hillshade, shoreline on top. All of it settled at build
-  // time by tools/yr_basemap_gen.py, so the panel spends nothing on it.
+  // elevation with a hillshade, shoreline on top. The shading, the fill and
+  // the anti-aliasing are settled at build time by tools/yr_basemap_gen.py -
+  // what remains here is 4096 drawPixel calls a frame, which is not free but
+  // is a copy rather than a computation.
   for (int16_t y = 0; y < YR_MAP_H; y++)
     for (int16_t x = 0; x < YR_MAP_W; x++)
       display.drawPixel(x, y, kYrBasemap[y * YR_MAP_W + x]);
@@ -411,8 +439,11 @@ void yachtRadarRender() {
       if (nm[0] == '\0') break;
       display.getTextBounds(nm, 0, 0, &bx, &by, &bw, &bh);
       if ((int16_t)bw <= room) break;
+      // Same rule as the flight board's city column, and for the same reason:
+      // a shaved word reads as a typo. Drop trailing words; if the first one
+      // still will not fit, show nothing rather than half of it.
       char *sp = strrchr(nm, ' ');
-      if (sp == NULL) { nm[strlen(nm) - 1] = '\0'; continue; }  // one word: shave
+      if (sp == NULL) { nm[0] = '\0'; break; }
       *sp = '\0';
     }
     display.setCursor(YR_X_TABLE, base);

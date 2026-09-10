@@ -12,19 +12,19 @@ struct ClockStyleEntry { uint8_t id; const char *name; };
 #define CLOCK_STYLE_COUNT 15
 
 static const ClockStyleEntry kClockStyles[CLOCK_STYLE_COUNT] = {
-  {  0, "MARIO         " },   // Mario Animation
-  {  1, "STANDARD      " },   // Standard Clock
-  {  2, "LARGE         " },   // Large Clock
-  {  3, "SPACE INVADERS" },   // Space Invaders
-  {  5, "ARKANOID      " },   // Arkanoid
-  {  6, "PAC-MAN       " },   // Pac-Man Clock
-  {  7, "SNAKE         " },   // Snake
-  {  8, "TETRIS        " },   // Tetris
-  { 10, "ASTEROIDS     " },   // Asteroids
-  { 11, "DINO          " },   // Dino Runner
-  { 12, "MATRIX RAIN   " },   // Matrix Rain
-  { 14, "WEATHER       " },   // Weather Clock
-  { 15, "BOMBERMAN     " },   // Bomberman
-  { 16, "TRON          " },   // TRON
-  {  9, "CUSTOM ROTATION" },   // Custom rotation
+  {  0, "MARIO"            },   // Mario Animation
+  {  1, "STANDARD"         },   // Standard Clock
+  {  2, "LARGE"            },   // Large Clock
+  {  3, "SPACE INVADERS"   },   // Space Invaders
+  {  5, "ARKANOID"         },   // Arkanoid
+  {  6, "PAC-MAN"          },   // Pac-Man Clock
+  {  7, "SNAKE"            },   // Snake
+  {  8, "TETRIS"           },   // Tetris
+  { 10, "ASTEROIDS"        },   // Asteroids
+  { 11, "DINO"             },   // Dino Runner
+  { 12, "MATRIX RAIN"      },   // Matrix Rain
+  { 14, "WEATHER"          },   // Weather Clock
+  { 15, "BOMBERMAN"        },   // Bomberman
+  { 16, "TRON"             },   // TRON
+  {  9, "CUSTOM ROTATION"  },   // Custom rotation
 };

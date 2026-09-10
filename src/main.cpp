@@ -129,6 +129,14 @@ bool getTimeWithTimeout(struct tm *timeinfo, unsigned long timeout_ms) {
 
 // Returns optimal refresh rate in Hz based on current display mode
 int getOptimalRefreshRate() {
+#if defined(YACHTRADAR_ENABLED)
+  // Vessels crawl, but the page is a map and a stutter reads as a fault.
+  if (httpForceYachtRadar) return 10;
+#endif
+#if defined(FLIGHTBOARD_ENABLED)
+  // A board that changes twice a minute; anything faster is wasted DMA.
+  if (httpForceFlightboard) return 5;
+#endif
   // Always adaptive. The manual fixed-Hz override (and its web control) was
   // removed - a user-pinned low rate only made animations choppy. The adaptive
   // rates below are what keep motion smooth.
@@ -327,9 +335,12 @@ void loop() {
 
 #if defined(CONTROL_ENCODER_ENABLED)
   // One knob, three pages. Rotation and a short press mean whatever the page
-  // in front of you is about; a long press leaves it. Page state is mirrored
-  // into the existing httpForce* flags so the web routes and the knob cannot
-  // disagree about what is on screen.
+  // in front of you is about; a long press leaves it.
+  //
+  // The httpForce* flags these drive are named after the HTTP routes, but no
+  // web route writes these two - they are set here and nowhere else. Two
+  // consequences worth knowing: with the encoder compiled out both pages are
+  // unreachable, and /api/status does not report them.
   controlLoop();
   for (CtrlEvent e = controlTake(); e != CTRL_NONE; e = controlTake()) {
     if (e == CTRL_LONG) {

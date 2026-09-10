@@ -4,6 +4,7 @@
 
 #include <Arduino.h>
 #include <Preferences.h>
+#include <esp_task_wdt.h>
 #include <PubSubClient.h>
 #include <WiFi.h>
 #include <string.h>
@@ -103,8 +104,15 @@ void fbMqttBegin() {
   snprintf(s_clientId, sizeof(s_clientId), "apc-%02X%02X%02X", mac[3], mac[4], mac[5]);
 
   s_mq.setServer(s_host.c_str(), s_port);
-  s_mq.setBufferSize(FB_MQTT_BUFFER);
+  // setBufferSize can fail: it reallocs, and on failure the buffer stays at
+  // 256 bytes and every board is dropped silently - exactly the failure this
+  // call exists to prevent. Refuse to run rather than run blind.
+  if (!s_mq.setBufferSize(FB_MQTT_BUFFER)) { s_noBroker = true; return; }
   s_mq.setKeepAlive(30);
+  // PubSubClient::connect() busy-waits for CONNACK with no yield, bounded by
+  // this timeout (default 15 s) on top of a 3 s TCP connect - past the 15 s
+  // watchdog. A broker that accepts TCP but never answers is not exotic.
+  s_mq.setSocketTimeout(5);
   s_mq.setCallback(onMessage);
 }
 
@@ -116,9 +124,12 @@ void fbMqttLoop() {
     const uint32_t now = millis();
     if (now - s_lastTry < FB_RETRY_MS) return;
     s_lastTry = now;
+    esp_task_wdt_delete(NULL);          // connect() does not yield
     const bool ok = s_user.length()
         ? s_mq.connect(s_clientId, s_user.c_str(), s_pass.c_str())
         : s_mq.connect(s_clientId);
+    esp_task_wdt_add(NULL);
+    esp_task_wdt_reset();
     if (!ok) return;
     resubscribe();
     return;
