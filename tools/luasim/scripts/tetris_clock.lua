@@ -150,16 +150,31 @@ function draw()
     -- A gloss sweeps across the stack the whole time. A clock that only moves
     -- for ten seconds a minute is a still image with an interruption, and the
     -- other fifty seconds are most of what anyone actually sees.
-    local sweep = ((t * 3.2) % 1.0) * (COLS + 14) - 7
+    -- Two glints half a period apart. One alone spends a quarter of its cycle
+    -- off the left edge, and those frames are dead - measured, not assumed.
+    local SPAN = 36
+    local s1 = ((t * 3.0) % 1.0) * SPAN - 2
+    local s2 = (((t * 3.0) + 0.5) % 1.0) * SPAN - 2
+    for _, p in ipairs(pieces_cur) do
+      for _, c in ipairs(p.cells) do cell(c.c, c.r, p.col) end
+    end
+    -- Blended toward white, not multiplied: these colours already sit near 255,
+    -- so scaling them up clamps and nothing moves. Measured that the hard way.
     for _, p in ipairs(pieces_cur) do
       for _, c in ipairs(p.cells) do
-        local d = abs(c.c + c.r * 0.35 - sweep)
-        cell(c.c, c.r, p.col, 1.0 + 0.45 * max(0, 1 - d / 3.5))
+        local k = c.c + c.r * 0.35
+        local a = 0.5 * max(max(0, 1 - abs(k - s1) / 3.0),
+                            max(0, 1 - abs(k - s2) / 3.0))
+        if a > 0.01 then
+          for yy = 0, B-2 do for xx = 0, B-2 do
+            px.blend(c.c*B + xx, c.r*B + yy, 255, 255, 255, a)
+          end end
+        end
       end
     end
     -- Every few seconds one piece remembers it is a tetromino and settles.
-    local who = floor(t * 7) % max(1, #pieces_cur) + 1
-    local ph = (t * 7) % 1.0
+    local who = floor(t * 14) % max(1, #pieces_cur) + 1
+    local ph = (t * 14) % 1.0
     if ph < 0.18 and pieces_cur[who] then
       local q = pieces_cur[who]
       local lift = (ph < 0.09) and 1 or 0
