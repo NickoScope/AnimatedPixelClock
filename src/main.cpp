@@ -55,6 +55,21 @@ bool httpForceFlightboard = false;  // flight board page override
 #if defined(YACHTRADAR_ENABLED)
 bool httpForceYachtRadar = false;   // yacht radar page override
 #endif
+#if defined(CONTROL_ENCODER_ENABLED)
+// Pages the knob cycles through, in the order a long press walks them. The
+// clock is first because it is what the panel should fall back to.
+enum CtrlPage : uint8_t {
+  PAGE_CLOCK = 0,
+#if defined(FLIGHTBOARD_ENABLED)
+  PAGE_FLIGHTBOARD,
+#endif
+#if defined(YACHTRADAR_ENABLED)
+  PAGE_YACHTRADAR,
+#endif
+  PAGE_COUNT
+};
+static uint8_t ctrlPage = PAGE_CLOCK;
+#endif
 bool httpForceViz = false;  // HTTP override to force the audio visualizer (via /api/mode/viz)
 
 // ========== Forward Declarations ==========
@@ -73,6 +88,7 @@ int getOptimalRefreshRate();
 #include "metrics/metrics.h"
 #include "flightboard/flightboard.h"
 #include "yachtradar/yachtradar.h"
+#include "control/control.h"
 #include "network/network.h"
 #include "notify/notify.h"
 #include "viz/visualizer.h"
@@ -272,6 +288,10 @@ void setup() {
   // Initialize WiFi connection status flag
   wifiConnected = (WiFi.status() == WL_CONNECTED);
 
+#if defined(CONTROL_ENCODER_ENABLED)
+  controlBegin();
+#endif
+
   // Configure hardware watchdog timer
   esp_task_wdt_init(15, true);
   esp_task_wdt_add(NULL);
@@ -299,6 +319,43 @@ void setup() {
 void loop() {
   // Feed watchdog
   esp_task_wdt_reset();
+
+#if defined(CONTROL_ENCODER_ENABLED)
+  // One knob, three pages. Rotation and a short press mean whatever the page
+  // in front of you is about; a long press leaves it. Page state is mirrored
+  // into the existing httpForce* flags so the web routes and the knob cannot
+  // disagree about what is on screen.
+  controlLoop();
+  for (CtrlEvent e = controlTake(); e != CTRL_NONE; e = controlTake()) {
+    if (e == CTRL_LONG) {
+      ctrlPage = (uint8_t)((ctrlPage + 1) % PAGE_COUNT);
+    } else {
+      switch (ctrlPage) {
+#if defined(FLIGHTBOARD_ENABLED)
+      case PAGE_FLIGHTBOARD:
+        if (e == CTRL_CW)         flightboardStepAirport(+1);
+        else if (e == CTRL_CCW)   flightboardStepAirport(-1);
+        else if (e == CTRL_PRESS) flightboardToggleDirection();
+        break;
+#endif
+#if defined(YACHTRADAR_ENABLED)
+      case PAGE_YACHTRADAR:
+        if (e == CTRL_CW)         yachtRadarScroll(+1);
+        else if (e == CTRL_CCW)   yachtRadarScroll(-1);
+        else if (e == CTRL_PRESS) yachtRadarToggleSort();
+        break;
+#endif
+      default: break;             // the clock page takes no input yet
+      }
+    }
+  }
+#if defined(FLIGHTBOARD_ENABLED)
+  httpForceFlightboard = (ctrlPage == PAGE_FLIGHTBOARD);
+#endif
+#if defined(YACHTRADAR_ENABLED)
+  httpForceYachtRadar  = (ctrlPage == PAGE_YACHTRADAR);
+#endif
+#endif  // CONTROL_ENCODER_ENABLED
 
 #if defined(YACHTRADAR_ENABLED)
   // The AIS stream is held open only while its page is up: a websocket to

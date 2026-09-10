@@ -68,6 +68,8 @@ static bool         s_open     = false;
 static bool         s_conn     = false;
 static bool         s_subbed   = false;
 static bool         s_noKey    = false;
+static uint8_t      s_scroll   = 0;      // first table row shown
+static bool         s_bySize   = false;   // false = by range
 static String       s_key;
 static WebSocketsClient s_ws;
 
@@ -282,17 +284,32 @@ static void project(const YrVessel &v, float *px, float *py) {
   *py = YR_CY - dy * YR_R_PX / YR_R_DAC;     // row 0 is the top
 }
 
-// Order for the table: nearest first. The chart already shows where everything
-// is, so the list earns its place by answering "what is closest to me".
-static void sortByRange(uint8_t *idx, uint8_t n) {
+// Order for the table. The chart already shows where everything is, so the list
+// earns its place by answering one of two questions - what is nearest, or what
+// is biggest - and the knob picks which.
+static float sortKey(uint8_t i) {
+  return s_bySize ? -(float)s_v[i].length_m : distDac(s_v[i]);
+}
+static void sortRows(uint8_t *idx, uint8_t n) {
   for (uint8_t i = 1; i < n; i++) {          // insertion sort, n <= 16
     const uint8_t k = idx[i];
-    const float   d = distDac(s_v[k]);
+    const float   d = sortKey(k);
     int8_t j = (int8_t)i - 1;
-    while (j >= 0 && distDac(s_v[idx[j]]) > d) { idx[j + 1] = idx[j]; j--; }
+    while (j >= 0 && sortKey(idx[j]) > d) { idx[j + 1] = idx[j]; j--; }
     idx[j + 1] = k;
   }
 }
+
+void yachtRadarScroll(int8_t delta) {
+  const int16_t maxTop = (int16_t)s_count - YR_TABLE_ROWS;
+  if (maxTop <= 0) { s_scroll = 0; return; }
+  int16_t v = (int16_t)s_scroll + delta;
+  if (v < 0) v = 0;
+  if (v > maxTop) v = maxTop;
+  s_scroll = (uint8_t)v;
+}
+void yachtRadarToggleSort() { s_bySize = !s_bySize; s_scroll = 0; }
+bool yachtRadarSortsBySize() { return s_bySize; }
 
 void yachtRadarRender() {
   display.fillScreen(0);
@@ -320,7 +337,7 @@ void yachtRadarRender() {
   expire();
   uint8_t idx[YR_MAX_VESSELS];
   for (uint8_t i = 0; i < s_count; i++) idx[i] = i;
-  sortByRange(idx, s_count);
+  sortRows(idx, s_count);
 
   for (uint8_t i = 0; i < s_count; i++) {
     const YrVessel &v = s_v[idx[i]];
@@ -354,8 +371,8 @@ void yachtRadarRender() {
   if (s_noKey)            strncpy(sub, "NO AIS KEY", sizeof(sub));
   else if (!s_conn)       strncpy(sub, "CONNECTING", sizeof(sub));
   else if (s_count == 0)  strncpy(sub, "SCANNING", sizeof(sub));
-  else snprintf(sub, sizeof(sub), "%u NOW  %lu SEEN",
-                (unsigned)s_count, (unsigned long)s_logged);
+  else snprintf(sub, sizeof(sub), "%u NOW  BY %s",
+                (unsigned)s_count, s_bySize ? "SIZE" : "RANGE");
   sub[sizeof(sub) - 1] = '\0';
   display.setTextColor(dim);
   display.setCursor(YR_X_TABLE, YR_Y_SUB + 4);
@@ -363,9 +380,12 @@ void yachtRadarRender() {
   display.drawFastHLine(YR_X_TABLE - 1, YR_Y_RULE, YR_X_RIGHT - YR_X_TABLE + 1,
                         display.color565(40, 48, 54));
 
-  const uint8_t rows = s_count < YR_TABLE_ROWS ? s_count : YR_TABLE_ROWS;
+  if (s_scroll && s_scroll + YR_TABLE_ROWS > s_count)          // list shrank under us
+    s_scroll = (uint8_t)(s_count > YR_TABLE_ROWS ? s_count - YR_TABLE_ROWS : 0);
+  const uint8_t rows = (uint8_t)(s_count - s_scroll < YR_TABLE_ROWS
+                                 ? s_count - s_scroll : YR_TABLE_ROWS);
   for (uint8_t i = 0; i < rows; i++) {
-    const YrVessel &v = s_v[idx[i]];
+    const YrVessel &v = s_v[idx[s_scroll + i]];
     const int16_t base = YR_Y_ROW0 + i * YR_ROW_H + 4;
     const uint16_t c = colourFor(v, NULL, NULL, NULL);
     display.setTextColor(c);

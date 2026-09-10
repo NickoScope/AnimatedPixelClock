@@ -37,6 +37,13 @@ void yachtRadarLoop();
 void yachtRadarStop();
 
 void     yachtRadarRender();
+
+// Encoder handles. Rotation scrolls the table when more vessels are in the bay
+// than fit; the press swaps what the list is sorted by, because "what is
+// nearest" and "what is biggest" are the two questions the bay actually raises.
+void     yachtRadarScroll(int8_t delta);
+void     yachtRadarToggleSort();
+bool     yachtRadarSortsBySize();
 bool     yachtRadarHasData();
 uint8_t  yachtRadarCount();      // vessels currently on the plot
 uint32_t yachtRadarAge();        // ms since the last position report
