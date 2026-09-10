@@ -8,24 +8,32 @@
 
 #include "../config/config.h"
 #include "../display/display.h"
+#include <Fonts/TomThumb.h>
 
 // ── layout ──────────────────────────────────────────────────────────────────
-// 128x64 with the built-in 5x7 GFX font (6 px advance, 8 px line pitch).
-// A row is "HH:MM FFFFFFF CCC" = 17 glyphs = 102 px, leaving 26 px spare, so
-// the readable 5x7 font fits and the cramped 4x6 is not needed.
-static const int16_t FB_X_TIME   = 1;
-static const int16_t FB_X_FLIGHT = 37;
-static const int16_t FB_X_CODE   = 91;
-static const int16_t FB_Y_HEADER = 0;    // airport + direction + update time
-static const int16_t FB_Y_RULE   = 9;
-static const int16_t FB_Y_ROW0   = 12;
-static const int16_t FB_ROW_H    = 8;
-static const uint8_t FB_VISIBLE  = 6;    // (64 - 12) / 8 = 6 whole rows
+// TomThumb: 3x5 glyphs on a 4x6 cell. Four pixels of advance instead of the
+// built-in font's six buys 32 characters across 128 px and 9 rows down 64,
+// against 21 and 6. That is the difference between a 3-letter IATA code and a
+// spelled-out city name, and it costs nothing - the font ships with GFX.
+//
+// A GFX custom font positions from the BASELINE, not the top-left like the
+// built-in one. Glyph tops sit FB_ASCENT pixels above the cursor, so a row
+// whose top edge is at y is drawn with the cursor at y + FB_ASCENT.
+static const int16_t FB_ASCENT   = 5;
+static const int16_t FB_X_TIME   = 2;
+static const int16_t FB_X_FLIGHT = 32;
+static const int16_t FB_X_DEST   = 70;    // 14 chars to the right edge
+static const int16_t FB_Y_HEADER = 1;
+static const int16_t FB_Y_RULE   = 8;
+static const int16_t FB_Y_ROW0   = 11;
+static const int16_t FB_ROW_H    = 6;
+static const uint8_t FB_VISIBLE  = 8;     // (64 - 11) / 6 = 8 whole rows
 
 struct FbRow {
   char     fn[FB_FN_LEN];
   char     tm[FB_TM_LEN];
   char     ct[FB_CT_LEN];
+  char     cy[FB_CY_LEN];
   FbStatus st;
 };
 
@@ -88,6 +96,8 @@ bool flightboardIngest(const char *json, uint16_t len) {
     copyField(s_rows[n].fn, FB_FN_LEN, f["fn"] | "");
     copyField(s_rows[n].tm, FB_TM_LEN, f["tm"] | "--:--");
     copyField(s_rows[n].ct, FB_CT_LEN, f["ct"] | "");
+    // Prefer the city name; fall back to the code when HA does not send one.
+    copyField(s_rows[n].cy, FB_CY_LEN, f["cy"] | (const char *)(f["ct"] | ""));
     s_rows[n].st = parseStatus(f["st"] | "");
     n++;
   }
@@ -120,37 +130,36 @@ void flightboardStepAirport(int8_t delta) {
 void flightboardToggleDirection() { s_dirDep = !s_dirDep; }
 
 void flightboardRender() {
+  display.setFont(&TomThumb);
   display.setTextSize(1);
   display.setTextWrap(false);
 
   // ── header ────────────────────────────────────────────────────────────────
-  display.setCursor(FB_X_TIME, FB_Y_HEADER);
+  display.setCursor(FB_X_TIME, FB_Y_HEADER + FB_ASCENT);
   display.setTextColor(display.color565(255, 255, 255));
   display.print(s_apt);
 
-  display.setCursor(FB_X_TIME + 30, FB_Y_HEADER);
-  display.setTextColor(display.color565(255, 200, 0));
-  display.print(strcmp(s_dir, "dep") == 0 ? "DEP" : "ARR");
+  display.setCursor(FB_X_TIME + 22, FB_Y_HEADER + FB_ASCENT);
+  display.setTextColor(display.color565(255, 180, 0));
+  display.print(strcmp(s_dir, "dep") == 0 ? "DEPARTURES" : "ARRIVALS");
 
-  // Update time greys out once the payload is old enough to be misleading.
   bool stale = flightboardAge() > 600;
-  display.setCursor(FB_X_CODE + 6, FB_Y_HEADER);
-  display.setTextColor(stale ? display.color565(140, 90, 0)
-                             : display.color565(120, 120, 120));
+  display.setCursor(108, FB_Y_HEADER + FB_ASCENT);
+  display.setTextColor(stale ? display.color565(150, 90, 0)
+                             : display.color565(120, 132, 138));
   display.print(s_upd);
 
-  display.drawFastHLine(0, FB_Y_RULE, 128, display.color565(60, 60, 60));
+  display.drawFastHLine(0, FB_Y_RULE, 128, display.color565(52, 60, 64));
 
   if (!s_haveData || s_count == 0) {
-    display.setCursor(20, 30);
+    display.setCursor(40, 34);
     display.setTextColor(display.color565(120, 120, 120));
     display.print("NO DATA");
+    display.setFont(NULL);
     return;
   }
 
   // ── window ────────────────────────────────────────────────────────────────
-  // Put the next flight on the second visible line: one past flight for
-  // context, the rest of the window looking forward.
   int16_t start = (int16_t)s_nowIdx - 1;
   if (start + FB_VISIBLE > s_count) start = s_count - FB_VISIBLE;
   if (start < 0) start = 0;
@@ -159,23 +168,25 @@ void flightboardRender() {
     uint8_t idx = start + i;
     if (idx >= s_count) break;
     const FbRow &r = s_rows[idx];
-    int16_t y = FB_Y_ROW0 + i * FB_ROW_H;
+    int16_t top = FB_Y_ROW0 + i * FB_ROW_H;
+    int16_t base = top + FB_ASCENT;
     uint16_t col = statusColor(r.st);
 
-    // The next flight gets a marker column of its own; everything else keeps
-    // the full width for data.
     if (idx == s_nowIdx) {
-      display.fillRect(0, y - 1, 1, 7, display.color565(255, 200, 0));
+      display.fillRect(0, top, 1, FB_ROW_H - 1, display.color565(255, 180, 0));
     }
 
     display.setTextColor(col);
-    display.setCursor(FB_X_TIME + 2, y);
+    display.setCursor(FB_X_TIME, base);
     display.print(r.tm);
-    display.setCursor(FB_X_FLIGHT, y);
+    display.setCursor(FB_X_FLIGHT, base);
     display.print(r.fn);
-    display.setCursor(FB_X_CODE, y);
-    display.print(r.ct);
+    display.setCursor(FB_X_DEST, base);
+    display.print(r.cy);
   }
+
+  // Other pages draw with the built-in font and would inherit this one.
+  display.setFont(NULL);
 }
 
 #endif  // FLIGHTBOARD_ENABLED

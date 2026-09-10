@@ -9,10 +9,12 @@
  *
  * Payload contract (retained on nickoscope_watch/flightboard/state/<apt>/<dir>):
  *   {"apt":"LFMN","dir":"arr","n":15,"upd":"08:30","now_idx":7,
- *    "f":[{"fn":"SK791","tm":"08:34","st":"dep","ct":"CPH"}, ...]}
+ *    "f":[{"fn":"SK791","tm":"08:34","st":"dep","ct":"CPH","cy":"COPENHAGEN"}, ...]}
  *
  * st is a closed vocabulary: sched | board | dep | land | delay | canc
- * ct is a 3-letter IATA code, not a city name.
+ * ct is the 3-letter IATA code. cy is an optional city name - when Home
+ * Assistant sends it the page shows it, otherwise it falls back to ct. The
+ * column is 14 characters wide, so nothing is lost by sending names.
  */
 #ifndef FLIGHTBOARD_H
 #define FLIGHTBOARD_H
@@ -25,6 +27,7 @@
 #define FB_FN_LEN   9
 #define FB_TM_LEN   6
 #define FB_CT_LEN   5
+#define FB_CY_LEN   15   // city name, or ct when HA sends no name
 
 enum FbStatus : uint8_t {
   FB_SCHED = 0, FB_BOARD, FB_DEP, FB_LAND, FB_DELAY, FB_CANC, FB_UNKNOWN
