@@ -87,6 +87,7 @@ int getOptimalRefreshRate();
 #include "clocks/clock_globals.h"
 #include "metrics/metrics.h"
 #include "flightboard/flightboard.h"
+#include "flightboard/fb_mqtt.h"
 #include "yachtradar/yachtradar.h"
 #include "control/control.h"
 #include "control/clock_style.h"
@@ -292,6 +293,9 @@ void setup() {
 #if defined(CONTROL_ENCODER_ENABLED)
   controlBegin();
 #endif
+#if defined(FLIGHTBOARD_ENABLED) && defined(FB_MQTT_ENABLED)
+  fbMqttBegin();
+#endif
 
   // Configure hardware watchdog timer
   esp_task_wdt_init(15, true);
@@ -337,6 +341,9 @@ void loop() {
         if (e == CTRL_CW)         flightboardStepAirport(+1);
         else if (e == CTRL_CCW)   flightboardStepAirport(-1);
         else if (e == CTRL_PRESS) flightboardToggleDirection();
+#if defined(FB_MQTT_ENABLED)
+        fbMqttSelectionChanged();   // resubscribes once the knob settles
+#endif
         break;
 #endif
 #if defined(YACHTRADAR_ENABLED)
@@ -363,6 +370,13 @@ void loop() {
   httpForceYachtRadar  = (ctrlPage == PAGE_YACHTRADAR);
 #endif
 #endif  // CONTROL_ENCODER_ENABLED
+
+#if defined(FLIGHTBOARD_ENABLED) && defined(FB_MQTT_ENABLED)
+  // Runs regardless of which page is up: unlike the AIS websocket this costs
+  // almost nothing idle, and a retained payload that arrives while the clock is
+  // showing means the board is already populated when you turn to it.
+  fbMqttLoop();
+#endif
 
 #if defined(YACHTRADAR_ENABLED)
   // The AIS stream is held open only while its page is up: a websocket to

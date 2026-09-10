@@ -9,6 +9,7 @@
 #include "../config/config.h"
 #include "../display/display.h"
 #include "../fonts/picopixel_fb.h"   // Picopixel with a legible U
+#include "fb_mqtt.h"
 
 // ── layout ──────────────────────────────────────────────────────────────────
 // Picopixel, not TomThumb. Both are 3x5-class faces that fit 32-ish characters
@@ -198,7 +199,13 @@ void flightboardRender() {
   if (!s_haveData || s_count == 0) {
     display.setCursor(40, 34);
     display.setTextColor(display.color565(120, 120, 120));
+#if defined(FB_MQTT_ENABLED)
+    // Say which of the several ways to have no data this is. "NO DATA" alone
+    // sends you looking at Home Assistant when the panel never reached WiFi.
+    display.print(fbMqttStatus());
+#else
     display.print("NO DATA");
+#endif
     display.setFont(NULL);
     return;
   }
