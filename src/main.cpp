@@ -48,7 +48,10 @@ unsigned long wifiDisconnectTime = 0;
 unsigned long nextDisplayUpdate = 0;
 bool wifiConnected = false;  // WiFi connection status for icon display
 bool httpForceClock = false;  // HTTP override to force clock mode (via /api/mode/clock)
-bool httpForceAmbient = false;  // HTTP override to force the ambient screen (via /api/mode/ambient)
+bool httpForceAmbient = false;
+#if defined(FLIGHTBOARD_ENABLED)
+bool httpForceFlightboard = false;  // flight board page override
+#endif  // HTTP override to force the ambient screen (via /api/mode/ambient)
 bool httpForceViz = false;  // HTTP override to force the audio visualizer (via /api/mode/viz)
 
 // ========== Forward Declarations ==========
@@ -65,6 +68,7 @@ int getOptimalRefreshRate();
 #include "clocks/clocks.h"
 #include "clocks/clock_globals.h"
 #include "metrics/metrics.h"
+#include "flightboard/flightboard.h"
 #include "network/network.h"
 #include "notify/notify.h"
 #include "viz/visualizer.h"
@@ -383,6 +387,11 @@ void loop() {
     if (showViz && settings.vizStyle == 5) display.waitForScanCompletion();
     if (!animFullRepaint) display.clearDisplay();
 
+#if defined(FLIGHTBOARD_ENABLED)
+    if (httpForceFlightboard) {
+      flightboardRender();
+    } else
+#endif
     if (showViz) {
       displayVisualizer();
     } else
