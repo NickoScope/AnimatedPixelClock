@@ -24,6 +24,13 @@ repositories, and staying in step depended entirely on somebody remembering.
 directions, and the airport code/name table. It hashes them into a short
 `digest`; that digest is what tells you whether two repos still agree.
 
+It also records which commit of this repo the layout was read from, and writes
+that into the other repo alongside the layout. Two different questions, kept
+separate: the **digest** answers "has the layout drifted", the **commit**
+answers "which firmware state do those docs describe". The commit is outside
+the digest on purpose - folding it in would make every commit look like drift.
+This is why the two repositories need no submodule to stay tied together.
+
 ## The two commands
 
 ```bash

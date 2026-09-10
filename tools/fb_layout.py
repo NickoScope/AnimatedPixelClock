@@ -9,7 +9,7 @@ without the check script noticing.
   python3 tools/fb_layout.py            # human-readable dump
   python3 tools/fb_layout.py --json     # machine-readable, what consumers use
 """
-import hashlib, json, pathlib, re, sys
+import hashlib, json, pathlib, re, subprocess, sys
 
 SRC = pathlib.Path(__file__).resolve().parent.parent / "src/flightboard/flightboard.cpp"
 
@@ -50,7 +50,28 @@ def load():
     lay["digest"] = hashlib.sha256(
         json.dumps({k: v for k, v in lay.items() if k != "_source"},
                    sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:16]
+    # Provenance, deliberately OUTSIDE the digest: it answers "which firmware
+    # state do these docs describe", which is a different question from "has the
+    # layout drifted". Folding it in would make every commit look like drift.
+    lay["firmware"] = _provenance()
     return lay
+
+def _provenance():
+    def git(*a):
+        try:
+            return subprocess.run(("git",) + a, cwd=SRC.parent, capture_output=True,
+                                  text=True, check=True).stdout.strip()
+        except Exception:
+            return None
+    dirty = git("status", "--porcelain", "--", str(SRC))
+    return {
+        "repo":   git("remote", "get-url", "origin"),
+        "branch": git("rev-parse", "--abbrev-ref", "HEAD"),
+        "commit": git("rev-parse", "HEAD"),
+        # True when flightboard.cpp had uncommitted edits at generation time, so
+        # "commit" names the last committed state rather than what was read.
+        "dirty":  bool(dirty),
+    }
 
 if __name__ == "__main__":
     L = load()

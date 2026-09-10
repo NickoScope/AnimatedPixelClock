@@ -20,7 +20,10 @@ def main():
                       else os.environ.get("FB_KB_REPO", DEFAULT_KB))
     L = fb_layout.load()
     want = L["digest"]
+    fw = L["firmware"]
     print(f"firmware  src/flightboard/flightboard.cpp   digest {want}")
+    print(f"          {fw['branch']} @ {(fw['commit'] or '?')[:12]}"
+          + ("  (uncommitted edits)" if fw["dirty"] else ""))
 
     bad = []
     # 1. the host renderer reads fb_layout directly, so it can only be stale if
@@ -47,9 +50,15 @@ def main():
 
     js = kb / "sim/flightboard-layout.json"
     if js.exists():
-        got = json.loads(js.read_text()).get("digest")
+        d = json.loads(js.read_text())
+        got = d.get("digest")
         print(f"consumer  {js.name:35s} " + ("in step" if got == want else f"STALE (has {got})"))
         if got != want: bad.append(f"{js} is stale")
+        gen = (d.get("firmware") or {}).get("commit")
+        if gen:
+            same = gen == fw["commit"]
+            print(f"          generated from {gen[:12]}"
+                  + ("" if same else "  <- the other repo describes an older firmware commit"))
 
     if bad:
         print("\nDRIFT:")
