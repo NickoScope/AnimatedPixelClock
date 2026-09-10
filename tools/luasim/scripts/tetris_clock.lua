@@ -7,7 +7,7 @@
 local W, H = px.size()
 local B = 4
 local COLS, ROWS = W // B, H // B          -- 32 x 16
-local floor, ceil, min, max, sin, pi = math.floor, math.ceil, math.min, math.max, math.sin, math.pi
+local floor, ceil, min, max, abs, sin, pi = math.floor, math.ceil, math.min, math.max, math.abs, math.sin, math.pi
 
 -- ---------------------------------------------------------------- digits
 local GLYPH = {
@@ -147,8 +147,23 @@ function draw()
   for _, c in ipairs(COLON_CELLS) do cell(c.c, c.r, {225, 232, 245}, beat) end
 
   if t < CLR0 then
+    -- A gloss sweeps across the stack the whole time. A clock that only moves
+    -- for ten seconds a minute is a still image with an interruption, and the
+    -- other fifty seconds are most of what anyone actually sees.
+    local sweep = ((t * 3.2) % 1.0) * (COLS + 14) - 7
     for _, p in ipairs(pieces_cur) do
-      for _, c in ipairs(p.cells) do cell(c.c, c.r, p.col) end
+      for _, c in ipairs(p.cells) do
+        local d = abs(c.c + c.r * 0.35 - sweep)
+        cell(c.c, c.r, p.col, 1.0 + 0.45 * max(0, 1 - d / 3.5))
+      end
+    end
+    -- Every few seconds one piece remembers it is a tetromino and settles.
+    local who = floor(t * 7) % max(1, #pieces_cur) + 1
+    local ph = (t * 7) % 1.0
+    if ph < 0.18 and pieces_cur[who] then
+      local q = pieces_cur[who]
+      local lift = (ph < 0.09) and 1 or 0
+      for _, c in ipairs(q.cells) do cell(c.c, c.r - lift, q.col, 1.15) end
     end
 
   elseif t < CLR1 then

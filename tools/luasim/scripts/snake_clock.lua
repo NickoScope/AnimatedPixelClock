@@ -105,18 +105,33 @@ end
 
 -- The body is drawn from tail to head so the head sits on top, and it brightens
 -- along its length: that is what makes a line of blocks read as a creature.
-local function body(route, s, n, col, headglow)
+--
+-- A pulse also runs head-to-tail the whole time, not only during a change. A
+-- clock that is only alive for ten seconds a minute is a still image with an
+-- interruption; the pulse is what makes the other fifty seconds worth looking
+-- at, and it costs one sine per cell.
+local function body(route, s, n, col, headglow, pulse, blink)
   for i = 0, n - 1 do
     local p = route[s + i + 1]
     if p then
       local f = i / max(1, n - 1)                 -- 0 tail .. 1 head
-      cell(p.c, p.r, col, 0.55 + 0.45 * f)
+      local base = 0.52 + 0.38 * f
+      local wave = 0
+      if pulse then
+        -- one crest travelling head-to-tail, narrow enough to read as a beat
+        local d = abs(((1 - f) - pulse) % 1.0)
+        d = min(d, 1 - d)
+        wave = 0.55 * max(0, 1 - d * 7)
+      end
+      cell(p.c, p.r, col, min(1.25, base + wave))
     end
   end
   local hp = route[s + n]
-  if hp and headglow and hp.r >= -1 and hp.r < ROWS then
-    px.glow(hp.c*B + 2, hp.r*B + 2, 7, col[1], col[2], col[3], 0.5)
-    px.rect(hp.c*B + 1, hp.r*B + 1, 1, 1, 255, 255, 255, true)   -- an eye
+  if hp and hp.r >= -1 and hp.r < ROWS then
+    if headglow then px.glow(hp.c*B + 2, hp.r*B + 2, 7, col[1], col[2], col[3], 0.5) end
+    if not blink then
+      px.rect(hp.c*B + 1, hp.r*B + 1, 1, 1, 255, 255, 255, true)   -- an eye
+    end
   end
 end
 
@@ -144,7 +159,11 @@ function draw()
     local col = SNAKE[i]
     if t < DIS0 then
       local p = walks_cur[i]
-      body(route_out(p), 0, #p, col, false)
+      -- Each snake pulses at its own rate and blinks on its own schedule, so
+      -- four of them never look like one animation drawn four times.
+      local pulse = (t * (7 + i * 1.7)) % 1.0
+      local bl = ((t * 60 + i * 11) % 17) < 0.6
+      body(route_out(p), 0, #p, col, true, pulse, bl)
 
     elseif t < DIS1 then
       -- crawling away: the rope slides forward into its exit column
@@ -153,7 +172,7 @@ function draw()
       local lead = (i - 1) * 0.06                 -- the four leave in turn, not as one
       local kk = max(0, min(1, (k - lead) / (1 - lead)))
       local r = route_out(p)
-      body(r, floor(kk * (#r - #p)), #p, col, kk > 0)
+      body(r, floor(kk * (#r - #p)), #p, col, kk > 0, (t * 9) % 1.0, false)
 
     else
       -- crawling in: a column from above unrolls onto the new digit
@@ -162,7 +181,7 @@ function draw()
       local lead = (i - 1) * 0.07
       local kk = max(0, min(1, (k - lead) / (1 - lead)))
       local r, rest = route_in(p)
-      body(r, floor(kk * rest), #p, col, kk < 1)
+      body(r, floor(kk * rest), #p, col, kk < 1, (t * 9) % 1.0, false)
     end
   end
 end
