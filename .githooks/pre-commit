@@ -1,0 +1,12 @@
+#!/bin/sh
+# Refuse a commit that leaves the flight board layout out of step with its
+# consumers. See src/flightboard/README.md. Enable with:
+#   git config core.hooksPath .githooks
+if git diff --cached --name-only | grep -qE '^(src/flightboard/|tools/fb_)'; then
+  python3 tools/fb_check.py || {
+    echo
+    echo "pre-commit: flight board layout has drifted (see above)."
+    echo "            run  python3 tools/fb_sim_build.py  and stage the other repo too."
+    exit 1
+  }
+fi

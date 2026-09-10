@@ -1,24 +1,33 @@
 #!/usr/bin/env python3
-"""Host render of the flight board page, mirroring src/flightboard/flightboard.cpp.
+"""Host render of the flight board page.
 
-Same font, same constants, same clipping rule. Used to judge the layout before
-hardware exists.  python3 tools/fb_render.py payload.json out.png [scale]
+Every constant, status word and airport name is read out of
+src/flightboard/flightboard.cpp through fb_layout, so this cannot drift from
+the firmware: change the firmware and this render changes with it. Used to
+judge the layout before hardware exists.
+
+  python3 tools/fb_render.py payload.json out.png [scale]
 """
 import json, sys, pathlib
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from PIL import Image
+
+import fb_layout                      # constants come from the firmware, never from here
+L = fb_layout.load()
+_g = L["geom"]
 
 W, H = 128, 64
 FB = json.load(open(pathlib.Path(__file__).parent / "picopixel.json"))
-G, YADV, ASC = FB["glyphs"], FB["yAdvance"], 4
-X_TIME, X_FLIGHT, X_DEST, X_RIGHT, GAP = 2, 22, 50, 126, 2
-CODE_GAP = 2
-Y_HEADER, Y_RULE, Y_ROW0, ROW_H, VISIBLE = 1, 8, 11, 7, 7
+G, YADV, ASC = FB["glyphs"], FB["yAdvance"], _g["FB_ASCENT"]
+X_TIME, X_FLIGHT   = _g["FB_X_TIME"], _g["FB_X_FLIGHT"]
+X_DEST, X_RIGHT    = _g["FB_X_DEST"], _g["FB_X_RIGHT"]
+GAP, CODE_GAP      = _g["FB_GAP"], _g["FB_CODE_GAP"]
+Y_HEADER, Y_RULE   = _g["FB_Y_HEADER"], _g["FB_Y_RULE"]
+Y_ROW0, ROW_H      = _g["FB_Y_ROW0"], _g["FB_ROW_H"]
+VISIBLE            = _g["FB_VISIBLE"]
 
-APT = {"LFMD":"CANNES","LFMN":"NICE","LFPG":"PARIS CDG",
-       "EGLL":"LONDON","EDDF":"FRANKFURT","EHAM":"AMSTERDAM"}
-ARR = {"sched":"DUE","board":"GATE","dep":"IN AIR",
-       "land":"LANDED","delay":"DELAY","canc":"CANX"}
-DEP = dict(ARR, sched="ON TIME", dep="DEPART")
+APT = dict(zip(L["airports"], L["airport_names"]))
+ARR, DEP = L["status"]["arr"], L["status"]["dep"]
 COL = {"sched":(210,210,210),"board":(0,220,220),"dep":(70,140,255),
        "land":(0,200,90),"delay":(255,140,0),"canc":(255,56,56)}
 SIG, DIM, RULE = (255,180,0), (120,132,138), (52,60,64)
