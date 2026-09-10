@@ -10,7 +10,7 @@
 #include <string.h>
 
 #include "../display/display.h"
-#include "coastline.h"
+#include "basemap.h"
 #include "../fonts/picopixel_fb.h"
 
 // ---------------------------------------------------------------- geometry
@@ -234,41 +234,55 @@ void yachtRadarStop() {
 
 
 // ---------------------------------------------------------------- render
-static uint16_t colourFor(const YrVessel &v) {
-  if (v.length_m >= 60) return display.color565(255, 180,   0);   // mega, amber
-  switch (motionOf(v)) {
-  case YR_ANCHORED:     return display.color565(0,   200,  95);   // green
-  case YR_MANOEUVRE:    return display.color565(0,   200, 200);   // cyan
-  default:              return display.color565(70,  150, 255);   // blue
+static uint16_t colourFor(const YrVessel &v, uint8_t *r, uint8_t *g, uint8_t *b) {
+  uint8_t rr, gg, bb;
+  if (v.length_m >= 60)      { rr = 255; gg = 190; bb =  40; }   // mega, amber
+  else switch (motionOf(v)) {
+  case YR_ANCHORED:          { rr =  60; gg = 255; bb =  90; } break;
+  case YR_MANOEUVRE:         { rr =   0; gg = 255; bb = 210; } break;
+  default:                   { rr = 255; gg = 120; bb = 255; } break;
   }
+  if (r) *r = rr; if (g) *g = gg; if (b) *b = bb;
+  return display.color565(rr, gg, bb);
 }
 
-// lat/lon -> panel pixel, via the DAC space the coastline was clipped in.
-static void project(const YrVessel &v, int16_t *px, int16_t *py) {
+// Blend against the baked map rather than over it. The basemap is in flash, so
+// the pixel underneath is known exactly - which is what lets a vessel carry a
+// sub-pixel halo instead of snapping to the pixel grid. On a 64 px chart that
+// halo is the only resolution left to spend.
+static void blendOverMap(int16_t x, int16_t y, uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
+  if (a == 0 || x < 0 || x >= YR_MAP_W || y < 0 || y >= YR_MAP_H) return;
+  const uint16_t m = kYrBasemap[y * YR_MAP_W + x];
+  const uint8_t mr = (uint8_t)((m >> 8) & 0xF8);
+  const uint8_t mg = (uint8_t)((m >> 3) & 0xFC);
+  const uint8_t mb = (uint8_t)((m << 3) & 0xF8);
+  const uint16_t ia = (uint16_t)(255 - a);
+  display.drawPixelRGB888(x, y,
+      (uint8_t)((mr * ia + r * a) / 255),
+      (uint8_t)((mg * ia + g * a) / 255),
+      (uint8_t)((mb * ia + b * a) / 255));
+}
+
+// Wu-style 2x2 split of a fractional position, in 1/256 units.
+static void softDot(float fx, float fy, uint8_t r, uint8_t g, uint8_t b, float alpha) {
+  const int16_t x0 = (int16_t)floorf(fx), y0 = (int16_t)floorf(fy);
+  const float ax = fx - x0, ay = fy - y0;
+  blendOverMap(x0,     y0,     r, g, b, (uint8_t)(255.0f * alpha * (1 - ax) * (1 - ay)));
+  blendOverMap(x0 + 1, y0,     r, g, b, (uint8_t)(255.0f * alpha *      ax  * (1 - ay)));
+  blendOverMap(x0,     y0 + 1, r, g, b, (uint8_t)(255.0f * alpha * (1 - ax) *      ay));
+  blendOverMap(x0 + 1, y0 + 1, r, g, b, (uint8_t)(255.0f * alpha *      ax  *      ay));
+}
+
+// lat/lon -> panel pixel, via the DAC space the map was baked in.
+static void project(const YrVessel &v, float *px, float *py) {
   const float dx = (v.lon - YR_CENTRE_LON) * 111.320f *
                    cosf(YR_CENTRE_LAT * (float)DEG_TO_RAD) * YR_DAC_PER_KM;
   const float dy = (v.lat - YR_CENTRE_LAT) * 110.574f * YR_DAC_PER_KM;
-  *px = YR_CX + (int16_t)lroundf(dx * YR_R_PX / YR_R_DAC);
-  *py = YR_CY - (int16_t)lroundf(dy * YR_R_PX / YR_R_DAC);   // row 0 is the top
+  *px = YR_CX + dx * YR_R_PX / YR_R_DAC;
+  *py = YR_CY - dy * YR_R_PX / YR_R_DAC;     // row 0 is the top
 }
 
-static void drawCoast(uint16_t c) {
-  uint16_t p = 0;
-  for (uint8_t s = 0; s < YR_COAST_SEGS; s++) {
-    const uint16_t hdr    = kYrCoastSeg[s];
-    const uint16_t n      = hdr & 0x7FFF;
-    const bool     closed = (hdr & 0x8000) != 0;
-    for (uint16_t i = 0; i + 1 < n; i++)
-      display.drawLine(kYrCoastXY[(p + i) * 2],     kYrCoastXY[(p + i) * 2 + 1],
-                       kYrCoastXY[(p + i + 1) * 2], kYrCoastXY[(p + i + 1) * 2 + 1], c);
-    if (closed && n > 2)
-      display.drawLine(kYrCoastXY[(p + n - 1) * 2], kYrCoastXY[(p + n - 1) * 2 + 1],
-                       kYrCoastXY[p * 2],           kYrCoastXY[p * 2 + 1], c);
-    p += n;
-  }
-}
-
-// Order for the table: nearest first. The plot already shows where everything
+// Order for the table: nearest first. The chart already shows where everything
 // is, so the list earns its place by answering "what is closest to me".
 static void sortByRange(uint8_t *idx, uint8_t n) {
   for (uint8_t i = 1; i < n; i++) {          // insertion sort, n <= 16
@@ -286,23 +300,22 @@ void yachtRadarRender() {
   display.setTextWrap(false);
   int16_t bx, by; uint16_t bw, bh;
 
-  const uint16_t grid  = display.color565(22,  30,  36);
-  const uint16_t coast = display.color565(0,  120,  70);
   const uint16_t white = display.color565(255, 255, 255);
   const uint16_t dim   = display.color565(110, 122, 128);
 
-  // --- left: the plot ---
-  display.drawCircle(YR_CX, YR_CY, YR_R_PX / 3,     grid);
-  display.drawCircle(YR_CX, YR_CY, YR_R_PX * 2 / 3, grid);
-  display.drawCircle(YR_CX, YR_CY, YR_R_PX,         grid);
-  display.drawFastVLine(YR_CX, 1, 62, grid);
-  display.drawFastHLine(0, YR_CY, 62, grid);
-  drawCoast(coast);
-  display.setTextColor(grid);
-  display.setCursor(YR_CX - 1, 1 + 4);           ; display.print('N');
-  display.setCursor(YR_CX - 1, 57 + 4);          ; display.print('S');
-  display.setCursor(0, YR_CY - 3 + 4);           ; display.print('W');
-  display.setCursor(57, YR_CY - 3 + 4);          ; display.print('E');
+  // --- left: the chart ---
+  // Blitted, not drawn: sea shaded by measured depth, land by measured
+  // elevation with a hillshade, shoreline on top. All of it settled at build
+  // time by tools/yr_basemap_gen.py, so the panel spends nothing on it.
+  for (int16_t y = 0; y < YR_MAP_H; y++)
+    for (int16_t x = 0; x < YR_MAP_W; x++)
+      display.drawPixel(x, y, kYrBasemap[y * YR_MAP_W + x]);
+
+  display.setTextColor(display.color565(200, 230, 255));
+  display.setCursor(YR_CX - 1, 0 + 4);      display.print('N');
+  display.setCursor(YR_CX - 1, 57 + 4);     display.print('S');
+  display.setCursor(1, YR_CY - 3 + 4);      display.print('W');
+  display.setCursor(57, YR_CY - 3 + 4);     display.print('E');
 
   expire();
   uint8_t idx[YR_MAX_VESSELS];
@@ -311,17 +324,24 @@ void yachtRadarRender() {
 
   for (uint8_t i = 0; i < s_count; i++) {
     const YrVessel &v = s_v[idx[i]];
-    int16_t px, py; project(v, &px, &py);
-    if (px < 0 || px > 62 || py < 0 || py > 63) continue;
-    const uint16_t c = colourFor(v);
-    // A white core keeps the hull readable against the coastline; the arms
-    // carry the colour. Mega yachts get four arms so size reads at a glance.
-    display.drawPixel(px, py, white);
-    display.drawPixel(px - 1, py, c);
-    display.drawPixel(px + 1, py, c);
-    if (v.length_m >= 60) {
-      display.drawPixel(px, py - 1, c);
-      display.drawPixel(px, py + 1, c);
+    float fx, fy; project(v, &fx, &fy);
+    const int16_t ix = (int16_t)lroundf(fx), iy = (int16_t)lroundf(fy);
+    if (ix < 0 || ix >= YR_MAP_W || iy < 0 || iy >= YR_MAP_H) continue;
+    uint8_t r, g, b; colourFor(v, &r, &g, &b);
+
+    // A dark ring first: over a coloured chart a bright dot alone reads as part
+    // of the map, and the vessels are the point of the page.
+    for (int8_t dx = -1; dx <= 1; dx++)
+      for (int8_t dy = -1; dy <= 1; dy++)
+        if (dx || dy) blendOverMap(ix + dx, iy + dy, 0, 0, 0, 90);
+
+    softDot(fx, fy, r, g, b, 0.5f);                  // sub-pixel halo
+    blendOverMap(ix, iy, r, g, b, 255);              // core, full brightness
+    if (v.length_m >= 60) {                          // mega: size at a glance
+      blendOverMap(ix - 1, iy, r, g, b, 190);
+      blendOverMap(ix + 1, iy, r, g, b, 190);
+      blendOverMap(ix, iy - 1, r, g, b, 190);
+      blendOverMap(ix, iy + 1, r, g, b, 190);
     }
   }
 
@@ -347,7 +367,7 @@ void yachtRadarRender() {
   for (uint8_t i = 0; i < rows; i++) {
     const YrVessel &v = s_v[idx[i]];
     const int16_t base = YR_Y_ROW0 + i * YR_ROW_H + 4;
-    const uint16_t c = colourFor(v);
+    const uint16_t c = colourFor(v, NULL, NULL, NULL);
     display.setTextColor(c);
 
     // Length is the one number worth the width - it is what separates a

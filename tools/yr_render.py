@@ -30,13 +30,13 @@ DAC_PER_KM, R_DAC = C["YR_DAC_PER_KM"], C["YR_R_DAC"]
 ROWS = int(re.search(r"#define YR_TABLE_ROWS\s+(\d+)",
                      (ROOT / "src/yachtradar/yachtradar.h").read_text()).group(1))
 
-def _coast():
-    t = (ROOT / "src/yachtradar/coastline.h").read_text()
-    segs = [int(x, 16) for x in re.findall(r"0x([0-9A-Fa-f]{4})", t)]
-    body = re.sub(r"//.*", "", re.search(r"kYrCoastXY\[[^\]]*\]\s*=\s*\{(.*?)\};", t, re.S).group(1))
-    v = [int(x) for x in re.findall(r"-?\d+", body)]
-    return segs, list(zip(v[0::2], v[1::2]))
-SEGS, XY = _coast()
+def _basemap():
+    t = (ROOT / "src/yachtradar/basemap.h").read_text()
+    body = re.sub(r"//.*", "", re.search(r"kYrBasemap\[[^\]]*\]\s*=\s*\{(.*?)\};", t, re.S).group(1))
+    v = [int(x, 16) for x in re.findall(r"0x([0-9A-Fa-f]{4})", body)]
+    assert len(v) == 64*64, f"basemap has {len(v)} entries"
+    return [((x >> 8) & 0xF8, (x >> 3) & 0xFC, (x << 3) & 0xF8) for x in v]
+MAP = _basemap()
 
 GRID=(22,30,36); COAST=(0,120,70); WHITE=(255,255,255); DIM=(110,122,128); RULE=(40,48,54)
 px = [[(10,12,14)]*W for _ in range(H)]
@@ -66,36 +66,45 @@ def circle(cx,cy,r,c):
         d = d+2*y+1 if d<0 else d+2*(y-(x:=x-1))+1
 
 def colour(v):
-    if v.get("len",0) >= 60: return (255,180,0)
+    if v.get("len",0) >= 60: return (255,190,40)
     s = v.get("sog",0.0)
-    return (0,200,95) if s<0.5 else ((0,200,200) if s<3.0 else (70,150,255))
-def project(v):
+    return (60,255,90) if s<0.5 else ((0,255,210) if s<3.0 else (255,120,255))
+def projf(v):
     import math
     dx=(v["lon"]-CENTRE_LON)*111.320*math.cos(math.radians(CENTRE_LAT))*DAC_PER_KM
     dy=(v["lat"]-CENTRE_LAT)*110.574*DAC_PER_KM
-    return CX+round(dx*RPX/R_DAC), CY-round(dy*RPX/R_DAC)
+    return CX+dx*RPX/R_DAC, CY-dy*RPX/R_DAC
 def rng(v):
     import math
-    x,y=project(v); return math.hypot(x-CX, y-CY)
+    x,y=projf(v); return math.hypot(x-CX, y-CY)
+
+def blend(x,y,c,a):
+    if a<=0 or not (0<=x<W and 0<=y<H): return
+    p=px[y][x]; px[y][x]=tuple(int(p[i]*(1-a)+c[i]*a) for i in range(3))
+def softdot(fx,fy,c,al):
+    import math as _m
+    x0,y0=_m.floor(fx),_m.floor(fy); ax,ay=fx-x0,fy-y0
+    blend(x0,y0,c,al*(1-ax)*(1-ay)); blend(x0+1,y0,c,al*ax*(1-ay))
+    blend(x0,y0+1,c,al*(1-ax)*ay);   blend(x0+1,y0+1,c,al*ax*ay)
 
 def main():
     b=json.load(open(sys.argv[1])); S=int(sys.argv[3]) if len(sys.argv)>3 else 9
-    for r in (RPX//3, RPX*2//3, RPX): circle(CX,CY,r,GRID)
-    for y in range(1,63): put(CX,y,GRID)
-    for x in range(0,63): put(x,CY,GRID)
-    i=0
-    for s in SEGS:
-        n=s&0x7FFF; pts=XY[i:i+n]; i+=n
-        if s&0x8000: pts=pts+[pts[0]]
-        for a,c in zip(pts,pts[1:]): line(a[0],a[1],c[0],c[1],COAST)
-    for lbl,(x,y) in (("N",(CX-1,1)),("S",(CX-1,57)),("W",(0,CY-3)),("E",(57,CY-3))): text(x,y,lbl,GRID)
+    for y in range(64):
+        for x in range(64): px[y][x]=MAP[y*64+x]
+    for lbl,(x,y) in (("N",(CX-1,0)),("S",(CX-1,57)),("W",(1,CY-3)),("E",(57,CY-3))):
+        text(x,y,lbl,(200,230,255))
 
     ves=sorted(b["vessels"], key=rng)
     for v in ves:
-        x,y=project(v)
-        if not (0<=x<=62 and 0<=y<=63): continue
-        c=colour(v); put(x,y,WHITE); put(x-1,y,c); put(x+1,y,c)
-        if v.get("len",0)>=60: put(x,y-1,c); put(x,y+1,c)
+        fx,fy=projf(v); ix,iy=round(fx),round(fy)
+        if not (0<=ix<64 and 0<=iy<64): continue
+        c=colour(v)
+        for dx in (-1,0,1):
+            for dy in (-1,0,1):
+                if dx or dy: blend(ix+dx,iy+dy,(0,0,0),90/255)
+        softdot(fx,fy,c,0.5); px[iy][ix]=c
+        if v.get("len",0)>=60:
+            for dx,dy in ((-1,0),(1,0),(0,-1),(0,1)): blend(ix+dx,iy+dy,c,190/255)
 
     text(X_TABLE, Y_TITLE, "BAY OF CANNES", WHITE)
     text(X_TABLE, Y_SUB, b.get("sub", f"{len(ves)} NOW  {b.get('seen',len(ves))} SEEN"), DIM)
