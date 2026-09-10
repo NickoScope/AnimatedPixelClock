@@ -89,6 +89,7 @@ int getOptimalRefreshRate();
 #include "flightboard/flightboard.h"
 #include "yachtradar/yachtradar.h"
 #include "control/control.h"
+#include "control/clock_style.h"
 #include "network/network.h"
 #include "notify/notify.h"
 #include "viz/visualizer.h"
@@ -345,13 +346,19 @@ void loop() {
         else if (e == CTRL_PRESS) yachtRadarToggleSort();
         break;
 #endif
-      default: break;             // the clock page takes no input yet
+      case PAGE_CLOCK:
+        if (e == CTRL_CW)         clockStyleStep(+1);
+        else if (e == CTRL_CCW)   clockStyleStep(-1);
+        else if (e == CTRL_PRESS) clockStyleToggleRotation();
+        break;
+      default: break;
       }
     }
   }
 #if defined(FLIGHTBOARD_ENABLED)
   httpForceFlightboard = (ctrlPage == PAGE_FLIGHTBOARD);
 #endif
+  clockStyleTick();          // deferred NVS write, once the knob settles
 #if defined(YACHTRADAR_ENABLED)
   httpForceYachtRadar  = (ctrlPage == PAGE_YACHTRADAR);
 #endif
@@ -543,6 +550,12 @@ void loop() {
     if (notifyActive()) {
       drawNotifyOverlay();
     }
+
+#if defined(CONTROL_ENCODER_ENABLED)
+    // After everything else, before the flip: the toast has to sit on top of
+    // whatever the page drew, and every clock fills the panel.
+    if (ctrlPage == PAGE_CLOCK) clockStyleOverlay();
+#endif
 
     display.display();
 

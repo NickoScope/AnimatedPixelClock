@@ -2,6 +2,22 @@
 # Refuse a commit that leaves the flight board layout out of step with its
 # consumers. See src/flightboard/README.md. Enable with:
 #   git config core.hooksPath .githooks
+# The clock style table is generated from the web UI's own option list. If the
+# UI gained or lost a style and the table was not regenerated, the knob would
+# walk a stale list - so regenerate and refuse the commit if anything moved.
+# Compared by hash against a regenerated copy rather than with git diff: the
+# file may be untracked or already staged, and neither shows up as a diff.
+if git diff --cached --name-only | grep -qE '^(src/web/web_pages\.h|src/control/clock_styles\.h)$'; then
+  BEFORE=$(shasum src/control/clock_styles.h 2>/dev/null | cut -d' ' -f1)
+  python3 tools/clock_styles_gen.py >/dev/null || { echo "pre-commit: style generator failed"; exit 1; }
+  AFTER=$(shasum src/control/clock_styles.h | cut -d' ' -f1)
+  if [ "$BEFORE" != "$AFTER" ]; then
+    echo "pre-commit: src/control/clock_styles.h was stale - regenerated it."
+    echo "            stage it and commit again."
+    exit 1
+  fi
+fi
+
 if git diff --cached --name-only | grep -qE '^(src/flightboard/|tools/fb_)'; then
   python3 tools/fb_check.py || {
     echo
