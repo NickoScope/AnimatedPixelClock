@@ -162,7 +162,55 @@ static int l_width(lua_State *L) {
   lua_pushinteger(L, w); return 1;
 }
 
+/* Blending. The raster API overwrites by default, which makes a dim colour a
+   dark blot rather than a faint light - so glows, shadows and anti-aliasing all
+   need read-modify-write. Doing it per pixel in Lua would burn the instruction
+   budget, so it lives here: the same reasoning that put beam.kit in C. */
+static int l_get(lua_State *L) {
+  int x = (int)luaL_checkinteger(L, 1), y = (int)luaL_checkinteger(L, 2);
+  if (x < 0 || x >= W || y < 0 || y >= H) { lua_pushinteger(L,0); lua_pushinteger(L,0); lua_pushinteger(L,0); return 3; }
+  unsigned char *p = &fb[(y * W + x) * 3];
+  lua_pushinteger(L, p[0]); lua_pushinteger(L, p[1]); lua_pushinteger(L, p[2]);
+  return 3;
+}
+
+static void blend_px(int x, int y, double r, double g, double b, double a) {
+  if (a <= 0.0 || x < 0 || x >= W || y < 0 || y >= H) return;
+  if (a > 1.0) a = 1.0;
+  unsigned char *p = &fb[(y * W + x) * 3];
+  double ir = 1.0 - a;
+  int nr = (int)(p[0] * ir + r * a), ng = (int)(p[1] * ir + g * a), nb = (int)(p[2] * ir + b * a);
+  p[0] = nr > 255 ? 255 : nr; p[1] = ng > 255 ? 255 : ng; p[2] = nb > 255 ? 255 : nb;
+}
+
+static int l_blend(lua_State *L) {
+  blend_px((int)luaL_checkinteger(L,1), (int)luaL_checkinteger(L,2),
+           luaL_checknumber(L,3), luaL_checknumber(L,4), luaL_checknumber(L,5),
+           luaL_checknumber(L,6));
+  return 0;
+}
+
+/* A radial light: one call instead of a Lua loop over a few hundred pixels.
+   Falls off as (1 - d/rad)^2, which reads as a lamp rather than a disc. */
+static int l_glow(lua_State *L) {
+  double cx = luaL_checknumber(L,1), cy = luaL_checknumber(L,2), rad = luaL_checknumber(L,3);
+  double r = luaL_checknumber(L,4), g = luaL_checknumber(L,5), b = luaL_checknumber(L,6);
+  double amp = luaL_optnumber(L,7, 1.0);
+  if (rad < 0.5) return 0;
+  int x0 = (int)(cx - rad), x1 = (int)(cx + rad), y0 = (int)(cy - rad), y1 = (int)(cy + rad);
+  for (int y = y0; y <= y1; y++)
+    for (int x = x0; x <= x1; x++) {
+      double dx = x + 0.5 - cx, dy = y + 0.5 - cy;
+      double d = sqrt(dx*dx + dy*dy);
+      if (d > rad) continue;
+      double f = 1.0 - d / rad;
+      blend_px(x, y, r, g, b, amp * f * f);
+    }
+  return 0;
+}
+
 static const luaL_Reg px_lib[] = {
+  {"get", l_get}, {"blend", l_blend}, {"glow", l_glow},
   {"size", l_size}, {"t", l_t}, {"now", l_now}, {"clear", l_clear},
   {"pixel", l_pixel}, {"rect", l_rect}, {"line", l_line}, {"circle", l_circle},
   {"text", l_text}, {"width", l_width}, {NULL, NULL}
