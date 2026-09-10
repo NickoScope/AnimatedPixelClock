@@ -91,6 +91,8 @@ int getOptimalRefreshRate();
 #include "yachtradar/yachtradar.h"
 #include "control/control.h"
 #include "control/clock_style.h"
+#include "lua/nslua.h"
+#include "lua/nslua_bindings.h"
 #include "network/network.h"
 #include "notify/notify.h"
 #include "viz/visualizer.h"
@@ -300,6 +302,21 @@ void setup() {
 
 #if defined(CONTROL_ENCODER_ENABLED)
   controlBegin();
+#endif
+#if defined(NSLUA_ENABLED)
+  // Phase 1: prove the runtime exists on this board and that the PSRAM
+  // allocator works, before anything is built on top of it. Stateless by
+  // design - a persistent state belongs to the render path and comes later.
+  if (nslua_begin()) {
+    char err[128];
+    const bool ok = nslua_run("local t={} for i=1,10 do t[i]=i*i end "
+                              "return #t == 10 and t[10] == 100", err, sizeof(err));
+    Serial.printf("[nslua] self-test %s%s%s\n",
+                  ok ? "PASSED" : "FAILED", ok ? "" : ": ", ok ? "" : err);
+    nslua_bindings_dump();
+  } else {
+    Serial.println("[nslua] runtime unavailable (no PSRAM?)");
+  }
 #endif
 #if defined(FLIGHTBOARD_ENABLED) && defined(FB_MQTT_ENABLED)
   fbMqttBegin();

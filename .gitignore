@@ -22,3 +22,8 @@ hardware/
 
 # Release upload copy; the companion EXE is already tracked in win-companion/dist.
 /release/*/*.exe
+
+# luasim build products
+tools/luasim/luasim
+tools/luasim/font_picopixel.inc
+tools/luasim/*.raw
