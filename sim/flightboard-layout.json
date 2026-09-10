@@ -1,0 +1,59 @@
+{
+  "_source": "src/flightboard/flightboard.cpp",
+  "airport_names": [
+    "CANNES",
+    "NICE",
+    "PARIS CDG",
+    "LONDON",
+    "FRANKFURT",
+    "AMSTERDAM"
+  ],
+  "airports": [
+    "LFMD",
+    "LFMN",
+    "LFPG",
+    "EGLL",
+    "EDDF",
+    "EHAM"
+  ],
+  "digest": "5e1009327ceec064",
+  "firmware": {
+    "branch": "board/waveshare-esp32-s3-rgb-matrix",
+    "commit": "f9f3a9cf42df4b371b6a57184ea92583386cea0d",
+    "dirty": false,
+    "repo": "https://github.com/NickoScope/AnimatedPixelClock.git"
+  },
+  "font": "PicopixelFB",
+  "geom": {
+    "FB_ASCENT": 4,
+    "FB_CODE_GAP": 2,
+    "FB_GAP": 2,
+    "FB_ROW_H": 7,
+    "FB_VISIBLE": 7,
+    "FB_X_DEST": 50,
+    "FB_X_FLIGHT": 22,
+    "FB_X_RIGHT": 126,
+    "FB_X_TIME": 2,
+    "FB_Y_HEADER": 1,
+    "FB_Y_ROW0": 11,
+    "FB_Y_RULE": 8
+  },
+  "status": {
+    "arr": {
+      "board": "GATE",
+      "canc": "CANX",
+      "delay": "DELAY",
+      "dep": "IN AIR",
+      "land": "LANDED",
+      "sched": "DUE"
+    },
+    "dep": {
+      "board": "GATE",
+      "canc": "CANX",
+      "delay": "DELAY",
+      "dep": "DEPART",
+      "land": "LANDED",
+      "sched": "ON TIME"
+    }
+  }
+}

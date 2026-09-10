@@ -1,0 +1,282 @@
+<title>Nice Flight Board</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@400;600&family=Public+Sans:wght@400;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+:root{
+  --ground:#0e1113; --panel:#171c1f; --edge:#242b30;
+  --ink:#e6ebee; --dim:#8e9aa1; --faint:#5d686e;
+  --signal:#ffb400; --led-off:#0a0d0e;
+  --ok:#00c85a; --late:#ff8c00; --off:#ff3838; --info:#00bfff;
+}
+:root:not([data-theme="light"]){}
+@media (prefers-color-scheme: light){
+  :root:not([data-theme="dark"]){
+    --ground:#eef1f2; --panel:#ffffff; --edge:#d5dcdf;
+    --ink:#12171a; --dim:#5a666d; --faint:#8b969c;
+  }
+}
+:root[data-theme="light"]{
+  --ground:#eef1f2; --panel:#ffffff; --edge:#d5dcdf;
+  --ink:#12171a; --dim:#5a666d; --faint:#8b969c;
+}
+:root[data-theme="dark"]{
+  --ground:#0e1113; --panel:#171c1f; --edge:#242b30;
+  --ink:#e6ebee; --dim:#8e9aa1; --faint:#5d686e;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--ground);color:var(--ink);
+  font-family:"Public Sans",-apple-system,system-ui,sans-serif;line-height:1.55;}
+.wrap{max-width:1180px;margin:0 auto;padding:40px 24px 72px;}
+header{display:flex;flex-direction:column;gap:10px;margin-bottom:8px}
+.eyebrow{font-family:"Saira Condensed",Impact,sans-serif;font-size:13px;letter-spacing:.16em;
+  text-transform:uppercase;color:var(--signal);font-weight:600}
+h1{font-family:"Saira Condensed",Impact,sans-serif;font-weight:600;font-size:clamp(34px,5vw,52px);
+  line-height:1.02;margin:0;text-wrap:balance;letter-spacing:.01em}
+.lede{color:var(--dim);max-width:66ch;margin:0}
+.meta{font-family:"JetBrains Mono",ui-monospace,monospace;font-size:12px;color:var(--faint);
+  display:flex;flex-wrap:wrap;gap:6px 18px;margin-top:4px}
+.controls{display:flex;flex-wrap:wrap;gap:20px;align-items:center;margin:28px 0 8px;
+  padding:14px 18px;background:var(--panel);border:1px solid var(--edge);border-radius:4px}
+.ctl{display:flex;align-items:center;gap:9px;font-size:13px;color:var(--dim)}
+.ctl label{font-family:"Saira Condensed",sans-serif;text-transform:uppercase;letter-spacing:.09em;font-size:12px}
+input[type=range]{accent-color:var(--signal);width:112px}
+input[type=checkbox]{accent-color:var(--signal);width:15px;height:15px}
+button{font:inherit;font-size:12px;padding:5px 11px;border-radius:3px;cursor:pointer;
+  background:transparent;color:var(--dim);border:1px solid var(--edge)}
+button[aria-pressed="true"]{background:var(--signal);color:#111;border-color:var(--signal);font-weight:600}
+button:focus-visible,input:focus-visible{outline:2px solid var(--signal);outline-offset:2px}
+.setups{display:flex;flex-direction:column;gap:34px;margin-top:34px}
+.setup{display:grid;grid-template-columns:1fr;gap:14px}
+.hd{display:flex;flex-wrap:wrap;align-items:baseline;gap:12px}
+.hd h2{font-family:"Saira Condensed",sans-serif;font-size:23px;margin:0;font-weight:600;letter-spacing:.01em}
+.tag{font-family:"JetBrains Mono",monospace;font-size:11px;color:var(--faint);
+  border:1px solid var(--edge);padding:2px 7px;border-radius:2px}
+.tag.best{color:var(--signal);border-color:var(--signal)}
+.note{color:var(--dim);font-size:14px;max-width:70ch;margin:0}
+.screen{background:var(--led-off);padding:9px;border-radius:3px;border:1px solid var(--edge);
+  overflow-x:auto;display:flex}
+canvas{image-rendering:pixelated;display:block}
+table{border-collapse:collapse;width:100%;font-size:13.5px;margin-top:8px}
+th,td{text-align:left;padding:8px 12px;border-bottom:1px solid var(--edge)}
+th{font-family:"Saira Condensed",sans-serif;text-transform:uppercase;letter-spacing:.09em;
+  font-size:12px;color:var(--faint);font-weight:600}
+td.num{font-family:"JetBrains Mono",monospace;font-variant-numeric:tabular-nums}
+.legend{display:flex;flex-wrap:wrap;gap:7px 16px;font-size:12.5px;color:var(--dim);margin-top:10px}
+.sw{display:inline-flex;align-items:center;gap:6px}
+.sw i{width:11px;height:11px;border-radius:2px;display:inline-block}
+h3{font-family:"Saira Condensed",sans-serif;font-size:19px;margin:40px 0 6px;font-weight:600}
+.rule{height:1px;background:var(--edge);margin:38px 0 0}
+code{font-family:"JetBrains Mono",monospace;font-size:.9em;color:var(--ink)}
+.code{font-family:"JetBrains Mono",monospace;font-size:11.5px;line-height:1.65;color:var(--dim);
+  background:var(--panel);border:1px solid var(--edge);border-radius:4px;padding:14px 16px;
+  overflow-x:auto;white-space:pre;margin-top:8px}
+.screen.scroll{display:block;padding:0;background:var(--panel)}
+#rows{width:100%;font-size:12.5px}
+#rows td{padding:5px 12px;border-bottom:1px solid var(--edge);
+  font-family:"JetBrains Mono",monospace;font-variant-numeric:tabular-nums}
+#rows tr.now td{background:rgba(255,180,0,.09)}
+#rows td.mk{width:14px;padding:0 0 0 4px;color:var(--signal)}
+#rows td.st{text-align:right}
+#screen{margin-top:26px}
+canvas{margin-inline:auto}
+.find{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:18px;margin-top:14px}
+.find>div{background:var(--panel);border:1px solid var(--edge);border-left:2px solid var(--signal);
+  border-radius:0 4px 4px 0;padding:14px 16px}
+.find h4{font-family:"Saira Condensed",sans-serif;font-size:15px;margin:0 0 6px;font-weight:600}
+.find p{margin:0;font-size:13.5px;color:var(--dim)}
+.find b{color:var(--ink);font-weight:600}
+.find code{font-size:12px;color:var(--signal)}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+<div class="wrap">
+<header>
+  <div class="eyebrow">Nice C&ocirc;te d&rsquo;Azur &middot; 128 &times; 64 &middot; two HUB75 panels</div>
+  <h1>The flight board, pixel for pixel</h1>
+  <p class="lede">Live arrivals and departures from Home Assistant, drawn exactly as the panel
+  will draw them &mdash; same Picopixel glyphs, same column positions, same rule for fitting a
+  city name into whatever room the status word leaves. Every row carries the IATA code and,
+  where it fits, the city name. Thirty real flights turned out to be enough to break three
+  things that thirty invented ones never would have.</p>
+  <div class="meta">
+    <span id="m-src"></span><span id="m-upd"></span><span id="m-n"></span>
+  </div>
+</header>
+
+<div class="controls">
+  <div class="ctl"><label>Board</label>
+    <button id="b-arr" aria-pressed="true">Arrivals</button>
+    <button id="b-dep" aria-pressed="false">Departures</button></div>
+  <div class="ctl"><label for="zoom">Zoom</label>
+    <input type="range" id="zoom" min="2" max="12" step="1" value="7"><span id="zoomv">7&times;</span></div>
+  <div class="ctl"><label for="grid">Pixel grid</label><input type="checkbox" id="grid" checked></div>
+</div>
+
+<div class="screen" id="screen"><canvas id="cv"></canvas></div>
+<div class="legend" id="legend"></div>
+
+<div class="rule"></div>
+<h3>The window</h3>
+<p class="note">Home Assistant sends fifteen flights spanning two hours either side of now,
+with the index of the next one. The panel shows seven of them and puts that next flight on
+the second line: one behind for context, the rest ahead. The marker down the left edge is it.</p>
+<div class="screen scroll"><table id="rows"></table></div>
+
+<h3>What thirty real flights changed</h3>
+<div class="find">
+  <div><h4>A half word is worse than a code</h4>
+  <p>The old rule shaved a character at a time until the name fitted, which turned Basel's
+  <b>EUROAIRPORT</b> into <code>EUROAIRPOR</code> &mdash; a typo, not an abbreviation. It now drops
+  whole trailing words, then any dangling connector, and stops at the code if the first word
+  still will not fit. Basel reads <code>BSL</code>.</p></div>
+  <div><h4>The code earns its place</h4>
+  <p>AeroAPI's &ldquo;city&rdquo; is the commune: <b>BLAGNAC</b> for Toulouse,
+  <b>EUROAIRPORT</b> for Basel, <b>ORLY</b> for Paris. The code is the part that is never wrong,
+  so it is drawn first and unconditionally, with the name as context on top. Paying for it cost
+  four pixels of column and two status words: <code>ENROUTE</code> and <code>DELAYED</code> were
+  the widest on the board, and shortening just those two bought back four destinations their
+  full name. 27 of 30 live rows now show code and city together.</p></div>
+  <div><h4>Picopixel's U was a V</h4>
+  <p>Stock Picopixel draws <b>U</b> as <b>V</b> with one extra row: both end in a single centred
+  pixel. <code>ZURICH</code> read <code>ZVRICH</code>, <code>EDINBURGH</code> read
+  <code>EDINBVRGH</code> &mdash; a quarter of the destination column. That is the same one-pixel
+  ambiguity that disqualified TomThumb. The fix gives U a flat bottom, the form Org_01 uses:
+  one bit in the font bitmap, every other glyph byte-identical.</p></div>
+</div>
+
+<h3>What is actually on the wire</h3>
+<p class="note">One retained MQTT topic per airport and direction. A few hundred bytes, already
+digested &mdash; the panel holds no API key, makes no HTTP call, and parses no dates.</p>
+<pre class="code" id="payload"></pre>
+</div>
+<script>
+/* BEGIN GENERATED LAYOUT - tools/fb_sim_build.py */
+const LAYOUT={"_source":"src/flightboard/flightboard.cpp","airport_names":["CANNES","NICE","PARIS CDG","LONDON","FRANKFURT","AMSTERDAM"],"airports":["LFMD","LFMN","LFPG","EGLL","EDDF","EHAM"],"digest":"5e1009327ceec064","firmware":{"branch":"board/waveshare-esp32-s3-rgb-matrix","commit":"f9f3a9cf42df4b371b6a57184ea92583386cea0d","dirty":false,"repo":"https://github.com/NickoScope/AnimatedPixelClock.git"},"font":"PicopixelFB","geom":{"FB_ASCENT":4,"FB_CODE_GAP":2,"FB_GAP":2,"FB_ROW_H":7,"FB_VISIBLE":7,"FB_X_DEST":50,"FB_X_FLIGHT":22,"FB_X_RIGHT":126,"FB_X_TIME":2,"FB_Y_HEADER":1,"FB_Y_ROW0":11,"FB_Y_RULE":8},"status":{"arr":{"board":"GATE","canc":"CANX","delay":"DELAY","dep":"IN AIR","land":"LANDED","sched":"DUE"},"dep":{"board":"GATE","canc":"CANX","delay":"DELAY","dep":"DEPART","land":"LANDED","sched":"ON TIME"}}};
+/* END GENERATED LAYOUT */
+const BOARDS={"LFMN_arr":{"apt":"LFMN","dir":"arr","upd":"09:34","n":15,"now_idx":7,"f":[{"tm":"09:05","fn":"BT250","ct":"BEG","cy":"BELGRADE","st":"dep"},{"tm":"09:15","fn":"EW424","ct":"CGN","cy":"COLOGNE","st":"land"},{"tm":"09:15","fn":"UA272","ct":"EWR","cy":"NEWARK","st":"land"},{"tm":"09:19","fn":"LY223","ct":"TLV","cy":"TEL AVIV","st":"land"},{"tm":"09:20","fn":"TK1813","ct":"IST","cy":"ISTANBUL","st":"dep"},{"tm":"09:29","fn":"W45145","ct":"TIA","cy":"TIRANA","st":"dep"},{"tm":"09:30","fn":"BA336","ct":"LHR","cy":"LONDON","st":"land"},{"tm":"09:37","fn":"LX522","ct":"GVA","cy":"GENEVA","st":"dep"},{"tm":"09:37","fn":"OS373","ct":"VIE","cy":"VIENNA","st":"dep"},{"tm":"09:40","fn":"U21618","ct":"BOD","cy":"BORDEAUX","st":"dep"},{"tm":"09:43","fn":"U21756","ct":"BSL","cy":"EUROAIRPORT","st":"dep"},{"tm":"09:44","fn":"U23245","ct":"EDI","cy":"EDINBURGH","st":"dep"},{"tm":"09:44","fn":"GF25","ct":"MXP","cy":"MILAN","st":"dep"},{"tm":"09:49","fn":"TU996","ct":"TUN","cy":"TUNIS","st":"dep"},{"tm":"09:52","fn":"LH1058","ct":"FRA","cy":"FRANKFURT AM MAIN","st":"dep"}]},"LFMN_dep":{"apt":"LFMN","dir":"dep","upd":"09:34","n":15,"now_idx":7,"f":[{"tm":"08:57","fn":"BT2271","ct":"MUC","cy":"MUNICH","st":"dep"},{"tm":"08:57","fn":"V72578","ct":"LUX","cy":"LUXEMBOURG","st":"dep"},{"tm":"09:08","fn":"AF7301","ct":"CDG","cy":"PARIS","st":"dep"},{"tm":"09:10","fn":"TO7131","ct":"ORY","cy":"ORLY","st":"dep"},{"tm":"09:14","fn":"XK101","ct":"AJA","cy":"AJACCIO","st":"dep"},{"tm":"09:26","fn":"SK792","ct":"CPH","cy":"COPENHAGEN","st":"board"},{"tm":"09:30","fn":"YW1210","ct":"MAD","cy":"MADRID","st":"sched"},{"tm":"09:40","fn":"U28418","ct":"LGW","cy":"LONDON","st":"sched"},{"tm":"09:45","fn":"LX563","ct":"ZRH","cy":"ZURICH","st":"sched"},{"tm":"09:45","fn":"AF7303","ct":"CDG","cy":"PARIS","st":"delay"},{"tm":"09:50","fn":"GF24","ct":"MXP","cy":"MILAN","st":"sched"},{"tm":"09:50","fn":"BT251","ct":"BEG","cy":"BELGRADE","st":"sched"},{"tm":"09:55","fn":"EW7429","ct":"HAM","cy":"HAMBURG","st":"delay"},{"tm":"10:00","fn":"W45146","ct":"TIA","cy":"TIRANA","st":"sched"},{"tm":"10:08","fn":"U21625","ct":"TLS","cy":"BLAGNAC","st":"sched"}]}};
+const FONTS={"Picopixel":{"yAdvance":7,"asc":4,"glyphs":{" ":{"w":0,"h":0,"adv":2,"xo":0,"yo":1,"rows":[]},"-":{"w":3,"h":1,"adv":4,"xo":0,"yo":-2,"rows":[7]},".":{"w":1,"h":1,"adv":2,"xo":0,"yo":0,"rows":[1]},"/":{"w":3,"h":5,"adv":4,"xo":0,"yo":-4,"rows":[4,4,2,1,1]},"0":{"w":3,"h":5,"adv":4,"xo":0,"yo":-4,"rows":[2,5,5,5,2]},"1":{"w":2,"h":5,"adv":3,"xo":0,"yo":-4,"rows":[2,3,2,2,2]},"2":{"w":3,"h":5,"adv":4,"xo":0,"yo":-4,"rows":[3,4,2,1,7]},"3":{"w":3,"h":5,"adv":4,"xo":0,"yo":-4,"rows":[3,4,2,4,3]},"4":{"w":3,"h":5,"adv":4,"xo":0,"yo":-4,"rows":[1,5,7,4,4]},"5":{"w":3,"h":5,"adv":4,"xo":0,"yo":-4,"rows":[7,1,3,4,3]},"6":{"w":3,"h":5,"adv":4,"xo":0,"yo":-4,"rows":[2,1,3,5,2]},"7":{"w":3,"h":5,"adv":4,"xo":0,"yo":-4,"rows":[7,4,2,1,1]},"8":{"w":3,"h":5,"adv":4,"xo":0,"yo":-4,"rows":[2,5,2,5,2]},"9":{"w":3,"h":5,"adv":4,"xo":0,"yo":-4,"rows":[2,5,6,4,2]},":":{"w":1,"h":3,"adv":2,"xo":0,"yo":-3,"rows":[1,0,1]},"A":{"w":3,"h":5,"adv":4,"xo":0,"yo":-4,"rows":[2,5,7,5,5]},"B":{"w":3,"h":5,"adv":4,"xo":0,"yo":-4,"rows":[3,5,3,5,3]},"C":{"w":3,"h":5,"adv":4,"xo":0,"yo":-4,"rows":[6,1,1,1,6]},"D":{"w":3,"h":5,"adv":4,"xo":0,"yo":-4,"rows":[3,5,5,5,3]},"E":{"w":3,"h":5,"adv":4,"xo":0,"yo":-4,"rows":[7,1,7,1,7]},"F":{"w":3,"h":5,"adv":4,"xo":0,"yo":-4,"rows":[7,1,3,1,1]},"G":{"w":3,"h":5,"adv":4,"xo":0,"yo":-4,"rows":[6,1,5,5,2]},"H":{"w":3,"h":5,"adv":4,"xo":0,"yo":-4,"rows":[5,5,7,5,5]},"I":{"w":1,"h":5,"adv":2,"xo":0,"yo":-4,"rows":[1,1,1,1,1]},"J":{"w":3,"h":5,"adv":4,"xo":0,"yo":-4,"rows":[4,4,4,5,2]},"K":{"w":3,"h":5,"adv":4,"xo":0,"yo":-4,"rows":[5,3,3,5,5]},"L":{"w":3,"h":5,"adv":4,"xo":0,"yo":-4,"rows":[1,1,1,1,7]},"M":{"w":5,"h":5,"adv":6,"xo":0,"yo":-4,"rows":[17,27,21,21,17]},"N":{"w":4,"h":5,"adv":5,"xo":0,"yo":-4,"rows":[9,11,13,9,9]},"O":{"w":3,"h":5,"adv":4,"xo":0,"yo":-4,"rows":[2,5,5,5,2]},"P":{"w":3,"h":5,"adv":4,"xo":0,"yo":-4,"rows":[3,5,3,1,1]},"Q":{"w":3,"h":6,"adv":4,"xo":0,"yo":-4,"rows":[2,5,5,5,2,4]},"R":{"w":3,"h":5,"adv":4,"xo":0,"yo":-4,"rows":[3,5,3,5,5]},"S":{"w":3,"h":5,"adv":4,"xo":0,"yo":-4,"rows":[6,1,2,4,3]},"T":{"w":3,"h":5,"adv":4,"xo":0,"yo":-4,"rows":[7,2,2,2,2]},"U":{"w":3,"h":5,"adv":4,"xo":0,"yo":-4,"rows":[5,5,5,5,7]},"V":{"w":3,"h":5,"adv":4,"xo":0,"yo":-4,"rows":[5,5,5,2,2]},"W":{"w":5,"h":5,"adv":6,"xo":0,"yo":-4,"rows":[17,17,21,21,10]},"X":{"w":3,"h":5,"adv":4,"xo":0,"yo":-4,"rows":[5,5,2,5,5]},"Y":{"w":3,"h":5,"adv":4,"xo":0,"yo":-4,"rows":[5,5,2,2,2]},"Z":{"w":3,"h":5,"adv":4,"xo":0,"yo":-4,"rows":[7,4,2,1,7]}}}};
+</script>
+<script>
+/* Every constant below is generated from src/flightboard/flightboard.cpp in the
+   firmware repo by tools/fb_sim_build.py. Do not edit them here - edit the
+   firmware and regenerate, or tools/fb_check.py will flag the drift. */
+const W=128,H=64, G=LAYOUT.geom;
+const FB_X_TIME=G.FB_X_TIME, FB_X_FLIGHT=G.FB_X_FLIGHT, FB_X_DEST=G.FB_X_DEST,
+      FB_X_RIGHT=G.FB_X_RIGHT, FB_GAP=G.FB_GAP, FB_CODE_GAP=G.FB_CODE_GAP;
+const FB_Y_HEADER=G.FB_Y_HEADER, FB_Y_RULE=G.FB_Y_RULE, FB_Y_ROW0=G.FB_Y_ROW0,
+      FB_ROW_H=G.FB_ROW_H, FB_VISIBLE=G.FB_VISIBLE;
+const FONT="Picopixel";
+
+const COL={sched:[210,210,210],board:[0,220,220],dep:[70,140,255],
+           land:[0,200,90],delay:[255,140,0],canc:[255,56,56]};
+const SIG=[255,180,0],DIM=[120,132,138],RULE=[52,60,64],WHITE=[255,255,255];
+const APT=Object.fromEntries(LAYOUT.airports.map((a,i)=>[a,LAYOUT.airport_names[i]]));
+const ARR=LAYOUT.status.arr, DEP=LAYOUT.status.dep;
+
+let dir="arr", zoom=7, grid=true;
+const board=()=>BOARDS["LFMN_"+dir];
+const gl=ch=>FONTS[FONT].glyphs[ch]||FONTS[FONT].glyphs[" "];
+const tw=s=>[...s.toUpperCase()].reduce((a,ch)=>a+gl(ch).adv,0);
+
+function text(buf,x,y,s,rgb){
+  const F=FONTS[FONT];
+  for(const ch of s.toUpperCase()){
+    const g=gl(ch), oy=(F.yAdvance-1)+g.yo;      /* GFX sets from the baseline */
+    for(let r=0;r<g.h;r++)for(let c=0;c<g.w;c++)
+      if((g.rows[r]>>c)&1){
+        const X=x+c+g.xo, Y=y+r+oy;
+        if(X>=0&&X<W&&Y>=0&&Y<H) buf[Y*W+X]=rgb;
+      }
+    x+=g.adv;
+  }
+}
+
+/* start index: one flight behind the next one, clamped to the tail */
+const startIdx=b=>Math.max(0,Math.min(b.now_idx-1,b.n-FB_VISIBLE));
+
+function render(){
+  const b=board(), buf=new Array(W*H).fill(null);
+  const isDep=b.dir==="dep", ST=isDep?DEP:ARR;
+  const apt=APT[b.apt]||b.apt;
+  text(buf,FB_X_TIME,FB_Y_HEADER,apt,WHITE);
+  text(buf,FB_X_TIME+tw(apt)+6,FB_Y_HEADER,isDep?"DEPARTURES":"ARRIVALS",SIG);
+  text(buf,FB_X_RIGHT-tw(b.upd),FB_Y_HEADER,b.upd,DIM);
+  for(let x=0;x<W;x++) buf[FB_Y_RULE*W+x]=RULE;
+
+  const start=startIdx(b);
+  for(let i=0;i<FB_VISIBLE;i++){
+    const idx=start+i; if(idx>=b.n) break;
+    const r=b.f[idx], y=FB_Y_ROW0+i*FB_ROW_H, col=COL[r.st]||DIM;
+    if(idx===b.now_idx) for(let yy=y;yy<y+FB_ROW_H-1;yy++) if(yy<H) buf[yy*W]=SIG;
+    text(buf,FB_X_TIME,y,r.tm,col);
+    text(buf,FB_X_FLIGHT,y,r.fn,col);
+    const word=ST[r.st]||"", wordW=tw(word);
+    if(word) text(buf,FB_X_RIGHT-wordW,y,word,col);
+    text(buf,FB_X_DEST,y,r.ct,col);              /* the code, always */
+    const xCity=FB_X_DEST+tw(r.ct)+FB_CODE_GAP;
+    let city=r.cy||"";
+    const room=(FB_X_RIGHT-wordW-FB_GAP)-xCity;
+    while(city.length&&tw(city)>room){           /* drop whole trailing words */
+      if(!city.includes(" ")){city="";break;}    /* code alone says it already */
+      city=city.slice(0,city.lastIndexOf(" "));
+    }
+    if(city.includes(" ")&&city.split(" ").pop().length<=2)   /* dangling AM/DE/SUR */
+      city=city.slice(0,city.lastIndexOf(" "));
+    if(city) text(buf,xCity,y,city,col);
+  }
+  return buf;
+}
+
+function paint(){
+  const cv=document.getElementById("cv"), buf=render();
+  cv.width=W*zoom; cv.height=H*zoom;
+  const g=cv.getContext("2d"); g.imageSmoothingEnabled=false;
+  const d=(grid&&zoom>=4)?1:0;
+  for(let y=0;y<H;y++)for(let x=0;x<W;x++){
+    const p=buf[y*W+x];
+    g.fillStyle=p?`rgb(${p[0]},${p[1]},${p[2]})`:"#12181a";
+    g.fillRect(x*zoom,y*zoom,zoom-d,zoom-d);
+  }
+}
+
+function chrome(){
+  const b=board(), ST=b.dir==="dep"?DEP:ARR;
+  const used=new Set(b.f.map(r=>r.st));
+  document.getElementById("legend").innerHTML=
+    Object.keys(COL).filter(k=>used.has(k)).map(k=>
+      `<span class="sw"><i style="background:rgb(${COL[k].join(",")})"></i>${ST[k]}</span>`).join("")
+    +`<span class="sw"><i style="background:rgb(${SIG.join(",")})"></i>next ${b.dir==="dep"?"departure":"arrival"}</span>`;
+  document.getElementById("m-src").textContent="home assistant · aeroapi";
+  document.getElementById("m-upd").textContent="updated "+b.upd+" local";
+  document.getElementById("m-n").textContent=b.n+" flights held · "+FB_VISIBLE+" on the panel";
+
+  const start=startIdx(b), t=document.getElementById("rows"); t.textContent="";
+  b.f.forEach((r,i)=>{
+    const on=i>=start&&i<start+FB_VISIBLE, c=COL[r.st]||DIM;
+    t.insertAdjacentHTML("beforeend",
+      `<tr class="${i===b.now_idx?"now":""}" style="opacity:${on?1:.4}">
+       <td class="mk">${i===b.now_idx?"▶":""}</td><td>${r.tm}</td><td>${r.fn}</td>
+       <td>${r.ct}</td><td>${r.cy}</td>
+       <td class="st" style="color:rgb(${c.join(",")})">${ST[r.st]||r.st}</td>
+       <td style="color:var(--faint)">${on?"on panel":""}</td></tr>`);
+  });
+
+  const one=r=>'  '+JSON.stringify(r);
+  document.getElementById("payload").textContent=
+    "nickoscope_watch/flightboard/state/"+b.apt+"/"+b.dir+"      retained\n\n"+
+    '{"apt":"'+b.apt+'","dir":"'+b.dir+'","upd":"'+b.upd+'","now":'+b.now_idx+',"f":[\n'+
+    b.f.slice(0,3).map(one).join(",\n")+",\n  \u2026 "+(b.n-3)+" more\n]}\n\n"+
+    "= "+JSON.stringify({apt:b.apt,dir:b.dir,upd:b.upd,now:b.now_idx,f:b.f}).length+" bytes";
+}
+
+function setDir(d){
+  dir=d;
+  document.getElementById("b-arr").setAttribute("aria-pressed",String(d==="arr"));
+  document.getElementById("b-dep").setAttribute("aria-pressed",String(d==="dep"));
+  chrome(); paint();
+}
+document.getElementById("b-arr").onclick=()=>setDir("arr");
+document.getElementById("b-dep").onclick=()=>setDir("dep");
+document.getElementById("zoom").addEventListener("input",e=>{
+  zoom=+e.target.value; document.getElementById("zoomv").textContent=zoom+"×"; paint();});
+document.getElementById("grid").addEventListener("change",e=>{grid=e.target.checked;paint();});
+setDir("arr");
+</script>
