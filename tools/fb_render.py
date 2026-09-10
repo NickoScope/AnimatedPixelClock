@@ -64,7 +64,9 @@ def main():
 
         room = (X_RIGHT - wordW - GAP) - X_DEST
         city = r.get("cy") or r.get("city") or r["ct"]
-        while city and tw(city) > room: city = city[:-1]
+        while city and tw(city) > room:          # drop whole trailing words
+            city = city.rsplit(" ", 1)[0] if " " in city else r["ct"]
+            if city == r["ct"]: break             # never show a half word
         text(px, X_DEST, y, city, col)
 
     img.resize((W * S, H * S), Image.NEAREST).save(sys.argv[2])

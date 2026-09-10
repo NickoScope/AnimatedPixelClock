@@ -8,7 +8,7 @@
 
 #include "../config/config.h"
 #include "../display/display.h"
-#include <Fonts/Picopixel.h>
+#include "picopixel_fb.h"   // Picopixel with a legible U
 
 // ── layout ──────────────────────────────────────────────────────────────────
 // Picopixel, not TomThumb. Both are 3x5-class faces that fit 32-ish characters
@@ -161,7 +161,7 @@ void flightboardStepAirport(int8_t delta) {
 void flightboardToggleDirection() { s_dirDep = !s_dirDep; }
 
 void flightboardRender() {
-  display.setFont(&Picopixel);
+  display.setFont(&PicopixelFB);
   display.setTextSize(1);
   display.setTextWrap(false);
 
@@ -233,18 +233,30 @@ void flightboardRender() {
       display.print(word);
     }
 
-    // City, trimmed to the gap that actually remains rather than to a fixed
+    // City, fitted to the gap that actually remains rather than to a fixed
     // character count - a proportional font makes those two different things,
     // and COPENHAGEN against ENROUTE is exactly where they diverge.
+    //
+    // Fitting drops whole trailing words first (FRANKFURT AM MAIN -> FRANKFURT),
+    // and if even the first word is too wide it falls back to the IATA code.
+    // A half-word is worse than a code: live Nice data rendered EUROAIRPORT as
+    // EUROAIRPOR, which reads as a typo rather than as an abbreviation.
     const int16_t cityRoom =
         (FB_X_RIGHT - (int16_t)wordW - FB_GAP) - FB_X_DEST;
     char city[FB_CY_LEN];
     strncpy(city, r.cy, sizeof(city) - 1);
     city[sizeof(city) - 1] = '\0';
-    for (int16_t len = (int16_t)strlen(city); len > 0; len--) {
+    for (;;) {
+      if (city[0] == '\0') break;
       display.getTextBounds(city, 0, 0, &bx, &by, &bw, &bh);
       if ((int16_t)bw <= cityRoom) break;
-      city[len - 1] = '\0';
+      char *sp = strrchr(city, ' ');
+      if (sp == NULL) {           // single word and still too wide - use the code
+        strncpy(city, r.ct, sizeof(city) - 1);
+        city[sizeof(city) - 1] = '\0';
+        break;
+      }
+      *sp = '\0';
     }
     display.setCursor(FB_X_DEST, base);
     display.print(city);
