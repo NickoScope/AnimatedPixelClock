@@ -5,21 +5,29 @@
 #include <Arduino.h>
 
 // ---------------------------------------------------------------- pins
-// Only two GPIOs are genuinely free on the Waveshare ESP32-S3-RGB-Matrix once
-// HUB75, I2S, I2C and the TF slot have taken theirs, and an encoder with a
-// switch needs three. See docs/11 in the knowledge base for the full budget.
+// From the vendor schematic (reference-drawings/controller in the knowledge
+// base), not from counting what the firmware happens not to use.
 //
-// A and B take the two clean pins. The switch shares GPIO0 with the on-board
-// BOOT button: they sit in parallel, both active-low, both already pulled up.
+// The expansion header U8 is four pins: IO45, IO46, GND, 3V3. That is the whole
+// budget. Everything else on this board is committed, and two pins that look
+// free in a firmware grep are not: the vendor pin table assigns IO10 to RTC_INT
+// and IO13 to IMU_INT, and neither reaches the header anyway.
 //
-// The cost of that sharing is real and worth stating: GPIO0 is a strapping pin,
-// so a knob held down while the board comes out of reset puts it into download
-// mode instead of running. It recovers on the next reset. The upside is that
-// the same gesture flashes the board without opening the case.
+// Both header pins are strapping pins, which is survivable here:
+//   IO45 selects VDD_SPI voltage - but this module has in-package flash and
+//        PSRAM with VDD_SPI fixed at 1.8 V by the VDD_SPI_FORCE eFuse, and the
+//        datasheet is explicit that the strap then no longer affects it.
+//        UNVERIFIED on hardware: read the eFuse with esptool before trusting it.
+//   IO46 gates ROM message printing at boot. Cosmetic; it does not stop a boot.
+//
+// The switch has nowhere to go on the header, so it shares GPIO0 with the BOOT
+// button - which means a wire to the button pad, not a header pin. The cost is
+// unchanged: a knob held through reset lands in download mode and recovers on
+// the next one, and the same gesture flashes the board without opening the case.
 #if defined(BOARD_WAVESHARE_RGB_MATRIX)
-  #define CTRL_PIN_A   10
-  #define CTRL_PIN_B   13
-  #define CTRL_PIN_SW   0     // shared with BOOT
+  #define CTRL_PIN_A   45     // header U8 pin 1
+  #define CTRL_PIN_B   46     // header U8 pin 2
+  #define CTRL_PIN_SW   0     // BOOT button pad, shared
 #else
   #error "CONTROL_ENCODER_ENABLED: no pin map for this board"
 #endif
