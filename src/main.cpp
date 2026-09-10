@@ -48,10 +48,13 @@ unsigned long wifiDisconnectTime = 0;
 unsigned long nextDisplayUpdate = 0;
 bool wifiConnected = false;  // WiFi connection status for icon display
 bool httpForceClock = false;  // HTTP override to force clock mode (via /api/mode/clock)
-bool httpForceAmbient = false;
+bool httpForceAmbient = false;  // HTTP override to force the ambient screen (via /api/mode/ambient)
 #if defined(FLIGHTBOARD_ENABLED)
 bool httpForceFlightboard = false;  // flight board page override
-#endif  // HTTP override to force the ambient screen (via /api/mode/ambient)
+#endif
+#if defined(YACHTRADAR_ENABLED)
+bool httpForceYachtRadar = false;   // yacht radar page override
+#endif
 bool httpForceViz = false;  // HTTP override to force the audio visualizer (via /api/mode/viz)
 
 // ========== Forward Declarations ==========
@@ -69,6 +72,7 @@ int getOptimalRefreshRate();
 #include "clocks/clock_globals.h"
 #include "metrics/metrics.h"
 #include "flightboard/flightboard.h"
+#include "yachtradar/yachtradar.h"
 #include "network/network.h"
 #include "notify/notify.h"
 #include "viz/visualizer.h"
@@ -296,6 +300,22 @@ void loop() {
   // Feed watchdog
   esp_task_wdt_reset();
 
+#if defined(YACHTRADAR_ENABLED)
+  // The AIS stream is held open only while its page is up: a websocket to
+  // aisstream.io costs a TLS session's worth of heap and a steady trickle of
+  // traffic, and neither is worth paying for a page nobody is looking at.
+  // Same gating fx34 uses on the NickoScope32 side.
+  {
+    static bool yrWasOn = false;
+    if (httpForceYachtRadar != yrWasOn) {
+      if (httpForceYachtRadar) yachtRadarBegin();
+      else                     yachtRadarStop();
+      yrWasOn = httpForceYachtRadar;
+    }
+    if (httpForceYachtRadar) yachtRadarLoop();
+  }
+#endif
+
   // Check and apply scheduled brightness (time-based dimming)
   checkScheduledBrightness();
 
@@ -387,6 +407,11 @@ void loop() {
     if (showViz && settings.vizStyle == 5) display.waitForScanCompletion();
     if (!animFullRepaint) display.clearDisplay();
 
+#if defined(YACHTRADAR_ENABLED)
+    if (httpForceYachtRadar) {
+      yachtRadarRender();
+    } else
+#endif
 #if defined(FLIGHTBOARD_ENABLED)
     if (httpForceFlightboard) {
       flightboardRender();

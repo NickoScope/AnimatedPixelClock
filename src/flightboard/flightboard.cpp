@@ -8,7 +8,7 @@
 
 #include "../config/config.h"
 #include "../display/display.h"
-#include "picopixel_fb.h"   // Picopixel with a legible U
+#include "../fonts/picopixel_fb.h"   // Picopixel with a legible U
 
 // ── layout ──────────────────────────────────────────────────────────────────
 // Picopixel, not TomThumb. Both are 3x5-class faces that fit 32-ish characters

@@ -1,6 +1,7 @@
 #pragma once
 
-// Picopixel with one glyph corrected, for the flight board.
+// Picopixel with one glyph corrected. Shared by every page that draws
+// small text: the flight board and the yacht radar.
 //
 // WHY. Picopixel's stock 'U' is 'V' with one extra #.# row: both end in a
 // centred pixel, so at 2 mm pitch across a room ZURICH reads ZVRICH and
