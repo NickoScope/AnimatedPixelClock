@@ -23,10 +23,11 @@
 // y + FB_ASCENT.
 static const int16_t FB_ASCENT   = 4;
 static const int16_t FB_X_TIME   = 2;
-static const int16_t FB_X_FLIGHT = 24;
-static const int16_t FB_X_DEST   = 54;
+static const int16_t FB_X_FLIGHT = 22;
+static const int16_t FB_X_DEST   = 50;
 static const int16_t FB_X_RIGHT  = 126;   // status is right-aligned to here
-static const int16_t FB_GAP      = 3;     // minimum air between city and status
+static const int16_t FB_GAP      = 2;     // minimum air between city and status
+static const int16_t FB_CODE_GAP = 2;     // air between the IATA code and the city
 static const int16_t FB_Y_HEADER = 1;
 static const int16_t FB_Y_RULE   = 8;
 static const int16_t FB_Y_ROW0   = 11;
@@ -65,12 +66,17 @@ static bool    s_dirDep = false;
 // For arrivals, "dep" means the aircraft has taken off and is on its way here.
 static const char *statusWord(FbStatus st, bool departures) {
   switch (st) {
-  case FB_SCHED: return departures ? "ON TIME" : "EXPECT";
-  case FB_BOARD: return "BOARD";
-  case FB_DEP:   return departures ? "DEPART" : "ENROUTE";
+  // Widths matter here: every pixel this column takes is a pixel the city
+  // name does not get. Measured against 30 live Nice rows, ENROUTE (29 px) and
+  // DELAYED (28 px) alone cost four destinations their name, so those two are
+  // shortened and the rest - the ones a passenger actually scans for - keep
+  // their full spelling. See docs/09 for the measurement.
+  case FB_SCHED: return departures ? "ON TIME" : "DUE";
+  case FB_BOARD: return "GATE";
+  case FB_DEP:   return departures ? "DEPART" : "IN AIR";
   case FB_LAND:  return "LANDED";
-  case FB_DELAY: return "DELAYED";
-  case FB_CANC:  return "CANCEL";
+  case FB_DELAY: return "DELAY";
+  case FB_CANC:  return "CANX";
   default:       return "";
   }
 }
@@ -233,16 +239,24 @@ void flightboardRender() {
       display.print(word);
     }
 
-    // City, fitted to the gap that actually remains rather than to a fixed
-    // character count - a proportional font makes those two different things,
-    // and COPENHAGEN against ENROUTE is exactly where they diverge.
+    // Destination: the IATA code always, then the city name if it fits.
     //
-    // Fitting drops whole trailing words first (FRANKFURT AM MAIN -> FRANKFURT),
-    // and if even the first word is too wide it falls back to the IATA code.
-    // A half-word is worse than a code: live Nice data rendered EUROAIRPORT as
-    // EUROAIRPOR, which reads as a typo rather than as an abbreviation.
-    const int16_t cityRoom =
-        (FB_X_RIGHT - (int16_t)wordW - FB_GAP) - FB_X_DEST;
+    // The code is the part that is never ambiguous and never wrong - AeroAPI's
+    // "city" for TLS is BLAGNAC and for BSL is EUROAIRPORT - so it is drawn
+    // first and unconditionally. The name is context on top of it.
+    display.setCursor(FB_X_DEST, base);
+    display.print(r.ct);
+    display.getTextBounds(r.ct, 0, 0, &bx, &by, &bw, &bh);
+    const int16_t xCity = FB_X_DEST + (int16_t)bw + FB_CODE_GAP;
+
+    // City, fitted to the gap that actually remains rather than to a fixed
+    // character count - a proportional font makes those two different things.
+    // Fitting drops whole trailing words (FRANKFURT AM MAIN -> FRANKFURT), then
+    // any dangling connector left behind (AM, DE, SUR), and if the first word
+    // still will not fit the row simply stops at the code. A half word is worse
+    // than a code: live data rendered EUROAIRPORT as EUROAIRPOR, which reads as
+    // a typo rather than as an abbreviation.
+    const int16_t cityRoom = (FB_X_RIGHT - (int16_t)wordW - FB_GAP) - xCity;
     char city[FB_CY_LEN];
     strncpy(city, r.cy, sizeof(city) - 1);
     city[sizeof(city) - 1] = '\0';
@@ -251,15 +265,15 @@ void flightboardRender() {
       display.getTextBounds(city, 0, 0, &bx, &by, &bw, &bh);
       if ((int16_t)bw <= cityRoom) break;
       char *sp = strrchr(city, ' ');
-      if (sp == NULL) {           // single word and still too wide - use the code
-        strncpy(city, r.ct, sizeof(city) - 1);
-        city[sizeof(city) - 1] = '\0';
-        break;
-      }
+      if (sp == NULL) { city[0] = '\0'; break; }   // code alone says it already
       *sp = '\0';
     }
-    display.setCursor(FB_X_DEST, base);
-    display.print(city);
+    char *tail = strrchr(city, ' ');
+    if (tail != NULL && strlen(tail + 1) <= 2) *tail = '\0';
+    if (city[0]) {
+      display.setCursor(xCity, base);
+      display.print(city);
+    }
   }
 
   // Other pages draw with the built-in font and would inherit this one.
