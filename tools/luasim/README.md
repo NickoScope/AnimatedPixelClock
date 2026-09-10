@@ -11,6 +11,18 @@ make                                   # builds luasim and regenerates the font
 python3 render.py out.raw out.gif 6    # or out.png for a single frame
 ```
 
+## What is in scripts/
+
+| | | |
+|---|---|---|
+| ![](preview/snake_clock.png) | **snake_clock.lua** | HH:MM where each digit is a snake. On the minute the four crawl off the bottom and four more crawl in from the top and lay themselves out as the next time. A pulse runs head to tail the whole time — [full minute](preview/snake_clock.gif) |
+| ![](preview/tetris_clock.png) | **tetris_clock.lua** | The same clock in tetrominoes. The rows clear from the bottom like completed lines, everything above drops, and the next minute falls in. Two glints sweep the stack between changes — [full minute](preview/tetris_clock.gif) |
+| ![](preview/minecraft.png) | **minecraft.lua** | A blocky world with a full day/night cycle in one minute: terrain, lake, trees, drifting clouds, torches that pool light after dark, a creeper pacing the ridge — [full minute](preview/minecraft.gif) |
+| | **demo.lua** | Exercises every `px.*` call. Start here when writing a new effect |
+
+Previews are 225 frames at 3× — a quarter of the real frame rate, so they are
+choppier than the panel will be.
+
 ## The contract a script follows
 
 Define a global `draw()`. The host calls it once per frame.
@@ -41,6 +53,15 @@ project calls *cannot be otherwise* — mixing the two is the classic bug.
 | `px.circle(x,y,rad,r,g,b,fill)` | |
 | `px.text(x,y,s,r,g,b)` | Picopixel, upper-cased |
 | `px.width(s)` | pixel width of `s`, for right-alignment |
+| `px.get(x,y)` | → `r,g,b` already on the canvas |
+| `px.blend(x,y,r,g,b,a)` | alpha-blend one pixel |
+| `px.glow(x,y,rad,r,g,b,amp)` | a radial light, falling off as `(1-d/rad)²` |
+
+The raster calls **overwrite**. That is right for shapes and wrong for light: a
+dim colour paints a dark blot, not a faint glow. `blend` and `glow` are the way
+to add light to something already drawn, and `glow` is one C call rather than a
+Lua loop over a few hundred pixels — the same reason `beam.kit` exists on the
+H743.
 
 No `io`, no `os`, no `package` — those libraries are not compiled into the
 vendored tree at all, so a script cannot reach the filesystem or the host.

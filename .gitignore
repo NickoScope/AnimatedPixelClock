@@ -27,3 +27,4 @@ hardware/
 tools/luasim/luasim
 tools/luasim/font_picopixel.inc
 tools/luasim/*.raw
+# previews ARE committed - they are the only record of what an effect looks like
