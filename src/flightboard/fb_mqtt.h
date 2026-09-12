@@ -17,6 +17,10 @@
 
 #include <stdint.h>
 
+#if defined(FB_MQTT_ENABLED) && !defined(MQTT_BUS_ENABLED)
+#error "FB_MQTT_ENABLED needs MQTT_BUS_ENABLED: the connection lives in src/mqtt/mqtt_bus"
+#endif
+
 #if defined(FLIGHTBOARD_ENABLED) && defined(FB_MQTT_ENABLED)
 
 void fbMqttBegin();

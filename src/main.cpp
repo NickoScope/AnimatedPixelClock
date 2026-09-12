@@ -69,6 +69,7 @@ enum CtrlPage : uint8_t {
   PAGE_COUNT
 };
 static uint8_t ctrlPage = PAGE_CLOCK;
+
 #endif
 bool httpForceViz = false;  // HTTP override to force the audio visualizer (via /api/mode/viz)
 
@@ -88,6 +89,22 @@ int getOptimalRefreshRate();
 #include "metrics/metrics.h"
 #include "flightboard/flightboard.h"
 #include "flightboard/fb_mqtt.h"
+#include "mqtt/mqtt_bus.h"
+#include "cards/cards.h"
+
+#if defined(CONTROL_ENCODER_ENABLED)
+// Cards are pages too, but they come and go while the panel is running, so they
+// live past the fixed ones rather than in the enum: page PAGE_COUNT + n is the
+// n-th live card. Defined here rather than beside the enum because it needs
+// cardsCount(), and the module includes come after the declarations.
+static inline uint8_t ctrlPageCount() {
+#if defined(CARDS_ENABLED)
+  return (uint8_t)(PAGE_COUNT + cardsCount());
+#else
+  return PAGE_COUNT;
+#endif
+}
+#endif
 #include "yachtradar/yachtradar.h"
 #include "control/control.h"
 #include "control/clock_style.h"
@@ -318,8 +335,14 @@ void setup() {
     Serial.println("[nslua] runtime unavailable (no PSRAM?)");
   }
 #endif
+#if defined(MQTT_BUS_ENABLED)
+  mqttBusBegin();
+#endif
 #if defined(FLIGHTBOARD_ENABLED) && defined(FB_MQTT_ENABLED)
   fbMqttBegin();
+#endif
+#if defined(CARDS_ENABLED)
+  cardsBegin();
 #endif
 
   // Configure hardware watchdog timer
@@ -360,8 +383,19 @@ void loop() {
   // unreachable, and /api/status does not report them.
   controlLoop();
   for (CtrlEvent e = controlTake(); e != CTRL_NONE; e = controlTake()) {
+#if defined(CARDS_ENABLED)
+    // A notification owns the screen, so the first press dismisses it and does
+    // nothing else. Anything other than that would act on a page you cannot see.
+    if (cardsNotifyActive() && (e == CTRL_PRESS || e == CTRL_LONG)) {
+      cardsNotifyDismiss();
+      continue;
+    }
+    if (ctrlPage >= ctrlPageCount()) ctrlPage = PAGE_CLOCK;   // its card expired
+#endif
     if (e == CTRL_LONG) {
-      ctrlPage = (uint8_t)((ctrlPage + 1) % PAGE_COUNT);
+      ctrlPage = (uint8_t)((ctrlPage + 1) % ctrlPageCount());
+    } else if (ctrlPage >= PAGE_COUNT) {
+      // A card takes no input: whatever it shows was decided elsewhere.
     } else {
       switch (ctrlPage) {
 #if defined(FLIGHTBOARD_ENABLED)
@@ -399,11 +433,17 @@ void loop() {
 #endif
 #endif  // CONTROL_ENCODER_ENABLED
 
-#if defined(FLIGHTBOARD_ENABLED) && defined(FB_MQTT_ENABLED)
+#if defined(MQTT_BUS_ENABLED)
   // Runs regardless of which page is up: unlike the AIS websocket this costs
   // almost nothing idle, and a retained payload that arrives while the clock is
-  // showing means the board is already populated when you turn to it.
+  // showing means the page is already populated when you turn to it.
+  mqttBusLoop();
+#endif
+#if defined(FLIGHTBOARD_ENABLED) && defined(FB_MQTT_ENABLED)
   fbMqttLoop();
+#endif
+#if defined(CARDS_ENABLED)
+  cardsLoop();
 #endif
 
 #if defined(YACHTRADAR_ENABLED)
@@ -513,6 +553,14 @@ void loop() {
     if (showViz && settings.vizStyle == 5) display.waitForScanCompletion();
     if (!animFullRepaint) display.clearDisplay();
 
+#if defined(CARDS_ENABLED) && defined(CONTROL_ENCODER_ENABLED)
+    // Requires the knob: a card is only ever reached by walking the pages, so
+    // without an encoder there is no way to select one and nothing to render.
+    // A notification still works - it takes the screen by itself.
+    if (ctrlPage >= PAGE_COUNT && (ctrlPage - PAGE_COUNT) < cardsCount()) {
+      cardsRender((uint8_t)(ctrlPage - PAGE_COUNT));
+    } else
+#endif
 #if defined(YACHTRADAR_ENABLED)
     if (httpForceYachtRadar) {
       yachtRadarRender();
@@ -597,6 +645,10 @@ void loop() {
     // After everything else, before the flip: the toast has to sit on top of
     // whatever the page drew, and every clock fills the panel.
     if (ctrlPage == PAGE_CLOCK) clockStyleOverlay();
+#endif
+#if defined(CARDS_ENABLED)
+    // Last of all, because it replaces the page rather than decorating it.
+    if (cardsNotifyActive()) cardsNotifyRender();
 #endif
 
     display.display();
