@@ -91,6 +91,22 @@ int getOptimalRefreshRate();
 #include "flightboard/fb_mqtt.h"
 #include "mqtt/mqtt_bus.h"
 #include "cards/cards.h"
+#include "control/carousel.h"
+
+#if defined(CAROUSEL_ENABLED) && defined(CONTROL_ENCODER_ENABLED)
+// How long each page holds the screen when the panel is cycling on its own.
+// The clock gets the longest turn because it is the one you glance at; the data
+// pages are there to be noticed, not studied.
+static uint16_t ctrlPageSeconds(uint8_t page) {
+#if defined(CARDS_ENABLED)
+  if (page >= PAGE_COUNT) {
+    const uint16_t own = cardsDuration((uint8_t)(page - PAGE_COUNT));
+    return own ? own : 10;              // a card may ask for its own time
+  }
+#endif
+  return (page == PAGE_CLOCK) ? 25 : 15;
+}
+#endif
 
 #if defined(CONTROL_ENCODER_ENABLED)
 // Cards are pages too, but they come and go while the panel is running, so they
@@ -383,6 +399,9 @@ void loop() {
   // unreachable, and /api/status does not report them.
   controlLoop();
   for (CtrlEvent e = controlTake(); e != CTRL_NONE; e = controlTake()) {
+#if defined(CAROUSEL_ENABLED)
+    carouselNote();            // somebody is here; stop advancing on our own
+#endif
 #if defined(CARDS_ENABLED)
     // A notification owns the screen, so the first press dismisses it and does
     // nothing else. Anything other than that would act on a page you cannot see.
@@ -424,6 +443,15 @@ void loop() {
       }
     }
   }
+#if defined(CAROUSEL_ENABLED)
+  // Advance only when the knob has been quiet for a while, so the page you
+  // chose stays where you left it until you have walked away from it.
+  if (carouselDue(ctrlPageSeconds(ctrlPage))) {
+    const uint8_t n = ctrlPageCount();
+    if (n) ctrlPage = (uint8_t)((ctrlPage + 1) % n);
+  }
+  if (ctrlPage >= ctrlPageCount()) ctrlPage = PAGE_CLOCK;
+#endif
 #if defined(FLIGHTBOARD_ENABLED)
   httpForceFlightboard = (ctrlPage == PAGE_FLIGHTBOARD);
 #endif

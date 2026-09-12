@@ -16,6 +16,8 @@
 //   color     "#RRGGBB"
 //   progress  0..100, draws a bar
 //   progressC "#RRGGBB" for the bar
+//   icon      name of an icon in the store, drawn to the left of the text
+//   duration  seconds this card holds the screen when the panel is cycling
 //   lifetime  seconds; the card removes itself if not updated in time
 //   hold      notify only: stay until dismissed rather than timing out
 //   duration  notify only: seconds on screen, default 6
@@ -36,6 +38,7 @@
 #define CARD_NAME_LEN  14
 #define CARD_TITLE_LEN 22
 #define CARD_TEXT_LEN  64
+#define CARD_ICON_LEN  18
 
 void     cardsBegin();          // registers the MQTT handlers and subscribes
 void     cardsLoop();           // expiry, and the notification timer
@@ -43,6 +46,7 @@ void     cardsLoop();           // expiry, and the notification timer
 uint8_t  cardsCount();          // live cards, in the order they arrived
 void     cardsRender(uint8_t i);
 const char *cardsName(uint8_t i);
+uint16_t    cardsDuration(uint8_t i);   // seconds for the carousel, 0 = default
 
 bool     cardsNotifyActive();   // an overlay wants the screen
 void     cardsNotifyRender();   // draw it over whatever the page drew

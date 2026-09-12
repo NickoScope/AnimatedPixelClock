@@ -49,21 +49,40 @@ def wrap(s, maxw):
 
 # The same TOP-of-line numbers as CARD_Y_* in src/cards/cards.cpp.
 Y_TITLE, Y_RULE, Y_TEXT, Y_TEXT1, Y_TEXT2, Y_BAR, W_TEXT = 6, 14, 28, 24, 32, 52, 118
+X_ICON, Y_ICON, X_TXT2, ICON = 6, 22, 28, 16
+
+def load_icon(path):
+    """The wire format the firmware reads: 512 bytes, RGB565 big-endian."""
+    import struct
+    d = pathlib.Path(path).read_bytes()
+    assert len(d) == ICON*ICON*2, f"{path}: {len(d)} bytes"
+    out = []
+    for i in range(ICON*ICON):
+        v = struct.unpack_from(">H", d, i*2)[0]
+        out.append((((v >> 11) & 31) << 3, ((v >> 5) & 63) << 2, (v & 31) << 3))
+    return out
 
 def card(title, body, colour=(255,255,255), progress=None,
-         bar=(0,200,255), notify=False, hold=False):
+         bar=(0,200,255), notify=False, hold=False, icon=None):
     px = mk()
     if notify:
         rect(px, 0, 0, W, H, colour, fill=False)
+    x0, x1 = (X_TXT2, 124) if icon else (0, W)
+    if icon:
+        ic = load_icon(icon)
+        for y in range(ICON):
+            for x in range(ICON):
+                put(px, X_ICON + x, Y_ICON + y, ic[y*ICON + x])
+    ctr = lambda s: x0 + ((x1 - x0) - tw(s)) // 2
     if title:
-        text(px, (W - tw(title)) // 2, Y_TITLE, title, (120,132,138))
+        text(px, ctr(title), Y_TITLE, title, (120,132,138))
         rect(px, 8, Y_RULE, 112, 1, (40,48,54))
-    l1, l2 = wrap(body, W_TEXT)
+    l1, l2 = wrap(body, x1 - x0 - 4)
     if l2:
-        text(px, (W - tw(l1)) // 2, Y_TEXT1, l1, colour)
-        text(px, (W - tw(l2)) // 2, Y_TEXT2, l2, colour)
+        text(px, ctr(l1), Y_TEXT1, l1, colour)
+        text(px, ctr(l2), Y_TEXT2, l2, colour)
     else:
-        text(px, (W - tw(l1)) // 2, Y_TEXT, l1, colour)
+        text(px, ctr(l1), Y_TEXT, l1, colour)
     if progress is not None:
         x, y, w, h = 10, Y_BAR, 108, 6
         rect(px, x, y, w, h, (40,48,54), fill=False)
@@ -81,8 +100,12 @@ def main():
         ("длинный текст",     card("ELECTRICITY", "CHEAP UNTIL 06:00 TOMORROW", (60,255,90))),
         ("перенос на две",    card("GARDEN", "WATERING SKIPPED BECAUSE RAIN IS FORECAST", (0,200,255))),
         ("одно длинное слово",card("", "SUPERCALIFRAGILISTIC", (255,120,255))),
+        ("иконка + текст",    card("WATERING", "STARTS AT 06:00", (0,200,255),
+                                   icon="/tmp/drop.i16")),
+        ("иконка + полоса",   card("LAUNDRY", "RINSE", (0,200,255), progress=68,
+                                   icon="/tmp/drop.i16")),
         ("уведомление",       card("DOORBELL", "SOMEONE AT THE GATE", (255,180,0),
-                                   notify=True, hold=True)),
+                                   notify=True, hold=True, icon="/tmp/bell.i16")),
     ]
     S = 5
     out = Image.new("RGB", (W*S, (H*S + 8) * len(scenes)), (18,18,18))
