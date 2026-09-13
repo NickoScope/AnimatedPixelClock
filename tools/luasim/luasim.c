@@ -29,6 +29,8 @@
 static unsigned char fb[W * H * 3];
 static double g_phase = 0.0;
 static int    g_hour = 12, g_min = 34, g_sec = 56;
+static int    g_yday = 255;      /* 0-based day of year; 255 = 13 September */
+static int    g_utc  = 2;        /* local time minus UTC, hours; CEST */
 
 static void put(int x, int y, int r, int g, int b) {
   if (x < 0 || x >= W || y < 0 || y >= H) return;
@@ -48,6 +50,10 @@ static int l_now(lua_State *L) {
   lua_pushinteger(L, g_hour); lua_setfield(L, -2, "hour");
   lua_pushinteger(L, g_min);  lua_setfield(L, -2, "min");
   lua_pushinteger(L, g_sec);  lua_setfield(L, -2, "sec");
+  /* Anything that depends on where the sun is needs the date and UTC, not just
+     the wall clock: the day/night line moves with both. */
+  lua_pushinteger(L, g_yday); lua_setfield(L, -2, "yday");
+  lua_pushinteger(L, g_utc);  lua_setfield(L, -2, "utc");
   return 1;
 }
 
@@ -217,8 +223,21 @@ static const luaL_Reg px_lib[] = {
 };
 
 int main(int argc, char **argv) {
-  if (argc < 4) { fprintf(stderr, "usage: luasim script.lua frames out.raw\n"); return 2; }
+  if (argc < 4) {
+    fprintf(stderr, "usage: luasim script.lua frames out.raw "
+                    "[--start HH:MM] [--yday N] [--utc H] [--sweep]\n");
+    return 2;
+  }
   const int frames = atoi(argv[2]);
+  int start_min = g_hour * 60 + g_min, sweep = 0;
+  for (int a = 4; a < argc; a++) {
+    if (!strcmp(argv[a], "--start") && a + 1 < argc) {
+      int hh = 0, mm = 0; sscanf(argv[++a], "%d:%d", &hh, &mm); start_min = hh * 60 + mm;
+    } else if (!strcmp(argv[a], "--yday") && a + 1 < argc) g_yday = atoi(argv[++a]);
+    else if (!strcmp(argv[a], "--utc") && a + 1 < argc)   g_utc  = atoi(argv[++a]);
+    else if (!strcmp(argv[a], "--sweep"))                 sweep  = 1;   /* a whole day over the frames */
+  }
+  g_hour = start_min / 60 % 24; g_min = start_min % 60;
 
   lua_State *L = luaL_newstate();
   if (!L) { fprintf(stderr, "no state\n"); return 1; }
@@ -239,7 +258,12 @@ int main(int argc, char **argv) {
 
   for (int f = 0; f < frames; f++) {
     g_phase = frames > 1 ? (double)f / (double)frames : 0.0;
-    g_sec = (56 + f / 30) % 60;
+    if (sweep) {
+      const int m = (start_min + f * 1440 / (frames > 0 ? frames : 1)) % 1440;
+      g_hour = m / 60; g_min = m % 60; g_sec = 0;
+    } else {
+      g_sec = (56 + f / 30) % 60;
+    }
     lua_getglobal(L, "draw");
     if (!lua_isfunction(L, -1)) { fprintf(stderr, "script defines no draw()\n"); return 1; }
     if (lua_pcall(L, 0, 0, 0) != LUA_OK) {

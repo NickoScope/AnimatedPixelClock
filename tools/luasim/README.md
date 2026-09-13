@@ -11,12 +11,20 @@ make                                   # builds luasim and regenerates the font
 python3 render.py out.raw out.gif 6    # or out.png for a single frame
 ```
 
+Optional flags set the simulated clock:
+
+```bash
+./luasim scripts/world_clock.lua 1   out.raw --start 23:07 --yday 255 --utc 2
+./luasim scripts/world_clock.lua 240 out.raw --sweep    # one whole day across the frames
+```
+
 ## What is in scripts/
 
 | | | |
 |---|---|---|
 | ![](preview/snake_clock.png) | **snake_clock.lua** | HH:MM where each digit is a snake. On the minute the four crawl off the bottom and four more crawl in from the top and lay themselves out as the next time. A pulse runs head to tail the whole time — [full minute](preview/snake_clock.gif) |
 | ![](preview/tetris_clock.png) | **tetris_clock.lua** | The same clock in tetrominoes. The rows clear from the bottom like completed lines, everything above drops, and the next minute falls in. Two glints sweep the stack between changes — [full minute](preview/tetris_clock.gif) |
+| ![](preview/world_clock.png) | **world_clock.lua** | A dotted world map on the panel's 64x32 grid: land in daylight is lit, night is dim, and civil twilight blends between them, so the terminator draws itself and creeps across the day. Big time in the empty South Pacific, cities as orange dots, home breathing. Mask from Natural Earth via `gen_world.py` — [a full day](preview/world_clock.gif) |
 | ![](preview/minecraft.png) | **minecraft.lua** | A blocky world with a full day/night cycle in one minute: terrain, lake, trees, drifting clouds, torches that pool light after dark, a creeper pacing the ridge — [full minute](preview/minecraft.gif) |
 | | **demo.lua** | Exercises every `px.*` call. Start here when writing a new effect |
 
@@ -45,7 +53,7 @@ project calls *cannot be otherwise* — mixing the two is the classic bug.
 |---|---|
 | `px.size()` | → `128, 64` |
 | `px.t()` | animation phase `[0,1)` |
-| `px.now()` | `{hour, min, sec}` |
+| `px.now()` | `{hour, min, sec, yday, utc}` — `yday` is 0-based, `utc` is local minus UTC in hours; anything that needs the sun needs both |
 | `px.clear(r,g,b)` | |
 | `px.pixel(x,y,r,g,b)` | |
 | `px.line(x0,y0,x1,y1,r,g,b)` | |
