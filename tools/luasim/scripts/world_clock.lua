@@ -49,18 +49,19 @@ local MASK = {
   "...................#............................................",
 }
 local MASK_TOP, MASK_BOTTOM = 78.0, -58.0
+-- Cities worth a dot. The first is home and it breathes.
+local CITIES = {
+  {name = "CANNES", lat = 43.55, lon = 7.02},
+  {name = "MOSCOW", lat = 55.75, lon = 37.62},
+  {name = "NEW YORK", lat = 40.71, lon = -74.0},
+  {name = "LONDON", lat = 51.51, lon = -0.13},
+  {name = "DUBAI", lat = 25.2, lon = 55.27},
+  {name = "ALMATY", lat = 43.24, lon = 76.89},
+}
 -- END WORLD MASK
 
 local COLS, ROWS = 64, 32
 
--- Cities worth a dot. Edit freely; the first one is home and it pulses.
-local CITIES = {
-  {name = "CANNES",   lat = 43.55, lon =   7.02},
-  {name = "MOSCOW",   lat = 55.75, lon =  37.62},
-  {name = "NEW YORK", lat = 40.71, lon = -74.00},
-  {name = "SF",       lat = 37.77, lon = -122.42},
-  {name = "TOKYO",    lat = 35.68, lon = 139.69},
-}
 
 local function cell_of(lat, lon)
   local c = floor((lon + 180) / 360 * COLS)

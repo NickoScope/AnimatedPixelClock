@@ -60,6 +60,9 @@ bool httpForceYachtRadar = false;   // yacht radar page override
 // clock is first because it is what the panel should fall back to.
 enum CtrlPage : uint8_t {
   PAGE_CLOCK = 0,
+#if defined(WORLDCLOCK_ENABLED)
+  PAGE_WORLDCLOCK,               // a clock too, so it sits next to the clock
+#endif
 #if defined(FLIGHTBOARD_ENABLED)
   PAGE_FLIGHTBOARD,
 #endif
@@ -92,6 +95,7 @@ int getOptimalRefreshRate();
 #include "mqtt/mqtt_bus.h"
 #include "cards/cards.h"
 #include "control/carousel.h"
+#include "worldclock/worldclock.h"
 
 #if defined(CAROUSEL_ENABLED) && defined(CONTROL_ENCODER_ENABLED)
 // How long each page holds the screen when the panel is cycling on its own.
@@ -103,6 +107,9 @@ static uint16_t ctrlPageSeconds(uint8_t page) {
     const uint16_t own = cardsDuration((uint8_t)(page - PAGE_COUNT));
     return own ? own : 10;              // a card may ask for its own time
   }
+#endif
+#if defined(WORLDCLOCK_ENABLED)
+  if (page == PAGE_WORLDCLOCK) return 20;
 #endif
   return (page == PAGE_CLOCK) ? 25 : 15;
 }
@@ -167,6 +174,10 @@ int getOptimalRefreshRate() {
 #if defined(YACHTRADAR_ENABLED)
   // Vessels crawl, but the page is a map and a stutter reads as a fault.
   if (httpForceYachtRadar) return 10;
+#endif
+#if defined(WORLDCLOCK_ENABLED) && defined(CONTROL_ENCODER_ENABLED)
+  // The map changes once a minute; only the breathing home dot needs frames.
+  if (ctrlPage == PAGE_WORLDCLOCK) return 10;
 #endif
 #if defined(FLIGHTBOARD_ENABLED)
   // A board that changes twice a minute; anything faster is wasted DMA.
@@ -390,7 +401,7 @@ void loop() {
   esp_task_wdt_reset();
 
 #if defined(CONTROL_ENCODER_ENABLED)
-  // One knob, three pages. Rotation and a short press mean whatever the page
+  // One knob, several pages. Rotation and a short press mean whatever the page
   // in front of you is about; a long press leaves it.
   //
   // The httpForce* flags these drive are named after the HTTP routes, but no
@@ -587,6 +598,11 @@ void loop() {
     // A notification still works - it takes the screen by itself.
     if (ctrlPage >= PAGE_COUNT && (ctrlPage - PAGE_COUNT) < cardsCount()) {
       cardsRender((uint8_t)(ctrlPage - PAGE_COUNT));
+    } else
+#endif
+#if defined(WORLDCLOCK_ENABLED) && defined(CONTROL_ENCODER_ENABLED)
+    if (ctrlPage == PAGE_WORLDCLOCK) {
+      worldClockRender();
     } else
 #endif
 #if defined(YACHTRADAR_ENABLED)
