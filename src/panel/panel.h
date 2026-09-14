@@ -18,6 +18,7 @@
 //   fbApt    u8   flight board airport, index into the fixed list
 //   fbDep    u8   1 = departures
 //   wcHome   u8   world clock home city, index into the city list
+//   rbStn    str  rail board station, exactly three capitals A-Z (default RB_CRS)
 //   knRev    u8   knob direction reversed
 //   knLock   u16  ms after a step during which the decoder ignores the knob
 //   knDeb    u16  ms the switch must be steady
@@ -85,6 +86,12 @@ void     panelNoteFlightboard();   // the knob moved the selection: keep it, lat
 
 bool     panelSetWorldHome(uint8_t city);
 uint8_t  panelWorldHome();
+
+// The rail board's station: validated, handed to the rail board (which
+// resubscribes and tells Home Assistant), and kept. False: not three capitals
+// A-Z, or no rail board in this build.
+bool        panelSetRailStation(const char *crs);
+const char *panelRailStation();      // "" without a rail board
 
 // ---- implemented in main.cpp, where the page enum and the knob state live
 // A page is an index in knob order: the fixed pages, then one per live card.

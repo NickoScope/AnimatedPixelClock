@@ -140,7 +140,7 @@ static uint16_t ctrlPageSeconds(uint8_t page) {
   if (page == PAGE_WORLDCLOCK) return 20;
 #endif
 #if defined(RAILBOARD_ENABLED)
-  if (page == PAGE_RAILBOARD) return 20;   // one panel: both lists get a turn at the default 10 s
+  if (page == PAGE_RAILBOARD) return 20;   // one list at a time: both get a turn at the default 10 s
 #endif
   return (page == PAGE_CLOCK) ? 25 : 15;
 }
@@ -388,8 +388,9 @@ void setup() {
 
 #if defined(CONTROL_ENCODER_ENABLED)
   // Run-time panel settings from NVS: the knob's feel, the carousel, the flight
-  // board selection and the world clock's home. Before controlBegin() and
-  // fbMqttBegin(), which subscribes to whatever airport is selected by then.
+  // board selection, the world clock's home and the rail board's station.
+  // Before controlBegin(), fbMqttBegin() and railboardBegin(), which subscribe
+  // to whatever airport and station are selected by then.
   panelBegin();
   controlBegin();
 #endif
@@ -507,7 +508,7 @@ static const char *ctrlEnterHint(uint8_t page) {
   if (page == PAGE_YACHTRADAR) return "TURN: SCROLL";
 #endif
 #if defined(RAILBOARD_ENABLED)
-  if (page == PAGE_RAILBOARD) return "TURN: INFO";
+  if (page == PAGE_RAILBOARD) return "TURN: LISTS";
 #endif
   (void)page;
   return "";
@@ -683,9 +684,9 @@ void loop() {
     case PAGE_YACHTRADAR:  yachtRadarScroll(d); break;
 #endif
 #if defined(RAILBOARD_ENABLED)
-    // Both lists are on screen at once on two panels, so inside the rail board
-    // the knob turns between the board and its diagnostics.
-    case PAGE_RAILBOARD:   railboardPress(); break;
+    // Inside the rail board the knob steps departures, arrivals, diagnostics;
+    // the choice holds the 10 s alternation for RB_HOLD_S (railboard.h).
+    case PAGE_RAILBOARD:   railboardKnob(d); break;
 #endif
     default:               ctrlEntered = false; ctrlBrowse(d); break;
     }
@@ -740,6 +741,9 @@ void loop() {
 #endif
 #if defined(CARDS_ENABLED)
   cardsLoop();
+#endif
+#if defined(RAILBOARD_ENABLED)
+  railboardLoop();           // the retained station selection, once connected
 #endif
 
 #if defined(YACHTRADAR_ENABLED)

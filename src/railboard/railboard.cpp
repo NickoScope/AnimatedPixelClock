@@ -7,6 +7,7 @@
 #include <esp_heap_caps.h>
 #include <stddef.h>
 #include <string.h>
+#include <strings.h>
 #include <time.h>
 
 #include "../display/display.h"
@@ -14,82 +15,99 @@
 #include "../mqtt/mqtt_bus.h"
 #include "uk_time.h"
 
-#define RB_TOPIC_BASE MQTT_BASE "/railboard/" RB_CRS "/"
+#define RB_TOPIC_ROOT   MQTT_BASE "/railboard/"
+#define RB_TOPIC_SELECT RB_TOPIC_ROOT "select"
 static const long RB_SCHEMA = 1;
 
+// A build-time default that is not three characters would never match a topic.
+static_assert(sizeof(RB_CRS) == 4, "RB_CRS must be a three-letter station code");
+
 // ── layout ──────────────────────────────────────────────────────────────────
-// One 7 px grid of Picopixel lines, nine of them, which is exactly the panel's
-// 64 px: header, list title, three services of two lines each, and a last line
-// that stays empty until the data goes stale. One list per 64 px panel.
-// tools/railboard/render.py reads every number here, so change them only here.
+// A UK station screen, from the owner's photograph of one: one list on the
+// whole 128 x 64, a white title and white column headings, amber rows in mixed
+// case, and a large amber clock at the foot. When the services do not fit, the
+// list pages; page 2 starts with a Continued...... row.
+// tools/railboard/render.py reads every number and word here, so change them only here.
 //
-// A service takes two lines because 64 px holds about fifteen Picopixel
-// capitals and LONDON WATERLOO alone is 62 px:
+//     Departures           Plat Expt      Arrivals        Time Plat Expt
+//     Time Destination      Guildford     From                 Guildford
+//     14:08 London Waterloo   5 On time   Redhill        14:04    2 14:06
+//     14:12 Portsmouth        3 14:19     Reading        14:14      Cancelled
+//     ...                                 ...
+//     Page 1 of 2               14:05:14  Page 1 of 1              14:05:14
 //
-//     14:08 EXP 14:15     5        scheduled, status, platform
-//     WATERLOO           SW        place, operator
-//
-// Picopixel draws from its baseline, 4 px below the top of a capital, so a line
-// whose top is y is printed with the cursor at y + RB_ASCENT.
-static const int16_t RB_W          = 64;   // one panel, one list
+// Two faces. The title and the clock are the built-in 5x7 font (7 px capitals,
+// positioned from the top). Everything else is Picopixel (5 px capitals, 3 px
+// lower case, 1 px descenders), which draws from its baseline, 4 px below the
+// top of a capital: a line whose top is y is printed with the cursor at
+// y + RB_ASCENT.
 static const int16_t RB_ASCENT     = 4;
-static const int16_t RB_PITCH      = 7;    // 5 px capitals, 2 px of air
-static const int16_t RB_Y_HEAD     = 1;    // station, date, clock
-static const int16_t RB_Y_TITLE    = 8;    // DEPARTURES / ARRIVALS
-static const int16_t RB_Y_ROW0     = 15;   // first service
-static const int16_t RB_Y_FOOT     = 57;   // DATA UPDATING, when it is
-static const int16_t RB_X_STATUS   = 20;   // HH:MM is at most 17 px wide
-static const int16_t RB_X_VALUE    = 32;   // diagnostics: after the longest label, UPDATED
+static const int16_t RB_PITCH      = 7;    // 5 px capitals, a 1 px descender, 1 px of air
+static const int16_t RB_BIG_ADV    = 6;    // built-in font: 6 px a character
+static const int16_t RB_X_LEFT     = 2;    // the flight board's margins
+static const int16_t RB_X_RIGHT    = 126;  // exclusive: the last lit column is 125
 static const int16_t RB_GAP        = 3;    // least air between two fields
-// Two lists side by side meet at x = 64 with nothing between them: a platform
-// 5 against the next list's 14:04 read as 514:04 in the first preview. Every
-// list keeps its last three columns dark.
-static const int16_t RB_GUTTER     = 3;
-static const int16_t RB_ROWS_SMALL = 3;    // (57 - 15) / 14
-// Large type is the built-in 5x7 font: 6 px a character, 8 px a line, ten
-// characters to a panel. That leaves no room for an operator code or a status
-// word, so a large row is time and platform over the place name; a delay shows
-// the expected time (a late arrival, the actual one) in amber in place of the
-// scheduled one, and a cancellation says CANC.
-static const int16_t RB_L_ADV      = 6;
-static const int16_t RB_L_PITCH    = 8;
-static const int16_t RB_L_ROW0     = 15;
-static const int16_t RB_ROWS_LARGE = 2;    // 15 + 2 * 16 = 47, clear of the last line
+static const int16_t RB_Y_TITLE    = 0;    // big: capitals on rows 0-6, p's tail on 7
+static const int16_t RB_Y_HEAD1    = 2;    // small, on the title's baseline (row 6): Plat Expt
+static const int16_t RB_Y_HEAD2    = 9;    // small: Time Destination / From
+static const int16_t RB_Y_ROW0     = 16;
+static const int16_t RB_ROWS_PAGE  = 6;    // 16 + 5 * 7 = 51, its descenders on row 56
+static const int16_t RB_Y_CLOCK    = 57;   // big: rows 57-63, clear of that descender
+static const int16_t RB_Y_FOOT     = 58;   // small: Page 1 of 2, its g's tail on row 63
+// Columns. Expt is left-aligned, and Cancelled, its widest word (33 px), ends
+// on the last lit column. Plat is right-aligned a gap short of it; on arrivals
+// Time is right-aligned a gap short of Plat's heading.
+static const int16_t RB_X_DEST     = 22;   // departures: HH:MM is at most 17 px, then 3 px of air
+static const int16_t RB_X_EXPT     = 93;
+static const int16_t RB_X_PLAT_R   = 89;   // exclusive right edge of Plat
+static const int16_t RB_X_TIME_R   = 72;   // arrivals: exclusive right edge of Time
+static const int16_t RB_X_VALUE    = 34;   // diagnostics: after the longest label, UPDATED
 // A service whose time has passed by this much leaves the list even while no
-// new data arrives, so an outage shows DATA UPDATING over trains still to come
+// new data arrives, so an outage shows Data updating over trains still to come
 // rather than over ones long gone. Matches grace_s in the Home Assistant package.
 static const int16_t RB_GRACE_S    = 60;
+// A page that has not been drawn for this long is being opened again: it
+// starts on departures rather than wherever the alternation happened to be.
+static const int16_t RB_REOPEN_MS  = 2000;
 
 // ── colour ──────────────────────────────────────────────────────────────────
-// Black ground and warm white type. Amber is kept for what should catch the
-// eye - the list title, a delay, stale data - and red for a cancellation.
-static const uint8_t RB_COL_TEXT[3]  = {230, 226, 214};
+// Black ground with nothing lit behind the text. White for the headings, amber
+// for every row and the clock - 255,150,0 rather than the photograph's
+// 255,170,0, which on these panels leans yellow - and red for Cancelled.
 static const uint8_t RB_COL_WHITE[3] = {255, 255, 255};
 static const uint8_t RB_COL_AMBER[3] = {255, 150,   0};
 static const uint8_t RB_COL_RED[3]   = {255,  36,  24};
 static const uint8_t RB_COL_DIM[3]   = {120, 126, 132};
+static const uint8_t RB_COL_TEXT[3]  = {230, 226, 214};   // diagnostics values
 
 // ── words ───────────────────────────────────────────────────────────────────
 // Status is Home Assistant's closed vocabulary, in this order on both ends.
 enum RbStatus : uint8_t { RB_OK = 0, RB_LATE, RB_CANC, RB_NOREPORT, RB_ARRIVED, RB_STATUS_COUNT };
 static const char *const RB_ST_KEYS[]  = {"ok", "late", "canc", "nr", "arr"};
-// A service with no realtime report says nothing rather than ON TIME.
-static const char *const RB_ST_WORDS[] = {"ON TIME", "EXP", "CANCELLED", "", "ARRIVED"};
-static const char *const RB_CANC_LARGE = "CANC";
-static const char *const RB_ARR_AT     = "ARR";   // ARR 14:06: arrived, late, at
-static const char *const RB_TITLES[]   = {"DEPARTURES", "ARRIVALS"};
+// Expt shows the expected time for a late train, and the actual time for one
+// that arrived late. A service with no realtime report says nothing rather
+// than On time.
+static const char *const RB_ST_WORDS[] = {"On time", "", "Cancelled", "", "Arrived"};
+static const char *const RB_TITLES[]   = {"Departures", "Arrivals"};
+static const char *const RB_H_PLAT     = "Plat";
+static const char *const RB_H_EXPT     = "Expt";
+static const char *const RB_H_TIME     = "Time";
+static const char *const RB_H_DEST     = "Destination";
+static const char *const RB_H_FROM     = "From";
+static const char *const RB_CONTINUED  = "Continued......";
+static const char *const RB_PAGE       = "Page";
+static const char *const RB_OF         = "of";
+static const char *const RB_STALE      = "Data updating";
+static const char *const RB_EMPTY      = "No services";
+static const char *const RB_WAITING    = "Waiting for";
 static const char *const RB_DIAG_DIR[] = {"DEP", "ARR"};
-static const char *const RB_STALE      = "DATA UPDATING";
-static const char *const RB_EMPTY      = "NO SERVICES";
-static const char *const RB_DAYS[]     = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
-static const char *const RB_MONTHS[]   = {"JAN", "FEB", "MAR", "APR", "MAY", "JUN",
-                                          "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"};
 
 // ── data ────────────────────────────────────────────────────────────────────
 #define RB_MAX_SVC  8     // the package sends at most 8 a list
 #define RB_PLAT_LEN 4     // "10A"
 #define RB_OP_LEN   4     // "SW", "BUS"
 #define RB_NAME_LEN 25    // the package cuts names to 24 on a word boundary
+#define RB_STN_LEN  32    // RTT's description, e.g. London Road (Guildford)
 
 struct RbService {
   uint32_t t;             // scheduled (advertised), UTC epoch seconds
@@ -107,7 +125,7 @@ struct RbBoard {
   bool      have;
   uint32_t  ts;           // when Home Assistant fetched it, UTC epoch seconds
   uint32_t  rxMs;         // millis() when it reached the panel
-  char      stn[20];
+  char      stn[RB_STN_LEN];
   char      rt[24];       // RTT systemStatus.realtimeNetworkRail
 };
 
@@ -121,27 +139,37 @@ struct RbHaStatus {
 };
 
 struct RbConfig {
-  uint8_t  panels;
   uint8_t  rows;
   uint8_t  level;
-  bool     large;
   bool     diag;
   uint16_t switchS;
   uint16_t staleS;
 };
 
 enum : uint8_t { RB_DEP = 0, RB_ARR = 1 };
+// What the knob chose. AUTO is the alternation.
+enum RbView : uint8_t { RB_VIEW_AUTO = 0, RB_VIEW_DEP, RB_VIEW_ARR, RB_VIEW_DIAG };
 
 static RbBoard    s_board[2];
 static RbBoard    s_scratch;          // parsed into first, so a bad payload never shows
 static RbHaStatus s_ha;
-static RbConfig   s_cfg = {RB_PANELS, RB_ROWS, RB_LEVEL, false, false, RB_SWITCH_S, RB_STALE_S};
-static bool       s_diag     = false;
-static uint8_t    s_flip     = 0;
-static uint32_t   s_altSince = 0;
+static RbConfig   s_cfg = {RB_ROWS, RB_LEVEL, false, RB_SWITCH_S, RB_STALE_S};
 static uint16_t   s_refused  = 0;
 static size_t     s_jsonPeak = 0;
 static uint8_t    s_cfgFrom  = 0;     // 0 build defaults, 1 Home Assistant, 2 web portal
+
+static char       s_crs[4]       = RB_CRS;
+static char       s_sub[48]      = "";      // the subscription in force, "" = none
+static bool       s_begun        = false;
+static bool       s_selectDirty  = true;    // the retained selection still has to go out
+static bool       s_wasConnected = false;
+
+static uint8_t    s_view       = RB_VIEW_AUTO;
+static uint32_t   s_viewAt     = 0;
+static bool       s_diagPinned = false;     // the portal's switch
+static uint32_t   s_altSince   = 0;
+static uint8_t    s_autoFirst  = RB_DEP;    // the list the alternation starts from
+static uint32_t   s_lastFrame  = 0;
 
 // ── JSON memory ─────────────────────────────────────────────────────────────
 // Every allocation ArduinoJson makes for a payload comes from here: PSRAM first,
@@ -190,12 +218,17 @@ class RbJsonAllocator : public ArduinoJson::Allocator {
 static RbJsonAllocator s_alloc;
 
 // ── parsing ─────────────────────────────────────────────────────────────────
-static void copyUpper(char *dst, size_t cap, const char *src) {
+static void copyText(char *dst, size_t cap, const char *src) {
   size_t i = 0;
   if (src) {
-    for (; src[i] && i + 1 < cap; i++) dst[i] = (char)toupper((unsigned char)src[i]);
+    for (; src[i] && i + 1 < cap; i++) dst[i] = src[i];
   }
   dst[i] = '\0';
+}
+
+static void copyUpper(char *dst, size_t cap, const char *src) {
+  copyText(dst, cap, src);
+  for (char *c = dst; *c; c++) *c = (char)toupper((unsigned char)*c);
 }
 
 static uint8_t parseStatus(const char *s) {
@@ -221,6 +254,8 @@ static bool ingestBoard(uint8_t which, const char *json, uint16_t len) {
   }
   if ((doc["v"] | 0L) != RB_SCHEMA) return false;
   if (strcmp(doc["dir"] | "", which == RB_DEP ? "dep" : "arr")) return false;
+  const char *crs = doc["crs"] | "";
+  if (crs[0] && strcmp(crs, s_crs)) return false;   // on our topic, but for another station
   JsonArrayConst list = doc["s"].as<JsonArrayConst>();
   if (list.isNull()) return false;
 
@@ -235,15 +270,15 @@ static bool ingestBoard(uint8_t which, const char *json, uint16_t len) {
     sv.x  = o["x"] | 0UL;
     sv.st = parseStatus(o["st"] | "");
     sv.d  = (uint8_t)clampL(o["d"] | 0L, 0, 255);
-    copyUpper(sv.p, sizeof(sv.p), o["p"] | "");
-    copyUpper(sv.o, sizeof(sv.o), o["o"] | "");
-    copyUpper(sv.n, sizeof(sv.n), o["n"] | "");
+    copyText(sv.p, sizeof(sv.p), o["p"] | "");
+    copyText(sv.o, sizeof(sv.o), o["o"] | "");
+    copyText(sv.n, sizeof(sv.n), o["n"] | "");   // mixed case, as the board prints it
   }
   b.ts   = doc["ts"] | 0UL;
   b.rxMs = millis();
   b.have = true;
-  copyUpper(b.stn, sizeof(b.stn), doc["stn"] | "");
-  copyUpper(b.rt,  sizeof(b.rt),  doc["rt"]  | "");
+  copyText(b.stn, sizeof(b.stn), doc["stn"] | "");
+  copyUpper(b.rt, sizeof(b.rt), doc["rt"] | "");
   // Parse and render both run on the loop task, so there is no torn read; the
   // scratch copy is what keeps the last good board when a payload is refused.
   s_board[which] = b;
@@ -264,29 +299,32 @@ static bool ingestStatus(const char *json, uint16_t len) {
   return true;
 }
 
-// Bounds are what the page can draw, not recommendations.
+// Bounds are what the page can draw, not recommendations. "panels" and "font"
+// from the earlier two-list layout are ignored: the station screen has one list
+// and one set of type sizes.
 static bool ingestConfig(const char *json, uint16_t len) {
   JsonDocument doc(&s_alloc);
   const bool bad = deserializeJson(doc, json, len) != DeserializationError::Ok;
   noteJson();
   if (bad || (doc["v"] | 0L) != RB_SCHEMA) return false;
   RbConfig c = s_cfg;
-  c.panels  = (uint8_t)clampL(doc["panels"] | (long)c.panels, 1, 2);
-  c.rows    = (uint8_t)clampL(doc["rows"] | (long)c.rows, 1, RB_ROWS_SMALL);
+  c.rows    = (uint8_t)clampL(doc["rows"] | (long)c.rows, 1, RB_MAX_SVC);
   c.level   = (uint8_t)clampL(doc["level"] | (long)c.level, 10, 100);
   c.switchS = (uint16_t)clampL(doc["switch_s"] | (long)c.switchS, 3, 600);
   c.staleS  = (uint16_t)clampL(doc["stale_s"] | (long)c.staleS, 30, 3600);
-  c.large   = !strcmp(doc["font"] | (c.large ? "large" : "small"), "large");
   c.diag    = doc["diag"] | c.diag;
   s_cfg = c;
   return true;
 }
 
 bool railboardIngest(const char *topic, const char *payload, uint16_t len) {
-  static const size_t baseLen = sizeof(RB_TOPIC_BASE) - 1;
-  if (!topic || strncmp(topic, RB_TOPIC_BASE, baseLen)) return false;
+  static const size_t rootLen = sizeof(RB_TOPIC_ROOT) - 1;
+  if (!topic || strncmp(topic, RB_TOPIC_ROOT, rootLen)) return false;
+  const char *rest = topic + rootLen;                    // "GLD/departures"
+  // Another station's: still in flight from just before a change of station.
+  if (strncmp(rest, s_crs, 3) || rest[3] != '/') return false;
   if (!payload || !len) return false;   // a cleared retained topic: keep what is shown
-  const char *leaf = topic + baseLen;
+  const char *leaf = rest + 4;
   bool ok;
   if      (!strcmp(leaf, "departures")) ok = ingestBoard(RB_DEP, payload, len);
   else if (!strcmp(leaf, "arrivals"))   ok = ingestBoard(RB_ARR, payload, len);
@@ -304,35 +342,119 @@ static void onMessage(const char *topic, const uint8_t *payload, uint16_t len) {
   railboardIngest(topic, (const char *)payload, len);
 }
 
-void railboardBegin() {
-  const bool routed = mqttBusOnMessage(RB_TOPIC_BASE, onMessage);
-  const bool subbed = mqttBusSubscribe(RB_TOPIC_BASE "+");
-  if (!routed || !subbed) {
-    Serial.printf("[railboard] MQTT bus is full: handler %s, subscription %s\n",
-                  routed ? "ok" : "REFUSED", subbed ? "ok" : "REFUSED");
+// ── station ─────────────────────────────────────────────────────────────────
+bool railboardValidStation(const char *crs) {
+  if (!crs) return false;
+  for (uint8_t i = 0; i < 3; i++) {
+    if (crs[i] < 'A' || crs[i] > 'Z') return false;
   }
+  return crs[3] == '\0';
+}
+
+const char *railboardStation() { return s_crs; }
+
+// One subscription whatever the station: unsubscribe the old one first, so a
+// change never costs a slot of mqtt_bus's six.
+static void subscribeStation() {
+  char want[sizeof(s_sub)];
+  snprintf(want, sizeof(want), RB_TOPIC_ROOT "%s/+", s_crs);
+  if (!strcmp(want, s_sub)) return;
+  if (s_sub[0]) mqttBusUnsubscribe(s_sub);
+  if (mqttBusSubscribe(want)) {
+    strcpy(s_sub, want);
+  } else {
+    s_sub[0] = '\0';
+    Serial.printf("[railboard] MQTT bus refused the subscription to %s\n", want);
+  }
+}
+
+bool railboardSetStation(const char *crs) {
+  if (!railboardValidStation(crs)) return false;
+  if (!strcmp(crs, s_crs)) return true;
+  memcpy(s_crs, crs, sizeof(s_crs));
+  // The old station's boards must not sit under the new station's name. The
+  // new one's retained boards, if Home Assistant ever fetched it, arrive within
+  // a moment of subscribing; otherwise the page says it is waiting.
+  memset(s_board, 0, sizeof(s_board));
+  memset(&s_ha, 0, sizeof(s_ha));
+  s_selectDirty = true;
+  s_altSince    = millis();
+  s_autoFirst   = RB_DEP;
+  if (s_begun) subscribeStation();
+  return true;
+}
+
+void railboardBegin() {
+  // The prefix without the station, so a change of station needs no new handler.
+  if (!mqttBusOnMessage(RB_TOPIC_ROOT, onMessage))
+    Serial.println("[railboard] MQTT bus is full: handler REFUSED");
+  s_begun = true;
+  subscribeStation();
   s_altSince = millis();
 }
 
-void railboardPress() { s_diag = !s_diag; }
+// Retained, so Home Assistant learns the station after its own restart as well
+// as at the moment it changes. Sent again on every reconnect: the broker may
+// have lost it, and a repeat of the same value changes nothing.
+void railboardLoop() {
+  const bool up = mqttBusConnected();
+  if (up && !s_wasConnected) s_selectDirty = true;
+  s_wasConnected = up;
+  if (!up || !s_selectDirty) return;
+  char body[20];
+  snprintf(body, sizeof(body), "{\"crs\":\"%s\"}", s_crs);
+  if (mqttBusPublish(RB_TOPIC_SELECT, body, true)) s_selectDirty = false;
+}
+
+// ── views ───────────────────────────────────────────────────────────────────
+static uint8_t currentView(uint32_t nowMs) {
+  if (s_view != RB_VIEW_AUTO && nowMs - s_viewAt >= (uint32_t)RB_HOLD_S * 1000UL) {
+    // The hold is over: alternate again, starting from the list that was chosen.
+    s_autoFirst = (s_view == RB_VIEW_ARR) ? RB_ARR : RB_DEP;
+    s_altSince  = nowMs;
+    s_view      = RB_VIEW_AUTO;
+  }
+  if (s_view != RB_VIEW_AUTO) return s_view;
+  if (s_diagPinned || s_cfg.diag) return RB_VIEW_DIAG;
+  const uint32_t turns = (nowMs - s_altSince) / ((uint32_t)s_cfg.switchS * 1000UL);
+  return ((turns + s_autoFirst) % 2) ? RB_VIEW_ARR : RB_VIEW_DEP;
+}
+
+// How far into the current list's turn we are: page 1 has the first half,
+// page 2 the second. A list the knob chose pages on the same rhythm.
+static uint32_t turnElapsedMs(uint32_t nowMs) {
+  const uint32_t turn = (uint32_t)s_cfg.switchS * 1000UL;
+  return (nowMs - (s_view != RB_VIEW_AUTO ? s_viewAt : s_altSince)) % turn;
+}
+
+void railboardKnob(int8_t delta) {
+  static const uint8_t order[] = {RB_VIEW_DEP, RB_VIEW_ARR, RB_VIEW_DIAG};
+  const uint32_t nowMs = millis();
+  const uint8_t cur = currentView(nowMs);
+  uint8_t i = (cur == RB_VIEW_DEP) ? 0 : (cur == RB_VIEW_ARR ? 1 : 2);
+  i = (uint8_t)((i + (delta > 0 ? 1 : 2)) % 3);
+  s_view   = order[i];
+  s_viewAt = nowMs;
+  // Turning off diagnostics with the knob turns it off, wherever it was pinned:
+  // otherwise the knob could never leave it.
+  if (s_view != RB_VIEW_DIAG) {
+    s_diagPinned = false;
+    s_cfg.diag   = false;
+  }
+}
 
 // Off means off: a diag:true from Home Assistant's config is cleared too, until
 // that config arrives again.
 void railboardSetDiag(bool on) {
-  s_diag = on;
+  s_diagPinned = on;
   if (!on) s_cfg.diag = false;
+  s_view = RB_VIEW_AUTO;          // the portal's choice wins over a knob hold
 }
 
 bool railboardApplyConfig(const char *json, uint16_t len) {
   if (!json || !len || !ingestConfig(json, len)) return false;
   s_cfgFrom = 2;
   return true;
-}
-
-void railboardTurn(int8_t delta) {
-  (void)delta;              // two lists: either direction means "the other one"
-  s_flip ^= 1;
-  s_altSince = millis();    // and it gets a full turn from now
 }
 
 // ── drawing ─────────────────────────────────────────────────────────────────
@@ -351,10 +473,10 @@ static int16_t textW(const char *s) {
   return (int16_t)bw;
 }
 
-// Lit width in large type: 6 px a character, the last column of the cell blank.
-static int16_t largeW(const char *s) {
+// Lit width in big type: 6 px a character, the last column of the cell blank.
+static int16_t bigW(const char *s) {
   const size_t n = strlen(s);
-  return n ? (int16_t)(n * RB_L_ADV - 1) : 0;
+  return n ? (int16_t)(n * RB_BIG_ADV - 1) : 0;
 }
 
 static void put(int16_t x, int16_t top, const char *s, uint16_t c) {
@@ -368,7 +490,7 @@ static void putRight(int16_t right, int16_t top, const char *s, uint16_t c) {
   put(right - textW(s), top, s, c);
 }
 
-static void putLarge(int16_t x, int16_t top, const char *s, uint16_t c) {
+static void putBig(int16_t x, int16_t top, const char *s, uint16_t c) {
   display.setFont(NULL);                // the built-in font positions from the top
   display.setTextColor(c);
   display.setCursor(x, top);
@@ -381,88 +503,99 @@ static void hhmm(char *out, size_t n, uint32_t utc) {
   snprintf(out, n, "%02u:%02u", (unsigned)c.hour, (unsigned)c.minute);
 }
 
-// Fit a place name into `room` pixels, whole words only: a cut word reads as a
-// typo rather than as an abbreviation, which the flight board found on live
-// data. A London terminus loses LONDON first, but only when one word is left -
-// WATERLOO is unambiguous, ROAD (GUILDFORD) is not. Then trailing words go,
-// with any & or short connector they leave dangling. A single word that still
-// does not fit is the one case that gets cut, since a blank is worse.
-static void fitName(char *out, size_t cap, const char *name, int16_t room, bool large) {
-  strncpy(out, name, cap - 1);
-  out[cap - 1] = '\0';
-  auto width = [large](const char *s) { return large ? largeW(s) : textW(s); };
-  if (width(out) <= room) return;
-  if (!strncmp(out, "LONDON ", 7) && out[7] && !strchr(out + 7, ' ')) {
+// Fit a place name into `room` pixels. Whole letters always; whole words where
+// a word boundary allows, because a cut word reads as a typo rather than as an
+// abbreviation - the flight board found that on live data (EUROAIRPOR). So:
+// the whole name; for a London terminus the name without London, when one word
+// is left (Waterloo is unambiguous, Road (Guildford) is not); the name less
+// trailing words and any connector they leave dangling; and only when even the
+// first word does not fit, that word cut to as many letters as fit.
+static void fitName(char *out, size_t cap, const char *name, int16_t room) {
+  copyText(out, cap, name);
+  if (textW(out) <= room) return;
+  if (!strncasecmp(out, "London ", 7) && out[7] && !strchr(out + 7, ' ')) {
     memmove(out, out + 7, strlen(out + 7) + 1);
-    if (width(out) <= room) return;
+    if (textW(out) <= room) return;
   }
-  while (width(out) > room) {
-    char *sp = strrchr(out, ' ');
-    if (!sp) {
-      size_t n = strlen(out);
-      while (n > 1 && width(out) > room) out[--n] = '\0';
-      return;
-    }
+  char words[RB_STN_LEN];
+  copyText(words, sizeof(words), out);
+  while (words[0] && textW(words) > room) {
+    char *sp = strrchr(words, ' ');
+    if (!sp) { words[0] = '\0'; break; }
     *sp = '\0';
-    char *tail = strrchr(out, ' ');
-    if (tail && (strlen(tail + 1) <= 2 || !strcmp(tail + 1, "AND"))) *tail = '\0';
+    char *tail = strrchr(words, ' ');
+    if (tail && (strlen(tail + 1) <= 2 || !strcasecmp(tail + 1, "and"))) *tail = '\0';
   }
+  if (words[0]) { copyText(out, cap, words); return; }
+  char *sp = strchr(out, ' ');
+  if (sp) *sp = '\0';
+  size_t n = strlen(out);
+  while (n > 1 && textW(out) > room) out[--n] = '\0';
 }
 
 static bool isLate(const RbService &sv) {
   return sv.st == RB_LATE || (sv.st == RB_ARRIVED && sv.d > 0);
 }
 
-// A second time worth printing: when a late train is expected, or when a late
-// one actually arrived.
+// Expt shows a time instead of a word: a late train's expected time, or a late
+// arrival's actual one.
 static bool hasTime(const RbService &sv) {
   return sv.x && isLate(sv);
 }
 
-static void drawServiceSmall(int16_t x0, int16_t top, const RbService &sv) {
-  char buf[RB_NAME_LEN + 8];
-  const bool canc = sv.st == RB_CANC;
-  const uint16_t body = col(canc ? RB_COL_RED : RB_COL_TEXT);
-  const int16_t right = x0 + RB_W - RB_GUTTER;
-  const int16_t xPlat = (!canc && sv.p[0]) ? right - textW(sv.p) : right;
+static void drawHeadings(uint8_t which) {
+  const uint16_t white = col(RB_COL_WHITE);
+  putBig(RB_X_LEFT, RB_Y_TITLE, RB_TITLES[which], white);
+  if (which == RB_ARR) putRight(RB_X_TIME_R, RB_Y_HEAD1, RB_H_TIME, white);
+  putRight(RB_X_PLAT_R, RB_Y_HEAD1, RB_H_PLAT, white);
+  put(RB_X_EXPT, RB_Y_HEAD1, RB_H_EXPT, white);
 
-  hhmm(buf, sizeof(buf), sv.t);
-  put(x0, top, buf, body);
-  if (hasTime(sv)) {
-    char at[8];
-    hhmm(at, sizeof(at), sv.x);
-    snprintf(buf, sizeof(buf), "%s %s", sv.st == RB_LATE ? RB_ST_WORDS[RB_LATE] : RB_ARR_AT, at);
-    // A wide platform (10A) beside a wide time leaves no air: the word goes, the time stays.
-    if (x0 + RB_X_STATUS + textW(buf) + RB_GAP > xPlat) snprintf(buf, sizeof(buf), "%s", at);
+  int16_t used;
+  if (which == RB_DEP) {
+    put(RB_X_LEFT, RB_Y_HEAD2, RB_H_TIME, white);
+    put(RB_X_DEST, RB_Y_HEAD2, RB_H_DEST, white);
+    used = RB_X_DEST + textW(RB_H_DEST);
   } else {
-    snprintf(buf, sizeof(buf), "%s", RB_ST_WORDS[sv.st < RB_STATUS_COUNT ? sv.st : RB_NOREPORT]);
+    put(RB_X_LEFT, RB_Y_HEAD2, RB_H_FROM, white);
+    used = RB_X_LEFT + textW(RB_H_FROM);
   }
-  put(x0 + RB_X_STATUS, top, buf, canc ? body : col(isLate(sv) ? RB_COL_AMBER : RB_COL_TEXT));
-  if (xPlat < right) put(xPlat, top, sv.p, col(RB_COL_WHITE));
-
-  const int16_t top2 = top + RB_PITCH;
-  int16_t room = RB_W - RB_GUTTER;
-  if (sv.o[0]) {
-    putRight(right, top2, sv.o, col(RB_COL_DIM));
-    room -= textW(sv.o) + RB_GAP;
-  }
-  fitName(buf, sizeof(buf), sv.n, room, false);
-  put(x0, top2, buf, body);
+  // The station, right-aligned on the second heading line and dim, so it reads
+  // as a label rather than as a column heading. The payload names it; until one
+  // has, its code.
+  const char *stn = s_board[RB_DEP].stn[0] ? s_board[RB_DEP].stn
+                  : (s_board[RB_ARR].stn[0] ? s_board[RB_ARR].stn : s_crs);
+  char fit[RB_STN_LEN];
+  fitName(fit, sizeof(fit), stn, RB_X_RIGHT - used - 2 * RB_GAP);
+  putRight(RB_X_RIGHT, RB_Y_HEAD2, fit, col(RB_COL_DIM));
 }
 
-static void drawServiceLarge(int16_t x0, int16_t top, const RbService &sv) {
-  char buf[RB_NAME_LEN + 8];
+static void drawService(uint8_t which, int16_t top, const RbService &sv) {
+  char tm[8], expt[12], name[RB_STN_LEN];
   const bool canc = sv.st == RB_CANC;
-  const uint16_t c1 = col(canc ? RB_COL_RED : (isLate(sv) ? RB_COL_AMBER : RB_COL_TEXT));
-  const int16_t right = x0 + RB_W - RB_GUTTER;
+  const uint16_t amber = col(RB_COL_AMBER);
 
-  hhmm(buf, sizeof(buf), hasTime(sv) ? sv.x : sv.t);
-  putLarge(x0, top, buf, c1);
-  if (canc)          putLarge(right - largeW(RB_CANC_LARGE), top, RB_CANC_LARGE, c1);
-  else if (sv.p[0])  putLarge(right - largeW(sv.p), top, sv.p, col(RB_COL_WHITE));
+  if (hasTime(sv)) hhmm(expt, sizeof(expt), sv.x);
+  else             copyText(expt, sizeof(expt), RB_ST_WORDS[sv.st < RB_STATUS_COUNT ? sv.st : RB_NOREPORT]);
+  put(RB_X_EXPT, top, expt, canc ? col(RB_COL_RED) : amber);
 
-  fitName(buf, sizeof(buf), sv.n, RB_W - RB_GUTTER, true);
-  putLarge(x0, top + RB_L_PITCH, buf, col(canc ? RB_COL_RED : RB_COL_TEXT));
+  // A cancelled train has no platform worth showing.
+  int16_t platLeft = RB_X_PLAT_R;
+  if (!canc && sv.p[0]) {
+    platLeft = RB_X_PLAT_R - textW(sv.p);
+    put(platLeft, top, sv.p, amber);
+  }
+
+  hhmm(tm, sizeof(tm), sv.t);
+  if (which == RB_DEP) {
+    put(RB_X_LEFT, top, tm, amber);
+    fitName(name, sizeof(name), sv.n, platLeft - RB_GAP - RB_X_DEST);
+    put(RB_X_DEST, top, name, amber);
+  } else {
+    const int16_t xTime = RB_X_TIME_R - textW(tm);
+    put(xTime, top, tm, amber);
+    fitName(name, sizeof(name), sv.n, xTime - RB_GAP - RB_X_LEFT);
+    put(RB_X_LEFT, top, name, amber);
+  }
 }
 
 // Stale when Home Assistant's own timestamp is older than stale_s. Without a
@@ -482,82 +615,65 @@ static bool isGone(const RbService &sv, time_t now, bool synced) {
   return (int64_t)now > when + grace;
 }
 
-static const char *stationName() {
-  if (s_board[RB_DEP].have && s_board[RB_DEP].stn[0]) return s_board[RB_DEP].stn;
-  if (s_board[RB_ARR].have && s_board[RB_ARR].stn[0]) return s_board[RB_ARR].stn;
-  return RB_STATION;
-}
-
-static void drawList(int16_t x0, uint8_t which, time_t now, bool synced) {
+static void drawBoard(uint8_t which, time_t now, bool synced, uint32_t nowMs) {
   const RbBoard &b = s_board[which];
+  const uint16_t amber = col(RB_COL_AMBER);
+  char foot[24];
+
   if (!b.have) {
-    put(x0, RB_Y_ROW0, mqttBusStatus(), col(RB_COL_DIM));   // NO WIFI, CONNECTING, ...
-    put(x0, RB_Y_FOOT, RB_STALE, col(RB_COL_AMBER));
+    char why[32];
+    if (mqttBusConnected()) snprintf(why, sizeof(why), "%s %s", RB_WAITING, s_crs);
+    else                    snprintf(why, sizeof(why), "%s", mqttBusStatus());   // NO WIFI, CONNECTING, ...
+    put(RB_X_LEFT, RB_Y_ROW0, why, amber);
+    put(RB_X_LEFT, RB_Y_FOOT, RB_STALE, amber);
     return;
   }
+
+  // The services still to come, up to the configured count.
+  uint8_t idx[RB_MAX_SVC], n = 0;
+  for (uint8_t i = 0; i < b.count && n < s_cfg.rows; i++)
+    if (!isGone(b.s[i], now, synced)) idx[n++] = i;
+
+  // Page 2, when there is one, gives its first line to Continued......
+  const uint8_t pages = n > RB_ROWS_PAGE ? 2 : 1;
+  const uint8_t page  = (pages > 1 && turnElapsedMs(nowMs) >= (uint32_t)s_cfg.switchS * 500UL) ? 1 : 0;
   const bool stale = isStale(b, now, synced);
-  if (b.count == 0 && !stale) put(x0, RB_Y_ROW0, RB_EMPTY, col(RB_COL_DIM));
 
-  const uint8_t cap  = s_cfg.large ? RB_ROWS_LARGE : RB_ROWS_SMALL;
-  const uint8_t rows = s_cfg.rows < cap ? s_cfg.rows : cap;
-  uint8_t shown = 0;
-  for (uint8_t i = 0; i < b.count && shown < rows; i++) {
-    if (isGone(b.s[i], now, synced)) continue;
-    if (s_cfg.large) drawServiceLarge(x0, RB_L_ROW0 + shown * 2 * RB_L_PITCH, b.s[i]);
-    else             drawServiceSmall(x0, RB_Y_ROW0 + shown * 2 * RB_PITCH, b.s[i]);
-    shown++;
+  if (n == 0) {
+    if (!stale) put(RB_X_LEFT, RB_Y_ROW0, RB_EMPTY, amber);
+  } else if (page == 0) {
+    for (uint8_t r = 0; r < n && r < RB_ROWS_PAGE; r++)
+      drawService(which, RB_Y_ROW0 + r * RB_PITCH, b.s[idx[r]]);
+  } else {
+    put(RB_X_LEFT, RB_Y_ROW0, RB_CONTINUED, amber);
+    for (uint8_t r = 1, k = RB_ROWS_PAGE; k < n && r < RB_ROWS_PAGE; r++, k++)
+      drawService(which, RB_Y_ROW0 + r * RB_PITCH, b.s[idx[k]]);
   }
-  if (stale) put(x0, RB_Y_FOOT, RB_STALE, col(RB_COL_AMBER));
+
+  if (stale) snprintf(foot, sizeof(foot), "%s", RB_STALE);
+  else       snprintf(foot, sizeof(foot), "%s %u %s %u", RB_PAGE, (unsigned)(page + 1), RB_OF, (unsigned)pages);
+  put(RB_X_LEFT, RB_Y_FOOT, foot, amber);
 }
 
-static void drawHeaderWide(const uktime::Civil &c, bool synced) {
-  char clk[12], date[16], stn[20];
-  if (synced) {
-    snprintf(clk, sizeof(clk), "%02u:%02u:%02u", (unsigned)c.hour, (unsigned)c.minute, (unsigned)c.second);
-    snprintf(date, sizeof(date), "%s %u %s", RB_DAYS[c.wday], (unsigned)c.day, RB_MONTHS[c.month - 1]);
-  } else {
-    strcpy(clk, "--:--:--");
-    date[0] = '\0';
-  }
-  const int16_t xClk = 2 * RB_W - textW(clk);
-  put(xClk, RB_Y_HEAD, clk, col(RB_COL_WHITE));
-  const int16_t xDate = xClk - 2 * RB_GAP - textW(date);
-  fitName(stn, sizeof(stn), stationName(), xClk - RB_GAP, false);
-  put(0, RB_Y_HEAD, stn, col(RB_COL_WHITE));
-  if (date[0] && xDate >= textW(stn) + 2 * RB_GAP) put(xDate, RB_Y_HEAD, date, col(RB_COL_DIM));
-  put(0,    RB_Y_TITLE, RB_TITLES[RB_DEP], col(RB_COL_AMBER));
-  put(RB_W, RB_Y_TITLE, RB_TITLES[RB_ARR], col(RB_COL_AMBER));
-}
-
-static void drawHeaderNarrow(uint8_t which, const uktime::Civil &c, bool synced) {
-  char clk[8], date[12], stn[20];
-  if (synced) {
-    snprintf(clk, sizeof(clk), "%02u:%02u", (unsigned)c.hour, (unsigned)c.minute);
-    snprintf(date, sizeof(date), "%u %s", (unsigned)c.day, RB_MONTHS[c.month - 1]);
-  } else {
-    strcpy(clk, "--:--");
-    date[0] = '\0';
-  }
-  putRight(RB_W, RB_Y_HEAD, clk, col(RB_COL_WHITE));
-  fitName(stn, sizeof(stn), stationName(), RB_W - textW(clk) - RB_GAP, false);
-  put(0, RB_Y_HEAD, stn, col(RB_COL_WHITE));
-  put(0, RB_Y_TITLE, RB_TITLES[which], col(RB_COL_AMBER));
-  if (date[0] && textW(RB_TITLES[which]) + RB_GAP + textW(date) <= RB_W)
-    putRight(RB_W, RB_Y_TITLE, date, col(RB_COL_DIM));
+static void drawClock(const uktime::Civil &c, bool synced) {
+  char clk[12];
+  if (synced) snprintf(clk, sizeof(clk), "%02u:%02u:%02u", (unsigned)c.hour, (unsigned)c.minute, (unsigned)c.second);
+  else        strcpy(clk, "--:--:--");
+  putBig(RB_X_RIGHT - bigW(clk), RB_Y_CLOCK, clk, col(RB_COL_AMBER));
 }
 
 static void diagLine(uint8_t line, const char *label, const char *value, uint16_t valueCol,
                      const char *right) {
-  const int16_t top = RB_Y_HEAD + line * RB_PITCH;
-  put(0, top, label, col(RB_COL_DIM));
+  const int16_t top = 1 + line * RB_PITCH;
+  put(RB_X_LEFT, top, label, col(RB_COL_DIM));
   int16_t end = RB_X_VALUE;
   if (value && *value) {
     put(RB_X_VALUE, top, value, valueCol);
     end += textW(value);
   }
   // The right-hand note is the one that gives way when a long value needs the room.
-  if (right && *right && 2 * RB_W - textW(right) >= end + RB_GAP)
-    putRight(2 * RB_W, top, right, col(RB_COL_DIM));
+  if (right && *right && RB_X_RIGHT - textW(right) >= end + RB_GAP)
+    putRight(RB_X_RIGHT, top, right, col(RB_COL_DIM));
 }
 
 // An age as a reader wants it, with a space so an S never passes for a 5 -
@@ -572,10 +688,11 @@ static void drawDiag(time_t now, bool synced) {
   char v[40], r[24];
   const uint16_t white = col(RB_COL_WHITE);
 
-  put(0, RB_Y_HEAD, "RAIL BOARD " RB_CRS, col(RB_COL_AMBER));
-  putRight(2 * RB_W, RB_Y_HEAD, "DIAGNOSTICS", col(RB_COL_DIM));
+  snprintf(v, sizeof(v), "RAIL BOARD %s", s_crs);
+  put(RB_X_LEFT, 1, v, col(RB_COL_AMBER));
+  putRight(RB_X_RIGHT, 1, "DIAGNOSTICS", col(RB_COL_DIM));
 
-  // The spec's one hard requirement for this view: when did data last arrive.
+  // The one hard requirement for this view: when did data last arrive.
   const uint32_t last = s_board[RB_DEP].ts > s_board[RB_ARR].ts ? s_board[RB_DEP].ts : s_board[RB_ARR].ts;
   if (last) {
     const uktime::Civil c = uktime::london(last);
@@ -628,55 +745,65 @@ static void drawDiag(time_t now, bool synced) {
   snprintf(r, sizeof(r), "JSON %.1fK", s_jsonPeak / 1024.0);
   diagLine(7, "HEAP", v, white, r);
 
-  if (synced) {
-    const uktime::Civil c = uktime::london((int64_t)now);
-    snprintf(v, sizeof(v), "%s  NTP OK", c.bst ? "BST" : "GMT");
-  } else {
-    strcpy(v, "NO NTP YET");
-  }
-  diagLine(8, "LONDON", v, col(synced ? RB_COL_TEXT : RB_COL_AMBER), "");
+  // The selection Home Assistant follows, and whether it has gone out.
+  snprintf(v, sizeof(v), "%s %s", s_crs, s_selectDirty ? "NOT SENT" : "SENT");
+  diagLine(8, "SELECT", v, col(s_selectDirty ? RB_COL_AMBER : RB_COL_TEXT), synced ? "NTP OK" : "NO NTP");
 }
 
 void railboardRender() {
-  const time_t now    = time(nullptr);
-  const bool   synced = now > 1700000000;   // before NTP the clock reads 1970; same test as the world clock
-  const uktime::Civil c = uktime::london((int64_t)now);
+  const time_t   now    = time(nullptr);
+  const bool     synced = now > 1700000000;   // before NTP the clock reads 1970; same test as the world clock
+  const uint32_t nowMs  = millis();
+
+  if (s_view == RB_VIEW_AUTO && nowMs - s_lastFrame > (uint32_t)RB_REOPEN_MS) {
+    s_altSince  = nowMs;
+    s_autoFirst = RB_DEP;
+  }
+  s_lastFrame = nowMs;
+  const uint8_t view = currentView(nowMs);
 
   display.setFont(&PicopixelFB);
   display.setTextSize(1);
   display.setTextWrap(false);
 
-  if (s_diag || s_cfg.diag) {
+  if (view == RB_VIEW_DIAG) {
     drawDiag(now, synced);
-  } else if (s_cfg.panels >= 2) {
-    drawHeaderWide(c, synced);
-    drawList(0,    RB_DEP, now, synced);
-    drawList(RB_W, RB_ARR, now, synced);
   } else {
-    const uint32_t turns = (millis() - s_altSince) / (s_cfg.switchS * 1000UL);
-    const uint8_t which  = (uint8_t)((turns + s_flip) % 2);
-    drawHeaderNarrow(which, c, synced);
-    drawList(0, which, now, synced);
+    const uint8_t which = (view == RB_VIEW_ARR) ? RB_ARR : RB_DEP;
+    drawHeadings(which);
+    drawBoard(which, now, synced, nowMs);
+    drawClock(uktime::london((int64_t)now), synced);
   }
 
   display.setFont(NULL);   // other pages draw with the built-in font and would inherit this one
 }
 
 void railboardStatusJson(JsonObject out) {
-  const time_t now    = time(nullptr);
-  const bool   synced = now > 1700000000;
-  out["crs"]     = RB_CRS;
-  out["station"] = stationName();
+  const time_t   now    = time(nullptr);
+  const bool     synced = now > 1700000000;
+  const uint32_t nowMs  = millis();
+  static const char *const VIEWS[] = {"auto", "dep", "arr", "diag"};
+  const uint8_t view = currentView(nowMs);
+  const char *stn = s_board[RB_DEP].stn[0] ? s_board[RB_DEP].stn
+                  : (s_board[RB_ARR].stn[0] ? s_board[RB_ARR].stn : "");
+
+  out["crs"]     = (const char *)s_crs;
+  out["station"] = stn[0] ? stn : (const char *)s_crs;
+  out["named"]   = stn[0] != '\0';               // false: no payload has named it yet
   out["synced"]  = synced;
   out["now"]     = synced ? (uint32_t)now : 0;
-  out["diag"]    = s_diag || s_cfg.diag;
-  out["diagKnob"] = s_diag;
-  out["diagCfg"]  = s_cfg.diag;
+  out["list"]    = VIEWS[view];                  // what the page shows: dep, arr or diag
+  out["knob"]    = VIEWS[s_view];                // what the knob chose; auto = alternating
+  if (s_view != RB_VIEW_AUTO) out["holdS"] = RB_HOLD_S - (nowMs - s_viewAt) / 1000UL;
+  out["diag"]    = s_diagPinned || s_cfg.diag;   // pinned, by the portal or Home Assistant
+  out["diagCfg"] = s_cfg.diag;
+
+  JsonObject sel = out["select"].to<JsonObject>();
+  sel["topic"] = RB_TOPIC_SELECT;
+  sel["sent"]  = !s_selectDirty;
 
   JsonObject cfg = out["cfg"].to<JsonObject>();
-  cfg["panels"]   = s_cfg.panels;
   cfg["rows"]     = s_cfg.rows;
-  cfg["font"]     = s_cfg.large ? "large" : "small";
   cfg["level"]    = s_cfg.level;
   cfg["switch_s"] = s_cfg.switchS;
   cfg["stale_s"]  = s_cfg.staleS;

@@ -4,11 +4,13 @@
 
 #include <Arduino.h>
 #include <Preferences.h>
+#include <string.h>
 
 #include "../control/carousel.h"
 #include "../control/control.h"
 #include "../flightboard/fb_mqtt.h"
 #include "../flightboard/flightboard.h"
+#include "../railboard/railboard.h"
 #include "../worldclock/worldclock.h"
 
 // Same reasoning as the clock style's deferred save: a slider dragged across its
@@ -23,6 +25,7 @@ struct PanelState {
   uint8_t       fbAirport;
   bool          fbDep;
   uint8_t       wcHome;
+  char          rbStn[4];        // "" in a build without the rail board
 };
 
 static const uint16_t ALL_PAGES = (uint16_t)((1u << PANEL_KEY_COUNT) - 1);
@@ -100,6 +103,11 @@ void panelBegin() {
   s_cur.fbDep     = false;
 #endif
   s_cur.wcHome = 0;
+#if defined(RAILBOARD_ENABLED)
+  memcpy(s_cur.rbStn, RB_CRS, sizeof(s_cur.rbStn));
+#else
+  s_cur.rbStn[0] = '\0';
+#endif
 
   // Read-write on purpose: a read-only open of a namespace that does not exist
   // yet fails with a logged error on every boot until the first save. Opening
@@ -133,6 +141,16 @@ void panelBegin() {
     const uint8_t home = p.getUChar("wcHome", d.wcHome);
     if (home < worldClockCityCount()) s_cur.wcHome = home;
 #endif
+#if defined(RAILBOARD_ENABLED)
+    // isKey() first: unlike the numeric getters, getString() logs at error level
+    // for a key never written (Preferences.cpp, arduino-esp32 2.0.17), which
+    // would be every boot until the portal first sets a station. isKey() probes
+    // with nvs_get_* and logs nothing.
+    if (p.isKey("rbStn")) {
+      const String stn = p.getString("rbStn", "");
+      if (railboardValidStation(stn.c_str())) memcpy(s_cur.rbStn, stn.c_str(), sizeof(s_cur.rbStn));
+    }
+#endif
     p.end();
   }
   // What was read is what NVS holds; a field never stored holds its default,
@@ -146,6 +164,9 @@ void panelBegin() {
 #endif
 #if defined(WORLDCLOCK_ENABLED)
   worldClockSetHome(s_cur.wcHome);
+#endif
+#if defined(RAILBOARD_ENABLED)
+  railboardSetStation(s_cur.rbStn);   // before railboardBegin() subscribes
 #endif
 }
 
@@ -169,6 +190,7 @@ void panelTick() {
   if (c.fbAirport != w.fbAirport && p.putUChar("fbApt", c.fbAirport)) w.fbAirport = c.fbAirport;
   if (c.fbDep != w.fbDep && p.putUChar("fbDep", c.fbDep)) w.fbDep = c.fbDep;
   if (c.wcHome != w.wcHome && p.putUChar("wcHome", c.wcHome)) w.wcHome = c.wcHome;
+  if (strcmp(c.rbStn, w.rbStn) && p.putString("rbStn", c.rbStn)) memcpy(w.rbStn, c.rbStn, sizeof(w.rbStn));
   p.end();
 }
 
@@ -252,5 +274,21 @@ bool panelSetWorldHome(uint8_t city) {
 }
 
 uint8_t panelWorldHome() { return s_cur.wcHome; }
+
+bool panelSetRailStation(const char *crs) {
+#if defined(RAILBOARD_ENABLED)
+  if (!railboardSetStation(crs)) return false;   // validates: three capitals A-Z
+  if (strcmp(s_cur.rbStn, crs)) {
+    memcpy(s_cur.rbStn, crs, sizeof(s_cur.rbStn));
+    markDirty();
+  }
+  return true;
+#else
+  (void)crs;
+  return false;
+#endif
+}
+
+const char *panelRailStation() { return s_cur.rbStn; }
 
 #endif  // CONTROL_ENCODER_ENABLED
