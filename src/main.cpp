@@ -179,6 +179,7 @@ static inline uint8_t ctrlPageCount() {
 #include "notify/notify.h"
 #include "viz/visualizer.h"
 #include "weather/weather.h"
+#include "health/boot_health.h"
 #include "web/web.h"
 
 
@@ -351,6 +352,7 @@ void setup() {
 #endif
   Serial.begin(115200);
   delay(1000);
+  healthBegin();   // confirms an OTA image only once it has run, and reports the last crash: src/health
 
   // Load settings from flash
   loadSettings();
@@ -1123,6 +1125,7 @@ void loop() {
     nsluaBenchFrameEnd();
 #endif
     loopMark("overlays and flip");
+    healthNoteFrame();
 
     // Right after the flip = maximum headroom before the next render tick;
     // the custom animation reads its next frame from flash here so the I/O
@@ -1131,6 +1134,7 @@ void loop() {
   }
   loopMark("ambient prefetch");
 
+  healthTick(!displayAvailable || isDisplayForcedOff());
   // WiFi reconnection handling
   handleWiFiReconnection();
   loopMark("wifi reconnect");

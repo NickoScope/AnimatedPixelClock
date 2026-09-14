@@ -216,6 +216,7 @@ void handleDeviceInfo() {
  { extern const char *loopSlowPart(); extern uint32_t loopSlowPartMs();       // and the part of loop() that took longest
    doc["loopSlowPart"] = loopSlowPart(); doc["loopSlowPartMs"] = loopSlowPartMs(); }
  doc["resetReason"] = (int)esp_reset_reason();
+ { extern void healthInfoJson(JsonObject out); healthInfoJson(doc.as<JsonObject>()); }   // OTA state, last crash
  doc["animationStorageBytes"] = (uint32_t)animFsTotal();
  doc["animationFreeBytes"] = (uint32_t)animFsFree();
  doc["animationsUsable"] = animFsUsable();
