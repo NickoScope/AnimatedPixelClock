@@ -25,6 +25,7 @@ extern "C" {
 
 #include "nslua.h"
 #include "nslua_bindings.h"   // P&P-реестр биндинг-групп (sys/time/echo/...)
+#include "nslua_sandbox.h"    // the whitelist, shared with lua_fx.cpp
 
 // ============================================================
 // PSRAM аллокатор (lua_Alloc, семантика realloc — Lua RM §lua_Alloc)
@@ -79,103 +80,17 @@ static void resetInstructionBudget(lua_State *L) {
 // Песочница
 // ============================================================
 
-// print → Serial (lua_writestring из vendor пишет в stdout newlib;
-// на S3 это USB-CDC, но заворачиваем сами для единообразия с log()).
-static int sandboxPrint(lua_State *L) {
-    const int n = lua_gettop(L);
-    char line[160];
-    int pos = 0;
-    for (int i = 1; i <= n && pos < (int)sizeof(line) - 2; i++) {
-        size_t l = 0;
-        const char *s = luaL_tolstring(L, i, &l);  // использует __tostring
-        if (i > 1 && pos < (int)sizeof(line) - 2) line[pos++] = '\t';
-        while (l-- && pos < (int)sizeof(line) - 2) line[pos++] = *s++;
-        lua_pop(L, 1);
-    }
-    line[pos] = 0;
-    Serial.printf("[lua] %s\n", line);
-    return 0;
-}
-
-// log(str) — явный биндинг в Serial (первое доказательство биндинга).
-static int sandboxLog(lua_State *L) {
-    size_t l = 0;
-    const char *s = luaL_tolstring(L, 1, &l);   // любой тип → строка
-    Serial.printf("[lua] %s\n", s ? s : "(nil)");
-    lua_pop(L, 1);
-    return 0;
-}
-
-// require — только хост-прелоады (реестр LOADED), файлов нет by construction.
-static int sandboxRequire(lua_State *L) {
-    const char *name = luaL_checkstring(L, 1);
-    lua_getfield(L, LUA_REGISTRYINDEX, LUA_LOADED_TABLE);
-    lua_getfield(L, -1, name);
-    if (!lua_isnil(L, -1)) return 1;
-    return luaL_error(L, "module '%s' is not available in the nslua sandbox", name);
-}
-
-// message handler: строка + traceback (как в lua_engine.cpp).
-static int messageHandler(lua_State *L) {
-    const char *msg = lua_tostring(L, 1);
-    if (msg == NULL) {
-        if (luaL_callmeta(L, 1, "__tostring") != 0 &&
-            lua_type(L, -1) == LUA_TSTRING) {
-            return 1;
-        }
-        msg = lua_pushfstring(L, "(error object is a %s value)",
-                              luaL_typename(L, 1));
-    }
-    luaL_traceback(L, L, msg, 1);
-    return 1;
-}
-
-// Setup песочницы: библиотеки, чёрный список, print/log/require, hook.
-// Вызывается под pcall — при OOM бросает наверх строкой.
+// The whitelist itself - libraries, removed globals, print/log/require - is
+// nslua_sandbox.cpp, shared with the persistent effect runtime (lua_fx.cpp)
+// so the two cannot drift apart. Called under pcall: OOM propagates as a string.
 static void setupSandbox(lua_State *L) {
-    // Белый список: ТОЛЬКО base, table, string, math. io/os/debug/
-    // coroutine/package не только не открыты — их .c нет в сборке.
-    static const luaL_Reg libraries[] = {
-        {LUA_GNAME,       luaopen_base},
-        {LUA_TABLIBNAME,  luaopen_table},
-        {LUA_STRLIBNAME,  luaopen_string},
-        {LUA_MATHLIBNAME, luaopen_math},
-        {NULL, NULL},
-    };
-    for (const luaL_Reg *lib = libraries; lib->func != NULL; ++lib) {
-        luaL_requiref(L, lib->name, lib->func, 1);
-        lua_pop(L, 1);
-    }
+    nslua_sandbox_open(L);
 
-    // dofile/loadfile — файловая система; load — непроверяемый байткод;
-    // collectgarbage — контроль GC (паузы/тайминг), policy-скрипту не место.
-    // (setmetatable/rawset/… оставлены: нужны для таблиц, escape'ом не являются —
-    //  io/os/load физически отсутствуют в сборке. Аудит nslua v33.32.0.)
-    static const char *const kRemoved[] = {"dofile", "loadfile", "load",
-                                           "collectgarbage"};
-    for (size_t i = 0; i < sizeof(kRemoved) / sizeof(kRemoved[0]); i++) {
-        lua_pushnil(L);
-        lua_setglobal(L, kRemoved[i]);
-    }
-
-    // print → Serial
-    lua_pushcfunction(L, sandboxPrint);
-    lua_setglobal(L, "print");
-
-    // log(str) → Serial
-    lua_pushcfunction(L, sandboxLog);
-    lua_setglobal(L, "log");
-
-    // require-заглушка (только хост-прелоады, которых на S3 пока нет)
-    lua_pushcfunction(L, sandboxRequire);
-    lua_setglobal(L, "require");
-
-    // P&P биндинг-группы (sys/time/echo/...) — саморегистрируются через
-    // NSLUA_BIND_REGISTER, открываются здесь в _G. Новая группа = 1 макрос
-    // в своём .cpp, без правки этого файла.
+    // P&P binding groups (sys/...) register themselves with
+    // NSLUA_BIND_REGISTER and are opened here into _G.
     nslua_open_all_bindings(L);
 
-    // Бюджет инструкций
+    // Instruction budget
     resetInstructionBudget(L);
 }
 
@@ -226,7 +141,7 @@ bool nslua_run(const char *src, char *err, size_t errlen) {
     }
 
     RunCtx ctx = { src };
-    lua_pushcfunction(L, messageHandler);       // errfunc @1
+    lua_pushcfunction(L, nslua_message_handler);       // errfunc @1
     lua_pushcfunction(L, runSandboxed);
     lua_pushlightuserdata(L, &ctx);
     const int status = lua_pcall(L, 1, 0, 1);   // 1 arg (ctx), errfunc @1

@@ -55,11 +55,20 @@ bool httpForceFlightboard = false;  // flight board page override
 #if defined(YACHTRADAR_ENABLED)
 bool httpForceYachtRadar = false;   // yacht radar page override
 #endif
+#if defined(LUA_EFFECTS_ENABLED)
+#include "lua/lua_effects_page.h"    // LUA_EFFECT_COUNT, which the page enum below needs
+#endif
 #if defined(CONTROL_ENCODER_ENABLED)
 // Pages the knob cycles through, in the order a long press walks them. The
 // clock is first because it is what the panel should fall back to.
 enum CtrlPage : uint8_t {
   PAGE_CLOCK = 0,
+#if defined(LUA_EFFECTS_ENABLED)
+  // Each Lua effect is a page of its own, straight after the clock styles, so
+  // the knob and the carousel walk them one at a time as they walk the styles.
+  PAGE_LUA_FIRST,
+  PAGE_LUA_LAST = PAGE_LUA_FIRST + LUA_EFFECT_COUNT - 1,
+#endif
 #if defined(WORLDCLOCK_ENABLED)
   PAGE_WORLDCLOCK,               // a clock too, so it sits next to the clock
 #endif
@@ -75,6 +84,12 @@ enum CtrlPage : uint8_t {
   PAGE_COUNT
 };
 static uint8_t ctrlPage = PAGE_CLOCK;
+#if defined(LUA_EFFECTS_ENABLED)
+// The effect a page shows, or -1 if it is not an effect page.
+static inline int16_t ctrlLuaEffect(uint8_t page) {
+  return (page >= PAGE_LUA_FIRST && page <= PAGE_LUA_LAST) ? (int16_t)(page - PAGE_LUA_FIRST) : -1;
+}
+#endif
 
 #endif
 bool httpForceViz = false;  // HTTP override to force the audio visualizer (via /api/mode/viz)
@@ -196,6 +211,10 @@ int getOptimalRefreshRate() {
 #if defined(WORLDCLOCK_ENABLED) && defined(CONTROL_ENCODER_ENABLED)
   // The map changes once a minute; only the breathing home dot needs frames.
   if (ctrlPage == PAGE_WORLDCLOCK) return 10;
+#endif
+#if defined(LUA_EFFECTS_ENABLED)
+  // The effect's own frame cap, lowered to what its task actually delivers.
+  if (luaEffectCurrent() >= 0) return luaEffectsRefreshHz();
 #endif
 #if defined(RAILBOARD_ENABLED)
   // The header clock shows seconds; the data itself changes every 20 s.
@@ -383,6 +402,9 @@ void setup() {
     Serial.printf("[nslua] self-test %s%s%s\n",
                   ok ? "PASSED" : "FAILED", ok ? "" : ": ", ok ? "" : err);
     nslua_bindings_dump();
+#if defined(LUA_EFFECTS_ENABLED)
+    luaEffectsBegin();           // the effect task on core 0 and its frame buffers
+#endif
 #if defined(NSLUA_BENCH)
     nsluaBenchBegin();           // phase 6b bench build only
 #endif
@@ -457,6 +479,9 @@ static bool ctrlPageHasControls(uint8_t page) {
 
 static const char *ctrlPageName(uint8_t page) {
   if (page >= PAGE_COUNT) return "CARD";
+#if defined(LUA_EFFECTS_ENABLED)
+  if (ctrlLuaEffect(page) >= 0) return luaEffectName((uint8_t)ctrlLuaEffect(page));
+#endif
 #if defined(WORLDCLOCK_ENABLED)
   if (page == PAGE_WORLDCLOCK) return "WORLD CLOCK";
 #endif
@@ -596,6 +621,22 @@ void loop() {
   }
   if (ctrlPage >= ctrlPageCount()) ctrlPage = PAGE_CLOCK;
 #endif
+#if defined(LUA_EFFECTS_ENABLED)
+  // The web UI picks an effect by index: it becomes the page, as a knob turn
+  // would make it, and holds the carousel as a knob turn does.
+  {
+    const int16_t asked = luaEffectsTakeShowRequest();
+    if (asked >= 0) {
+      ctrlPage = (uint8_t)(PAGE_LUA_FIRST + asked);
+      ctrlEntered = false;
+#if defined(CAROUSEL_ENABLED)
+      carouselNote();
+#endif
+    }
+  }
+  // Opens the effect on its task when its page arrives, closes it when it goes.
+  luaEffectsSelect(ctrlLuaEffect(ctrlPage));
+#endif
 #if defined(FLIGHTBOARD_ENABLED)
   httpForceFlightboard = (ctrlPage == PAGE_FLIGHTBOARD);
 #endif
@@ -723,6 +764,10 @@ void loop() {
     // frame, so skip the redundant clear when it is what renders this tick.
     bool animFullRepaint = !showViz && !showStats && ambientActive() &&
                            settings.ambientStyle == 6 && ambientCustomPlaying();
+#if defined(LUA_EFFECTS_ENABLED)
+    // An effect's blit writes all 8192 pixels; a clear first would only flash black.
+    if (luaEffectCurrent() >= 0) animFullRepaint = true;
+#endif
     // Bright starfield details make partial scans visible. Do not clear/reuse
     // the previous front buffer until the queued flip has settled.
     if (showViz && settings.vizStyle == 5) display.waitForScanCompletion();
@@ -739,6 +784,12 @@ void loop() {
 #if defined(WORLDCLOCK_ENABLED) && defined(CONTROL_ENCODER_ENABLED)
     if (ctrlPage == PAGE_WORLDCLOCK) {
       worldClockRender();
+    } else
+#endif
+#if defined(LUA_EFFECTS_ENABLED)
+    // The newest frame the effect task finished, blitted from its PSRAM canvas.
+    if (luaEffectCurrent() >= 0) {
+      luaEffectsRender();
     } else
 #endif
 #if defined(RAILBOARD_ENABLED)
