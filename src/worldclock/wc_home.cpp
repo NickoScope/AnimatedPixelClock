@@ -12,6 +12,7 @@
 #include <time.h>
 
 #include "../config/config.h"
+#include "../network/net_lock.h"
 #include "../timezones.h"
 #include "posix_tz.h"
 #include "worldclock.h"
@@ -149,12 +150,13 @@ static void ipTask(void *) {
   memset(&c, 0, sizeof(c));
   bool ok = false;
   {
+    NetLockGuard net(2 * NET_LOCK_WAIT_MS);   // declared first: released after the connection closes
     WiFiClientSecure client;
     client.setInsecure();   // as the weather fetch: public, non-sensitive data, no certificate bundle
     HTTPClient http;
     http.setTimeout(10000);
     http.useHTTP10(true);
-    if (http.begin(client, IP_URL)) {
+    if (net.held() && http.begin(client, IP_URL)) {
       const int code = http.GET();
       if (code == HTTP_CODE_OK) {
         JsonDocument doc;
@@ -228,10 +230,11 @@ void wcHomeTick() {
 
   // One lookup per boot, once NTP has proved the way out works, and only when
   // nothing better will ever answer.
-  if (s_ipState == IP_IDLE && !locationSet() && WiFi.status() == WL_CONNECTED && time(nullptr) > 1700000000) {
+  if (s_ipState == IP_IDLE && !locationSet() && WiFi.status() == WL_CONNECTED && time(nullptr) > 1700000000 &&
+      !netLockBusy()) {
     s_ipState = IP_RUNNING;
     // Core 0 and 8 KB, as the weather task that does the same HTTPS and JSON work.
-    if (xTaskCreatePinnedToCore(ipTask, "wcHomeIp", 8192, nullptr, 1, nullptr, 0) != pdPASS) s_ipState = IP_FAILED;
+    if (xTaskCreatePinnedToCore(ipTask, "wcHomeIp", 8192, nullptr, 0, nullptr, 0) != pdPASS) s_ipState = IP_FAILED;
   }
 }
 

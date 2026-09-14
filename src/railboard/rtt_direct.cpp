@@ -14,6 +14,7 @@
 #include <time.h>
 
 #include "rtt_roots.h"
+#include "../network/net_lock.h"
 
 namespace {
 
@@ -28,7 +29,10 @@ const char *const kNvsNs       = "rb";
 // Home Assistant polls the same token every 20 s when its poll is on, so the
 // day's quota is shared: this side slows down as it runs out and leaves the
 // rest to Home Assistant.
-const uint32_t kIntervalS  = 30;        // the owner's brief
+const uint32_t kIntervalS  = 30;        // the owner's brief, while the page is on screen
+// Off screen the board still stays fresh enough to show at once, but a poll is
+// a TLS handshake on core 0 beside the effects; every 5 min is a CPU choice.
+const uint32_t kBackgroundS = 300;
 const uint32_t kSlowS      = 120;       // remaining-day <= 2 x floor
 const uint32_t kTrickleS   = 900;       // remaining-day <= floor, or none left this hour
 const int32_t  kFloorMin   = 500;       // floor = max(500, limit-day / 10)
@@ -46,7 +50,11 @@ const int64_t  kTokenAssumeS = 600;     // validUntil missing or unreadable
 // fetch runs. Everything else - mbedTLS (tlsUsePsram), the body, the JSON, the
 // access token - is PSRAM. The task reports its stack high-water mark.
 const uint32_t    kStackBytes      = 12 * 1024;
-const UBaseType_t kPriority        = 1;
+// Below the Lua effect task (priority 1, core 0): a TLS handshake is hundreds of
+// milliseconds of maths, and at equal priority it took turns with the effect's
+// frames - the snooker clock stuttered on the panel, 2026-09-14. At 0 it runs
+// in the gaps between frames.
+const UBaseType_t kPriority        = 0;
 const BaseType_t  kCore            = 0;
 const size_t      kMinInternalFree = 28 * 1024;   // do not start below this
 // Sized from synthetic answers with every field the schema lists (the spec has
@@ -119,6 +127,7 @@ uint8_t  s_errStreak   = 0;
 uint32_t s_polls = 0, s_fails = 0;
 uint32_t s_lastDoneMs = 0, s_lastOkMs = 0;
 uint32_t s_lastDelayS = kIntervalS;
+bool     s_onScreen   = false;
 bool     s_haveOutcome = false;
 Outcome  s_last;                    // the latest finished fetch
 uint8_t  s_blocked = ST_IDLE;       // why a due fetch did not start
@@ -420,9 +429,13 @@ void fetchTask(void *) {
   Outcome o;
   memset(&o, 0, sizeof(o));
   o.leftDay = o.limitDay = o.leftHour = o.leftMinute = -1;
-  o.heapBefore = o.heapMin = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
   memcpy(o.crs, s_taskCrs, sizeof(o.crs));
-  runFetch(o);
+  {
+    NetLockGuard net(NET_LOCK_WAIT_MS);   // released before vTaskDelete below
+    o.heapBefore = o.heapMin = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+    if (net.held()) runFetch(o);
+    else            o.state = ST_LOWMEM;
+  }
   o.kind       = s_kind;
   o.validUntil = s_kind == KIND_REFRESH ? s_accessUntil : 0;
   o.fetchedAt  = time(nullptr);
@@ -440,7 +453,7 @@ uint32_t nextDelayS(const Outcome &o) {
   switch (o.state) {
   case ST_OK: {
     s_errStreak = 0;
-    uint32_t d = kIntervalS;
+    uint32_t d = s_onScreen ? kIntervalS : kBackgroundS;
     if (o.leftDay >= 0) {
       const int32_t floor = o.limitDay > 0 && o.limitDay / 10 > kFloorMin ? o.limitDay / 10 : kFloorMin;
       if (o.leftDay <= floor)            d = kTrickleS;
@@ -495,6 +508,15 @@ void rttDirectStationChanged() {
   if (!s_authStepS) s_nextAtMs = millis();     // a new station does not mend a refused token
 }
 
+void rttDirectOnScreen(bool onScreen) {
+  if (onScreen && !s_onScreen && s_tokenStored) {
+    // Coming into view: fetch now unless the last good board is fresher than a poll.
+    const uint32_t nowMs = millis();
+    if (!s_lastOkMs || nowMs - s_lastOkMs >= kIntervalS * 1000UL) s_nextAtMs = nowMs;
+  }
+  s_onScreen = onScreen;
+}
+
 bool rttDirectLoop(const char *crs, rtt::Lists *out, int64_t *fetchedAt) {
   if (!s_begun || !s_tokenStored || !s_result) return false;
   const uint32_t nowMs = millis();
@@ -535,6 +557,7 @@ bool rttDirectLoop(const char *crs, rtt::Lists *out, int64_t *fetchedAt) {
   if ((int32_t)(nowMs - s_nextAtMs) < 0) return handed;
   if (WiFi.status() != WL_CONNECTED) { s_blocked = ST_NOWIFI; return handed; }
   if (time(nullptr) < 1700000000) { s_blocked = ST_NOCLOCK; return handed; }   // certificates need the date
+  if (netLockBusy()) { s_nextAtMs = nowMs + 2000UL; return handed; }         // another fetch is on the network
   if (heap_caps_get_free_size(MALLOC_CAP_INTERNAL) < kMinInternalFree ||
       heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) < kStackBytes + 1024) {
     s_blocked  = ST_LOWMEM;

@@ -641,7 +641,18 @@ bool panelShowStyle(uint8_t styleId) {
 #endif  // CONTROL_ENCODER_ENABLED
 
 // ========== loop() ==========
+// The longest loop() pass in the last 10 s, for /api/info: a slow page change or
+// a stuttering effect shows up here before anyone has to guess.
+static uint32_t s_loopPrevUs = 0, s_loopMaxUs = 0, s_loopMaxLastUs = 0, s_loopWinMs = 0;
+uint32_t loopMaxMs() { return s_loopMaxLastUs / 1000UL; }
+
 void loop() {
+  {
+    const uint32_t nowUs = micros();
+    if (s_loopPrevUs && nowUs - s_loopPrevUs > s_loopMaxUs) s_loopMaxUs = nowUs - s_loopPrevUs;
+    s_loopPrevUs = nowUs;
+    if (millis() - s_loopWinMs >= 10000UL) { s_loopWinMs = millis(); s_loopMaxLastUs = s_loopMaxUs; s_loopMaxUs = 0; }
+  }
   // Feed watchdog
   esp_task_wdt_reset();
 #if defined(NSLUA_BENCH)

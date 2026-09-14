@@ -35,6 +35,7 @@ void rttDirectBegin();                 // setup(): reads whether a token is stor
 bool rttDirectLoop(const char *crs, rtt::Lists *out, int64_t *fetchedAt);
 
 void rttDirectStationChanged();        // fetch the new station now
+void rttDirectOnScreen(bool onScreen); // page up: poll every 30 s; otherwise every 5 min
 bool rttDirectHasToken();
 bool rttDirectAuthRefused();           // RTT refused the stored token
 

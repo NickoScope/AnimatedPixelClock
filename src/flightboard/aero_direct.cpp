@@ -14,6 +14,7 @@
 #include <time.h>
 
 #include "aero_roots.h"
+#include "../network/net_lock.h"
 
 namespace {
 
@@ -48,7 +49,8 @@ const uint32_t kSettleMs      = 2500;                   // budget and trackers r
 // route strings and indentation, and the filtered parse of 16 records peaked
 // at 15 KB on a 64-bit host. The real sizes are in /api/flightboard.
 const uint32_t    kStackBytes      = 12 * 1024;
-const UBaseType_t kPriority        = 1;
+// Below the Lua effect task, for the same reason as the rail board's fetch.
+const UBaseType_t kPriority        = 0;
 const BaseType_t  kCore            = 0;
 const size_t      kMinInternalFree = 28 * 1024;
 const size_t      kBodyMax         = 192 * 1024;
@@ -418,8 +420,12 @@ void callTask(void *) {
   Outcome o;
   memset(&o, 0, sizeof(o));
   o.job = s_job;
-  o.heapBefore = o.heapMin = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
-  runCall(o);
+  {
+    NetLockGuard net(NET_LOCK_WAIT_MS);   // released before vTaskDelete below
+    o.heapBefore = o.heapMin = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+    if (net.held()) runCall(o);
+    else            o.state = ST_LOWMEM;
+  }
   o.stackFree = uxTaskGetStackHighWaterMark(nullptr);
   portENTER_CRITICAL(&s_mux);
   s_done    = o;
@@ -607,6 +613,7 @@ void aeroDirectLoop(const AeroWant &w) {
   if (held(s_holdUntilMs, nowMs)) return;
   if (WiFi.status() != WL_CONNECTED) { s_blocked = ST_NOWIFI; return; }
   if (!clockSet()) { s_blocked = ST_NOCLOCK; return; }        // certificates, windows and caps need the date
+  if (netLockBusy()) { s_holdUntilMs = (nowMs + 2000UL) | 1; return; }   // another fetch is on the network; nothing counted
 
   Job j;
   bool board = false;

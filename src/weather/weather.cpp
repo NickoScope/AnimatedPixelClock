@@ -17,6 +17,7 @@
 #include "../config/config.h"
 #include "../clocks/cycle_config.h"
 #include "../network/network.h"
+#include "../network/net_lock.h"
 
 #define WEATHER_FETCH_INTERVAL_MS (10UL * 60UL * 1000UL)
 #define WEATHER_RETRY_INTERVAL_MS (60UL * 1000UL)
@@ -142,7 +143,11 @@ static void weatherTask(void*) {
       ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(WEATHER_IDLE_POLL_MS));
       continue;
     }
-    bool ok = fetchWeather();
+    bool ok = false;
+    {
+      NetLockGuard net(NET_LOCK_WAIT_MS);
+      ok = net.held() && fetchWeather();
+    }
     // Sleeps the full interval, but a settings change (new location, toggle)
     // kicks the task awake early via weatherSettingsChanged().
     ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(ok ? WEATHER_FETCH_INTERVAL_MS
@@ -157,6 +162,6 @@ void weatherSettingsChanged() {
 void startWeatherTask() {
   if (weatherTaskHandle) return;
   // Core 0: the Arduino loop (and the HUB75 DMA refresh) live on core 1.
-  xTaskCreatePinnedToCore(weatherTask, "weather", 8192, nullptr, 1,
+  xTaskCreatePinnedToCore(weatherTask, "weather", 8192, nullptr, 0,   // below the Lua effect task
                           &weatherTaskHandle, 0);
 }

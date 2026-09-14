@@ -134,6 +134,7 @@ enum : uint8_t { RB_SRC_NONE = 0, RB_SRC_HA, RB_SRC_DIRECT };
 enum RbView : uint8_t { RB_VIEW_AUTO = 0, RB_VIEW_DEP, RB_VIEW_ARR, RB_VIEW_DIAG };
 
 static RbBoard    s_board[2];
+static uint32_t   s_lastRenderMs = 0;   // the page was drawn this recently
 static RbBoard    s_scratch;          // parsed into first, so a bad payload never shows
 static RbHaStatus s_ha;
 static rbs::Settings s_cfg   = RB_BUILD;   // in force
@@ -544,6 +545,7 @@ void railboardLoop() {
   saveWebSettings();
 #if defined(RAILBOARD_DIRECT_ENABLED)
   int64_t fetchedAt = 0;
+  rttDirectOnScreen(s_lastRenderMs && millis() - s_lastRenderMs < 3000UL);
   if (s_direct && rttDirectLoop(s_crs, s_direct, &fetchedAt)) applyDirect(*s_direct, fetchedAt);
 #endif
   const bool up = mqttBusConnected();
@@ -929,6 +931,7 @@ void railboardRender() {
   const time_t   now    = time(nullptr);
   const bool     synced = now > 1700000000;   // before NTP the clock reads 1970; same test as the world clock
   const uint32_t nowMs  = millis();
+  s_lastRenderMs = nowMs ? nowMs : 1;
 
   if (s_view == RB_VIEW_AUTO && nowMs - s_lastFrame > (uint32_t)RB_REOPEN_MS) {
     s_altSince  = nowMs;
