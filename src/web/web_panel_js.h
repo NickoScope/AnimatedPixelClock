@@ -55,12 +55,12 @@ function segSet(id, v) {
   each(g.querySelectorAll('button'), function (b) { var on = b.getAttribute('data-v') === String(v); b.classList.toggle('on', on); b.setAttribute('aria-pressed', on ? 'true' : 'false'); });
 }
 
-var NAMES = { clock: 'Clock', world: 'World clock', flights: 'Flight board', trains: 'Rail board', yachts: 'Yacht radar', cards: 'Card', other: 'Page' };
-var HINTS = { clock: 'Always on - where the panel falls back to', world: 'Daylight map and the time', flights: 'Arrivals and departures', trains: 'Departures, then arrivals, for one station', yachts: 'AIS vessels in the bay', other: 'Always visited' };
+var NAMES = { clock: 'Clock', world: 'World clock', flights: 'Flight board', trains: 'Rail board', media: 'Media', yachts: 'Yacht radar', cards: 'Card', other: 'Page' };
+var HINTS = { clock: 'Always on - where the panel falls back to', world: 'Daylight map and the time', flights: 'Arrivals and departures', trains: 'Departures, then arrivals, for one station', media: 'Now playing on a Home Assistant player', yachts: 'AIS vessels in the bay', other: 'Always visited' };
 var pageIdx = {}, lastPanel = null;
 
 // ---------------------------------------------------------------- polling
-var POLL = { pnow: [pollNow, 2000], pflights: [pollFb, 5000], ptrains: [pollRb, 5000], pworld: [pollWc, 30000], pyachts: [pollYr, 3000], plua: [pollEffects, 3000], pknob: [pollKnob, 250] };
+var POLL = { pnow: [pollNow, 2000], pflights: [pollFb, 5000], ptrains: [pollRb, 5000], pmedia: [pollMp, 2000], pworld: [pollWc, 30000], pyachts: [pollYr, 3000], plua: [pollEffects, 3000], pknob: [pollKnob, 250] };
 var active = null, timer = null;
 function activePage() { var s = document.querySelector('section.page.active'); return s && POLL[s.dataset.page] ? s.dataset.page : null; }
 function tick() {
@@ -209,6 +209,93 @@ if ($('pnCardsOn')) $('pnCardsOn').addEventListener('change', function () {
     .catch(function (err) { box.checked = !box.checked; alert(err.message); });
 });
 
+// ---------------------------------------------------------------- media (src/media, /api/media)
+var mpLast = null;
+function mmss(s) {
+  s = Math.max(0, Math.floor(+s || 0));
+  var h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60;
+  return (h ? h + ':' + (m < 10 ? '0' : '') : '') + m + ':' + (x < 10 ? '0' : '') + x;
+}
+function pollMp() { return api('/api/media').then(renderMp); }
+function postMp(body, btn) {
+  return api('/api/media', body).then(function (d) { renderMp(d); if (btn) flash(btn, 'Sent'); note('mpMsg', ''); return d; })
+    .catch(function (err) { if (btn) flash(btn, err.message, true); note('mpMsg', err.message, true); throw err; });
+}
+function mpOption(sel, value, text) { var o = document.createElement('option'); o.value = value; o.textContent = text; sel.appendChild(o); }
+function renderMp(d) {
+  mpLast = d;
+  pageIdx.media = d.page;
+  var np = d.np || {}, pl = d.players || { list: [] }, fv = d.favs || { list: [] }, mq = d.mqtt || {};
+  // Every string from Home Assistant goes in with textContent or esc().
+  var sel = $('mpPlayer');
+  if (sel && !focused(sel)) {
+    var want = d.selected || pl.sel || np.player || '', sig = JSON.stringify(pl.list) + '|' + want, ids = {};
+    if (sel.dataset.sig !== sig) {
+      sel.dataset.sig = sig; sel.innerHTML = '';
+      pl.list.forEach(function (p) { ids[p.id] = 1; mpOption(sel, p.id, p.name + ' · ' + p.st); });
+      if (want && !ids[want]) mpOption(sel, want, want + ' (not in the list)');
+      if (!sel.options.length) mpOption(sel, '', 'no players from Home Assistant yet');
+      sel.value = want;
+    }
+  }
+  setText('mpSelTag', !d.selected ? 'none chosen here' : (d.selSent ? 'sent to home assistant' : 'not sent yet'));
+  var follows = !np.have ? 'nothing received yet' : (np.player ? np.name + ' · ' + np.player : 'no player');
+  if (np.have && d.selected && np.player !== d.selected) follows += ' - not the one chosen here; is it in the app\'s players list?';
+  setText('mpFollows', follows);
+
+  var fresh = np.have && !np.stale, led = $('mpLed');
+  if (led) { led.classList.toggle('online', fresh); led.classList.toggle('offline', !fresh); }
+  setText('mpStTag', !np.have ? '--' : (np.stale ? 'stale' : np.st));
+  setText('mpTitle', !np.have ? 'waiting for Home Assistant' : (np.title || (np.st === 'off' ? 'player is off' : 'nothing playing')));
+  setText('mpArtist', np.artist || '--');
+  setText('mpAlbum', np.album || '--');
+  setText('mpKind', !np.have ? '--' : np.kind + ' · ' + np.src + (np.err ? ' · last command failed: ' + np.err : ''));
+  var live = np.kind === 'radio' || !np.dur;
+  setText('mpPos', !np.have ? '--' : (live ? 'live' : mmss(np.pos) + ' / ' + mmss(np.dur)) + (np.stale ? ' · frozen, stale' : ''));
+  var bar = $('mpBar'); if (bar) bar.style.width = (np.have && !live ? Math.min(100, 100 * np.pos / np.dur) : 0) + '%';
+  var shown = d.volPending >= 0 ? d.volPending : (np.have ? np.vol : -1), vol = $('mpVol');
+  if (vol && !focused(vol)) { vol.disabled = !(shown >= 0); if (shown >= 0) vol.value = shown; setText('mpVolV', shown >= 0 ? shown + ' pc' : '--'); }
+  var mu = $('mpMute'); if (mu && !focused(mu)) mu.checked = !!np.muted;
+
+  setText('mpFavTag', fv.have ? fv.list.length + ' stations' + (fv.dropped ? ' · ' + fv.dropped + ' dropped' : '') : 'none received');
+  var box = $('mpFavs'), fsig = JSON.stringify(fv.list);
+  if (box && box.dataset.sig !== fsig) {
+    box.dataset.sig = fsig;
+    box.innerHTML = fv.list.map(function (f, i) {
+      return '<div class="pn-row"><div class="pn-name"><strong>' + esc(f.name) + '</strong><span class="ct-hint">' + esc(f.id) +
+        '</span></div><button type="button" class="btn btn-sm" data-fav="' + i + '">Play</button></div>';
+    }).join('') || '<p class="field-hint">None from Home Assistant: Music Assistant has no favourite radio, or the app has no config entry id.</p>';
+  }
+
+  setText('mpDiagTag', d.showing ? 'on screen' : 'not on screen');
+  setText('mpMq', (mq.connected ? 'connected' : String(mq.status || '--').toLowerCase()) + (mq.configured ? '' : ' · no broker stored'));
+  setText('mpBridge', { online: 'online', offline: 'offline - the app stopped, or lost the broker', unknown: 'has said nothing yet' }[d.bridge] || '--');
+  setText('mpAge', !np.have ? 'never' : (np.age != null ? ago(np.age) : 'no clock, received ' + ago(np.rx)) + ' · stale after ' + d.staleS + ' s');
+  setText('mpAvail', !np.have ? '--' : (np.player ? np.player + ' · ' + np.st : 'none followed'));
+  setText('mpPlayers', !pl.have ? 'none received' : pl.list.length + ' listed' + (pl.dropped ? ' · ' + pl.dropped + ' dropped' : '') + (pl.age != null ? ' · ' + ago(pl.age) : ''));
+  setText('mpSelSent', (d.selected || 'none chosen') + (d.selected ? ' · ' + (d.selSent ? 'sent' : 'not sent yet') + (d.selSaved ? '' : ' · saving') : ''));
+  var c = d.cmds || {};
+  setText('mpCmds', c.sent + ' sent · ' + c.failed + ' not sent' + (c.last ? ' · last ' + c.last + (c.lastOk ? '' : ' (not sent)') + (c.agoMs != null ? ' ' + ago(Math.round(c.agoMs / 1000)) : '') : ''));
+  setText('mpRefused', d.refused + (d.lastRefusal ? ' · last ' + d.lastRefusal : '') + ' · JSON peak ' + d.jsonPeak + ' B');
+  setText('mpTopics', d.root ? d.root + '{state, players, favs, ha, select, cmd}' + (d.subscribed && d.handler ? '' : ' · MQTT bus refused the subscription') : 'waiting for the MAC');
+}
+if ($('mpPlayer')) $('mpPlayer').addEventListener('change', function () {
+  var v = this.value; this.blur(); if (!v) return;
+  postMp({ select: v }).then(function () { note('mpSelMsg', 'Chosen and kept. Home Assistant follows it once its app reads the selection.'); }, function () {});
+});
+each(document.querySelectorAll('[data-mp]'), function (b) {
+  b.addEventListener('click', function () { postMp({ cmd: b.getAttribute('data-mp') }, b).catch(function () {}); });
+});
+if ($('mpVol')) {
+  $('mpVol').addEventListener('input', function () { setText('mpVolV', this.value + ' pc'); });
+  $('mpVol').addEventListener('change', function () { var v = +this.value; this.blur(); postMp({ vol: v }).catch(function () {}); });
+}
+if ($('mpMute')) $('mpMute').addEventListener('change', function () { var m = this.checked; this.blur(); postMp({ mute: m }).catch(function () {}); });
+if ($('mpFavs')) $('mpFavs').addEventListener('click', function (e) {
+  var b = e.target.closest('button[data-fav]'); if (!b || !mpLast || !mpLast.favs) return;
+  var f = mpLast.favs.list[+b.getAttribute('data-fav')]; if (f) postMp({ play_fav: f.id }, b).catch(function () {});
+});
+
 // ---------------------------------------------------------------- the sketch
 // A layout sketch on a 128x64 grid, four canvas pixels to a panel pixel so the
 // text stays crisp. Shapes stand for text the browser does not have.
@@ -242,6 +329,12 @@ function drawNow(d) {
     T(c, 2, 9, 'Time', 5, '#fff'); T(c, 22, 9, 'Destination', 5, '#fff');
     for (i = 0; i < 6; i++) { y = 16 + i * 7; R(c, 2, y, 16, 5, RBA); R(c, 22, y, 26 + (i * 23) % 34, 5, RBA); R(c, 85, y, 3, 5, RBA); R(c, 93, y, i === 2 ? 17 : 24, 5, i === 3 ? '#ff2418' : RBA); }
     T(c, 2, 58, 'Page 1 of 2', 5, RBA); T(c, 126, 57, n.time, 7, RBA, 'right');
+  } else if (n.key === 'media') {
+    // media_page.cpp's now playing: tag, player, clock; artist, title, album; progress and volume bars.
+    R(c, 0, 0, 11, 7, '#00bedc'); T(c, 2, 1, 'MA', 5, '#000'); T(c, 14, 1, 'PLAYER', 5, dim); T(c, 126, 1, n.time, 5, dim, 'right');
+    R(c, 2, 10, 44, 5, '#78c8ff'); R(c, 2, 17, 96, 7, '#fff'); R(c, 2, 27, 58, 5, dim);
+    R(c, 2, 37, 14, 5, dim); R(c, 19, 38, 88, 3, '#282c30'); R(c, 19, 38, 30, 3, '#30e840'); R(c, 110, 37, 14, 5, dim);
+    R(c, 2, 46, 11, 5, dim); R(c, 18, 47, 60, 3, '#282c30'); R(c, 18, 47, 30, 3, '#78c8ff'); T(c, 2, 57, 'CLICK: TUNE, VOLUME', 5, dim);
   } else if (n.key === 'yachts') {
     c.strokeStyle = dim; c.lineWidth = SK * 0.5;
     [31, 20, 10].forEach(function (r) { c.beginPath(); c.arc(31.5 * SK, 32 * SK, r * SK, 0, 2 * Math.PI); c.stroke(); });

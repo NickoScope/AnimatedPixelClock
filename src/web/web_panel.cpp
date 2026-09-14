@@ -27,6 +27,12 @@
 //                           | {"remove":id} | {"auto":true}
 //                           400 bad input; 409 no free slot, or the name is on the map.
 //                           A POST that changes home puts the page on the panel.
+//   GET  /api/media         dev, root, selected, bridge, np {player, st, title, artist, album, kind,
+//                           vol, muted, pos, dur, ts, age, stale}, players {list}, favs {list}, cmds,
+//                           refused, mqtt                                   (MEDIAPLAYER_ENABLED only)
+//   POST /api/media         one of {"select":"media_player.x"} | {"cmd":"toggle|play|pause|next|prev"}
+//                           | {"vol":0..100} | {"vol_step":-20..20} | {"mute":b} | {"play_fav":"id"}
+//                           400 bad input; 409 not in Home Assistant's lists, or no player; 503 MQTT down
 //   GET  /api/knob          settings, defaults, bounds, stats
 //   POST /api/knob          {"reverse":b,"lockoutMs":n,"debounceMs":n,"detent":-1..1}
 //                           | {"defaults":true}
@@ -72,6 +78,7 @@
 #include "../mqtt/mqtt_bus.h"
 #include "../panel/panel.h"
 #include "../railboard/railboard.h"
+#include "../media/media.h"
 #include "../utils/utils.h"
 #include "../viz/visualizer.h"
 #include "../worldclock/posix_tz.h"
@@ -178,7 +185,7 @@ static bool optBool(JsonVariantConst v, bool *out) {
 }
 
 static const char *const KEY_NAMES[PANEL_KEY_COUNT] = {
-  "clock", "world", "flights", "trains", "yachts", "cards", "lua"};
+  "clock", "world", "flights", "trains", "yachts", "cards", "lua", "media"};
 
 static const char *keyName(uint8_t key) {
   return key < PANEL_KEY_COUNT ? KEY_NAMES[key] : "other";
@@ -201,7 +208,7 @@ static int pageOf(uint8_t key) {
 }
 
 #if defined(FLIGHTBOARD_ENABLED) || defined(RAILBOARD_ENABLED) || defined(WORLDCLOCK_ENABLED) || \
-    defined(YACHTRADAR_ENABLED)
+    defined(YACHTRADAR_ENABLED) || defined(MEDIAPLAYER_ENABLED)
 static void pageInfo(JsonDocument &doc, uint8_t key) {
   doc["page"]    = pageOf(key);
   doc["showing"] = panelPageKey(panelCurrentPage()) == key;
@@ -220,7 +227,7 @@ static bool styleKnown(long id) {
   return false;
 }
 
-#if defined(MQTT_BUS_ENABLED) && (defined(FB_MQTT_ENABLED) || defined(RAILBOARD_ENABLED))
+#if defined(MQTT_BUS_ENABLED) && (defined(FB_MQTT_ENABLED) || defined(RAILBOARD_ENABLED) || defined(MEDIAPLAYER_ENABLED))
 static void mqttJson(JsonObject o, const char *status) {
   o["configured"] = mqttBusConfigured();
   o["connected"]  = mqttBusConnected();
@@ -256,6 +263,9 @@ String panelWebFeatures() {
 #endif
 #if defined(MQTT_BUS_ENABLED)
   f += " mqtt";
+#endif
+#if defined(MEDIAPLAYER_ENABLED)
+  f += " media";
 #endif
   return f;
 }
@@ -619,6 +629,27 @@ static void handleWorldclock() {
 }
 #endif
 
+// ---------------------------------------------------------------- /api/media
+#if defined(MEDIAPLAYER_ENABLED)
+// Validation lives with the lists it checks against (media_ha.cpp): a player
+// must be one Home Assistant listed, a favourite one it sent.
+static void handleMedia() {
+  if (isPost()) {
+    JsonDocument in(&s_alloc);
+    if (!readBody(in)) return;
+    const char *why = "refused";
+    const int code = mediaWebPost(in.as<JsonObjectConst>(), &why);
+    if (code != 200) REJECT(code, why);
+  }
+  JsonDocument doc(&s_alloc);
+  doc["success"] = true;
+  pageInfo(doc, PANEL_KEY_MEDIA);
+  mediaStatusJson(doc.as<JsonObject>());
+  mqttJson(doc["mqtt"].to<JsonObject>(), mqttBusStatus());
+  sendDoc(doc);
+}
+#endif
+
 // ---------------------------------------------------------------- /api/knob
 static const char *eventName(uint8_t e) {
   switch (e) {
@@ -942,6 +973,9 @@ void panelWebBegin() {
 #endif
 #if defined(LUA_EFFECTS_ENABLED)
   route("/api/lua", handleLua);
+#endif
+#if defined(MEDIAPLAYER_ENABLED)
+  route("/api/media", handleMedia);
 #endif
 #if defined(CLIPS_SD_ENABLED)
   route("/api/clips", handleClips);

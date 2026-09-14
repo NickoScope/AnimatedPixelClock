@@ -42,6 +42,7 @@ enum PanelPageKey : uint8_t {
   // Appended rather than placed by page order: the switches are bits in NVS
   // "pages", and a key inserted earlier would move every bit after it.
   PANEL_KEY_LUA,            // every Lua effect page, as one switch
+  PANEL_KEY_MEDIA,          // the media player's now-playing page
   PANEL_KEY_COUNT,
   PANEL_KEY_NONE = 0xFF,    // a page this module does not know: always visited
 };

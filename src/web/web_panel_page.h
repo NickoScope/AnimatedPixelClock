@@ -21,6 +21,7 @@ static const char PANEL_NAV_HTML[] PROGMEM = R"PNL(<div class="nav-group" data-n
         <button type="button" class="nav-item" data-nav="pnow">Now showing<span class="nv-tag pn-navtag" id="pnNavTag">live</span></button>
         <button type="button" class="nav-item" data-nav="pflights" data-need="flights">Flight board</button>
         <button type="button" class="nav-item" data-nav="ptrains" data-need="trains">Rail board</button>
+        <button type="button" class="nav-item" data-nav="pmedia" data-need="media">Media</button>
         <button type="button" class="nav-item" data-nav="pworld" data-need="world">World clock</button>
         <button type="button" class="nav-item" data-nav="pyachts" data-need="yachts">Yacht radar</button>
         <button type="button" class="nav-item" data-nav="plua" data-need="lua">Effects &amp; clips<span class="nv-tag">Lua</span></button>
@@ -278,6 +279,93 @@ static const char PANEL_PAGES_HTML[] PROGMEM = R"PNL(<link rel="stylesheet" href
         </div>
       </section>
 
+      <!-- MEDIA -->
+      <section class="page" data-page="pmedia" data-need="media">
+        <div class="page-header">
+          <h1 class="page-h1">Media</h1>
+          <p class="page-lede">Now playing on a Home Assistant or Music Assistant player, and a remote for it. Home Assistant's app follows the player chosen here and publishes what it plays; the panel draws it and sends the buttons back over MQTT. There is no sound on the panel.</p>
+        </div>
+
+        <div class="card">
+          <h2 class="card-title">Player <span class="tag" id="mpSelTag">--</span></h2>
+          <div class="grid-2">
+            <div class="field" style="margin-bottom:0">
+              <label class="field-label" for="mpPlayer">Follow</label>
+              <div class="select-wrap"><select id="mpPlayer"></select></div>
+              <p class="field-hint">The players Home Assistant's app allows. Kept across reboots and published to Home Assistant, which follows it.</p>
+            </div>
+            <div class="field" style="margin-bottom:0">
+              <span class="field-label">Home Assistant follows</span>
+              <p class="pn-stn" id="mpFollows">--</p>
+            </div>
+          </div>
+          <div class="page-actions">
+            <button type="button" class="btn" data-show="media"><span class="gl"></span> Show on panel</button>
+          </div>
+          <p class="field-hint" id="mpSelMsg"></p>
+        </div>
+
+        <div class="card">
+          <h2 class="card-title">Now playing <span class="tag" id="mpStTag">--</span></h2>
+          <div class="status-readout pn-readout">
+            <div class="sr-head"><span class="sr-led" id="mpLed"></span><span class="sr-title" id="mpTitle">--</span></div>
+            <dl class="sr-rows">
+              <div class="sr-row"><dt>artist</dt><dd id="mpArtist">--</dd></div>
+              <div class="sr-row"><dt>album</dt><dd id="mpAlbum">--</dd></div>
+              <div class="sr-row"><dt>source</dt><dd id="mpKind">--</dd></div>
+              <div class="sr-row"><dt>position</dt><dd id="mpPos">--</dd></div>
+            </dl>
+          </div>
+          <div class="pn-mp-bar" aria-hidden="true"><span id="mpBar"></span></div>
+          <div class="page-actions">
+            <button type="button" class="btn" data-mp="prev">Previous</button>
+            <button type="button" class="btn btn-accent" data-mp="toggle">Play / pause</button>
+            <button type="button" class="btn" data-mp="next">Next</button>
+          </div>
+          <div class="grid-2" style="margin-top:12px">
+            <div class="field" style="margin-bottom:0">
+              <label class="field-label" for="mpVol">Volume</label>
+              <div class="range-row">
+                <input type="range" id="mpVol" min="0" max="100" step="1">
+                <span class="range-val" id="mpVolV">--</span>
+              </div>
+            </div>
+            <div class="field" style="margin-bottom:0">
+              <span class="field-label">Mute</span>
+              <label class="check-row standalone">
+                <input type="checkbox" id="mpMute">
+                <span class="check-box" aria-hidden="true"></span>
+                <span class="check-text"><strong>Muted</strong></span>
+              </label>
+            </div>
+          </div>
+          <p class="field-hint" id="mpMsg"></p>
+        </div>
+
+        <div class="card">
+          <h2 class="card-title">Radio favourites <span class="tag" id="mpFavTag">--</span></h2>
+          <div class="pn-list" id="mpFavs"></div>
+          <p class="field-hint">Music Assistant's favourite radio stations, as Home Assistant's app sends them. On the panel: click into the page and turn the knob; the station under the pointer starts once the knob rests.</p>
+        </div>
+
+        <div class="card">
+          <h2 class="card-title">Diagnostics <span class="tag" id="mpDiagTag">--</span></h2>
+          <div class="status-readout pn-readout">
+            <dl class="sr-rows">
+              <div class="sr-row"><dt>mqtt</dt><dd id="mpMq">--</dd></div>
+              <div class="sr-row"><dt>ha app</dt><dd id="mpBridge">--</dd></div>
+              <div class="sr-row"><dt>state age</dt><dd id="mpAge">--</dd></div>
+              <div class="sr-row"><dt>player</dt><dd id="mpAvail">--</dd></div>
+              <div class="sr-row"><dt>players</dt><dd id="mpPlayers">--</dd></div>
+              <div class="sr-row"><dt>selection</dt><dd id="mpSelSent">--</dd></div>
+              <div class="sr-row"><dt>commands</dt><dd id="mpCmds">--</dd></div>
+              <div class="sr-row"><dt>refused</dt><dd id="mpRefused">--</dd></div>
+              <div class="sr-row"><dt>topics</dt><dd id="mpTopics">--</dd></div>
+            </dl>
+          </div>
+        </div>
+      </section>
+
       <!-- WORLD CLOCK -->
       <section class="page" data-page="pworld" data-need="world">
         <div class="page-header">
@@ -500,6 +588,6 @@ static const char PANEL_PAGES_HTML[] PROGMEM = R"PNL(<link rel="stylesheet" href
       </section>
       <script src="/panel.js?v=%ASSETVER%"></script>)PNL";
 
-static const char PANEL_CSS[] PROGMEM = R"CSS(.pn-navtag{color:var(--accent-d)!important;background:var(--accent-soft)!important;border-color:var(--accent-line)!important}html.pn-live .save-bar{display:none}.pn-stage{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:16px;align-items:stretch}.pn-stage .oled-preview{margin-bottom:0}@media (max-width:720px){.pn-stage{grid-template-columns:1fr}}.pn-readout .sr-row{grid-template-columns:74px 1fr}.pn-readout .sr-row dd.warn{color:#ffb454;text-shadow:none}.pn-list{display:flex;flex-direction:column}.pn-row{display:flex;align-items:center;gap:12px;padding:10px 0;border-top:1px solid var(--line-soft)}.pn-row:first-child{border-top:0;padding-top:2px}.pn-row>.check-row,.pn-row>.pn-name{flex:1;min-width:0}.pn-name{font-size:14px;color:var(--ink-soft)}.pn-name strong{color:var(--ink);font-weight:600}.pn-name .ct-hint{display:block;color:var(--dim);font-size:12.5px;margin-top:2px}.pn-here{font-family:var(--mono);font-size:10px;letter-spacing:.05em;text-transform:uppercase;color:var(--accent-d);background:var(--accent-soft);border:1px solid var(--accent-line);border-radius:999px;padding:1px 8px;white-space:nowrap}.pn-row:not(.here) .pn-here{visibility:hidden}.btn-sm{padding:6px 12px;font-size:12.5px}.pn-cards{margin-top:10px}.pn-cards:empty::before{content:"No cards right now.";font-family:var(--mono);font-size:12px;color:var(--dim)}.pn-chips{margin:0}.pn-chips .chip{cursor:pointer;font-family:var(--mono);font-size:11.5px;letter-spacing:.03em;padding:6px 12px}.pn-seg button.on{background:var(--card);color:var(--ink);box-shadow:var(--shadow-card)}.pn-seg button{font-size:12px;padding:7px 14px}.pn-board,.pn-tester{padding:12px 14px}.pn-table{position:relative;z-index:1;display:grid;gap:2px 12px;font-size:12px;line-height:1.5;color:var(--crt-fg);text-shadow:0 0 6px var(--crt-glow);overflow-x:auto}.pn-fb{grid-template-columns:max-content max-content minmax(0,1fr) max-content}.pn-yr{grid-template-columns:minmax(0,1fr) max-content max-content max-content}.pn-table>span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.pn-table .h{color:var(--crt-dim);text-shadow:none;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase}.pn-table .r{text-align:right}.pn-table .dim,.pn-table .m0{color:var(--crt-dim);text-shadow:none}.pn-table .m1{color:#ffb454}.pn-table .now{box-shadow:inset 2px 0 0 #ffb400;padding-left:6px}.pn-table .empty{grid-column:1/-1;color:var(--crt-dim);text-shadow:none}.st-sched{color:#c8c8c8}.st-board{color:#00dcdc}.st-dep{color:#6e9bff}.st-land{color:#00c83c}.st-delay{color:#ffaa00}.st-canc{color:#ff4b4b}.pn-kv{display:grid;grid-template-columns:max-content 1fr;gap:6px 18px;margin:16px 0 0;font-size:13.5px}.pn-kv dt{font-family:var(--mono);font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--dim);padding-top:2px}.pn-kv dd{margin:0;color:var(--ink-soft)}.pn-ok{color:var(--ok)}.pn-warn{color:var(--warn)}.pn-err{color:var(--err)}.pn-radio input[type="radio"]{position:absolute;opacity:0;width:0;height:0}.pn-row input:disabled+.check-box{opacity:.5}.pn-row input:disabled~.check-text{cursor:default}.pn-radio .check-box{border-radius:999px}.pn-radio .check-row input:checked+.check-box::after{border-radius:999px;clip-path:none;width:8px;height:8px}.pn-sun{font-family:var(--mono);font-size:10.5px;letter-spacing:.04em;text-transform:uppercase;border-radius:999px;padding:1px 8px;border:1px solid var(--line);color:var(--dim);background:var(--paper-2);white-space:nowrap}.pn-sun.day{color:var(--warn);border-color:color-mix(in oklab,var(--warn) 40%,var(--line));background:color-mix(in oklab,var(--warn) 10%,var(--card))}.pn-count{position:relative;z-index:1;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:6px 0 2px}.pn-count div{text-align:center}.pn-count b{display:block;font-size:28px;font-weight:600;line-height:1.15;color:var(--crt-fg);text-shadow:0 0 8px var(--crt-glow);font-variant-numeric:tabular-nums}.pn-count span{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--crt-dim)}.pn-count b.bump{animation:pn-bump 450ms ease-out}@keyframes pn-bump{0%{color:#fff;text-shadow:0 0 14px var(--crt-glow)}100%{}}@media (prefers-reduced-motion:reduce){.pn-count b.bump{animation:none}}.pn-crs{font-family:var(--mono);text-transform:uppercase;letter-spacing:.14em;max-width:9em}.pn-stn{margin:8px 0 0;font-size:15px;color:var(--ink)}.pn-stn small{display:block;font-size:12.5px;color:var(--dim);margin-top:2px}@media (max-width:560px){.pn-count b{font-size:22px}.pn-row{flex-wrap:wrap}}.pn-wcname{letter-spacing:.08em;max-width:16em}#wcResults:not(:empty){margin:4px 0 12px}#wcFind{width:100%}.pn-colors{display:flex;flex-wrap:wrap;gap:4px}.pn-sw{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:6px;vertical-align:-1px;box-shadow:0 0 0 1px rgba(0,0,0,.25)}.pn-crs{font-family:var(--mono);text-transform:uppercase;letter-spacing:.14em;max-width:9em}.pn-stn{margin:8px 0 0;font-size:15px;color:var(--ink)}.pn-stn small{display:block;font-size:12.5px;color:var(--dim);margin-top:2px}@media (max-width:560px){.pn-count b{font-size:22px}.pn-row{flex-wrap:wrap}}.pn-thumb{width:64px;height:32px;flex:none;image-rendering:pixelated;background:#000;border-radius:3px})CSS";
+static const char PANEL_CSS[] PROGMEM = R"CSS(.pn-navtag{color:var(--accent-d)!important;background:var(--accent-soft)!important;border-color:var(--accent-line)!important}html.pn-live .save-bar{display:none}.pn-stage{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:16px;align-items:stretch}.pn-stage .oled-preview{margin-bottom:0}@media (max-width:720px){.pn-stage{grid-template-columns:1fr}}.pn-readout .sr-row{grid-template-columns:74px 1fr}.pn-readout .sr-row dd.warn{color:#ffb454;text-shadow:none}.pn-list{display:flex;flex-direction:column}.pn-row{display:flex;align-items:center;gap:12px;padding:10px 0;border-top:1px solid var(--line-soft)}.pn-row:first-child{border-top:0;padding-top:2px}.pn-row>.check-row,.pn-row>.pn-name{flex:1;min-width:0}.pn-name{font-size:14px;color:var(--ink-soft)}.pn-name strong{color:var(--ink);font-weight:600}.pn-name .ct-hint{display:block;color:var(--dim);font-size:12.5px;margin-top:2px}.pn-here{font-family:var(--mono);font-size:10px;letter-spacing:.05em;text-transform:uppercase;color:var(--accent-d);background:var(--accent-soft);border:1px solid var(--accent-line);border-radius:999px;padding:1px 8px;white-space:nowrap}.pn-row:not(.here) .pn-here{visibility:hidden}.btn-sm{padding:6px 12px;font-size:12.5px}.pn-cards{margin-top:10px}.pn-cards:empty::before{content:"No cards right now.";font-family:var(--mono);font-size:12px;color:var(--dim)}.pn-chips{margin:0}.pn-chips .chip{cursor:pointer;font-family:var(--mono);font-size:11.5px;letter-spacing:.03em;padding:6px 12px}.pn-seg button.on{background:var(--card);color:var(--ink);box-shadow:var(--shadow-card)}.pn-seg button{font-size:12px;padding:7px 14px}.pn-board,.pn-tester{padding:12px 14px}.pn-table{position:relative;z-index:1;display:grid;gap:2px 12px;font-size:12px;line-height:1.5;color:var(--crt-fg);text-shadow:0 0 6px var(--crt-glow);overflow-x:auto}.pn-fb{grid-template-columns:max-content max-content minmax(0,1fr) max-content}.pn-yr{grid-template-columns:minmax(0,1fr) max-content max-content max-content}.pn-table>span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.pn-table .h{color:var(--crt-dim);text-shadow:none;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase}.pn-table .r{text-align:right}.pn-table .dim,.pn-table .m0{color:var(--crt-dim);text-shadow:none}.pn-table .m1{color:#ffb454}.pn-table .now{box-shadow:inset 2px 0 0 #ffb400;padding-left:6px}.pn-table .empty{grid-column:1/-1;color:var(--crt-dim);text-shadow:none}.st-sched{color:#c8c8c8}.st-board{color:#00dcdc}.st-dep{color:#6e9bff}.st-land{color:#00c83c}.st-delay{color:#ffaa00}.st-canc{color:#ff4b4b}.pn-kv{display:grid;grid-template-columns:max-content 1fr;gap:6px 18px;margin:16px 0 0;font-size:13.5px}.pn-kv dt{font-family:var(--mono);font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--dim);padding-top:2px}.pn-kv dd{margin:0;color:var(--ink-soft)}.pn-ok{color:var(--ok)}.pn-warn{color:var(--warn)}.pn-err{color:var(--err)}.pn-radio input[type="radio"]{position:absolute;opacity:0;width:0;height:0}.pn-row input:disabled+.check-box{opacity:.5}.pn-row input:disabled~.check-text{cursor:default}.pn-radio .check-box{border-radius:999px}.pn-radio .check-row input:checked+.check-box::after{border-radius:999px;clip-path:none;width:8px;height:8px}.pn-sun{font-family:var(--mono);font-size:10.5px;letter-spacing:.04em;text-transform:uppercase;border-radius:999px;padding:1px 8px;border:1px solid var(--line);color:var(--dim);background:var(--paper-2);white-space:nowrap}.pn-sun.day{color:var(--warn);border-color:color-mix(in oklab,var(--warn) 40%,var(--line));background:color-mix(in oklab,var(--warn) 10%,var(--card))}.pn-count{position:relative;z-index:1;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:6px 0 2px}.pn-count div{text-align:center}.pn-count b{display:block;font-size:28px;font-weight:600;line-height:1.15;color:var(--crt-fg);text-shadow:0 0 8px var(--crt-glow);font-variant-numeric:tabular-nums}.pn-count span{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--crt-dim)}.pn-count b.bump{animation:pn-bump 450ms ease-out}@keyframes pn-bump{0%{color:#fff;text-shadow:0 0 14px var(--crt-glow)}100%{}}@media (prefers-reduced-motion:reduce){.pn-count b.bump{animation:none}}.pn-crs{font-family:var(--mono);text-transform:uppercase;letter-spacing:.14em;max-width:9em}.pn-stn{margin:8px 0 0;font-size:15px;color:var(--ink)}.pn-stn small{display:block;font-size:12.5px;color:var(--dim);margin-top:2px}@media (max-width:560px){.pn-count b{font-size:22px}.pn-row{flex-wrap:wrap}}.pn-wcname{letter-spacing:.08em;max-width:16em}#wcResults:not(:empty){margin:4px 0 12px}#wcFind{width:100%}.pn-colors{display:flex;flex-wrap:wrap;gap:4px}.pn-sw{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:6px;vertical-align:-1px;box-shadow:0 0 0 1px rgba(0,0,0,.25)}.pn-crs{font-family:var(--mono);text-transform:uppercase;letter-spacing:.14em;max-width:9em}.pn-stn{margin:8px 0 0;font-size:15px;color:var(--ink)}.pn-stn small{display:block;font-size:12.5px;color:var(--dim);margin-top:2px}@media (max-width:560px){.pn-count b{font-size:22px}.pn-row{flex-wrap:wrap}}.pn-thumb{width:64px;height:32px;flex:none;image-rendering:pixelated;background:#000;border-radius:3px}.pn-mp-bar{height:6px;margin-top:14px;border-radius:3px;background:var(--line-soft);overflow:hidden}.pn-mp-bar span{display:block;height:100%;width:0;background:var(--accent-d);transition:width .4s linear})CSS";
 
 #include "web_panel_js.h"
