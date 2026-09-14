@@ -21,6 +21,11 @@
 static const int SD_PIN_CLK = 1;
 static const int SD_PIN_CMD = 44;
 static const int SD_PIN_D0 = 17;
+// What the card stack under the reader needs - VFS, FATFS with its long-name
+// buffer on the stack (CONFIG_FATFS_LFN_STACK), the SDMMC driver - is not
+// measured. 6 KB is a guess with room; stackFree in /api/clips shows the margin
+// on the panel (ESP-IDF's StackType_t is a byte, so the count is in bytes).
+static const uint32_t READER_STACK = 6144;
 
 static bool mounted = false;
 static const char* reason = "the card has not been looked for yet";
@@ -100,7 +105,7 @@ bool clipSdMount() {
     return false;
   }
   stream.init(ringBuf, delayBuf, CLIP_SD_MAX_FRAMES);
-  if (!reader && xTaskCreatePinnedToCore(readerTask, "clipsd", 4096, nullptr, 1, &reader, 0) != pdPASS) {
+  if (!reader && xTaskCreatePinnedToCore(readerTask, "clipsd", READER_STACK, nullptr, 1, &reader, 0) != pdPASS) {
     reader = nullptr;
     reason = "the reader task did not start";
     SD_MMC.end();
@@ -194,6 +199,7 @@ ClipSdStats clipSdStats() {
   s.underruns = stream.underruns;
   s.loops = stream.loops;
   s.queued = stream.queued();
+  s.stackFree = reader ? (uint32_t)uxTaskGetStackHighWaterMark(reader) : 0;
   return s;
 }
 

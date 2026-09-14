@@ -110,6 +110,10 @@ Where the page goes beyond the script, and why:
     - SD 1-bit on CLK GPIO1, CMD GPIO44 and D0 GPIO17, at 20 MHz.
     - Mounted on the panel 2026-09-14: a 32 GB SDHC card, FAT.
     - The card must be FAT32: this ESP-IDF is built without exFAT.
+    - GPIO14 is left alone. It is the slot's SD_CS, through 0 Ω to the card's
+      CD/D3, with a 10 k pull-up on the card side. It is planned as the IR
+      receiver's input, so the SD code never configures, drives or reads it,
+      and there is no SPI-mode fallback.
   - **The cap: 12000 frames**, 8:00 at 25 fps or 10:00 at 20 fps, 49.2 MB.
     - PCA1's frame count is a u16, so the format allows 65535 frames (43:41,
       268.6 MB) and a whole track needs no extension.
@@ -147,7 +151,9 @@ The `stream` object reports the following, all since the clip was opened:
 - `readAvgMs` and `readMaxMs`: the time each frame read took;
 - `underruns`: frames that came late and were held;
 - `loops`: returns to frame 0;
-- `queued`: frames in hand.
+- `queued`: frames in hand;
+- `stackFree`: the reader task's least free stack, in bytes. It has 6 KB, a
+  guess not measured.
 
 ## Checks
 
@@ -176,3 +182,32 @@ it makes goes to a temporary directory.
      frames and delays stay in order across the loop;
    - a 700 ms stall is absorbed;
    - a 2.5 s stall is counted and held, and no frame is skipped.
+
+## Status, 2026-09-14
+
+**Done**
+- The page's clip maker, identical to the script on real tracks.
+- The card gallery and its streaming player behind `CLIPS_SD_ENABLED`.
+- The routes above, and these checks, all passing.
+- The firmware build and the flag matrix, 26/26.
+- In desktop Chromium, against a stand-in panel: the page decoded MP3, FLAC
+  and MP4 (up to 139 MB) and uploaded a clip. The bytes that arrived match the
+  script's, except the first 13 frames, where the run-in warms the afterglow.
+
+**Not verified on the panel**
+- This firmware's mount at boot.
+- Uploads written through the route, and the rename over an old clip.
+- Playback timing, the stop handshake and the reader's stack.
+- How long FAT's free-space count takes.
+- A card pulled out while mounted.
+
+**Not verified on a phone**
+- How much memory the page has on the phone: whole-track renders, and decoding
+  large MP4s.
+- iOS Safari's decoder.
+
+**Next**
+- **On the panel:** flash, then run the curl list above. Watch `readMaxMs`,
+  `underruns` and `stackFree` while a whole-track clip plays.
+- **On the phone:** make a 14 s clip from a 192 kHz WAV, then a whole track to
+  the card.

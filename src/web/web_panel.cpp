@@ -37,7 +37,7 @@
 //   GET  /api/clips         card {mounted, type, totalKB, freeKB}, reason, maxFrames, maxBytes,
 //                           current, playing, clips [{name, bytes, frames, ms}],
 //                           stream {state idle|playing|failed, clip, frames, reads, readAvgMs,
-//                           readMaxMs, underruns, loops, queued}   (CLIPS_SD_ENABLED only)
+//                           readMaxMs, underruns, loops, queued, stackFree}   (CLIPS_SD_ENABLED only)
 //   POST /api/clips         one of {"play":"name"} | {"delete":"name"} | {"mount":true}
 //                           400 bad input; 404 no such clip; 422 not a valid clip; 503 no card.
 //                           Play puts the clip on screen, as /api/anim/play does a flash one.
@@ -814,6 +814,7 @@ static void handleClips() {
   st["underruns"] = s.underruns;
   st["loops"] = s.loops;
   st["queued"] = s.queued;
+  st["stackFree"] = s.stackFree;
   JsonArray clips = doc["clips"].to<JsonArray>();
   if (mounted) listClips(clips);
   sendDoc(doc);

@@ -11,7 +11,9 @@
  * Waveshare's BSP config.h as recorded in the bring-up notes
  * (docs/02-controller.md). Mounted on the panel 2026-09-14 with those pins
  * at 20 MHz, 1-bit: a 32 GB SDHC card, FAT. The HUB75 map, the encoder
- * (45/46/0) and USB-CDC leave all three free. The card must be FAT: this
+ * (45/46/0) and USB-CDC leave all three free. GPIO14, the slot's SD_CS to the
+ * card's CD/D3, is not touched here and there is no SPI-mode fallback: it is
+ * planned as the IR receiver's input. The card must be FAT: this
  * ESP-IDF (4.4.7) is built without exFAT (ffconf.h FF_FS_EXFAT 0), so an
  * exFAT card does not mount.
  *
@@ -59,6 +61,7 @@ struct ClipSdStats {
   ClipSdState state;
   char clip[25];
   uint32_t frames, reads, readUsAvg, readUsMax, underruns, loops, queued;
+  uint32_t stackFree;  // the reader task's least free stack so far, bytes
 };
 
 // Mount at boot, or again later (a card put in after boot). False with a
