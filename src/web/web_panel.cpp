@@ -34,6 +34,18 @@
 //   POST /api/yachtradar    {"bySize":b}
 //   GET  /api/lua           effects, current            (LUA_EFFECTS_ENABLED only)
 //   POST /api/lua           {"show":i}
+//   GET  /api/clips         card {mounted, type, totalKB, freeKB}, reason, maxFrames, maxBytes,
+//                           current, playing, clips [{name, bytes, frames, ms}],
+//                           stream {state idle|playing|failed, clip, frames, reads, readAvgMs,
+//                           readMaxMs, underruns, loops, queued}   (CLIPS_SD_ENABLED only)
+//   POST /api/clips         one of {"play":"name"} | {"delete":"name"} | {"mount":true}
+//                           400 bad input; 404 no such clip; 422 not a valid clip; 503 no card.
+//                           Play puts the clip on screen, as /api/anim/play does a flash one.
+//   Two routes of the card's gallery are not JSON, and answer as below:
+//   POST /api/clips/upload  multipart, ?name=<1-24 of A-z 0-9 _ ->[&bytes=<file size>]; streams
+//                           to /clips/upload.tmp, validated and renamed into place when complete.
+//                           {"success":true,"name":...} or 400 {"success":false,"error":...}
+//   GET  /api/clips/frame   ?name=&i=: header, palette and frame i, application/octet-stream
 //
 // A route whose module is not built is not registered, so it answers 404.
 
@@ -68,6 +80,13 @@
 #include "../yachtradar/yachtradar.h"
 #if defined(LUA_EFFECTS_ENABLED)
 #include "../lua/lua_effects.h"
+#endif
+#if defined(CLIPS_SD_ENABLED)
+#include <SD_MMC.h>
+#include <esp_task_wdt.h>
+
+#include "../ambient/anim_store.h"
+#include "../clips/clip_sd.h"
 #endif
 #include "web.h"
 
@@ -228,6 +247,9 @@ String panelWebFeatures() {
 #endif
 #if defined(YACHTRADAR_ENABLED)
   f += " yachts";
+#endif
+#if defined(CLIPS_SD_ENABLED)
+  f += " sdclips";
 #endif
 #if defined(LUA_EFFECTS_ENABLED)
   f += " lua";
@@ -702,6 +724,197 @@ static void handleLua() {
 }
 #endif
 
+// ---------------------------------------------------------------- /api/clips
+#if defined(CLIPS_SD_ENABLED)
+static void listClips(JsonArray out) {
+  File dir = SD_MMC.open(CLIP_SD_DIR);
+  if (!dir) return;
+  // getNextFileName opens nothing, so the listing holds one file at a time.
+  for (String p = dir.getNextFileName(); p.length(); p = dir.getNextFileName()) {
+    if (!p.endsWith(".pca")) continue;
+    const String name = p.substring(p.lastIndexOf('/') + 1, p.length() - 4);
+    if (!animValidName(name.c_str())) continue;
+    File f = SD_MMC.open(String(CLIP_SD_DIR "/") + name + ".pca", FILE_READ);
+    PcaHeader hdr;
+    const bool ok = animValidatePcaMax(f, &hdr, CLIP_SD_MAX_FRAMES);
+    const uint32_t bytes = f ? (uint32_t)f.size() : 0;
+    if (f) f.close();
+    if (!ok) continue;
+    JsonObject o = out.add<JsonObject>();
+    o["name"] = name;
+    o["bytes"] = bytes;
+    o["frames"] = hdr.frameCount;
+    o["ms"] = hdr.defaultFrameMs;
+  }
+  dir.close();
+}
+
+static const char *clipName(JsonVariantConst v) {
+  return v.is<const char *>() && animValidName(v.as<const char *>()) ? v.as<const char *>() : nullptr;
+}
+
+static void handleClips() {
+  if (isPost()) {
+    JsonDocument in(&s_alloc);
+    if (!readBody(in)) return;
+    bool mount = false;
+    if (!optBool(in["mount"], &mount)) REJECT(400, "mount must be a boolean");
+    const bool hasPlay = !in["play"].isNull(), hasDelete = !in["delete"].isNull();
+    if (hasPlay + hasDelete + mount != 1) REJECT(400, "one of play, delete or mount");
+    if (mount) {
+      if (!clipSdMount()) REJECT(503, clipSdReason());
+    } else {
+      const char *name = clipName(hasPlay ? in["play"] : in["delete"]);
+      if (!name) REJECT(400, "name must be 1-24 of A-z 0-9 _ -");
+      if (!clipSdMounted()) REJECT(503, clipSdReason());
+      const String path = clipSdPath(name);
+      if (!SD_MMC.exists(path)) REJECT(404, "no such clip on the card");
+      if (hasPlay) {
+        File f = SD_MMC.open(path, FILE_READ);
+        const bool ok = animValidatePcaMax(f, nullptr, CLIP_SD_MAX_FRAMES);
+        if (f) f.close();
+        if (!ok) REJECT(422, "not a valid clip");
+        snprintf(settings.ambientCustomFile, sizeof(settings.ambientCustomFile), CLIP_SD_REF "%s", name);
+        settings.ambientStyle = 6;
+        ambientCustomInvalidate();
+        httpForceAmbient = true;
+        httpForceClock = false;
+        httpForceViz = false;
+      } else {
+        ambientCustomInvalidate();  // the reader may hold this very file open
+        const bool gone = SD_MMC.remove(path);
+        clipSdRefresh();
+        if (!gone) REJECT(500, "the card did not delete the clip");
+      }
+    }
+  }
+  JsonDocument doc(&s_alloc);
+  doc["success"] = true;
+  const bool mounted = clipSdMounted();
+  JsonObject card = doc["card"].to<JsonObject>();
+  card["mounted"] = mounted;
+  card["type"] = clipSdCardType();
+  card["totalKB"] = (uint32_t)(clipSdTotalBytes() >> 10);
+  card["freeKB"] = (uint32_t)(clipSdFreeBytes() >> 10);
+  doc["reason"] = clipSdReason();
+  const uint64_t room = clipSdFreeBytes() > CLIP_SD_FREE_MARGIN ? clipSdFreeBytes() - CLIP_SD_FREE_MARGIN : 0;
+  doc["maxFrames"] = mounted ? CLIP_SD_MAX_FRAMES : 0;
+  doc["maxBytes"] = (uint32_t)(room < CLIP_SD_MAX_BYTES ? room : CLIP_SD_MAX_BYTES);
+  doc["current"] = settings.ambientCustomFile;
+  doc["playing"] = ambientCustomPlaying();
+  const ClipSdStats s = clipSdStats();
+  static const char *const STATES[] = {"idle", "playing", "failed"};
+  JsonObject st = doc["stream"].to<JsonObject>();
+  st["state"] = STATES[s.state];
+  st["clip"] = s.clip;
+  st["frames"] = s.frames;
+  st["reads"] = s.reads;
+  st["readAvgMs"] = s.readUsAvg / 1000.0f;
+  st["readMaxMs"] = s.readUsMax / 1000.0f;
+  st["underruns"] = s.underruns;
+  st["loops"] = s.loops;
+  st["queued"] = s.queued;
+  JsonArray clips = doc["clips"].to<JsonArray>();
+  if (mounted) listClips(clips);
+  sendDoc(doc);
+}
+
+// POST /api/clips/upload streams to a temp file on the card with the size cap
+// enforced per chunk, validates the finished file, then renames it into place:
+// the flash store's upload (web.cpp), with the card's limits.
+static File clipUpFile;
+static uint32_t clipUpWritten = 0;
+static uint32_t clipUpCap = 0;
+static String clipUpName;
+static const char *clipUpError = "no file in the request";
+
+static void clipUploadAbort(const char *why) {
+  if (clipUpFile) clipUpFile.close();
+  if (SD_MMC.exists(CLIP_SD_TMP)) SD_MMC.remove(CLIP_SD_TMP);
+  clipSdRefresh();
+  if (!clipUpError) clipUpError = why;
+}
+
+static void handleClipUploadChunk() {
+  HTTPUpload &up = server.upload();
+  esp_task_wdt_reset();  // a long upload keeps loop() here; same reason as web.cpp's
+  if (up.status == UPLOAD_FILE_START) {
+    clipUpError = nullptr;
+    clipUpWritten = 0;
+    clipUpName = server.arg("name");
+    if (!clipSdMounted()) { clipUpError = clipSdReason(); return; }
+    if (!animValidName(clipUpName.c_str())) { clipUpError = "bad name (use 1-24 of A-z 0-9 _ -)"; return; }
+    const uint64_t freeB = clipSdFreeBytes();
+    const uint64_t room = freeB > CLIP_SD_FREE_MARGIN ? freeB - CLIP_SD_FREE_MARGIN : 0;
+    clipUpCap = (uint32_t)(room < CLIP_SD_MAX_BYTES ? room : CLIP_SD_MAX_BYTES);
+    if (server.hasArg("bytes")) {  // told the size: refuse before writing a byte
+      const long want = server.arg("bytes").toInt();
+      if (want <= 0 || (unsigned long)want > CLIP_SD_MAX_BYTES) { clipUpError = "longer than a card clip may be"; return; }
+      if ((uint32_t)want > clipUpCap) { clipUpError = "not enough free space on the card"; return; }
+      clipUpCap = (uint32_t)want;
+    }
+    if (clipUpCap < PCA_HEADER_BYTES + PCA_FRAME_BYTES) { clipUpError = "not enough free space on the card"; return; }
+    ambientCustomInvalidate();  // lets go of a card clip the reader holds
+    clipUpFile = SD_MMC.open(CLIP_SD_TMP, FILE_WRITE);
+    if (!clipUpFile) clipUpError = "cannot open a temp file on the card";
+  } else if (up.status == UPLOAD_FILE_WRITE) {
+    if (clipUpError) return;
+    if (clipUpWritten + up.currentSize > clipUpCap) { clipUploadAbort("file too large"); return; }
+    if (clipUpFile.write(up.buf, up.currentSize) != up.currentSize) { clipUploadAbort("write failed (card full?)"); return; }
+    clipUpWritten += up.currentSize;
+  } else if (up.status == UPLOAD_FILE_END) {
+    if (clipUpError) return;
+    clipUpFile.close();
+    File f = SD_MMC.open(CLIP_SD_TMP, FILE_READ);
+    const bool ok = animValidatePcaMax(f, nullptr, CLIP_SD_MAX_FRAMES);
+    if (f) f.close();
+    if (!ok) { clipUploadAbort("not a valid .pca clip"); return; }
+    const String target = clipSdPath(clipUpName.c_str());
+    // Whether FAT's rename replaces an existing file is not verified here, so
+    // the old clip goes first; if the rename then fails, it is gone.
+    if (SD_MMC.exists(target)) SD_MMC.remove(target);
+    if (!SD_MMC.rename(CLIP_SD_TMP, target)) clipUploadAbort("rename failed");
+    clipSdRefresh();
+  } else if (up.status == UPLOAD_FILE_ABORTED) {
+    clipUploadAbort("upload aborted");
+  }
+}
+
+static void handleClipUploadDone() {
+  JsonDocument doc(&s_alloc);
+  doc["success"] = clipUpError == nullptr;
+  if (clipUpError) doc["error"] = clipUpError;
+  else doc["name"] = clipUpName;
+  sendDoc(doc, clipUpError ? 400 : 200);
+  clipUpError = "no file in the request";  // until the next upload starts
+}
+
+static void handleClipFrame() {
+  const String name = server.arg("name");
+  const long i = server.arg("i").toInt();
+  if (!clipSdMounted()) REJECT(503, clipSdReason());
+  if (!animValidName(name.c_str())) REJECT(400, "name must be 1-24 of A-z 0-9 _ -");
+  File f = SD_MMC.open(clipSdPath(name.c_str()), FILE_READ);
+  PcaHeader hdr;
+  const bool ok = animValidatePcaMax(f, &hdr, CLIP_SD_MAX_FRAMES);
+  const size_t head = ok ? PCA_HEADER_BYTES + (size_t)hdr.paletteLen * 2 : 0;
+  // PSRAM for the 4 KB, per request, like the documents here.
+  uint8_t *buf = ok ? (uint8_t *)heap_caps_malloc(head + PCA_FRAME_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) : nullptr;
+  const bool read = buf && i >= 0 && i < hdr.frameCount && f.seek(0) && f.read(buf, head) == head &&
+                    f.seek(head + (uint32_t)hdr.frameCount * 2 + (uint32_t)i * PCA_FRAME_BYTES) &&
+                    f.read(buf + head, PCA_FRAME_BYTES) == PCA_FRAME_BYTES;
+  if (f) f.close();
+  if (!ok) REJECT(404, "no such clip on the card");
+  if (!buf) { failOom(); return; }
+  if (read) {
+    server.sendHeader("Cache-Control", "no-store");
+    server.send_P(200, "application/octet-stream", (PGM_P)buf, head + PCA_FRAME_BYTES);
+  }
+  heap_caps_free(buf);
+  if (!read) REJECT(400, "i out of range, or the card did not read");
+}
+#endif
+
 static void route(const char *uri, WebServer::THandlerFunction fn) {
   server.on(uri, HTTP_GET, fn);
   server.on(uri, HTTP_POST, fn);
@@ -728,6 +941,11 @@ void panelWebBegin() {
 #endif
 #if defined(LUA_EFFECTS_ENABLED)
   route("/api/lua", handleLua);
+#endif
+#if defined(CLIPS_SD_ENABLED)
+  route("/api/clips", handleClips);
+  server.on("/api/clips/upload", HTTP_POST, handleClipUploadDone, handleClipUploadChunk);
+  server.on("/api/clips/frame", HTTP_GET, handleClipFrame);
 #endif
 }
 
