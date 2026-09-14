@@ -66,6 +66,9 @@ enum CtrlPage : uint8_t {
 #if defined(FLIGHTBOARD_ENABLED)
   PAGE_FLIGHTBOARD,
 #endif
+#if defined(RAILBOARD_ENABLED)
+  PAGE_RAILBOARD,                // the other board, so the two sit together
+#endif
 #if defined(YACHTRADAR_ENABLED)
   PAGE_YACHTRADAR,
 #endif
@@ -97,6 +100,7 @@ int getOptimalRefreshRate();
 #include "control/carousel.h"
 #include "worldclock/worldclock.h"
 #include "lua/nslua_bench.h"
+#include "railboard/railboard.h"
 
 #if defined(CAROUSEL_ENABLED) && defined(CONTROL_ENCODER_ENABLED)
 // How long each page holds the screen when the panel is cycling on its own.
@@ -119,6 +123,9 @@ static uint16_t ctrlPageSeconds(uint8_t page) {
 #else
 #if defined(WORLDCLOCK_ENABLED)
   if (page == PAGE_WORLDCLOCK) return 20;
+#endif
+#if defined(RAILBOARD_ENABLED)
+  if (page == PAGE_RAILBOARD) return 20;   // one panel: both lists get a turn at the default 10 s
 #endif
   return (page == PAGE_CLOCK) ? 25 : 15;
 #endif
@@ -188,6 +195,10 @@ int getOptimalRefreshRate() {
 #if defined(WORLDCLOCK_ENABLED) && defined(CONTROL_ENCODER_ENABLED)
   // The map changes once a minute; only the breathing home dot needs frames.
   if (ctrlPage == PAGE_WORLDCLOCK) return 10;
+#endif
+#if defined(RAILBOARD_ENABLED)
+  // The header clock shows seconds; the data itself changes every 20 s.
+  if (ctrlPage == PAGE_RAILBOARD) return 5;
 #endif
 #if defined(FLIGHTBOARD_ENABLED)
   // A board that changes twice a minute; anything faster is wasted DMA.
@@ -384,6 +395,15 @@ void setup() {
 #if defined(CARDS_ENABLED)
   cardsBegin();
 #endif
+#if defined(RAILBOARD_ENABLED)
+  // Subscribes now, whatever page is up: the retained boards arrive within a
+  // moment of the broker connecting, so the page is populated after a reboot
+  // before anyone turns to it.
+  railboardBegin();
+#if defined(RAILBOARD_BOOT_PAGE)
+  ctrlPage = PAGE_RAILBOARD;       // a panel that is a station board first
+#endif
+#endif
 
   // Configure hardware watchdog timer
   esp_task_wdt_init(15, true);
@@ -424,6 +444,9 @@ static bool ctrlPageHasControls(uint8_t page) {
 #if defined(YACHTRADAR_ENABLED)
   if (page == PAGE_YACHTRADAR) return true;
 #endif
+#if defined(RAILBOARD_ENABLED)
+  if (page == PAGE_RAILBOARD) return true;
+#endif
   (void)page;
   return false;
 }
@@ -435,6 +458,9 @@ static const char *ctrlPageName(uint8_t page) {
 #endif
 #if defined(FLIGHTBOARD_ENABLED)
   if (page == PAGE_FLIGHTBOARD) return "FLIGHTS";
+#endif
+#if defined(RAILBOARD_ENABLED)
+  if (page == PAGE_RAILBOARD) return "TRAINS";
 #endif
 #if defined(YACHTRADAR_ENABLED)
   if (page == PAGE_YACHTRADAR) return "YACHTS";
@@ -448,6 +474,9 @@ static const char *ctrlEnterHint(uint8_t page) {
 #endif
 #if defined(YACHTRADAR_ENABLED)
   if (page == PAGE_YACHTRADAR) return "TURN: SCROLL";
+#endif
+#if defined(RAILBOARD_ENABLED)
+  if (page == PAGE_RAILBOARD) return "TURN: INFO";
 #endif
   (void)page;
   return "";
@@ -538,6 +567,11 @@ void loop() {
 #endif
 #if defined(YACHTRADAR_ENABLED)
     case PAGE_YACHTRADAR:  yachtRadarScroll(d); break;
+#endif
+#if defined(RAILBOARD_ENABLED)
+    // Both lists are on screen at once on two panels, so inside the rail board
+    // the knob turns between the board and its diagnostics.
+    case PAGE_RAILBOARD:   railboardPress(); break;
 #endif
     default:               ctrlEntered = false; ctrlBrowse(d); break;
     }
@@ -701,6 +735,13 @@ void loop() {
 #if defined(WORLDCLOCK_ENABLED) && defined(CONTROL_ENCODER_ENABLED)
     if (ctrlPage == PAGE_WORLDCLOCK) {
       worldClockRender();
+    } else
+#endif
+#if defined(RAILBOARD_ENABLED)
+    // Drawn into the back buffer between the clear above and the flip below,
+    // like every page: the panel never shows a half-drawn board.
+    if (ctrlPage == PAGE_RAILBOARD) {
+      railboardRender();
     } else
 #endif
 #if defined(YACHTRADAR_ENABLED)
