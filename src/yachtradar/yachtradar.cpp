@@ -70,6 +70,12 @@ static uint32_t     s_lastPos  = 0;
 // Vessels admitted to the table since boot. A boat that leaves the bay and
 // returns is counted twice - this is "arrivals seen", not "distinct hulls".
 static uint32_t     s_logged   = 0;
+// What the stream actually delivers, so an empty screen can be told apart:
+// no frames at all, frames but nothing in the box, or an error from the server.
+static uint32_t     s_frames   = 0;
+static uint32_t     s_positions = 0;
+static uint32_t     s_lastFrame = 0;
+static char         s_err[64]  = "";
 static bool         s_open     = false;
 static bool         s_conn     = false;
 static bool         s_subbed   = false;
@@ -153,6 +159,16 @@ static void onMessage(const char *payload, size_t len) {
   JsonDocument doc;
   if (deserializeJson(doc, payload, len)) return;
 
+  // A reply carrying an "error" field (the shape aisstream.io's docs are said to
+  // use for a rejected key or subscription - not verified here) is kept for the
+  // portal instead of being parsed as a vessel.
+  const char *err = doc["error"] | (const char *)nullptr;
+  if (err) {
+    strncpy(s_err, err, sizeof(s_err) - 1);
+    s_err[sizeof(s_err) - 1] = '\0';
+    return;
+  }
+
   const char *type = doc["MessageType"] | "";
   JsonObjectConst meta = doc["MetaData"];
   const uint32_t mmsi = meta["MMSI"] | 0U;
@@ -161,6 +177,7 @@ static void onMessage(const char *payload, size_t len) {
   if (!strcmp(type, "PositionReport")) {
     JsonObjectConst pr = doc["Message"]["PositionReport"];
     if (pr["Latitude"].isNull() || pr["Longitude"].isNull()) return;
+    s_positions++;
     YrVessel *v = slotFor(mmsi);
     v->lat = pr["Latitude"].as<float>();
     v->lon = pr["Longitude"].as<float>();
@@ -212,6 +229,13 @@ static void onEvent(WStype_t type, uint8_t *payload, size_t len) {
     s_conn = false; s_subbed = false;
     break;
   case WStype_TEXT:
+  case WStype_BIN:
+    // aisstream.io sends its JSON as BINARY frames (opcode 0x2), not text. The
+    // flagship found that live and fixed it in v33.0.3 (src/iot/yacht_radar.cpp,
+    // NickoScope32 S3); this port had kept only the text case, so every message
+    // was dropped: on the panel, 2026-09-14, four minutes connected and 0 frames.
+    s_frames++;
+    s_lastFrame = millis();
     if (!s_subbed) subscribe();
     onMessage((const char *)payload, len);
     break;
@@ -487,6 +511,10 @@ void yachtRadarStatusJson(JsonObject out) {
   out["connected"]  = s_conn;
   out["count"]      = s_count;
   out["logged"]     = s_logged;
+  out["frames"]     = s_frames;             // every text frame since boot
+  out["positions"]  = s_positions;          // position reports among them
+  if (s_lastFrame) out["frameAge"] = (millis() - s_lastFrame) / 1000UL;
+  if (s_err[0]) out["error"] = (const char *)s_err;
   out["bySize"]     = s_bySize;
   if (s_lastPos) out["age"] = (millis() - s_lastPos) / 1000UL;
   uint8_t idx[YR_MAX_VESSELS];
