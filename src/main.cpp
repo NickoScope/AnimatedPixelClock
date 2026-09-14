@@ -705,12 +705,29 @@ bool panelShowStyle(uint8_t styleId) {
 static uint32_t s_loopPrevUs = 0, s_loopMaxUs = 0, s_loopMaxLastUs = 0, s_loopWinMs = 0;
 uint32_t loopMaxMs() { return s_loopMaxLastUs / 1000UL; }
 
+// Which part of loop() took longest in the same 10 s window, for /api/info, and a
+// serial line for any part over 200 ms. loopMark() closes the part that ends
+// where it is called. Added 2026-09-14 to find a 0.7-1 s stall seen after page
+// and style changes, which the settings write turned out not to be.
+static uint32_t s_markUs = 0, s_partMaxUs = 0, s_partMaxLastUs = 0;
+static const char *s_partMaxTag = "", *s_partMaxLastTag = "";
+static void loopMark(const char *tag) {
+  const uint32_t nowUs = micros();
+  const uint32_t us = s_markUs ? nowUs - s_markUs : 0;
+  s_markUs = nowUs;
+  if (us > s_partMaxUs) { s_partMaxUs = us; s_partMaxTag = tag; }
+  if (us > 200000UL) Serial.printf("[loop] %s took %u ms\n", tag, (unsigned)(us / 1000UL));
+}
+const char *loopSlowPart() { return s_partMaxLastTag; }
+uint32_t loopSlowPartMs() { return s_partMaxLastUs / 1000UL; }
+
 void loop() {
+  loopMark("between passes");
   {
     const uint32_t nowUs = micros();
     if (s_loopPrevUs && nowUs - s_loopPrevUs > s_loopMaxUs) s_loopMaxUs = nowUs - s_loopPrevUs;
     s_loopPrevUs = nowUs;
-    if (millis() - s_loopWinMs >= 10000UL) { s_loopWinMs = millis(); s_loopMaxLastUs = s_loopMaxUs; s_loopMaxUs = 0; }
+    if (millis() - s_loopWinMs >= 10000UL) { s_loopWinMs = millis(); s_loopMaxLastUs = s_loopMaxUs; s_loopMaxUs = 0; s_partMaxLastUs = s_partMaxUs; s_partMaxLastTag = s_partMaxTag; s_partMaxUs = 0; }
   }
   // Feed watchdog
   esp_task_wdt_reset();
@@ -804,14 +821,17 @@ void loop() {
 #endif
     }
   }
+  loopMark("knob and pages");
   // Opens the effect on its task when its page arrives, closes it when it goes.
   luaEffectsSelect(ctrlLuaEffect(ctrlPage));
+  loopMark("lua select");
 #endif
 #if defined(FLIGHTBOARD_ENABLED)
   httpForceFlightboard = (ctrlPage == PAGE_FLIGHTBOARD);
 #endif
   clockStyleTick();          // deferred NVS write, once the knob settles
   panelTick();               // the same for the portal's panel settings
+  loopMark("style and panel saves");
 #if defined(YACHTRADAR_ENABLED)
   httpForceYachtRadar  = (ctrlPage == PAGE_YACHTRADAR);
 #endif
@@ -822,24 +842,31 @@ void loop() {
   // almost nothing idle, and a retained payload that arrives while the clock is
   // showing means the page is already populated when you turn to it.
   mqttBusLoop();
+  loopMark("mqtt");
 #endif
 #if defined(FLIGHTBOARD_ENABLED) && defined(FB_MQTT_ENABLED)
   fbMqttLoop();
+  loopMark("flight board mqtt");
 #endif
 #if defined(FLIGHTBOARD_ENABLED)
   // The AeroAPI fetch, lists and tracked flights alike, only while the page is
   // up; nothing without FLIGHTBOARD_DIRECT_ENABLED.
   flightboardTick(httpForceFlightboard);
+  loopMark("flight board");
 #endif
 #if defined(CARDS_ENABLED)
   cardsLoop();
+  loopMark("cards");
 #endif
 #if defined(RAILBOARD_ENABLED)
   railboardLoop();           // the retained station selection, once connected
+  loopMark("rail board");
 #endif
   weatherLoop();             // starts a one-shot fetch task when one is due
+  loopMark("weather");
 #if defined(MEDIAPLAYER_ENABLED)
   mediaLoop();               // the selection out, coalesced volume, the knob's timers
+  loopMark("media");
 #endif
 
 #if defined(YACHTRADAR_ENABLED)
@@ -857,12 +884,15 @@ void loop() {
     if (httpForceYachtRadar) yachtRadarLoop();
   }
 #endif
+  loopMark("yacht radar");
 
   // Check and apply scheduled brightness (time-based dimming)
   checkScheduledBrightness();
+  loopMark("brightness");
 
   // Handle web server requests
   server.handleClient();
+  loopMark("web server");
 
   // Handle UDP packets - always process to track PC online status accurately
   handleUDP();
@@ -915,6 +945,7 @@ void loop() {
     }
   }
   prevNtpSynced = ntpSynced;
+  loopMark("udp and ntp");
 
   // Display update with adaptive refresh rate
   int targetHz = getOptimalRefreshRate();
@@ -1062,6 +1093,7 @@ void loop() {
       }
     }
 
+    loopMark("render");
     // Notification banner draws over whatever screen is active.
     if (notifyActive()) {
       drawNotifyOverlay();
@@ -1084,13 +1116,16 @@ void loop() {
 #if defined(NSLUA_BENCH)
     nsluaBenchFrameEnd();
 #endif
+    loopMark("overlays and flip");
 
     // Right after the flip = maximum headroom before the next render tick;
     // the custom animation reads its next frame from flash here so the I/O
     // never delays a flip (delayed flips beat against the DMA scan).
     ambientCustomPrefetch();
   }
+  loopMark("ambient prefetch");
 
   // WiFi reconnection handling
   handleWiFiReconnection();
+  loopMark("wifi reconnect");
 }

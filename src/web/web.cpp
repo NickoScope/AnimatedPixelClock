@@ -196,6 +196,8 @@ void handleDeviceInfo() {
  doc["largestHeapBlock"] = (uint32_t)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
  doc["freeInternalHeap"] = (uint32_t)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
  { extern uint32_t loopMaxMs(); doc["loopMaxMs"] = loopMaxMs(); }   // longest loop() pass, last 10 s
+ { extern const char *loopSlowPart(); extern uint32_t loopSlowPartMs();       // and the part of loop() that took longest
+   doc["loopSlowPart"] = loopSlowPart(); doc["loopSlowPartMs"] = loopSlowPartMs(); }
  doc["resetReason"] = (int)esp_reset_reason();
  doc["animationStorageBytes"] = (uint32_t)animFsTotal();
  doc["animationFreeBytes"] = (uint32_t)animFsFree();
