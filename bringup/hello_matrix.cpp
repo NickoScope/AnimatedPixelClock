@@ -27,7 +27,7 @@
 // ---- Panel geometry ----
 #define PANEL_W 64    // single module width
 #define PANEL_H 64    // single module height
-#define PANELS  1     // chain length: 1 for phase 2 (isolate), 2 = full 128x64 for phase 3
+#define PANELS  2     // chain length: 2 = full 128x64 (phase 3 on); 1 isolates one panel, as in phase 2
 
 // ---- Driver init ----
 // Our P2 panels' column drivers are marked FM6124HJ (read off the boards on
@@ -35,6 +35,8 @@
 // fm6124init(), so ON runs the init this chip needs; 0 (GENERIC) runs none and
 // is the comparison for test A. The init is written once, at begin(): power the
 // panel before the controller boots, or reset the controller afterwards.
+// Test A, 2026-09-14: GENERIC drew the same picture on our panel (after a panel
+// power cycle); kept ON because the chips are FM6124.
 #define USE_FM6126A 1
 
 // Clock phase. Default-true drops the RIGHTMOST column on some panels (esp.
