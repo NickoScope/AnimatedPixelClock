@@ -1,0 +1,24 @@
+# Rail board, poll A: add this entry to AppDaemon's apps.yaml
+# (/addon_configs/a0d7b954_appdaemon/apps/apps.yaml), next to flight_board.
+#
+# Needs, in the same apps directory: railboard_rtt.py and rtt_client.py.
+# Needs, in AppDaemon's own secrets.yaml (/addon_configs/a0d7b954_appdaemon/secrets.yaml):
+#   rtt_refresh_token     the token, without "Bearer "  (copy_rtt_token.sh puts it there)
+#   railboard_mqtt_user   the broker user the flight_board app uses
+#   railboard_mqtt_pass   and its password
+# Install ONE poll: this app, or ha_package_railboard_shell.yaml - never both.
+
+railboard_rtt:
+  module: railboard_rtt
+  class: RailboardRtt
+  rtt_token: !secret rtt_refresh_token
+  rtt_kind: refresh                # the owner's token; auto tries it as an access token first
+  interval: 20                     # seconds; 20 is the least the app accepts
+  station_entity: input_text.railboard_crs
+  default_crs: GLD
+  # The broker the panel and the flight_board app use, by IP: this container
+  # has no mDNS (the note on marta_bridge in this apps.yaml).
+  mqtt_host: "192.168.4.35"
+  mqtt_port: 1883
+  mqtt_user: !secret railboard_mqtt_user
+  mqtt_pass: !secret railboard_mqtt_pass

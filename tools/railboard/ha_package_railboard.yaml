@@ -1,84 +1,81 @@
 # Rail board for the LED matrix: any UK station, from Realtime Trains.
 #
-# The panel chooses the station - in its web portal - and publishes the choice
-# retained:
+# ── Two paths to the same board ──────────────────────────────────────────────
+# 1. The panel asks Realtime Trains itself (firmware RAILBOARD_DIRECT_ENABLED,
+#    token in the panel's NVS). No Home Assistant needed.
+# 2. Home Assistant asks, and publishes retained boards over MQTT. The panel
+#    uses them when it has no token of its own, or its own fetch has failed.
+#    This package is the part of path 2 that makes no RTT call: the station
+#    helper and the two automations that follow the panel's choice and publish
+#    its settings. The RTT poll itself is ONE of these, never both:
+#      A. the AppDaemon app  tools/railboard/appdaemon/   (recommended)
+#      B. the shell_command  tools/railboard/ha_package_railboard_shell.yaml
+#    Install steps and the trade-offs: src/railboard/README.md, "Home Assistant".
 #
-#   nickoscope_matrix/railboard/select        {"crs":"GLD"}
+# Topics:
+#   nickoscope_matrix/railboard/select                {"crs":"GLD"}  from the panel
+#   nickoscope_matrix/railboard/<crs>/departures | arrivals | status   from the poll
+#   nickoscope_matrix/railboard/<crs>/config          from this package
 #
-# This package follows it, polls RTT for that station every 20 s, and publishes
-# retained payloads the panel subscribes to:
+# ── The token, and why the poll is not in this file any more ─────────────────
+# The owner's token from api-portal.rtt.io is a REFRESH token. main.yml lines
+# 12-21 and 1644-1669: it has to be exchanged at GET /api/get_access_token for
+# a short-life access token, which the other calls then use. The earlier poll
+# sent the refresh token straight to /gb-nr/location and got 401 AUTH.
 #
-#   nickoscope_matrix/railboard/<crs>/departures | arrivals | status | config
+# An automation can do the exchange, but the access token would then pass
+# through a response variable, and automation traces store the variables they
+# change (core helpers/trace.py, "changed_variables") and are saved to disk
+# (core components/trace, .storage/trace.saved_traces). No template or helper
+# keeps it out of that. So the exchange lives in Python: in AppDaemon's
+# process memory (A), or in a short-lived process whose output carries no
+# token (B).
 #
-# Home Assistant does the HTTPS and holds the token; the panel only listens.
-# One RTT request gives both lists, because a location line-up carries each
-# service's arrival and departure at the station. Guildford (GLD) until the
-# panel says otherwise.
+# One daily quota. Both the panel and Home Assistant spend the same token's
+# requests. The panel slows down when RTT reports fewer than max(500, limit/10)
+# left today; poll A or B keeps its 20 s. Remaining requests are on the
+# panel's Rail board page in the portal.
 #
-# ── Install ──────────────────────────────────────────────────────────────────
-# 0. If the earlier ha_package_guildford.yaml is installed, delete it first:
-#    both would poll RTT and publish to the same topics.
+# Realtime Trains' terms (main.yml line 19): "no token is placed in a
+# distributable user application unless specifically authorised by us ...
+# End-user applications are expected to proxy their requests through a
+# server-side application". Path 1 puts the token in the panel. The owner has
+# been told and decides.
 #
+# ── Install (this file) ──────────────────────────────────────────────────────
 # 1. configuration.yaml, once, if packages are not already enabled:
 #
 #      homeassistant:
 #        packages: !include_dir_named packages
 #
-# 2. Copy this file to  <config>/packages/railboard.yaml
+# 2. Replace <config>/packages/railboard.yaml with this file. It no longer has
+#    the rest_command or the "fetch Realtime Trains" automation (switched off
+#    since 14 Sep 19:14); both disappear with the replacement.
 #
-# 3. The token. In <config>/secrets.yaml add ONE line: the word Bearer, a
-#    space, then the token from https://api-portal.rtt.io
-#
-#      rtt_bearer: "Bearer PASTE-YOUR-TOKEN-HERE"
-#
-#    This package expects a long-life ACCESS token. A REFRESH token has to be
-#    exchanged at /api/get_access_token first, and nothing here does that.
-#
-# 4. Restart Home Assistant (a new rest_command and input_text need a restart,
-#    not a reload).
-#
-# Where the token can and cannot leak:
-#  - It sits in rest_command's config, not in an automation, so it is not in
-#    automation traces, the MQTT payloads, or the automation YAML view.
-#  - Do NOT set the logger to debug for homeassistant.components.rest_command:
-#    at debug level that integration logs each request's headers, and this
-#    header is the token.
-#  - secrets.yaml must stay out of any git backup of /config.
+# 3. Restart Home Assistant, or reload automations and input_text.
 #
 # ── Written against (read 2026-09-14) ────────────────────────────────────────
 #  packages          https://www.home-assistant.io/docs/configuration/packages/
-#  secrets           https://www.home-assistant.io/docs/configuration/secrets/
-#  rest_command      https://www.home-assistant.io/integrations/rest_command/
-#                    (status/content/headers response; raises only on timeout,
-#                    client error or undecodable body - core rest_command/__init__.py)
 #  mqtt.publish      https://www.home-assistant.io/integrations/mqtt/
 #                    (fields topic/payload/retain - core mqtt/services.yaml)
 #  mqtt trigger      https://www.home-assistant.io/docs/automation/trigger/#mqtt-trigger
 #                    trigger.payload_json: https://www.home-assistant.io/docs/automation/templating/
-#                    (absent when the payload is not JSON; the listener has no
-#                    retain filter, so a retained selection fires it on subscribe -
-#                    core mqtt/trigger.py)
+#                    (absent when the payload is not JSON; no retain filter, so a
+#                    retained selection fires it on subscribe - core mqtt/trigger.py)
 #  state trigger     https://www.home-assistant.io/triggers/state/
 #  time_pattern      https://www.home-assistant.io/docs/automation/trigger/#time-pattern-trigger
 #  input_text        https://www.home-assistant.io/integrations/input_text/
 #                    (pattern is client-side only; set_value ignores a value of the
 #                    wrong length with a warning - core input_text/__init__.py)
 #  automation modes  https://www.home-assistant.io/docs/automation/modes/
-#  variables, delay, continue_on_error
-#                    https://www.home-assistant.io/docs/scripts/
+#  traces            https://www.home-assistant.io/docs/automation/troubleshooting/#traces
 #  system_log.write  https://www.home-assistant.io/integrations/system_log/
-#  template functions https://www.home-assistant.io/template-functions/
-#                    (as_timestamp, utcnow, timedelta, to_json, regex_match)
-#  RTT API           https://github.com/realtimetrains/api-specification
-#                    specification/main.yml, path /gb-nr/location
+#  template functions https://www.home-assistant.io/template-functions/  (to_json, regex_match)
+#  RTT API           https://github.com/realtimetrains/api-specification  specification/main.yml
 #
-# Why the payload is built inside the automation and never stored in an entity:
-# an entity's state is capped at 255 characters (MAX_LENGTH_STATE_STATE in
-# homeassistant/const.py, enforced in core.py) and a board is ~600 bytes; an
-# attribute would take it, but would also land in the recorder every 20 s for no use.
-#
-# NOT RUN: this file has not been loaded into a Home Assistant instance. The
-# templates were checked by reading, against the docs above.
+# NOT RUN: this version has not been loaded into Home Assistant. The helper and
+# both automations are unchanged from the version that was loaded on
+# 2026-09-14; only the rest_command and the poll were removed.
 
 input_text:
   railboard_crs:
@@ -89,16 +86,7 @@ input_text:
     pattern: "[A-Z]{3}"
     # No initial: the helper restores its last value across restarts, and the
     # panel's retained selection sets it again anyway. Empty on the very first
-    # start, when the poll falls back to GLD.
-
-rest_command:
-  railboard_rtt_location:
-    url: "https://data.rtt.io/gb-nr/location?code={{ code }}{{ query | default('') }}"
-    method: get
-    headers:
-      Authorization: !secret rtt_bearer
-      Accept: "application/json"
-    timeout: 10   # well inside the 20 s cycle: with mode single, runs cannot overlap
+    # start, when the polls fall back to GLD.
 
 automation:
   - id: railboard_follow_selection
@@ -140,206 +128,6 @@ automation:
               message: >-
                 Rail board: ignored a station selection that is not three capital
                 letters: {{ trigger.payload[:40] }}
-
-  - id: railboard_poll
-    alias: "Rail board: fetch Realtime Trains, publish to the panel"
-    description: >-
-      Every 20 s, and at once when the station changes, one RTT location line-up
-      for the selected station, split into departures and arrivals and published
-      retained. On any failure it logs, publishes only the status, and tries
-      again next cycle, so the panel keeps the last good board and marks it
-      Data updating.
-    # single: a trigger that arrives while a run is still going is dropped, so
-    # two requests are never in flight together. A change of station during a
-    # run is picked up by the next 20 s trigger.
-    mode: single
-    max_exceeded: silent
-    triggers:
-      - trigger: time_pattern
-        seconds: "/20"
-      - trigger: state
-        entity_id: input_text.railboard_crs
-    actions:
-      - alias: "Which station"
-        variables:
-          crs: >-
-            {%- set s = states('input_text.railboard_crs') -%}
-            {{ s if (s | length == 3 and s | regex_match('^[A-Z]{3}$')) else 'GLD' }}
-          keep: 8            # services per list on the wire; the panel pages them
-          # Ask from 30 min ago, so a train scheduled before now but still to come
-          # stays on the board. If RTT answers HTTP 400 or 403 here (a token may be
-          # limited in its time window - main.yml says so, not verified), set
-          # lookback_min to 0 and the query falls back to RTT's default window.
-          lookback_min: 30
-          window_min: 90
-          grace_s: 60        # a service leaves the list this long after its time
-      - alias: "Where it goes"
-        variables:
-          base: "nickoscope_matrix/railboard/{{ crs }}"
-
-      - alias: "Ask RTT"
-        action: rest_command.railboard_rtt_location
-        continue_on_error: true       # timeouts and connection errors are handled below
-        response_variable: rtt
-        data:
-          code: "{{ crs }}"
-          query: >-
-            {%- if lookback_min | int(0) > 0 -%}
-            &timeFrom={{ (utcnow() - timedelta(minutes=lookback_min | int)).strftime('%Y-%m-%dT%H:%M:%SZ') }}&timeWindow={{ window_min | int }}
-            {%- endif -%}
-
-      - alias: "Classify the answer"
-        variables:
-          now_ts: "{{ as_timestamp(utcnow()) | int }}"
-          http: "{{ rtt.status if (rtt is defined and rtt is mapping) else 0 }}"
-          err: >-
-            {%- if rtt is not defined or rtt is not mapping -%}NET
-            {%- elif rtt.status in [401, 403] -%}AUTH
-            {%- elif rtt.status == 429 -%}RATE
-            {%- elif rtt.status == 204 -%}
-            {%- elif rtt.status != 200 -%}HTTP
-            {%- elif rtt.content is not mapping or 'services' not in rtt.content -%}BAD
-            {%- endif -%}
-          retry_s: >-
-            {%- set r = namespace(v=0) -%}
-            {%- if rtt is defined and rtt is mapping -%}
-            {%- for k, v in (rtt.get('headers') or {}).items() if k | lower == 'retry-after' -%}
-            {%- set r.v = v | int(0) -%}
-            {%- endfor -%}
-            {%- endif -%}
-            {{ r.v }}
-          rl_day: >-
-            {%- set r = namespace(v='') -%}
-            {%- if rtt is defined and rtt is mapping -%}
-            {%- for k, v in (rtt.get('headers') or {}).items() if k | lower == 'x-ratelimit-remaining-day' -%}
-            {%- set r.v = v | string -%}
-            {%- endfor -%}
-            {%- endif -%}
-            {{ r.v }}
-
-      - alias: "Normalise both lists"
-        variables:
-          stn: >-
-            {%- set q = (rtt.content.get('query') or {}) if (err == '' and http == 200) else {} -%}
-            {{ (q.get('location') or {}).get('description') or crs }}
-          rt: >-
-            {%- set s = (rtt.content.get('systemStatus') or {}) if (err == '' and http == 200) else {} -%}
-            {{ s.get('realtimeNetworkRail') or '' }}
-          # Field by field from main.yml (line numbers at commit 57ace42):
-          #   services[]                              NetworkRailLocationLineUpObject  1162-1165
-          #   temporalData.departure / .arrival       IndividualTemporalData            285-293
-          #     scheduleAdvertised                    public timetable time             249-251
-          #     realtimeActual / Forecast / Estimate  when it did or will happen        252-269
-          #     isCancelled                                                             277-279
-          #   temporalData.displayAs                  CALL CANCELLED DIVERTED STARTS
-          #                                           TERMINATES PASS; null = PASS      197-218
-          #   temporalData.scheduledCallType          OPERATIONAL_ONLY, ADVERTISED_*    185-195
-          #   locationMetadata.platform.actual|planned                                  307-328
-          #   scheduleMetadata.operator.code          e.g. SW                           394-406
-          #   scheduleMetadata.modeType / inPassengerService                            407-420
-          #   destination[] / origin[] .location.description                            467-476, 633-639
-          lists: >-
-            {%- set ok = err == '' and http == 200 -%}
-            {%- set k = keep | int -%}
-            {%- set ns = namespace(dep=[], arr=[]) -%}
-            {%- for sv in ((rtt.content.get('services') or []) if ok else []) if sv is mapping -%}
-              {%- set td = sv.get('temporalData') or {} -%}
-              {%- set disp = td.get('displayAs') -%}
-              {%- set md = sv.get('scheduleMetadata') or {} -%}
-              {%- if disp not in [none, 'PASS'] and md.get('inPassengerService', true) is not false -%}
-                {%- set op = 'BUS' if md.get('modeType') in ['BUS', 'SCHEDULED_BUS', 'REPLACEMENT_BUS']
-                             else ((md.get('operator') or {}).get('code') or '') -%}
-                {%- set pm = (sv.get('locationMetadata') or {}).get('platform') or {} -%}
-                {%- set plat = (pm.get('actual') or pm.get('planned') or '') | string -%}
-                {%- set call = td.get('scheduledCallType') -%}
-                {%- for side in ['dep', 'arr'] -%}
-                  {%- set ev = td.get('departure' if side == 'dep' else 'arrival') -%}
-                  {%- set wrong_call = ('ADVERTISED_SET_DOWN' if side == 'dep' else 'ADVERTISED_PICK_UP') -%}
-                  {%- if ev is mapping and ev.get('scheduleAdvertised') and call not in ['OPERATIONAL_ONLY', wrong_call] -%}
-                    {%- set t = as_timestamp(ev.get('scheduleAdvertised'), 0) | int -%}
-                    {%- set xs = ev.get('realtimeActual') or ev.get('realtimeForecast') or ev.get('realtimeEstimate') -%}
-                    {%- set x = (as_timestamp(xs, 0) | int) if xs else 0 -%}
-                    {%- set actual = ev.get('realtimeActual') is not none -%}
-                    {%- set canc = (ev.get('isCancelled') is true) or disp in ['CANCELLED', 'DIVERTED']
-                                   or disp == ('TERMINATES' if side == 'dep' else 'STARTS') -%}
-                    {%- set when = x if x else t -%}
-                    {%- if side == 'dep' -%}
-                      {%- set show = t > 0 and not (actual and not canc) and when >= now_ts - grace_s -%}
-                    {%- else -%}
-                      {%- set show = t > 0 and when >= now_ts - (2 * grace_s if actual else grace_s) -%}
-                    {%- endif -%}
-                    {%- if show -%}
-                      {%- set nn = namespace(v=[]) -%}
-                      {%- for e in ((sv.get('destination') if side == 'dep' else sv.get('origin')) or []) if e is mapping -%}
-                        {%- set desc = (e.get('location') or {}).get('description') -%}
-                        {%- if desc -%}{%- set nn.v = nn.v + [desc] -%}{%- endif -%}
-                      {%- endfor -%}
-                      {%- set late = (x // 60 - t // 60) if x else 0 -%}
-                      {%- set st = 'canc' if canc
-                                   else ('arr' if (side == 'arr' and actual)
-                                   else ('nr' if not x
-                                   else ('late' if late >= 1 else 'ok'))) -%}
-                      {%- set row = {'t': t, 'x': x, 'p': plat[:3],
-                                     'n': nn.v | join(' & ') | truncate(24, false, '', 0),
-                                     'o': op[:3], 'st': st,
-                                     'd': ([late, 0] | max) if st in ['late', 'arr'] else 0} -%}
-                      {%- if side == 'dep' -%}
-                        {%- set ns.dep = ns.dep + [row] -%}
-                      {%- else -%}
-                        {%- set ns.arr = ns.arr + [row] -%}
-                      {%- endif -%}
-                    {%- endif -%}
-                  {%- endif -%}
-                {%- endfor -%}
-              {%- endif -%}
-            {%- endfor -%}
-            {{ {'dep': (ns.dep | sort(attribute='t'))[:k], 'arr': (ns.arr | sort(attribute='t'))[:k]} }}
-
-      - alias: "Publish, or log and keep the last good board"
-        if:
-          - condition: template
-            value_template: "{{ err == '' }}"
-        then:
-          - action: mqtt.publish
-            data:
-              topic: "{{ base }}/departures"
-              retain: true
-              payload: >-
-                {{ {'v': 1, 'crs': crs, 'stn': stn, 'dir': 'dep', 'ts': now_ts, 'rt': rt, 's': lists.dep} | to_json }}
-          - action: mqtt.publish
-            data:
-              topic: "{{ base }}/arrivals"
-              retain: true
-              payload: >-
-                {{ {'v': 1, 'crs': crs, 'stn': stn, 'dir': 'arr', 'ts': now_ts, 'rt': rt, 's': lists.arr} | to_json }}
-        else:
-          - action: system_log.write
-            data:
-              logger: railboard
-              level: "{{ 'error' if err in ['AUTH', 'BAD'] else 'warning' }}"
-              message: >-
-                Realtime Trains {{ crs }}: {{ err }}{{ (' HTTP ' ~ http) if http else '' }}{{
-                (', Retry-After ' ~ retry_s ~ ' s') if (retry_s | int(0)) else '' }}. Keeping the
-                last good board; next attempt in 20 s.
-
-      - alias: "Tell the panel how the attempt went"
-        action: mqtt.publish
-        data:
-          topic: "{{ base }}/status"
-          retain: true
-          payload: >-
-            {{ {'v': 1, 'at': now_ts, 'err': err, 'code': http | int(0),
-                'retry': retry_s | int(0), 'rl': rl_day} | to_json }}
-
-      # A 429 says when to come back. Retrying sooner is guaranteed to fail, so
-      # the run waits - and while it waits, mode single drops the 20 s triggers.
-      # Capped at 15 min so a wrong header cannot silence the board for hours.
-      - alias: "Honour Retry-After"
-        if:
-          - condition: template
-            value_template: "{{ err == 'RATE' and (retry_s | int(0)) > 20 }}"
-        then:
-          - delay: "{{ [retry_s | int(0), 900] | min }}"
 
   - id: railboard_config
     alias: "Rail board: panel settings"
