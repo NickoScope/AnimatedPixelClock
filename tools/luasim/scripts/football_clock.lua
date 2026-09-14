@@ -490,8 +490,8 @@ local function carrier_decide(p)
   local dgoal = dist(p.x, p.y, gx, PW / 2)
   local press = pressure(team, p.x, p.y, 4)
 
-  if p.role > 1 and dgoal < 32 and abs(p.y - PW / 2) < 20 then
-    local chance = (32 - dgoal) / 19 * (press > 1 and 0.7 or 1)
+  if p.role > 1 and dgoal < 34 and abs(p.y - PW / 2) < 20 then
+    local chance = (34 - dgoal) / 20 * (press > 1 and 0.7 or 1)
     if rand() < chance * 1.2 then
       local aim = PW / 2 + (rand() * 2 - 1) * (HALF_GOAL + 2.2)
       local dx, dy = gx - p.x, aim - p.y
@@ -503,7 +503,7 @@ local function carrier_decide(p)
     end
   end
 
-  if p.role > 1 and ux > 76 and (p.y < 15 or p.y > PW - 15) and rand() < 0.45 then
+  if p.role > 1 and ux > 72 and (p.y < 15 or p.y > PW - 15) and rand() < 0.55 then
     local tx = dir > 0 and PL - 7 - rand() * 7 or 7 + rand() * 7
     pass_to(p, tx, PW / 2 + (rand() * 2 - 1) * 10, true, 1.5)
     ball.cross = true
@@ -519,7 +519,7 @@ local function carrier_decide(p)
   local best, bs
   for _, q in ipairs(players) do
     if q.team == team and q ~= p then
-      local lx, ly = q.x + q.vx * 0.5 + (q.role >= 9 and dir * 4 or 0), q.y + q.vy * 0.5
+      local lx, ly = q.x + q.vx * 0.5 + (q.role >= 9 and dir * 7 or 0), q.y + q.vy * 0.5
       local d = dist(p.x, p.y, lx, ly)
       if d > 5 and d < 48 then
         local margin = lane_margin(team, p.x, p.y, lx, ly, ground_pace(d, 4))
@@ -686,8 +686,8 @@ local function try_control(dt)
   if ball.owner then
     local o = ball.owner
     for _, q in ipairs(players) do
-      if q.team ~= o.team and q.stun <= 0 and dist2(q.x, q.y, o.x, o.y) < 1.7 and rand() < dt * 2.4 then
-        if rand() < 0.45 then
+      if q.team ~= o.team and q.stun <= 0 and dist2(q.x, q.y, o.x, o.y) < 1.5 and rand() < dt * 1.7 then
+        if rand() < 0.38 then
           local ax, ay = o.x - q.x, o.y - q.y
           local l = max(0.1, sqrt(ax * ax + ay * ay))
           local v = 4 + rand() * 5
@@ -784,7 +784,7 @@ local function play_update(dt)
         end
         if near and nd < 49 then ay = (p.y > near.y) and 0.8 or -0.8 end
         if p.y < 6 then ay = 0.6 elseif p.y > PW - 6 then ay = -0.6 end
-        tx, ty, sp = p.x + dir * 6, p.y + ay * 6, RUN * 0.85
+        tx, ty, sp = p.x + dir * 6, p.y + ay * 6, RUN * 0.95
       end
       p.decide = p.decide - dt
       if p.decide <= 0 then
@@ -802,7 +802,7 @@ local function play_update(dt)
       tx, ty = shape_target(p, false)
       sp = JOG + ((match.possession == p.team) and 1.2 or 2.0)
       if match.possession == p.team then
-        tx = tx + match.dir[p.team] * ((p.role >= 9) and 10 or ((p.role >= 6) and 4 or 0))
+        tx = tx + match.dir[p.team] * ((p.role >= 9) and 14 or ((p.role >= 6) and 7 or 0))
       end
     end
     if p.stun > 0 then sp = sp * 0.35 end
@@ -836,6 +836,120 @@ local function goal_update(dt)
     steer(p, tx, ty, sp, dt)
   end
   if match.timer > 5 then set_kickoff(match.kickoff) end
+end
+
+-- ---------------------------------------------------------------- the HUD
+-- A broadcast score bug over the stands, the real time top right, and the
+-- moments of the match in plates of their own. All drawn last.
+
+local function plate(x, y, w, h, fill, edge)
+  px.rect(x, y, w, h, edge[1], edge[2], edge[3], true)
+  px.rect(x + 1, y + 1, w - 2, h - 2, fill[1], fill[2], fill[3], true)
+end
+
+local BUG, BUG_EDGE, BUG_TIME = {8, 12, 34}, {90, 100, 140}, {150, 18, 30}
+
+-- The team chips: the kits again, three pixels wide.
+local function chip(team, x, y)
+  if team == 1 then
+    px.rect(x, y, 3, 5, 220, 28, 40, true)
+    px.rect(x + 1, y, 1, 5, 250, 250, 250, true)
+  else
+    px.rect(x, y, 3, 5, 250, 250, 250, true)
+    px.rect(x + 2, y, 1, 5, 36, 36, 110, true)
+  end
+end
+
+-- "ATM 1-2 RMA 67'": a match minute is three real seconds, so the seconds
+-- would be a blur; the bug shows minutes, as a broadcast does at a glance.
+local function draw_bug()
+  local s = match.score[1] .. "-" .. match.score[2]
+  local minute = min(90, floor(match.clock / 60) + 1)
+  if match.phase == "halftime" then minute = 45 elseif match.phase == "fulltime" then minute = 90 end
+  local mt = minute .. "'"
+  local ws, wm = px.width(s), px.width(mt)
+  local wa, wr = px.width("ATM"), px.width("RMA")
+  local w = 3 + 3 + 2 + wa + 3 + ws + 3 + wr + 2 + 3 + 2
+  plate(0, 0, w, 9, BUG, BUG_EDGE)
+  local x = 2
+  chip(1, x, 2); x = x + 5
+  px.text(x, 0, "ATM", 250, 250, 250); x = x + wa + 2
+  px.rect(x - 1, 1, ws + 3, 7, 30, 36, 70, true)
+  px.text(x + 1, 0, s, 255, 215, 0); x = x + ws + 4
+  px.text(x, 0, "RMA", 250, 250, 250); x = x + wr + 2
+  chip(2, x, 2)
+  -- the minute in its own segment
+  local tx = w - 1
+  plate(tx, 0, wm + 4, 9, BUG_TIME, BUG_EDGE)
+  px.text(tx + 2, 0, mt, 250, 250, 250)
+  return tx + wm + 4
+end
+
+-- The real time: seven-segment digits, as on the snooker clock.
+local SEGMENTS = {[0] = "abcdef", "bc", "abdeg", "abcdg", "bcfg", "acdfg", "acdefg", "abc", "abcdefg", "abcdfg"}
+local SEG_RECT = {a = {0, 0, 4, 1}, b = {3, 0, 1, 4}, c = {3, 3, 1, 4}, d = {0, 6, 4, 1},
+                  e = {0, 3, 1, 4}, f = {0, 0, 1, 4}, g = {0, 3, 4, 1}}
+local DIGIT = {}
+for d = 0, 9 do
+  local list = {}
+  for s in SEGMENTS[d]:gmatch(".") do list[#list + 1] = SEG_RECT[s] end
+  DIGIT[d] = list
+end
+local function seg_digit(x, y, d)
+  local list = DIGIT[d]
+  for i = 1, #list do
+    local s = list[i]
+    px.rect(x + s[1], y + s[2], s[3], s[4], 255, 255, 255, true)
+  end
+end
+
+local function draw_clock(t)
+  local n = px.now()
+  local x0 = W - 26
+  plate(x0, 0, 25, 11, {0, 0, 0}, {120, 92, 30})
+  local x, y = x0 + 2, 2
+  seg_digit(x, y, n.hour // 10)
+  seg_digit(x + 5, y, n.hour % 10)
+  if (t * 60) % 1 < 0.5 then
+    px.rect(x + 10, y + 1, 1, 2, 255, 170, 0, true)
+    px.rect(x + 10, y + 4, 1, 2, 255, 170, 0, true)
+  end
+  seg_digit(x + 12, y, n.min // 10)
+  seg_digit(x + 17, y, n.min % 10)
+end
+
+-- A short tag between the bug and the clock: CORNER, SAVE, GOAL KICK.
+local function draw_tag(x_from)
+  local m = match.msg
+  if not m or m == "GOAL" then return end
+  local w = px.width(m) + 4
+  local x = floor((x_from + (W - 26) - w) / 2)
+  plate(x, 0, w, 9, {0, 0, 0}, {140, 140, 140})
+  px.text(x + 2, 0, m, 255, 215, 0)
+end
+
+-- Centred plates: the goal, half-time, full-time.
+local function banner(line1, c1, line2)
+  local w = max(px.width(line1), px.width(line2)) + 8
+  local x, y = floor((W - w) / 2), 24
+  plate(x, y, w, 15, BUG, BUG_EDGE)
+  px.text(x + floor((w - px.width(line1)) / 2), y, line1, c1[1], c1[2], c1[3])
+  px.text(x + floor((w - px.width(line2)) / 2), y + 7, line2, 250, 250, 250)
+end
+
+local function draw_hud(t)
+  local right = draw_bug()
+  draw_tag(right)
+  draw_clock(t)
+  local score = "ATM " .. match.score[1] .. "-" .. match.score[2] .. " RMA"
+  if match.phase == "goal" then
+    local flash = floor(match.timer * 4) % 2 == 0
+    banner("GOAL!", flash and {255, 215, 0} or {255, 255, 255}, score)
+  elseif match.phase == "halftime" then
+    banner("HALF TIME", {255, 215, 0}, score)
+  elseif match.phase == "fulltime" then
+    banner("FULL TIME", {255, 215, 0}, score)
+  end
 end
 
 -- ---------------------------------------------------------------- draw
@@ -920,4 +1034,5 @@ function draw()
   draw_static(match.phase == "goal" and floor(match.timer * 6) or nil)
   draw_players()
   draw_ball()
+  draw_hud(px.t())
 end
