@@ -7,6 +7,8 @@ they are - never the values themselves.
   python3 tools/provision_secrets.py import "<a NickoScope32_ESP32S3_v... folder>"
   python3 tools/provision_secrets.py rtt-from-ha [--host nickohome] [--kind refresh|access|auto]
   python3 tools/provision_secrets.py rtt-prompt  [--kind refresh|access|auto]
+  python3 tools/provision_secrets.py aeroapi-from-ha [--host nickohome]
+  python3 tools/provision_secrets.py aeroapi-prompt
   python3 tools/provision_secrets.py check
 
 import       MQTT broker and AIS key from the flagship's secret headers (local files)
@@ -15,6 +17,10 @@ rtt-from-ha  the Realtime Trains token from Home Assistant's secrets.yaml, over 
              The line's value is read from ssh's output inside this process; "Bearer "
              and the quotes are removed. ssh and sudo prompts still reach the terminal.
 rtt-prompt   the same token, typed or pasted at a prompt that does not echo
+aeroapi-from-ha  the FlightAware AeroAPI key from Home Assistant's secrets.yaml, over ssh:
+             ssh <host> 'sudo grep ^aeroapi_key: /config/secrets.yaml'
+             (the name Home Assistant's REST sensors use: x-apikey: !secret aeroapi_key)
+aeroapi-prompt   the same key, typed or pasted at a prompt that does not echo
 check        what the file holds, as set / length only
 
 Each command changes only its own lines and keeps the rest of the file. The
@@ -44,8 +50,9 @@ SOURCES = [
 ]
 REQUIRED = {"PROV_MQTT_HOST", "PROV_MQTT_PORT", "PROV_MQTT_USER", "PROV_MQTT_PASS"}
 RTT_TOKEN, RTT_KIND = "PROV_RTT_TOKEN", "PROV_RTT_KIND"
+AERO_KEY = "PROV_AEROAPI_KEY"
 # Template placeholders from provision_secrets.example.ini: set, but not real.
-PLACEHOLDERS = {"192.168.x.x", "mqtt-user", "mqtt-password", "aisstream-key", "rtt-token"}
+PLACEHOLDERS = {"192.168.x.x", "mqtt-user", "mqtt-password", "aisstream-key", "rtt-token", "aeroapi-key"}
 
 # What would break a -D flag in platformio.ini: whitespace splits the flag, a
 # quote or backslash breaks the escaping, ; or # after a space starts an ini
@@ -166,29 +173,60 @@ def store_token(token, kind, source):
     check()
 
 
-def rtt_from_ha(host, kind):
-    cmd = ["ssh", host, "sudo grep ^rtt_bearer: /config/secrets.yaml"]
-    print(f"asking {host} for the rtt_bearer line; its value is not shown")
+def secret_from_ha(host, name):
+    """One `name:` line of Home Assistant's secrets.yaml, read over ssh; its value is never shown."""
+    cmd = ["ssh", host, f"sudo grep ^{name}: /config/secrets.yaml"]
+    print(f"asking {host} for the {name} line; its value is not shown")
     # stdout is captured and never printed; stderr goes to the terminal, so an
     # ssh or sudo prompt or error is visible. grep writes matches to stdout only.
     r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=None)
     out = r.stdout.decode("utf-8", "replace")
     if r.returncode == 1 and not out:
-        print("  no rtt_bearer: line in /config/secrets.yaml")
+        print(f"  no {name}: line in /config/secrets.yaml")
         sys.exit(1)
     if r.returncode != 0:
         print(f"  ssh or sudo failed, exit code {r.returncode}")
         sys.exit(1)
-    found = [l for l in out.splitlines() if l.startswith("rtt_bearer:")]
+    found = [l for l in out.splitlines() if l.startswith(f"{name}:")]
     if len(found) != 1:
-        print(f"  expected one rtt_bearer: line, found {len(found)} - nothing written")
+        print(f"  expected one {name}: line, found {len(found)} - nothing written")
         sys.exit(1)
     try:
-        value = yaml_scalar(found[0].split(":", 1)[1])
+        return yaml_scalar(found[0].split(":", 1)[1])
     except ValueError as e:
         print(f"  {e} - nothing written")
         sys.exit(1)
-    store_token(bare_token(value), kind, "Home Assistant's secrets.yaml")
+
+
+def rtt_from_ha(host, kind):
+    store_token(bare_token(secret_from_ha(host, "rtt_bearer")), kind, "Home Assistant's secrets.yaml")
+
+
+def store_aero(key, source):
+    key = key.strip()
+    if not key:
+        print(f"  {AERO_KEY:15s} empty in {source} - nothing written")
+        sys.exit(1)
+    if UNSAFE.search(key):
+        print(f"  {AERO_KEY:15s} has a space, quote, backslash, ; # or $ - nothing written")
+        sys.exit(1)
+    # The firmware reads at most 255 characters (aero_direct.cpp kKeyMax). The
+    # key's real length is not documented; 16 only refuses an obvious mistake.
+    if not 16 <= len(key) <= 255:
+        print(f"  {AERO_KEY:15s} is {len(key)} chars, outside 16-255 - nothing written")
+        sys.exit(1)
+    print(f"  {AERO_KEY:15s} found, {len(key)} chars")
+    write_defines({AERO_KEY: str_flag(AERO_KEY, key)})
+    print(f"\nwrote {OUT.name}, readable by you only\n")
+    check()
+
+
+def aeroapi_from_ha(host):
+    store_aero(secret_from_ha(host, "aeroapi_key"), "Home Assistant's secrets.yaml")
+
+
+def aeroapi_prompt():
+    store_aero(getpass.getpass("FlightAware AeroAPI key (input is not shown): "), "the prompt")
 
 
 def rtt_prompt(kind):
@@ -225,8 +263,16 @@ def check():
         print(f"  {RTT_TOKEN:15s} set, {len(m.group(1))} chars")
     k = re.search(r'^\s*-D%s=\\"(refresh|access)\\"\s*$' % RTT_KIND, text, re.M)
     print(f"  {RTT_KIND:15s} {k.group(1) if k else 'not set (auto)'}")
-    # A file with only the RTT token is complete: NVS keeps the broker it has.
-    if not mqtt_seen and rtt_ok:
+    m = re.search(r'^\s*-D%s=\\"(.*)\\"\s*$' % AERO_KEY, text, re.M)
+    aero_ok = bool(m) and m.group(1) not in PLACEHOLDERS
+    if not m:
+        print(f"  {AERO_KEY:15s} not set  (the flight board then uses Home Assistant's MQTT boards)")
+    elif not aero_ok:
+        print(f"  {AERO_KEY:15s} still the template placeholder")
+    else:
+        print(f"  {AERO_KEY:15s} set, {len(m.group(1))} chars")
+    # A file with only a token or a key is complete: NVS keeps the broker it has.
+    if not mqtt_seen and (rtt_ok or aero_ok):
         good = True
     ignored = subprocess.run(["git", "-C", str(ROOT), "check-ignore", "-q", str(OUT)],
                              capture_output=True).returncode == 0
@@ -246,6 +292,9 @@ def main():
         p.add_argument("--kind", choices=("refresh", "access", "auto"), default="auto")
         if name == "rtt-from-ha":
             p.add_argument("--host", default="nickohome")
+    p = sub.add_parser("aeroapi-from-ha")
+    p.add_argument("--host", default="nickohome")
+    sub.add_parser("aeroapi-prompt")
     sub.add_parser("check")
     a = ap.parse_args()
     if a.cmd == "import":
@@ -254,6 +303,10 @@ def main():
         rtt_from_ha(a.host, a.kind)
     elif a.cmd == "rtt-prompt":
         rtt_prompt(a.kind)
+    elif a.cmd == "aeroapi-from-ha":
+        aeroapi_from_ha(a.host)
+    elif a.cmd == "aeroapi-prompt":
+        aeroapi_prompt()
     else:
         check()
 

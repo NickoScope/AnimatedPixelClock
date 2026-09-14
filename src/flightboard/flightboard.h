@@ -43,23 +43,47 @@ void flightboardRender();
 enum FbDirMode : uint8_t { FB_DIR_ARR = 0, FB_DIR_DEP = 1, FB_DIR_ALT = 2 };
 #define FB_ALT_SECONDS 10
 
-// The selected airport (ICAO), stepped by the knob. Moving it drops both
-// boards, so the old airport's rows never show under the new name.
+// The selected airport (ICAO), stepped by the knob through the built-in ones
+// and then the custom ones. Moving it drops both boards, so the old airport's
+// rows never show under the new name.
 const char *flightboardAirport();
 void flightboardStepAirport(int8_t delta);
 
-// The selection by index, for the web portal and for restoring it at boot. The
-// caller tells the transport (fbMqttSelectionChanged) - this only records it.
-uint8_t     flightboardAirportCount();
-uint8_t     flightboardAirportIndex();
+// Airports by id (fb_model.h): 0.. built in, FB_APT_CUSTOM + slot added in the
+// portal. The caller tells the transport (fbMqttSelectionChanged) - these only
+// record the choice.
+uint8_t     flightboardAirportId();
+bool        flightboardAirportById(uint8_t id, FbAirport *out);   // false: no such airport now
+bool        flightboardAirportBuiltin(uint8_t id);                // one Home Assistant serves
+uint8_t     flightboardBuiltinCount();
+const char *flightboardAirportLabel(uint8_t id);                  // the name the page shows, "" if none
+bool        flightboardSelect(uint8_t airport, FbDirMode mode);   // false: no such airport, nothing changed
+
+// Custom airports. The portal checks with flightboardAirportCheck first; src/panel
+// keeps them in NVS. Emptying the selected one selects Nice.
+const char *flightboardAirportCheck(const FbAirport &a);          // nullptr, or why not, naming the field
+bool        flightboardSetCustomAirport(uint8_t slot, const FbAirport *a);   // nullptr empties the slot
+bool        flightboardCustomUsed(uint8_t slot);
+int         flightboardNameWidth(const char *name);               // pixels, as the header draws it
+
 FbDirMode   flightboardDirMode();
 const char *flightboardModeKey();                 // "arr", "dep" or "alt"
 bool        flightboardShowingDepartures();       // the half on screen now
 bool        flightboardWants(bool departures);    // the mode shows this half
 bool        flightboardHasFreshBoard(bool departures); // arrived, fetched within 30 min
-const char *flightboardAirportCode(uint8_t i);    // ICAO, "" out of range
-const char *flightboardAirportLabel(uint8_t i);   // the name the page shows
-void        flightboardSelect(uint8_t airport, FbDirMode mode);
+
+// With an AeroAPI key stored the page is filled from AeroAPI and the MQTT
+// transport stands aside. Always false without FLIGHTBOARD_DIRECT_ENABLED.
+bool flightboardDirectOwns();
+
+// Loop task, every pass: the direct fetch and the boards built from it.
+// onScreen: the page is being drawn now.
+void flightboardTick(bool onScreen);
+
+#if defined(FLIGHTBOARD_DIRECT_ENABLED)
+// Tracked flight i as the pinned row prints it: the status word and HH:MM.
+void flightboardTrackLine(uint8_t i, char *word, size_t wordCap, char *hm, size_t hmCap);
+#endif
 
 // The board as it stands: what the last payload was for (which can lag the
 // selection by one fetch), its age, and its rows.

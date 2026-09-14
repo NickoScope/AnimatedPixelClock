@@ -66,6 +66,29 @@ static WcCity s_wcSaved[WC_CUSTOM_MAX];     // what NVS holds, slot by slot
 static bool   s_wcSavedUsed[WC_CUSTOM_MAX];
 #endif
 
+#if defined(FLIGHTBOARD_DIRECT_ENABLED)
+// One custom airport as NVS keeps it, the world clock's way: fixed size and
+// versioned, 63 bytes. Six, like the world clock's cities: the knob walks
+// twelve airports in a turn and a half, and the portal's list stays one screen.
+static const uint8_t FB_RECORD_V = 1;
+struct __attribute__((packed)) FbRecord {
+  uint8_t v;
+  char    icao[5];
+  char    iata[4];
+  char    name[FB_APT_NAME_MAX + 1];
+  char    tz[FB_APT_TZ_MAX + 1];
+};
+
+static bool sameAirport(const FbAirport &a, const FbAirport &b) {
+  return !strcmp(a.icao, b.icao) && !strcmp(a.iata, b.iata) && !strcmp(a.name, b.name) && !strcmp(a.tz, b.tz);
+}
+
+static void fbSlotKey(uint8_t slot, char key[6]) { snprintf(key, 6, "fbA%u", (unsigned)slot); }
+
+static FbAirport s_fbSaved[FB_APT_CUSTOM_MAX];     // what NVS holds, slot by slot
+static bool      s_fbSavedUsed[FB_APT_CUSTOM_MAX];
+#endif
+
 struct PanelState {
   uint16_t      pages;
   PanelCarousel car;
@@ -144,7 +167,7 @@ void panelBegin() {
   s_cur.car   = carouselDefaults();
   s_cur.knob  = panelKnobDefaults();
 #if defined(FLIGHTBOARD_ENABLED)
-  s_cur.fbAirport = flightboardAirportIndex();
+  s_cur.fbAirport = flightboardAirportId();
   s_cur.fbDir     = flightboardDirMode();
 #else
   s_cur.fbAirport = 0;
@@ -181,9 +204,35 @@ void panelBegin() {
     k.detent     = p.getChar("knDet", d.knob.detent);
     if (knobValid(k)) s_cur.knob = k;
 
+#if defined(FLIGHTBOARD_DIRECT_ENABLED)
+    // Custom airports before the selection: a stored selection may be one of
+    // them. Each record is checked again on the way in; one that fails is left
+    // out, not repaired.
+    for (uint8_t i = 0; i < FB_APT_CUSTOM_MAX; i++) {
+      char key[6];
+      fbSlotKey(i, key);
+      FbRecord r;
+      if (!p.isKey(key) || p.getBytesLength(key) != sizeof(r) || p.getBytes(key, &r, sizeof(r)) != sizeof(r) ||
+          r.v != FB_RECORD_V)
+        continue;
+      FbAirport a;
+      memset(&a, 0, sizeof(a));
+      memcpy(a.icao, r.icao, sizeof(a.icao) - 1);
+      memcpy(a.iata, r.iata, sizeof(a.iata) - 1);
+      memcpy(a.name, r.name, sizeof(a.name) - 1);
+      memcpy(a.tz, r.tz, sizeof(a.tz) - 1);
+      if (flightboardSetCustomAirport(i, &a)) {
+        s_fbSaved[i] = a;
+        s_fbSavedUsed[i] = true;
+      }
+    }
+#endif
 #if defined(FLIGHTBOARD_ENABLED)
+    // An airport id: 0-5 the built-in list (the indices this key held before
+    // custom airports), 100-105 a custom one.
     const uint8_t apt = p.getUChar("fbApt", d.fbAirport);
-    if (apt < flightboardAirportCount()) s_cur.fbAirport = apt;
+    FbAirport known;
+    if (flightboardAirportById(apt, &known)) s_cur.fbAirport = apt;
     // fbDir replaces the old arrivals-or-departures key, so a choice saved
     // before the board could swap does not pin it to one half.
     const uint8_t dir = p.getUChar("fbDir", d.fbDir);
@@ -298,6 +347,32 @@ void panelTick() {
     }
   }
 #endif
+#if defined(FLIGHTBOARD_DIRECT_ENABLED)
+  for (uint8_t i = 0; i < FB_APT_CUSTOM_MAX; i++) {
+    FbAirport now;
+    const bool used = flightboardAirportById((uint8_t)(FB_APT_CUSTOM + i), &now);
+    if (used == s_fbSavedUsed[i] && (!used || sameAirport(now, s_fbSaved[i]))) continue;
+    char key[6];
+    fbSlotKey(i, key);
+    bool ok;
+    if (used) {
+      FbRecord r;
+      memset(&r, 0, sizeof(r));
+      r.v = FB_RECORD_V;
+      memcpy(r.icao, now.icao, sizeof(r.icao));
+      memcpy(r.iata, now.iata, sizeof(r.iata));
+      memcpy(r.name, now.name, sizeof(r.name));
+      memcpy(r.tz, now.tz, sizeof(r.tz));
+      ok = p.putBytes(key, &r, sizeof(r)) == sizeof(r);
+    } else {
+      ok = !p.isKey(key) || p.remove(key);
+    }
+    if (ok) {
+      s_fbSavedUsed[i] = used;
+      if (used) s_fbSaved[i] = now;
+    }
+  }
+#endif
   if (strcmp(c.rbStn, w.rbStn) && p.putString("rbStn", c.rbStn)) memcpy(w.rbStn, c.rbStn, sizeof(w.rbStn));
   p.end();
 }
@@ -345,8 +420,9 @@ bool panelSetKnob(const PanelKnob &k) {
 
 bool panelSetFlightboard(uint8_t airport, uint8_t dirMode) {
 #if defined(FLIGHTBOARD_ENABLED)
-  if (airport >= flightboardAirportCount() || dirMode > FB_DIR_ALT) return false;
-  if (airport == flightboardAirportIndex() && dirMode == flightboardDirMode()) return true;
+  FbAirport a;
+  if (!flightboardAirportById(airport, &a) || dirMode > FB_DIR_ALT) return false;
+  if (airport == flightboardAirportId() && dirMode == flightboardDirMode()) return true;
   flightboardSelect(airport, (FbDirMode)dirMode);
 #if defined(FB_MQTT_ENABLED)
   fbMqttSelectionChanged();   // resubscribes once the selection settles
@@ -361,11 +437,44 @@ bool panelSetFlightboard(uint8_t airport, uint8_t dirMode) {
 
 void panelNoteFlightboard() {
 #if defined(FLIGHTBOARD_ENABLED)
-  s_cur.fbAirport = flightboardAirportIndex();
+  s_cur.fbAirport = flightboardAirportId();
   s_cur.fbDir     = flightboardDirMode();
   if (s_cur.fbAirport != s_saved.fbAirport || s_cur.fbDir != s_saved.fbDir) markDirty();
 #endif
 }
+
+#if defined(FLIGHTBOARD_DIRECT_ENABLED)
+const char *panelAddFlightAirport(const FbAirport &a, uint8_t *id) {
+  if (const char *why = flightboardAirportCheck(a)) return why;
+  // Two rows with one ICAO code would fetch and pay for the same board twice.
+  FbAirport x;
+  for (uint8_t i = 0; i < flightboardBuiltinCount(); i++)
+    if (flightboardAirportById(i, &x) && !strcmp(x.icao, a.icao)) return "that airport is already in the list";
+  for (uint8_t i = 0; i < FB_APT_CUSTOM_MAX; i++)
+    if (flightboardAirportById((uint8_t)(FB_APT_CUSTOM + i), &x) && !strcmp(x.icao, a.icao))
+      return "that airport is already in the list";
+  for (uint8_t i = 0; i < FB_APT_CUSTOM_MAX; i++) {
+    if (flightboardCustomUsed(i)) continue;
+    flightboardSetCustomAirport(i, &a);
+    *id = (uint8_t)(FB_APT_CUSTOM + i);
+    markDirty();
+    return nullptr;
+  }
+  return "all six custom airports are in use: delete one first";
+}
+
+const char *panelRemoveFlightAirport(uint8_t id) {
+  if (id < FB_APT_CUSTOM || id >= FB_APT_CUSTOM + FB_APT_CUSTOM_MAX || !flightboardCustomUsed((uint8_t)(id - FB_APT_CUSTOM)))
+    return "only a custom airport can be deleted";
+  flightboardSetCustomAirport((uint8_t)(id - FB_APT_CUSTOM), nullptr);   // the selection moves to Nice if it was this one
+#if defined(FB_MQTT_ENABLED)
+  fbMqttSelectionChanged();
+#endif
+  markDirty();
+  panelNoteFlightboard();
+  return nullptr;
+}
+#endif
 
 #if defined(WORLDCLOCK_ENABLED)
 static bool nameTaken(const char *name) {

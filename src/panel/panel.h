@@ -15,7 +15,9 @@
 //   carIdle  u16  seconds without the knob before it starts
 //   carSlot  u16  seconds per page, 0 = each page its own time
 //   carAll   u8   on the clock page, walk every style first
-//   fbApt    u8   flight board airport, index into the fixed list
+//   fbApt    u8   flight board airport, an id (fb_model.h: 0-5 the built-in list, the
+//                 indices it held before custom airports; 100-105 a custom one)
+//   fbA0-5   blob flight board custom airport in slot 0-5, an FbRecord (panel.cpp); absent = empty
 //   fbDir    u8   0 arrivals, 1 departures, 2 both in turn (default)
 //   wcHome   u8   world clock home, a city id (worldclock.h: 0.. built in, 100.. custom).
 //                 Absent = never chosen, and home follows the panel's location (wc_home.h)
@@ -83,8 +85,16 @@ const PanelKnob &panelKnob();
 PanelKnob panelKnobDefaults();
 bool     panelSetKnob(const PanelKnob &k);
 
-bool     panelSetFlightboard(uint8_t airport, uint8_t dirMode);   // FbDirMode
+bool     panelSetFlightboard(uint8_t airport, uint8_t dirMode);   // an airport id; FbDirMode
 void     panelNoteFlightboard();   // the knob moved the selection: keep it, later
+
+#if defined(FLIGHTBOARD_DIRECT_ENABLED)
+#include "../flightboard/fb_model.h"
+// Custom airports. nullptr when done, else why not in words the portal can
+// show: the airport's own check, a code already listed, or a full list.
+const char *panelAddFlightAirport(const FbAirport &a, uint8_t *id);
+const char *panelRemoveFlightAirport(uint8_t id);   // custom ids only
+#endif
 
 #if defined(WORLDCLOCK_ENABLED)
 #include "../worldclock/worldclock.h"

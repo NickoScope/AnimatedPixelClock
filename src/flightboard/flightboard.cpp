@@ -5,11 +5,14 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <string.h>
+#include <time.h>
 
 #include "../config/config.h"
 #include "../display/display.h"
 #include "../fonts/picopixel_fb.h"   // Picopixel with a legible U
+#include "aero_direct.h"
 #include "fb_mqtt.h"
+#include "fb_settings.h"
 
 // ── layout ──────────────────────────────────────────────────────────────────
 // Picopixel, not TomThumb. Both are 3x5-class faces that fit 32-ish characters
@@ -34,6 +37,17 @@ static const int16_t FB_Y_RULE   = 8;
 static const int16_t FB_Y_ROW0   = 11;
 static const int16_t FB_ROW_H    = 7;
 static const uint8_t FB_VISIBLE  = 7;     // (64 - 11) / 7 = 7 whole rows
+
+// The tracked flight's row: the first of the seven, on a dark blue band the
+// width of the panel with a bright blue bar at its left edge. Blue because
+// no status uses it as a background and amber already marks "now".
+static const uint8_t FB_PIN_BG_R  = 0;
+static const uint8_t FB_PIN_BG_G  = 26;
+static const uint8_t FB_PIN_BG_B  = 70;
+static const uint8_t FB_PIN_BAR_R = 0;
+static const uint8_t FB_PIN_BAR_G = 170;
+static const uint8_t FB_PIN_BAR_B = 255;
+static const int16_t FB_PIN_GATE_MIN = 60;   // the gate replaces ON TIME this long before departure
 
 struct FbRow {
   char     fn[FB_FN_LEN];
@@ -72,8 +86,25 @@ static const char *const FB_AIRPORTS[] = {"LFMD","LFMN","LFPG","EGLL","EDDF","EH
 // Assistant side, so a table here is enough and costs no round trip.
 static const char *const FB_AIRPORT_NAMES[] = {"CANNES","NICE","PARIS CDG",
                                                "LONDON","FRANKFURT","AMSTERDAM"};
+// IATA codes and zones of the same six, as the mwgg/Airports dataset (MIT) the
+// portal searches lists them, read 2026-09-14.
+static const char *const FB_AIRPORT_IATA_CODES[] = {"CEQ","NCE","CDG","LHR","FRA","AMS"};
+static const char *const FB_AIRPORT_ZONES[] = {"Europe/Paris","Europe/Paris","Europe/Paris",
+                                               "Europe/London","Europe/Berlin","Europe/Amsterdam"};
 static const uint8_t FB_AIRPORT_COUNT = sizeof(FB_AIRPORTS)/sizeof(FB_AIRPORTS[0]);
-static uint8_t s_aptIdx = 1;   // LFMN
+static uint8_t s_aptId = 1;   // LFMN
+
+// Airports added in the portal, kept by src/panel in NVS "panel"/fbA0-fbA5.
+static FbAirport s_custom[FB_APT_CUSTOM_MAX];
+static bool      s_customUsed[FB_APT_CUSTOM_MAX];
+
+#if defined(FLIGHTBOARD_DIRECT_ENABLED)
+static uint32_t s_directGen   = 0xFFFFFFFFUL;
+static uint32_t s_rebuiltMs   = 0;
+static uint32_t s_onScreenMs  = 0;
+static bool     s_everOn      = false;
+static uint32_t s_directAgeS[2] = {0, 0};   // the older of each half's two lists
+#endif
 
 // Minutes since Home Assistant fetched this half, from its "upd" stamp and the
 // local clock; -1 when either is unknown.
@@ -91,6 +122,10 @@ static int16_t updAgeMin(const FbBoard &b) {
 
 static void clearBoards() {
   for (FbBoard &b : s_b) { b.have = false; b.count = 0; }
+#if defined(FLIGHTBOARD_DIRECT_ENABLED)
+  aeroDirectAirportChanged();
+  s_directGen = 0xFFFFFFFFUL;
+#endif
 }
 
 // Which half is on screen. A cycle starts on arrivals whenever the page comes
@@ -151,7 +186,92 @@ static void copyField(char *dst, size_t cap, const char *src) {
   dst[cap - 1] = '\0';
 }
 
+// ── airports ────────────────────────────────────────────────────────────────
+static bool customId(uint8_t id) {
+  return id >= FB_APT_CUSTOM && id < FB_APT_CUSTOM + FB_APT_CUSTOM_MAX && s_customUsed[id - FB_APT_CUSTOM];
+}
+
+bool flightboardAirportById(uint8_t id, FbAirport *out) {
+  if (id < FB_AIRPORT_COUNT) {
+    memset(out, 0, sizeof(*out));
+    copyField(out->icao, sizeof(out->icao), FB_AIRPORTS[id]);
+    copyField(out->iata, sizeof(out->iata), FB_AIRPORT_IATA_CODES[id]);
+    copyField(out->name, sizeof(out->name), FB_AIRPORT_NAMES[id]);
+    copyField(out->tz, sizeof(out->tz), FB_AIRPORT_ZONES[id]);
+    return true;
+  }
+  if (customId(id)) { *out = s_custom[id - FB_APT_CUSTOM]; return true; }
+  return false;
+}
+
+bool        flightboardAirportBuiltin(uint8_t id) { return id < FB_AIRPORT_COUNT; }
+uint8_t     flightboardBuiltinCount()             { return FB_AIRPORT_COUNT; }
+uint8_t     flightboardAirportId()                { return s_aptId; }
+bool        flightboardCustomUsed(uint8_t slot)   { return slot < FB_APT_CUSTOM_MAX && s_customUsed[slot]; }
+
+const char *flightboardAirport() {
+  return s_aptId < FB_AIRPORT_COUNT ? FB_AIRPORTS[s_aptId]
+       : customId(s_aptId)          ? s_custom[s_aptId - FB_APT_CUSTOM].icao
+                                    : FB_AIRPORTS[1];
+}
+
+const char *flightboardAirportLabel(uint8_t id) {
+  if (id < FB_AIRPORT_COUNT) return FB_AIRPORT_NAMES[id];
+  return customId(id) ? s_custom[id - FB_APT_CUSTOM].name : "";
+}
+
+int flightboardNameWidth(const char *name) {
+  int w = 0;
+  for (const char *s = name ? name : ""; *s; s++) {
+    unsigned c = (unsigned char)*s;
+    if (c < PicopixelFB.first || c > PicopixelFB.last) c = ' ';
+    w += PicopixelFB.glyph[c - PicopixelFB.first].xAdvance;
+  }
+  return w;
+}
+
+const char *flightboardAirportCheck(const FbAirport &a) { return fbs::checkAirport(a, flightboardNameWidth); }
+
+bool flightboardSetCustomAirport(uint8_t slot, const FbAirport *a) {
+  if (slot >= FB_APT_CUSTOM_MAX) return false;
+  if (!a) {
+    s_customUsed[slot] = false;
+    if (s_aptId == FB_APT_CUSTOM + slot) { s_aptId = 1; clearBoards(); }   // back to Nice, the default
+    return true;
+  }
+  if (flightboardAirportCheck(*a)) return false;
+  s_custom[slot] = *a;
+  s_custom[slot].name[FB_APT_NAME_MAX] = '\0';
+  s_customUsed[slot] = true;
+  if (s_aptId == FB_APT_CUSTOM + slot) clearBoards();
+  return true;
+}
+
+// The knob walks the built-in airports, then the custom ones, by id.
+void flightboardStepAirport(int8_t delta) {
+  uint8_t ids[FB_AIRPORT_COUNT + FB_APT_CUSTOM_MAX];
+  uint8_t n = 0, at = 0;
+  for (uint8_t i = 0; i < FB_AIRPORT_COUNT; i++) ids[n++] = i;
+  for (uint8_t i = 0; i < FB_APT_CUSTOM_MAX; i++)
+    if (s_customUsed[i]) ids[n++] = (uint8_t)(FB_APT_CUSTOM + i);
+  for (uint8_t i = 0; i < n; i++)
+    if (ids[i] == s_aptId) at = i;
+  const uint8_t next = ids[(at + n + (delta > 0 ? 1 : n - 1)) % n];
+  if (next != s_aptId) { s_aptId = next; clearBoards(); }
+}
+
+bool flightboardDirectOwns() {
+#if defined(FLIGHTBOARD_DIRECT_ENABLED)
+  return aeroDirectHasKey();
+#else
+  return false;
+#endif
+}
+
 bool flightboardIngest(const char *json, uint16_t len) {
+  // With a key stored the page is AeroAPI's; a retained board still arriving
+  // from Home Assistant must not overwrite it.
+  if (flightboardDirectOwns()) return false;
   JsonDocument doc;
   if (deserializeJson(doc, json, len)) return false;   // keep the old board
 
@@ -162,7 +282,7 @@ bool flightboardIngest(const char *json, uint16_t len) {
   // A payload that does not name its airport is refused too: it cannot be
   // told from one for another airport.
   const char *apt = doc["apt"] | "";
-  if (strcmp(apt, FB_AIRPORTS[s_aptIdx])) return false;
+  if (strcmp(apt, flightboardAirport())) return false;
   const char *dir = doc["dir"] | "";
   if (strcmp(dir, "arr") && strcmp(dir, "dep")) return false;
   FbBoard &b = s_b[strcmp(dir, "dep") == 0];
@@ -194,17 +314,6 @@ uint32_t flightboardAge() {
   return b.have ? (millis() - b.stamp) / 1000UL : 0;
 }
 
-const char *flightboardAirport() { return FB_AIRPORTS[s_aptIdx]; }
-
-void flightboardStepAirport(int8_t delta) {
-  int16_t i = (int16_t)s_aptIdx + delta;
-  while (i < 0) i += FB_AIRPORT_COUNT;
-  const uint8_t next = (uint8_t)(i % FB_AIRPORT_COUNT);
-  if (next != s_aptIdx) { s_aptIdx = next; clearBoards(); }
-}
-
-uint8_t     flightboardAirportCount()      { return FB_AIRPORT_COUNT; }
-uint8_t     flightboardAirportIndex()      { return s_aptIdx; }
 FbDirMode   flightboardDirMode()           { return (FbDirMode)s_mode; }
 const char *flightboardModeKey()           { return s_mode == FB_DIR_ARR ? "arr" : s_mode == FB_DIR_DEP ? "dep" : "alt"; }
 bool        flightboardShowingDepartures() { return shownDep(); }
@@ -215,13 +324,188 @@ bool flightboardHasFreshBoard(bool dep) {
   const int16_t age = updAgeMin(s_b[dep]);
   return s_b[dep].have && age <= FB_FRESH_MIN;
 }
-const char *flightboardAirportCode(uint8_t i)  { return i < FB_AIRPORT_COUNT ? FB_AIRPORTS[i] : ""; }
-const char *flightboardAirportLabel(uint8_t i) { return i < FB_AIRPORT_COUNT ? FB_AIRPORT_NAMES[i] : ""; }
 
-void flightboardSelect(uint8_t airport, FbDirMode mode) {
-  if (airport < FB_AIRPORT_COUNT && airport != s_aptIdx) { s_aptIdx = airport; clearBoards(); }
-  if (mode <= FB_DIR_ALT) s_mode = mode;
+bool flightboardSelect(uint8_t airport, FbDirMode mode) {
+  FbAirport a;
+  if (!flightboardAirportById(airport, &a) || mode > FB_DIR_ALT) return false;
+  if (airport != s_aptId) { s_aptId = airport; clearBoards(); }
+  s_mode = mode;
+  return true;
 }
+
+// ── direct ──────────────────────────────────────────────────────────────────
+static void localHm(int64_t utc, char *out, size_t cap) {
+  const time_t t = (time_t)utc;
+  struct tm lt;
+  if (utc <= 0 || !localtime_r(&t, &lt)) { snprintf(out, cap, "--:--"); return; }
+  snprintf(out, cap, "%02d:%02d", lt.tm_hour, lt.tm_min);
+}
+
+#if defined(FLIGHTBOARD_DIRECT_ENABLED)
+// Both halves from the lists as they stand. Times go into the panel's own zone
+// here, as Home Assistant's as_local put them into its zone before.
+static void rebuildDirect() {
+  static aero::Board board;           // 750 B; kept off the loop task's stack
+  const int64_t now = (int64_t)time(nullptr);
+  const uint32_t nowMs = millis();
+  for (uint8_t d = 0; d < 2; d++) {
+    uint32_t agePast = 0, ageNext = 0;
+    const aero::ListResult *past = aeroDirectList(d ? aero::DEP_PAST : aero::ARR_PAST, &agePast);
+    const aero::ListResult *next = aeroDirectList(d ? aero::DEP_NEXT : aero::ARR_NEXT, &ageNext);
+    FbBoard &b = s_b[d];
+    if ((!past && !next) || now < 1700000000) { b.have = false; b.count = 0; continue; }
+    aero::buildBoard(past, next, now, &board);
+    for (uint8_t i = 0; i < board.count; i++) {
+      FbRow &r = b.rows[i];
+      const aero::Cand &c = board.rows[i];
+      memcpy(r.fn, c.fn, sizeof(r.fn));
+      memcpy(r.ct, c.ct, sizeof(r.ct));
+      memcpy(r.cy, c.cy[0] ? c.cy : c.ct, sizeof(r.cy) < sizeof(c.cy) ? sizeof(r.cy) : sizeof(c.cy));
+      r.cy[sizeof(r.cy) - 1] = '\0';
+      r.st = (FbStatus)c.st;
+      localHm(c.t, r.tm, sizeof(r.tm));
+    }
+    b.count  = board.count;
+    b.nowIdx = board.nowIdx >= board.count && board.count ? board.count - 1 : board.nowIdx;
+    const uint32_t age = past && next ? (agePast > ageNext ? agePast : ageNext) : (past ? agePast : ageNext);
+    s_directAgeS[d] = age;
+    localHm(now - age, b.upd, sizeof(b.upd));
+    b.stamp = nowMs - age * 1000UL;
+    b.have  = true;
+  }
+  s_rebuiltMs = nowMs;
+}
+#endif
+
+void flightboardTick(bool onScreen) {
+#if defined(FLIGHTBOARD_DIRECT_ENABLED)
+  const uint32_t nowMs = millis();
+  if (onScreen) { s_onScreenMs = nowMs; s_everOn = true; }
+  AeroWant w;
+  w.icao    = flightboardAirport();
+  w.arr     = flightboardWants(false);
+  w.dep     = flightboardWants(true);
+  w.visible = onScreen || (s_everOn && nowMs - s_onScreenMs < AERO_VISIBLE_GRACE_S * 1000UL);
+  aeroDirectLoop(w);
+  if (!aeroDirectHasKey()) return;
+  // Again whenever a list arrives, and every 30 s so that now_idx and the
+  // +-2 h window move with the clock between calls.
+  const uint32_t gen = aeroDirectListGen();
+  if (gen != s_directGen || nowMs - s_rebuiltMs > 30000UL) {
+    s_directGen = gen;
+    rebuildDirect();
+  }
+#else
+  (void)onScreen;
+#endif
+}
+
+// ── tracked flight row ──────────────────────────────────────────────────────
+#if defined(FLIGHTBOARD_DIRECT_ENABLED)
+// The word and its colour. Short on purpose: the row also holds a time, the
+// ident and the route. There is no BOARDING: no AeroAPI field says boarding
+// has started, so the gate stands in for it in the last hour.
+static const char *trackWord(const AeroTracker &k, char *buf, size_t cap, uint16_t *col) {
+  const aero::Track &t = k.t;
+  const int32_t late = aero::trackDelayMin(t);
+  const int64_t now = (int64_t)time(nullptr);
+  switch (t.state) {
+  case FB_TRK_WAIT:      *col = display.color565(120, 132, 138); return "...";
+  case FB_TRK_NOTFOUND:  *col = display.color565(120, 132, 138); return "NO FLIGHT";
+  case FB_TRK_SCHED: {
+    const int64_t dep = t.estOut ? t.estOut : t.schedOut;
+    if (t.gate[0] && dep && dep - now <= FB_PIN_GATE_MIN * 60) {
+      snprintf(buf, cap, "GATE %s", t.gate);
+      *col = display.color565(0, 220, 220);
+      return buf;
+    }
+    *col = display.color565(210, 210, 210);
+    return "ON TIME";
+  }
+  case FB_TRK_DELAYED:
+    snprintf(buf, cap, "DELAY %d", (int)late);
+    *col = display.color565(255, 170, 0);
+    return buf;
+  case FB_TRK_TAXI:      *col = display.color565(0, 220, 220);  return "TAXI";
+  case FB_TRK_ENROUTE:
+    if (late >= (int32_t)(aero::kDelayS / 60)) {
+      snprintf(buf, cap, "LATE %d", (int)late);
+      *col = display.color565(255, 170, 0);
+      return buf;
+    }
+    *col = display.color565(70, 140, 255);
+    return "IN AIR";
+  case FB_TRK_LANDED:    *col = display.color565(0, 200, 60);   return "LANDED";
+  case FB_TRK_CANCELLED: *col = display.color565(255, 40, 40);  return "CANX";
+  case FB_TRK_DIVERTED:  *col = display.color565(255, 60, 200); return "DIVERT";
+  default:               *col = display.color565(120, 132, 138); return "";
+  }
+}
+
+// Which tracked flight has the row now: they take turns with each swap.
+static uint8_t pinnedIndex(uint32_t nowMs) {
+  const uint8_t n = aeroTrackCount();
+  return n ? (uint8_t)(((nowMs - s_altT0) / FB_ALT_MS) % n) : 0;
+}
+
+void flightboardTrackLine(uint8_t i, char *word, size_t wordCap, char *hm, size_t hmCap) {
+  const AeroTracker *k = aeroTrack(i);
+  word[0] = '\0';
+  snprintf(hm, hmCap, "--:--");
+  if (!k) return;
+  char buf[16];
+  uint16_t col;
+  snprintf(word, wordCap, "%s", trackWord(*k, buf, sizeof(buf), &col));
+  if (k->t.state != FB_TRK_WAIT && k->t.state != FB_TRK_NOTFOUND) localHm(aero::trackShownTime(k->t), hm, hmCap);
+}
+
+static void drawTracked(int16_t top, uint32_t nowMs) {
+  const AeroTracker *k = aeroTrack(pinnedIndex(nowMs));
+  if (!k) return;
+  const aero::Track &t = k->t;
+  const int16_t base = top + FB_ASCENT;
+  int16_t bx, by; uint16_t bw, bh;
+  display.fillRect(0, top, 128, FB_ROW_H - 1, display.color565(FB_PIN_BG_R, FB_PIN_BG_G, FB_PIN_BG_B));
+  display.fillRect(0, top, 1, FB_ROW_H - 1, display.color565(FB_PIN_BAR_R, FB_PIN_BAR_G, FB_PIN_BAR_B));
+
+  const bool known = t.state != FB_TRK_WAIT && t.state != FB_TRK_NOTFOUND;
+  char hm[6] = "--:--";
+  if (known) localHm(aero::trackShownTime(t), hm, sizeof(hm));
+  display.setTextColor(display.color565(235, 240, 245));
+  display.setCursor(FB_X_TIME, base);
+  display.print(hm);
+
+  const char *fn = known && t.fn[0] ? t.fn : k->ident;
+  display.setCursor(FB_X_FLIGHT, base);
+  display.print(fn);
+  display.getTextBounds(fn, 0, 0, &bx, &by, &bw, &bh);
+  const int16_t xRoute = FB_X_FLIGHT + (int16_t)bw + FB_CODE_GAP > FB_X_DEST ? FB_X_FLIGHT + (int16_t)bw + FB_CODE_GAP
+                                                                            : FB_X_DEST;
+
+  char buf[16];
+  uint16_t col;
+  const char *word = trackWord(*k, buf, sizeof(buf), &col);
+  display.getTextBounds(word, 0, 0, &bx, &by, &bw, &bh);
+  const int16_t xWord = FB_X_RIGHT - (int16_t)bw;
+  display.setTextColor(col);
+  display.setCursor(xWord, base);
+  display.print(word);
+
+  // The route, both ends if they fit, else where it is going, else nothing.
+  if (!known) return;
+  char route[12];
+  snprintf(route, sizeof(route), "%s-%s", t.from, t.to);
+  display.getTextBounds(route, 0, 0, &bx, &by, &bw, &bh);
+  if (xRoute + (int16_t)bw + FB_GAP > xWord) {
+    snprintf(route, sizeof(route), "%s", t.to);
+    display.getTextBounds(route, 0, 0, &bx, &by, &bw, &bh);
+    if (xRoute + (int16_t)bw + FB_GAP > xWord) return;
+  }
+  display.setTextColor(display.color565(170, 190, 200));
+  display.setCursor(xRoute, base);
+  display.print(route);
+}
+#endif
 
 // The wire word for a status, the inverse of parseStatus().
 static const char *statusKey(FbStatus st) {
@@ -239,7 +523,13 @@ static const char *statusKey(FbStatus st) {
 void flightboardStatusJson(JsonObject out) {
   const bool departures = shownDep();
   const FbBoard &b = s_b[departures];
+  const bool direct = flightboardDirectOwns();
   out["have"] = b.have;
+#if defined(FB_MQTT_ENABLED)
+  out["source"] = direct ? "aeroapi" : (flightboardAirportBuiltin(s_aptId) ? "mqtt" : "none");
+#else
+  out["source"] = direct ? "aeroapi" : "none";
+#endif
   JsonObject sides = out["sides"].to<JsonObject>();
   for (uint8_t i = 0; i < 2; i++) {
     JsonObject s = sides[i ? "dep" : "arr"].to<JsonObject>();
@@ -250,8 +540,8 @@ void flightboardStatusJson(JsonObject out) {
     s["age"] = (millis() - s_b[i].stamp) / 1000UL;
   }
   if (!b.have) return;
-  out["apt"]  = FB_AIRPORTS[s_aptIdx];
-  out["name"] = FB_AIRPORT_NAMES[s_aptIdx];
+  out["apt"]  = flightboardAirport();
+  out["name"] = flightboardAirportLabel(s_aptId);
   out["dir"]  = departures ? "dep" : "arr";
   out["upd"]  = (const char *)b.upd;
   out["age"]  = flightboardAge();
@@ -267,6 +557,22 @@ void flightboardStatusJson(JsonObject out) {
     o["st"] = statusKey(r.st);
     o["w"]  = statusWord(r.st, departures);   // the word the panel prints
   }
+}
+
+// What the page says when a half has nothing to show.
+static const char *noBoardWord() {
+#if defined(FLIGHTBOARD_DIRECT_ENABLED)
+  if (flightboardDirectOwns()) return aeroDirectState();
+#endif
+  // Only the six built-in airports are served by Home Assistant.
+  if (!flightboardAirportBuiltin(s_aptId)) return "NEEDS A KEY";
+#if defined(FB_MQTT_ENABLED)
+  // Say which of the several ways to have no data this is. "NO DATA" alone
+  // sends you looking at Home Assistant when the panel never reached WiFi.
+  return fbMqttStatus();
+#else
+  return "NO DATA";
+#endif
 }
 
 void flightboardRender() {
@@ -285,7 +591,7 @@ void flightboardRender() {
   const int16_t hbase = FB_Y_HEADER + FB_ASCENT;
   int16_t bx, by; uint16_t bw, bh;
 
-  const char *apt = FB_AIRPORT_NAMES[s_aptIdx];
+  const char *apt = flightboardAirportLabel(s_aptId);
   display.setCursor(FB_X_TIME, hbase);
   display.setTextColor(display.color565(255, 255, 255));
   display.print(apt);
@@ -300,8 +606,16 @@ void flightboardRender() {
   // payload's "upd" - when Home Assistant last fetched - which stands still
   // between fetches and on the panel read as a clock that had stopped (owner,
   // on the bench, 2026-09-14). Freshness stays in the colour: amber once the
-  // data is more than ten minutes old.
-  bool stale = flightboardAge() > 600 || updAgeMin(b) > FB_FRESH_MIN;
+  // data is older than it should be - ten minutes for Home Assistant's boards;
+  // for AeroAPI's, twice the past lists' floor and five minutes more, since
+  // the budget, not a fault, is what keeps them that old.
+  bool stale;
+#if defined(FLIGHTBOARD_DIRECT_ENABLED)
+  if (flightboardDirectOwns())
+    stale = b.have && s_directAgeS[departures] > (uint32_t)aeroDirectBudget().floorMin * 60UL * 4UL + 300UL;
+  else
+#endif
+    stale = flightboardAge() > 600 || updAgeMin(b) > FB_FRESH_MIN;
   char nowHm[6] = "--:--";
   struct tm lt;
   if (getLocalTime(&lt, 0)) snprintf(nowHm, sizeof(nowHm), "%02d:%02d", lt.tm_hour, lt.tm_min);
@@ -319,30 +633,34 @@ void flightboardRender() {
     if (w > 0) display.drawFastHLine(0, FB_Y_RULE, w, display.color565(110, 78, 0));
   }
 
-  if (!b.have || b.count == 0) {
-    display.setCursor(40, 34);
-    display.setTextColor(display.color565(120, 120, 120));
-#if defined(FB_MQTT_ENABLED)
-    // Say which of the several ways to have no data this is. "NO DATA" alone
-    // sends you looking at Home Assistant when the panel never reached WiFi.
-    display.print(fbMqttStatus());
-#else
-    display.print("NO DATA");
+  // A tracked flight takes the first row, on both halves.
+  uint8_t firstRow = 0;
+#if defined(FLIGHTBOARD_DIRECT_ENABLED)
+  if (aeroTrackCount()) {
+    drawTracked(FB_Y_ROW0, nowMs);
+    firstRow = 1;
+  }
 #endif
+
+  if (!b.have || b.count == 0) {
+    display.setCursor(40, firstRow ? 38 : 34);
+    display.setTextColor(display.color565(120, 120, 120));
+    display.print(b.have ? "NO FLIGHTS" : noBoardWord());
     display.setFont(NULL);
     return;
   }
 
   // ── window ────────────────────────────────────────────────────────────────
+  const uint8_t rowsFree = FB_VISIBLE - firstRow;
   int16_t start = (int16_t)b.nowIdx - 1;
-  if (start + FB_VISIBLE > b.count) start = b.count - FB_VISIBLE;
+  if (start + rowsFree > b.count) start = b.count - rowsFree;
   if (start < 0) start = 0;
 
-  for (uint8_t i = 0; i < FB_VISIBLE; i++) {
+  for (uint8_t i = 0; i < rowsFree; i++) {
     uint8_t idx = start + i;
     if (idx >= b.count) break;
     const FbRow &r = b.rows[idx];
-    int16_t top = FB_Y_ROW0 + i * FB_ROW_H;
+    int16_t top = FB_Y_ROW0 + (i + firstRow) * FB_ROW_H;
     int16_t base = top + FB_ASCENT;
     uint16_t col = statusColor(r.st);
 
@@ -388,6 +706,8 @@ void flightboardRender() {
     char city[FB_CY_LEN];
     strncpy(city, r.cy, sizeof(city) - 1);
     city[sizeof(city) - 1] = '\0';
+    // The same name as the code (a city HA or AeroAPI did not send) says nothing more.
+    if (!strcmp(city, r.ct)) city[0] = '\0';
     for (;;) {
       if (city[0] == '\0') break;
       display.getTextBounds(city, 0, 0, &bx, &by, &bw, &bh);

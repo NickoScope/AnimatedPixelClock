@@ -14,6 +14,7 @@
 //   "fb" host/port/user/pass   flight board broker   (src/mqtt/mqtt_bus.cpp)
 //   "yr" ais                   aisstream.io key      (src/yachtradar/yachtradar.cpp)
 //   "rb" token/kind            Realtime Trains       (src/railboard/rtt_direct.cpp)
+//   "aero" key                 FlightAware AeroAPI   (src/flightboard/aero_direct.cpp)
 
 #include <Arduino.h>
 #include <Preferences.h>
@@ -88,6 +89,26 @@ void setup() {
 #ifdef PROV_RTT_KIND
   p.putString("kind", PROV_RTT_KIND); any = true;
   Serial.printf("  %-22s %s\n", "rb/kind", PROV_RTT_KIND);
+#endif
+  p.end();
+
+  // FlightAware AeroAPI, for the flight board's direct fetch: the key as
+  // issued, sent as the x-apikey header. Only its length is printed.
+  p.begin("aero", false);
+#ifdef PROV_AEROAPI_CLEAR
+  if (p.isKey("key")) p.remove("key");
+  Serial.printf("  %-22s cleared\n", "aero/key");
+  any = true;
+#endif
+#ifdef PROV_AEROAPI_KEY
+  if (p.putString("key", PROV_AEROAPI_KEY)) {
+    Serial.printf("  %-22s written, %u chars\n", "aero/key", (unsigned)strlen(PROV_AEROAPI_KEY));
+    any = true;
+  } else {
+    Serial.printf("  %-22s FAILED to write\n", "aero/key");
+  }
+#else
+  report("aero/key", false);
 #endif
   p.end();
 
