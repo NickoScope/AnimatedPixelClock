@@ -26,15 +26,14 @@ enum YrMotion : uint8_t {      // what the hull is doing, drives colour
   YR_UNDERWAY,                 // > 3 kn
 };
 
-// Open the AIS stream. Cheap to call repeatedly; only the first opens a socket.
+// Open the AIS stream: starts the task that holds the websocket, so neither the
+// TLS handshake nor the traffic runs in loop(). Cheap to call repeatedly.
 // Returns false when no key is stored, which the page renders as a message.
 bool yachtRadarBegin();
 
-// Pump the websocket. Must be called from the main loop while the page is up.
-void yachtRadarLoop();
-
-// Close the socket. Called when the page is left, so the stream is not held
-// open for a display nobody is looking at - the same gating fx34 uses.
+// Close the stream. Called when the page is left, so the stream is not held
+// open for a display nobody is looking at - the same gating fx34 uses. The task
+// disconnects and ends on its own, and its stack goes with it.
 void yachtRadarStop();
 
 void     yachtRadarRender();

@@ -881,7 +881,6 @@ void loop() {
       else                     yachtRadarStop();
       yrWasOn = httpForceYachtRadar;
     }
-    if (httpForceYachtRadar) yachtRadarLoop();
   }
 #endif
   loopMark("yacht radar");
@@ -891,7 +890,14 @@ void loop() {
   loopMark("brightness");
 
   // Handle web server requests
-  server.handleClient();
+  {
+    extern const char *webLastUri();
+    const uint32_t httpFromUs = micros();
+    server.handleClient();
+    // Which request, when one holds the loop: the part profiler names only the part.
+    if (micros() - httpFromUs > 200000UL)
+      Serial.printf("[loop] web %s took %u ms\n", webLastUri(), (unsigned)((micros() - httpFromUs) / 1000UL));
+  }
   loopMark("web server");
 
   // Handle UDP packets - always process to track PC online status accurately

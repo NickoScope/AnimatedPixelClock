@@ -4,7 +4,9 @@
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
-#include <esp_task_wdt.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+#include <freertos/task.h>
 #include <Preferences.h>
 #include <WebSocketsClient.h>
 #include <math.h>
@@ -78,15 +80,25 @@ static uint32_t     s_positions = 0;
 static uint32_t     s_lastFrame = 0;
 static char         s_err[64]  = "";
 static bool         s_open     = false;
-static bool         s_conn     = false;
-static bool         s_subbed   = false;
+static volatile bool s_conn    = false;   // written by the stream task
+static volatile bool s_subbed  = false;
 static bool         s_noKey    = false;
 static uint8_t      s_scroll   = 0;      // first table row shown
 // By length, longest first: the owner's order for the list (2026-09-14). The
 // knob and the portal can still switch to range.
 static bool         s_bySize   = true;    // false = by range
 static String       s_key;
-static WebSocketsClient s_ws;
+static WebSocketsClient s_ws;             // touched only by the stream task
+
+// The websocket runs on a task of its own (wsTask, below). Pumped from loop(),
+// its TLS handshake to aisstream.io held the whole panel: entering the page
+// took 636 ms in loop() on 2026-09-14. The vessel table is written by that
+// task and read and edited (pings, expiry) by the render, so both hold s_mx.
+static SemaphoreHandle_t s_mx = nullptr;
+struct YrLock {
+  YrLock()  { if (s_mx) xSemaphoreTake(s_mx, portMAX_DELAY); }
+  ~YrLock() { if (s_mx) xSemaphoreGive(s_mx); }
+};
 
 // ---------------------------------------------------------------- vessels
 static YrVessel *find(uint32_t mmsi) {
@@ -193,6 +205,7 @@ static YrMotion motionOf(const YrVessel &v) {
 static void onMessage(const char *payload, size_t len) {
   JsonDocument doc;
   if (deserializeJson(doc, payload, len)) return;
+  YrLock lock;   // parsed outside it; the table is shared with the render
 
   // A reply carrying an "error" field (the shape aisstream.io's docs are said to
   // use for a rejected key or subscription - not verified here) is kept for the
@@ -306,46 +319,91 @@ static void onEvent(WStype_t type, uint8_t *payload, size_t len) {
   }
 }
 
+// ---------------------------------------------------------------- stream task
+// Core 0 below the Lua effect task, like the other network work: a handshake is
+// hundreds of milliseconds of maths. 12 KB, as the rail and flight fetches: the
+// TLS handshake and the JSON parse run on it, and stackFree in the portal shows
+// the margin. It exists only while the page is up.
+static const uint32_t    YR_TASK_STACK = 12 * 1024;
+static TaskHandle_t      s_task      = nullptr;
+static portMUX_TYPE      s_taskMux   = portMUX_INITIALIZER_UNLOCKED;
+static bool              s_stopReq   = false;   // these three under s_taskMux
+static bool              s_exiting   = false;   // the task has committed to closing
+static bool              s_restart   = false;   // ...and the page came back meanwhile
+static volatile uint32_t s_stackFree = 0;
+
+static void wsTask(void *) {
+  for (;;) {
+    // Empty fingerprint makes the library call setInsecure() internally, so no
+    // CA bundle is carried. Same call the NickoScope32 S3 has been running on.
+    s_ws.beginSSL("stream.aisstream.io", 443, "/v0/stream");
+    s_ws.onEvent(onEvent);
+    s_ws.setReconnectInterval(5000);
+    s_ws.enableHeartbeat(15000, 3000, 2);
+    for (;;) {
+      bool stop;
+      portENTER_CRITICAL(&s_taskMux);
+      stop = s_stopReq;
+      if (stop) s_exiting = true;
+      portEXIT_CRITICAL(&s_taskMux);
+      if (stop) break;
+      s_ws.loop();
+      s_stackFree = uxTaskGetStackHighWaterMark(nullptr);
+      vTaskDelay(pdMS_TO_TICKS(10));
+    }
+    s_ws.disconnect();
+    s_conn = s_subbed = false;
+    bool again;
+    portENTER_CRITICAL(&s_taskMux);
+    again = s_restart;
+    s_restart = s_stopReq = s_exiting = false;
+    if (!again) s_task = nullptr;
+    portEXIT_CRITICAL(&s_taskMux);
+    if (!again) break;
+  }
+  vTaskDelete(nullptr);
+}
+
 bool yachtRadarBegin() {
   if (s_open) return !s_noKey;
-  Preferences p;
-  if (p.begin("yr", true)) {          // read-only
-    // isKey first: getString() logs an error for a missing key, and the
-    // carousel reaches this page every 75 s - on an unprovisioned board that
-    // was one error line every lap. isKey() reads without logging.
-    s_key = p.isKey("ais") ? p.getString("ais", "") : String();
-    p.end();
+  if (s_key.isEmpty()) {
+    // Read once: the key changes only by flashing the provisioning image, which
+    // reboots, and the stream task reads s_key when it subscribes.
+    Preferences p;
+    if (p.begin("yr", true)) {          // read-only
+      // isKey first: getString() logs an error for a missing key, and the
+      // carousel reaches this page every 75 s - on an unprovisioned board that
+      // was one error line every lap. isKey() reads without logging.
+      s_key = p.isKey("ais") ? p.getString("ais", "") : String();
+      p.end();
+    }
   }
   if (s_key.isEmpty()) { s_noKey = true; return false; }
   s_noKey = false;
-  // Empty fingerprint makes the library call setInsecure() internally, so no
-  // CA bundle is carried. Same call the NickoScope32 S3 has been running on.
-  s_ws.beginSSL("stream.aisstream.io", 443, "/v0/stream");
-  s_ws.onEvent(onEvent);
-  s_ws.setReconnectInterval(5000);
-  s_ws.enableHeartbeat(15000, 3000, 2);
+  if (!s_mx) s_mx = xSemaphoreCreateMutex();
+  bool create = false;
+  portENTER_CRITICAL(&s_taskMux);
+  if (!s_task)        create = true;
+  else if (s_exiting) s_restart = true;     // still closing the last visit: it reopens
+  else                s_stopReq = false;    // left and back before it noticed
+  portEXIT_CRITICAL(&s_taskMux);
+  if (create && (!s_mx || xTaskCreatePinnedToCore(wsTask, "aisws", YR_TASK_STACK, nullptr, 0,
+                                                  &s_task, 0) != pdPASS)) {
+    s_task = nullptr;
+    strncpy(s_err, "no memory for the AIS stream task", sizeof(s_err) - 1);
+    s_err[sizeof(s_err) - 1] = '\0';
+    return false;
+  }
   s_open = true;
   return true;
 }
 
-void yachtRadarLoop() {
-  if (!s_open) return;
-  // The websocket pump can block far longer than the task watchdog allows.
-  // arduinoWebSockets passes its 5 s timeout to the socket only; the TLS
-  // handshake loop inside WiFiClientSecure is bounded by handshake_timeout,
-  // which is 120 s and is never overridden. main.cpp arms a 15 s watchdog with
-  // panic=true, so an unreachable broker or a lossy handshake is a reboot loop
-  // rather than a slow page. Unsubscribe for the duration of the call.
-  esp_task_wdt_delete(NULL);
-  s_ws.loop();
-  esp_task_wdt_add(NULL);
-  esp_task_wdt_reset();
-}
-
 void yachtRadarStop() {
   if (!s_open) return;
-  s_ws.disconnect();
-  s_open = s_conn = s_subbed = false;
+  s_open = false;
+  portENTER_CRITICAL(&s_taskMux);
+  if (s_task) { s_stopReq = true; s_restart = false; }
+  portEXIT_CRITICAL(&s_taskMux);
 }
 
 
@@ -527,6 +585,7 @@ static void drawRow(const YrVessel &v, int16_t top, uint32_t now, uint16_t dim) 
 }
 
 void yachtRadarRender() {
+  YrLock lock;   // the stream task writes the table this reads
   display.fillScreen(0);
   display.setFont(&PicopixelFB);
   display.setTextWrap(false);
@@ -674,7 +733,10 @@ static bool keyStored() {
 }
 
 void yachtRadarStatusJson(JsonObject out) {
+  YrLock lock;
   out["keyPresent"] = keyStored();
+  out["task"]       = s_task != nullptr;    // the stream task, while the page is up
+  out["stackFree"]  = s_stackFree;          // its stack high-water mark, bytes
   out["open"]       = s_open;               // only while the page is on screen
   out["connected"]  = s_conn;
   out["count"]      = s_count;

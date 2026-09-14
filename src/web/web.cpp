@@ -51,7 +51,24 @@ extern bool httpForceViz;
 // ========== Web Server Setup ==========
 static uint32_t runningFirmwareBytes = 0;
 
+// Remembers the URI of the request being handled, for loop()'s slow-request line:
+// WebServer clears uri() by the time handleClient() returns. Registered first,
+// it is asked about every request and never takes one.
+class UriRecorder : public RequestHandler {
+public:
+  bool canHandle(HTTPMethod method, String uri) override {
+    (void)method;
+    strncpy(last, uri.c_str(), sizeof(last) - 1);
+    last[sizeof(last) - 1] = '\0';
+    return false;
+  }
+  char last[64] = "";
+};
+static UriRecorder s_uriRecorder;
+const char *webLastUri() { return s_uriRecorder.last; }
+
 void setupWebServer() {
+ server.addHandler(&s_uriRecorder);   // first, so it sees every request
  // Arduino's getSketchSize verifies the entire flash image. Cache it before
  // rendering starts, never repeat it in the five-second /api/info poll.
  runningFirmwareBytes = ESP.getSketchSize();
