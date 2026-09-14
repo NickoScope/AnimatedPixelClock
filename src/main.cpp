@@ -101,6 +101,7 @@ int getOptimalRefreshRate();
 #include "worldclock/worldclock.h"
 #include "lua/nslua_bench.h"
 #include "railboard/railboard.h"
+#include "network/tls_psram.h"
 
 #if defined(CAROUSEL_ENABLED) && defined(CONTROL_ENCODER_ENABLED)
 // How long each page holds the screen when the panel is cycling on its own.
@@ -300,6 +301,9 @@ void cycleClockScreens() {
 
 // ========== setup() ==========
 void setup() {
+#if defined(BOARD_HAS_PSRAM)
+  tlsUsePsram();   // before anything opens TLS - see network/tls_psram.cpp
+#endif
   Serial.begin(115200);
   delay(1000);
 
