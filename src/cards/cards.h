@@ -46,6 +46,7 @@ void     cardsLoop();           // expiry, and the notification timer
 uint8_t  cardsCount();          // live cards, in the order they arrived
 void     cardsRender(uint8_t i);
 const char *cardsName(uint8_t i);
+const char *cardsTitle(uint8_t i);      // "" when the card has none
 uint16_t    cardsDuration(uint8_t i);   // seconds for the carousel, 0 = default
 
 bool     cardsNotifyActive();   // an overlay wants the screen

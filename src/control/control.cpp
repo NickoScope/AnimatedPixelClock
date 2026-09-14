@@ -63,20 +63,9 @@
 // steady LOW, a click if released within 500 ms, a long press once held for a
 // second - the flagship's thresholds.
 
-// CTRL_REVERSE 1 if clockwise walks backwards - instead of swapping A and B.
-#ifndef CTRL_REVERSE
-#define CTRL_REVERSE 0
-#endif
-#ifndef CTRL_ENC_LOCKOUT_MS
-#define CTRL_ENC_LOCKOUT_MS 10
-#endif
-#ifndef CTRL_SW_DEBOUNCE_MS
-#define CTRL_SW_DEBOUNCE_MS 20
-#endif
-// -1 find out from the knob (default), 0 detents at 11 only, 1 at 11 and 00.
-#ifndef CTRL_ENC_HALF_DETENT
-#define CTRL_ENC_HALF_DETENT -1
-#endif
+// CTRL_REVERSE, CTRL_ENC_LOCKOUT_MS, CTRL_SW_DEBOUNCE_MS and CTRL_ENC_HALF_DETENT
+// are defaults now, defined in control.h; the values in force are the s_cfg*
+// fields below.
 
 static const uint64_t kSampleUs     = 1000;
 static const uint32_t kSwShortMaxMs = 500;
@@ -105,6 +94,24 @@ static volatile bool s_swDown = false;   // debounced
 static uint32_t s_swDownAtMs = 0;
 static bool     s_swLongSent = false;
 
+// Run-time settings. Written only by loop() through controlConfigure(), read by
+// the sampling task. Each is one byte or one word, so a read sees the old value
+// or the new one, never a mix; nothing depends on two of them agreeing.
+// s_halfDetent is the timer's own state, so a new detent mode is handed over by
+// generation: the fields are stored first and the generation last, and the
+// timer copies the mode in when it sees a generation it has not seen.
+static volatile bool     s_cfgReverse    = CTRL_REVERSE != 0;
+static volatile uint16_t s_cfgLockoutMs  = CTRL_ENC_LOCKOUT_MS;
+static volatile uint16_t s_cfgDebounceMs = CTRL_SW_DEBOUNCE_MS;
+static volatile int8_t   s_cfgDetent     = CTRL_ENC_HALF_DETENT;
+static volatile uint8_t  s_cfgGen        = 0;
+static uint8_t           s_cfgSeenGen    = 0;   // sampling task only
+
+// Knob tester counters: written by the sampling task only.
+static volatile uint32_t s_nCw = 0, s_nCcw = 0, s_nPress = 0, s_nLong = 0;
+static volatile uint8_t  s_lastEvent = CTRL_NONE;
+static volatile uint32_t s_lastEventMs = 0;
+
 // CTRL_DEBUG: pin levels, the detent mode, transition and step counts, and every
 // event, on serial. Build with PLATFORMIO_BUILD_FLAGS=-DCTRL_DEBUG; never in a
 // release.
@@ -121,6 +128,16 @@ static inline int pinB() { return CTRL_AB_ACTIVE_HIGH ? !digitalRead(CTRL_PIN_B)
 static inline int encAB() { return (pinB() << 1) | pinA(); }   // B bit 1, A bit 0
 
 static void push(CtrlEvent e) {
+  switch (e) {
+  case CTRL_CW:    s_nCw = s_nCw + 1; break;
+  case CTRL_CCW:   s_nCcw = s_nCcw + 1; break;
+  case CTRL_PRESS: s_nPress = s_nPress + 1; break;
+  case CTRL_LONG:  s_nLong = s_nLong + 1; break;
+  default: break;
+  }
+  s_lastEvent = e;
+  s_lastEventMs = millis();
+  if (!s_lastEventMs) s_lastEventMs = 1;   // 0 means none yet
   const uint8_t n = (uint8_t)((s_qHead + 1) % 16);
   if (n == s_qTail) return;         // full: drop the newest, keep the order
   s_q[s_qHead] = e;
@@ -129,6 +146,12 @@ static void push(CtrlEvent e) {
 
 static void sampleTick(void *) {
   const uint32_t now = millis();
+  if (s_cfgGen != s_cfgSeenGen) {           // the portal changed the detent mode
+    s_cfgSeenGen = s_cfgGen;
+    s_halfDetent = s_cfgDetent;
+  }
+  const uint16_t lockoutMs  = s_cfgLockoutMs;
+  const uint16_t debounceMs = s_cfgDebounceMs;
 
   // ---- rotation
   const int ab = encAB();
@@ -141,7 +164,7 @@ static void sampleTick(void *) {
   }
   if (s_halfDetent < 0 && ab == 0b00 && (now - s_abSinceMs) >= kRestSeenMs) s_halfDetent = 1;
 
-  if ((now - s_lastStepMs) < CTRL_ENC_LOCKOUT_MS) {
+  if ((now - s_lastStepMs) < lockoutMs) {
     s_encDir = 0;
     s_lastEnc = ab * 5;             // old = new
   } else {
@@ -151,7 +174,7 @@ static void sampleTick(void *) {
   const bool atDetent = (ab == 0b11) || (s_halfDetent == 1 && ab == 0b00);
   if (s_encDir != 0 && atDetent) {
     s_lastStepMs = now;
-    const bool forward = (s_encDir > 0) != (CTRL_REVERSE != 0);
+    const bool forward = (s_encDir > 0) != s_cfgReverse;
     s_encDir = 0;
     s_lastEnc = ab * 5;
     push(forward ? CTRL_CW : CTRL_CCW);
@@ -163,7 +186,7 @@ static void sampleTick(void *) {
   // ---- switch
   const bool raw = (digitalRead(CTRL_PIN_SW) == LOW);
   if (raw != s_swRaw) { s_swRaw = raw; s_swRawSinceMs = now; }
-  if (raw != s_swDown && (now - s_swRawSinceMs) >= CTRL_SW_DEBOUNCE_MS) {
+  if (raw != s_swDown && (now - s_swRawSinceMs) >= debounceMs) {
     s_swDown = raw;
     if (raw) { s_swDownAtMs = now; s_swLongSent = false; }
     else if (!s_swLongSent && (now - s_swDownAtMs) < kSwShortMaxMs) push(CTRL_PRESS);
@@ -226,6 +249,28 @@ CtrlEvent controlTake() {
   Serial.printf("[ctrl] event %s\n", e == CTRL_CW ? "CW" : e == CTRL_CCW ? "CCW" : e == CTRL_PRESS ? "PRESS" : "LONG");
 #endif
   return e;
+}
+
+void controlConfigure(bool reverse, uint16_t lockoutMs, uint16_t debounceMs, int8_t detent) {
+  s_cfgReverse    = reverse;
+  s_cfgLockoutMs  = lockoutMs;
+  s_cfgDebounceMs = debounceMs;
+  if (detent != s_cfgDetent) {
+    s_cfgDetent = detent;
+    s_cfgGen    = (uint8_t)(s_cfgGen + 1);   // last: the timer acts on it
+  }
+}
+
+void controlStats(CtrlStats *out) {
+  if (!out) return;
+  out->cw        = s_nCw;
+  out->ccw       = s_nCcw;
+  out->press     = s_nPress;
+  out->longPress = s_nLong;
+  out->last      = s_lastEvent;
+  out->lastMs    = s_lastEventMs;
+  out->detent    = s_halfDetent;
+  out->timer     = s_timerOk;
 }
 
 bool     controlHeld()   { return s_swDown; }

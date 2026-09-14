@@ -167,6 +167,53 @@ void flightboardStepAirport(int8_t delta) {
 
 void flightboardToggleDirection() { s_dirDep = !s_dirDep; }
 
+uint8_t     flightboardAirportCount()       { return FB_AIRPORT_COUNT; }
+uint8_t     flightboardAirportIndex()       { return s_aptIdx; }
+bool        flightboardDeparturesSelected() { return s_dirDep; }
+const char *flightboardAirportCode(uint8_t i)  { return i < FB_AIRPORT_COUNT ? FB_AIRPORTS[i] : ""; }
+const char *flightboardAirportLabel(uint8_t i) { return i < FB_AIRPORT_COUNT ? FB_AIRPORT_NAMES[i] : ""; }
+
+void flightboardSelect(uint8_t airport, bool departures) {
+  if (airport < FB_AIRPORT_COUNT) s_aptIdx = airport;
+  s_dirDep = departures;
+}
+
+// The wire word for a status, the inverse of parseStatus().
+static const char *statusKey(FbStatus st) {
+  switch (st) {
+  case FB_SCHED: return "sched";
+  case FB_BOARD: return "board";
+  case FB_DEP:   return "dep";
+  case FB_LAND:  return "land";
+  case FB_DELAY: return "delay";
+  case FB_CANC:  return "canc";
+  default:       return "";
+  }
+}
+
+void flightboardStatusJson(JsonObject out) {
+  out["have"] = s_haveData;
+  if (!s_haveData) return;
+  const bool departures = (strcmp(s_dir, "dep") == 0);
+  out["apt"]  = (const char *)s_apt;
+  out["name"] = airportName(s_apt);
+  out["dir"]  = (const char *)s_dir;
+  out["upd"]  = (const char *)s_upd;
+  out["age"]  = flightboardAge();
+  out["now"]  = s_nowIdx;
+  JsonArray rows = out["rows"].to<JsonArray>();
+  for (uint8_t i = 0; i < s_count; i++) {
+    const FbRow &r = s_rows[i];
+    JsonObject o = rows.add<JsonObject>();
+    o["tm"] = (const char *)r.tm;
+    o["fn"] = (const char *)r.fn;
+    o["ct"] = (const char *)r.ct;
+    o["cy"] = (const char *)r.cy;
+    o["st"] = statusKey(r.st);
+    o["w"]  = statusWord(r.st, departures);   // the word the panel prints
+  }
+}
+
 void flightboardRender() {
   display.setFont(&PicopixelFB);
   display.setTextSize(1);

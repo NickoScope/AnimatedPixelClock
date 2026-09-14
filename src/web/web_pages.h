@@ -63,6 +63,7 @@ static const char PAGE_HTML[] PROGMEM = R"PAGE(<!doctype html>
   <div class="nav-scrim" id="navScrim" aria-hidden="true"></div>
   <aside class="sidebar">
     <nav aria-label="Sections">
+      %PANEL_NAV%
       <div class="nav-group">
         <div class="nav-label">Configuration</div>
         <button type="button" class="nav-item active" data-nav="clock">Clock</button>
@@ -1144,6 +1145,7 @@ static const char PAGE_HTML[] PROGMEM = R"PAGE(<!doctype html>
         </section>
 
       </form>
+      %PANEL_PAGES%
     </div>
   </main>
 </div>

@@ -19,6 +19,12 @@
 #include "../viz/visualizer.h"
 #include "../weather/weather.h"
 #include "web_pages.h"
+#include "web_panel.h"
+#if defined(CONTROL_ENCODER_ENABLED)
+#include "web_panel_page.h"   // the Panel group's markup, style and script
+static void handlePanelCss();
+static void handlePanelJs();
+#endif
 #include <WebServer.h>
 #include <Update.h>
 #include <LittleFS.h>
@@ -54,6 +60,10 @@ void setupWebServer() {
  server.on("/portal.js", HTTP_GET, handlePortalJs);
  server.on("/favicon.svg", HTTP_GET, handleFavicon);
  server.on("/favicon.ico", HTTP_GET, handleFavicon);
+#if defined(CONTROL_ENCODER_ENABLED)
+ server.on("/panel.css", HTTP_GET, handlePanelCss);
+ server.on("/panel.js", HTTP_GET, handlePanelJs);
+#endif
  server.on("/save", HTTP_POST, handleSave);
  server.on("/reset", handleReset);
  server.on("/metrics", handleMetricsAPI);
@@ -83,6 +93,9 @@ void setupWebServer() {
  server.on("/api/mode/viz", HTTP_GET, handleModeViz);
  server.on("/api/clock/style", HTTP_GET, handleSetClockStyle);
  server.on("/api/reboot", HTTP_GET, handleReboot);
+#if defined(CONTROL_ENCODER_ENABLED)
+ panelWebBegin();   // the Panel group: /api/panel, /api/knob and one per page module
+#endif
 
  // OTA Firmware Update handlers
  server.on("/update", HTTP_POST, []() {
@@ -775,6 +788,10 @@ static String buildPcMetricsColorCard() {
 
 static bool resolvePlaceholder(const char* n, String& out) {
   if (!strcmp(n, "V_CYCLECONFIG")) { out = settings.cycleConfig; return true; }
+#if defined(CONTROL_ENCODER_ENABLED)
+  // Which Panel pages this build carries; the script drops the others.
+  if (!strcmp(n, "PANEL_FEATURES")) { out = panelWebFeatures(); return true; }
+#endif
   // --- Header / identity ---
   if (!strcmp(n, "VER")) { out = String(FIRMWARE_VERSION); return true; }
   if (!strcmp(n, "IP")) { out = WiFi.localIP().toString(); return true; }
@@ -1089,15 +1106,18 @@ static bool writeAllGuarded(int sock, const char* data, size_t len, uint32_t tot
 // Same guarantees as the page stream: bounded blocking, watchdog fed, stalled
 // client dropped. server.send() with a body does none of that.
 static void sendJsonGuarded(int code, const String& json) {
+  sendJsonBytesGuarded(code, json.c_str(), json.length());
+}
+
+void sendJsonBytesGuarded(int code, const char* data, size_t len) {
   netMarkHttp();
   server.sendHeader("Access-Control-Allow-Origin", "*");
-  server.setContentLength(json.length());
+  server.setContentLength(len);
   server.send(code, "application/json", "");
   WiFiClient client = server.client();
   int sock = client.fd();
   if (sock < 0 ||
-      !writeAllGuarded(sock, json.c_str(), json.length(),
-                       millis() + STREAM_TOTAL_LIMIT_MS)) {
+      !writeAllGuarded(sock, data, len, millis() + STREAM_TOTAL_LIMIT_MS)) {
     client.stop();
   }
 }
@@ -1124,47 +1144,58 @@ static bool sendChunkGuarded(char* frame, size_t payloadLen, uint32_t totalDeadl
 // Stream PAGE_HTML from flash, resolving %TOKEN% placeholders on the fly.
 // Literal HTML and resolved values flow through one fixed buffer that is
 // flushed to the client only when full (HTTP chunked transfer).
-static void streamTemplate(const char* tmpl, size_t tmplLen) {
-  netMarkHttp();
-  static const size_t BUF_SIZE = 4096;
-  // Chunk frame layout: [6B size line][payload, up to BUF_SIZE][2B trailer].
+static const size_t TEMPLATE_BUF_SIZE = 4096;
+
+struct TemplateOut {
+  // Chunk frame layout: [6B size line][payload, up to TEMPLATE_BUF_SIZE][2B trailer].
   // sendChunkGuarded() fills the framing in place around the payload.
-  char* buf = (char*)malloc(6 + BUF_SIZE + 2);
-  if (!buf) {
-    server.send(503, "text/plain", "Out of memory");
-    return;
-  }
-  char* payload = buf + 6;
-  size_t bufLen = 0;
+  char* buf;
+  size_t bufLen;
+  bool clientOk;
+  uint32_t deadline;
 
-  server.setContentLength(CONTENT_LENGTH_UNKNOWN);
-  server.send(200, "text/html", "");
-  const uint32_t deadline = millis() + STREAM_TOTAL_LIMIT_MS;
-  bool clientOk = true;
-
-  auto flush = [&]() {
+  void flush() {
     if (clientOk && bufLen > 0) clientOk = sendChunkGuarded(buf, bufLen, deadline);
     bufLen = 0;
-  };
+  }
 
-  auto emit = [&](const char* data, size_t len) {
+  void emit(const char* data, size_t len) {
     while (len > 0 && clientOk) {
-      size_t space = BUF_SIZE - bufLen;
+      size_t space = TEMPLATE_BUF_SIZE - bufLen;
       size_t take = len < space ? len : space;
-      memcpy(payload + bufLen, data, take);
+      memcpy(buf + 6 + bufLen, data, take);
       bufLen += take;
       data += take;
       len -= take;
-      if (bufLen >= BUF_SIZE) flush();
+      if (bufLen >= TEMPLATE_BUF_SIZE) flush();
     }
-  };
+  }
+};
 
+// A token that stands for a whole PROGMEM template rather than a value. Walked
+// in place, its own tokens resolved, so a large block costs no String copy: the
+// peak stays at the buffer plus the largest single value. Builds without the
+// block resolve the token to nothing.
+static bool nestedTemplate(const char* n, const char** tmpl, size_t* len) {
+  const bool nav = !strcmp(n, "PANEL_NAV"), pages = !strcmp(n, "PANEL_PAGES");
+  if (!nav && !pages) return false;
+#if defined(CONTROL_ENCODER_ENABLED)
+  *tmpl = nav ? PANEL_NAV_HTML : PANEL_PAGES_HTML;
+  *len = nav ? sizeof(PANEL_NAV_HTML) - 1 : sizeof(PANEL_PAGES_HTML) - 1;
+#else
+  *tmpl = "";
+  *len = 0;
+#endif
+  return true;
+}
+
+static void walkTemplate(TemplateOut& out, const char* tmpl, size_t tmplLen, int depth) {
   // On ESP32 PROGMEM is memory-mapped, so the template is readable directly.
   const char* end = tmpl + tmplLen;
   const char* pos = tmpl;
   const char* literalStart = tmpl;
 
-  while (pos < end && clientOk) {
+  while (pos < end && out.clientOk) {
     if (*pos != '%') { pos++; continue; }
     if (pos + 1 >= end || !(pos[1] >= 'A' && pos[1] <= 'Z')) { pos++; continue; }
 
@@ -1184,10 +1215,20 @@ static void streamTemplate(const char* tmpl, size_t tmplLen) {
     memcpy(name, pos + 1, nameLen);
     name[nameLen] = '\0';
 
+    const char* inner;
+    size_t innerLen;
+    if (depth == 0 && nestedTemplate(name, &inner, &innerLen)) {   // one level deep, never recursive
+      if (pos > literalStart) out.emit(literalStart, pos - literalStart);
+      walkTemplate(out, inner, innerLen, depth + 1);
+      pos = pEnd + 1;
+      literalStart = pos;
+      continue;
+    }
+
     String value;
     if (resolvePlaceholder(name, value)) {
-      if (pos > literalStart) emit(literalStart, pos - literalStart);
-      if (value.length() > 0) emit(value.c_str(), value.length());
+      if (pos > literalStart) out.emit(literalStart, pos - literalStart);
+      if (value.length() > 0) out.emit(value.c_str(), value.length());
       pos = pEnd + 1;
       literalStart = pos;
     } else {
@@ -1195,16 +1236,33 @@ static void streamTemplate(const char* tmpl, size_t tmplLen) {
     }
   }
 
-  if (clientOk) {
-    if (end > literalStart) emit(literalStart, end - literalStart);
-    flush();
+  if (out.clientOk && end > literalStart) out.emit(literalStart, end - literalStart);
+}
+
+static void streamTemplate(const char* tmpl, size_t tmplLen) {
+  netMarkHttp();
+  TemplateOut out;
+  out.buf = (char*)malloc(6 + TEMPLATE_BUF_SIZE + 2);
+  if (!out.buf) {
+    server.send(503, "text/plain", "Out of memory");
+    return;
   }
-  if (clientOk) {
+  out.bufLen = 0;
+  out.clientOk = true;
+
+  server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+  server.send(200, "text/html", "");
+  out.deadline = millis() + STREAM_TOTAL_LIMIT_MS;
+
+  walkTemplate(out, tmpl, tmplLen, 0);
+
+  if (out.clientOk) out.flush();
+  if (out.clientOk) {
     server.sendContent(""); // terminating 0-length chunk
   } else {
     server.client().stop(); // stalled client - drop it, keep the clock alive
   }
-  free(buf);
+  free(out.buf);
 }
 
 void handleRoot() {
@@ -1238,6 +1296,16 @@ void handlePortalJs() {
 void handleFavicon() {
   streamStatic(FAVICON_SVG, sizeof(FAVICON_SVG) - 1, "image/svg+xml");
 }
+
+#if defined(CONTROL_ENCODER_ENABLED)
+static void handlePanelCss() {
+  streamStatic(PANEL_CSS, sizeof(PANEL_CSS) - 1, "text/css");
+}
+
+static void handlePanelJs() {
+  streamStatic(PANEL_JS, sizeof(PANEL_JS) - 1, "application/javascript");
+}
+#endif
 
 // Parse an "HH:MM" time-input value into hour (0-23) + minute (0-59). Returns
 // false (leaving outputs untouched) if the string is malformed or out of range.

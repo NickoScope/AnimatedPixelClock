@@ -38,5 +38,6 @@ bool mqttBusPublish(const char *topic, const char *payload, bool retain = false)
 
 bool        mqttBusConnected();
 const char *mqttBusStatus();   // short label for a page that has nothing to show
+bool        mqttBusConfigured();  // a broker host is stored; never says which
 
 #endif  // MQTT_BUS_ENABLED

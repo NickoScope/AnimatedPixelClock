@@ -1,8 +1,9 @@
 #pragma once
 // The pages advance on their own when nobody is at the panel.
 //
-// No new gesture and no setting: touching the knob puts you in charge, and the
-// carousel picks up again once you have walked away. A wall panel is looked at
+// No new gesture: touching the knob puts you in charge, and the carousel picks
+// up again once you have walked away. The numbers below are defaults; the web
+// portal can change them at run time (src/panel). A wall panel is looked at
 // from across a room far more often than it is operated, and a device that only
 // changes when you touch it shows you the same thing all evening.
 
@@ -30,5 +31,8 @@
 void carouselNote();                     // the knob was used; hold everything
 bool carouselDue(uint16_t pageSeconds);  // true once, when this page has had its turn
 bool carouselRunning();                  // for a page that wants to show it
+void carouselConfigure(bool enabled, uint16_t idleS);
+uint32_t carouselHoldMs();               // until it starts again; 0 when running or off
+uint32_t carouselPageMs();               // how long the current page has had
 
 #endif

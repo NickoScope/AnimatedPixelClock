@@ -12,6 +12,7 @@
 // key "ais"; without it the page says so instead of pretending to scan.
 
 #include <stdint.h>
+#include <ArduinoJson.h>
 
 #if defined(YACHTRADAR_ENABLED)
 
@@ -47,5 +48,10 @@ bool     yachtRadarSortsBySize();
 bool     yachtRadarHasData();
 uint8_t  yachtRadarCount();      // vessels currently on the plot
 uint32_t yachtRadarAge();        // ms since the last position report
+void     yachtRadarSetSortBySize(bool bySize);
+
+// For the web portal: whether a key is stored (never the key), the stream, and
+// the table in the order the page shows it.
+void     yachtRadarStatusJson(JsonObject out);
 
 #endif  // YACHTRADAR_ENABLED

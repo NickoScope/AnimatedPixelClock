@@ -19,6 +19,9 @@ bool clockStyleBrowse(int8_t delta);
 // Arriving on the clock page while browsing: the first style coming forward,
 // the last coming back.
 void clockStyleBrowseEnter(int8_t delta);
+// The web portal's "show now": any style in the table, saved like a knob turn.
+// False for an id the table does not list.
+bool clockStyleSelect(uint8_t id);
 // A banner along the bottom over any page, as long as a style name shows. The
 // text must outlive it: a literal or a static buffer.
 void ctrlToast(const char *text);

@@ -15,6 +15,7 @@
 // The Home Assistant side: tools/railboard/ha_package_guildford.yaml.
 
 #include <stdint.h>
+#include <ArduinoJson.h>
 
 #if defined(RAILBOARD_ENABLED)
 
@@ -57,5 +58,13 @@ void railboardTurn(int8_t delta);  // knob turn: on one panel, the other list no
 // The same path the MQTT handler takes, for a test or a serial command.
 // Returns false and leaves the current board untouched on anything malformed.
 bool railboardIngest(const char *topic, const char *payload, uint16_t len);
+
+// For the web portal. The status carries no token or broker detail - the panel
+// never holds either. A config applied here is the .../config payload, same
+// schema, same clamps; it lasts until Home Assistant's retained config arrives
+// again (every reconnect) or the panel reboots, because Home Assistant owns it.
+void railboardStatusJson(JsonObject out);
+bool railboardApplyConfig(const char *json, uint16_t len);
+void railboardSetDiag(bool on);    // the knob's diagnostics view, on or off
 
 #endif  // RAILBOARD_ENABLED

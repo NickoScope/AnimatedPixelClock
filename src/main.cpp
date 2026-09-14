@@ -98,6 +98,7 @@ int getOptimalRefreshRate();
 #include "mqtt/mqtt_bus.h"
 #include "cards/cards.h"
 #include "control/carousel.h"
+#include "panel/panel.h"
 #include "worldclock/worldclock.h"
 #include "lua/nslua_bench.h"
 #include "railboard/railboard.h"
@@ -106,21 +107,19 @@ int getOptimalRefreshRate();
 // How long each page holds the screen when the panel is cycling on its own.
 // The clock gets the longest turn because it is the one you glance at; the data
 // pages are there to be noticed, not studied.
+//
+// The slot is a run-time setting (src/panel). Its default is CAROUSEL_SLOT_S
+// with CAROUSEL_ALL_STYLES and 0 without, where 0 keeps the times below - so
+// both builds behave as they did until someone changes it in the portal.
 static uint16_t ctrlPageSeconds(uint8_t page) {
+  const uint16_t slot = panelCarousel().slotS;
 #if defined(CARDS_ENABLED)
   if (page >= PAGE_COUNT) {
     const uint16_t own = cardsDuration((uint8_t)(page - PAGE_COUNT));
-#if defined(CAROUSEL_ALL_STYLES)
-    return own ? own : CAROUSEL_SLOT_S; // a card may still ask for its own time
-#else
-    return own ? own : 10;              // a card may ask for its own time
-#endif
+    return own ? own : (slot ? slot : 10);   // a card may still ask for its own time
   }
 #endif
-#if defined(CAROUSEL_ALL_STYLES)
-  (void)page;
-  return CAROUSEL_SLOT_S;               // every page, and every clock style, alike
-#else
+  if (slot) return slot;                     // every page, and every clock style, alike
 #if defined(WORLDCLOCK_ENABLED)
   if (page == PAGE_WORLDCLOCK) return 20;
 #endif
@@ -128,7 +127,6 @@ static uint16_t ctrlPageSeconds(uint8_t page) {
   if (page == PAGE_RAILBOARD) return 20;   // one panel: both lists get a turn at the default 10 s
 #endif
   return (page == PAGE_CLOCK) ? 25 : 15;
-#endif
 }
 #endif
 
@@ -366,6 +364,10 @@ void setup() {
   wifiConnected = (WiFi.status() == WL_CONNECTED);
 
 #if defined(CONTROL_ENCODER_ENABLED)
+  // Run-time panel settings from NVS: the knob's feel, the carousel, the flight
+  // board selection and the world clock's home. Before controlBegin() and
+  // fbMqttBegin(), which subscribes to whatever airport is selected by then.
+  panelBegin();
   controlBegin();
 #endif
 #if defined(NSLUA_ENABLED)
@@ -482,11 +484,46 @@ static const char *ctrlEnterHint(uint8_t page) {
   return "";
 }
 
+// Stable keys for the portal's per-page switches (src/panel/panel.h). A page
+// added to CtrlPage without a case here is PANEL_KEY_NONE: always visited.
+uint8_t panelPageKey(uint8_t page) {
+  if (page >= PAGE_COUNT) return PANEL_KEY_CARDS;
+  switch (page) {
+  case PAGE_CLOCK:       return PANEL_KEY_CLOCK;
+#if defined(WORLDCLOCK_ENABLED)
+  case PAGE_WORLDCLOCK:  return PANEL_KEY_WORLD;
+#endif
+#if defined(FLIGHTBOARD_ENABLED)
+  case PAGE_FLIGHTBOARD: return PANEL_KEY_FLIGHTS;
+#endif
+#if defined(RAILBOARD_ENABLED)
+  case PAGE_RAILBOARD:   return PANEL_KEY_TRAINS;
+#endif
+#if defined(YACHTRADAR_ENABLED)
+  case PAGE_YACHTRADAR:  return PANEL_KEY_YACHTS;
+#endif
+  default:               return PANEL_KEY_NONE;
+  }
+}
+
+// The next page the knob and the carousel may land on, skipping the ones
+// switched off in the portal. The clock cannot be switched off, so the walk
+// always ends within one lap.
+static uint8_t ctrlNextVisited(uint8_t from, int8_t d) {
+  const int n = ctrlPageCount();
+  if (!n) return from;
+  int p = from;
+  for (int k = 0; k < n; k++) {
+    p = (p + (d > 0 ? 1 : -1) + n) % n;
+    if (panelPageEnabled(panelPageKey((uint8_t)p))) break;
+  }
+  return (uint8_t)p;
+}
+
 static void ctrlBrowse(int8_t d) {
   if (ctrlPage == PAGE_CLOCK && clockStyleBrowse(d)) return;   // next style, same page
-  const int n = ctrlPageCount();
-  if (!n) return;
-  ctrlPage = (uint8_t)(((int)ctrlPage + (d > 0 ? 1 : -1) + n) % n);
+  if (!ctrlPageCount()) return;
+  ctrlPage = ctrlNextVisited(ctrlPage, d);
   if (ctrlPage == PAGE_CLOCK) clockStyleBrowseEnter(d);
   else ctrlToast(ctrlPageName(ctrlPage));
 }
@@ -510,10 +547,52 @@ static void fbKnob(int8_t d) {
 #if defined(FB_MQTT_ENABLED)
   fbMqttSelectionChanged();   // resubscribes once the knob settles
 #endif
+  panelNoteFlightboard();     // and it is still this airport after a reboot
   snprintf(fbToast, sizeof(fbToast), "%s %s", flightboardAirport(), flightboardDirection());
   ctrlToast(fbToast);
 }
 #endif
+
+// ---------------------------------------------------------------- the portal
+// What the web portal needs from the page model above (src/panel/panel.h).
+// Web handlers run inside loop(), on this task, so they may touch it directly.
+uint8_t     panelPageCount()             { return ctrlPageCount(); }
+const char *panelPageName(uint8_t page)  { return ctrlPageName(page); }
+uint8_t     panelCurrentPage()           { return ctrlPage; }
+bool        panelEnteredPage()           { return ctrlEntered; }
+
+uint16_t panelPageSeconds(uint8_t page) {
+#if defined(CAROUSEL_ENABLED)
+  return ctrlPageSeconds(page);
+#else
+  (void)page;
+  return 0;
+#endif
+}
+
+bool panelShowPage(uint8_t page) {
+  if (page >= ctrlPageCount()) return false;
+#if defined(CAROUSEL_ENABLED)
+  carouselNote();             // held for the idle time, as if the knob had put it there
+#endif
+  ctrlEntered = false;
+  ctrlPage = page;
+  ctrlToast(page == PAGE_CLOCK ? nullptr : ctrlPageName(page));   // null: the style name
+  // loop() sets these before it serves the web, so without this the frame drawn
+  // right after the request would still be the previous page.
+#if defined(FLIGHTBOARD_ENABLED)
+  httpForceFlightboard = (ctrlPage == PAGE_FLIGHTBOARD);
+#endif
+#if defined(YACHTRADAR_ENABLED)
+  httpForceYachtRadar  = (ctrlPage == PAGE_YACHTRADAR);
+#endif
+  return true;
+}
+
+bool panelShowStyle(uint8_t styleId) {
+  if (!clockStyleSelect(styleId)) return false;
+  return panelShowPage(PAGE_CLOCK);
+}
 #endif  // CONTROL_ENCODER_ENABLED
 
 // ========== loop() ==========
@@ -580,15 +659,12 @@ void loop() {
   // Advance only when the knob has been quiet for a while, so the page you
   // chose stays where you left it until you have walked away from it.
   if (carouselDue(ctrlPageSeconds(ctrlPage))) {
-    const uint8_t n = ctrlPageCount();
-#if defined(CAROUSEL_ALL_STYLES)
-    // On the clock page each style takes a slot of its own; the page moves on
-    // once the last style has had its turn.
-    const bool stay = (ctrlPage == PAGE_CLOCK) && clockStyleCarouselNext();
-#else
-    const bool stay = false;
-#endif
-    if (!stay && n) ctrlPage = (uint8_t)((ctrlPage + 1) % n);
+    // With "walk every clock style" (CAROUSEL_ALL_STYLES by default, switchable
+    // in the portal) each style takes a slot of its own on the clock page, and
+    // the page moves on once the last style has had its turn.
+    const bool stay = (ctrlPage == PAGE_CLOCK) && panelCarousel().allStyles &&
+                      clockStyleCarouselNext();
+    if (!stay) ctrlPage = ctrlNextVisited(ctrlPage, +1);
   }
   if (ctrlPage >= ctrlPageCount()) ctrlPage = PAGE_CLOCK;
 #endif
@@ -596,6 +672,7 @@ void loop() {
   httpForceFlightboard = (ctrlPage == PAGE_FLIGHTBOARD);
 #endif
   clockStyleTick();          // deferred NVS write, once the knob settles
+  panelTick();               // the same for the portal's panel settings
 #if defined(YACHTRADAR_ENABLED)
   httpForceYachtRadar  = (ctrlPage == PAGE_YACHTRADAR);
 #endif

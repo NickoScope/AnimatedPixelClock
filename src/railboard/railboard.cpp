@@ -141,6 +141,7 @@ static uint8_t    s_flip     = 0;
 static uint32_t   s_altSince = 0;
 static uint16_t   s_refused  = 0;
 static size_t     s_jsonPeak = 0;
+static uint8_t    s_cfgFrom  = 0;     // 0 build defaults, 1 Home Assistant, 2 web portal
 
 // ── JSON memory ─────────────────────────────────────────────────────────────
 // Every allocation ArduinoJson makes for a payload comes from here: PSRAM first,
@@ -290,7 +291,7 @@ bool railboardIngest(const char *topic, const char *payload, uint16_t len) {
   if      (!strcmp(leaf, "departures")) ok = ingestBoard(RB_DEP, payload, len);
   else if (!strcmp(leaf, "arrivals"))   ok = ingestBoard(RB_ARR, payload, len);
   else if (!strcmp(leaf, "status"))     ok = ingestStatus(payload, len);
-  else if (!strcmp(leaf, "config"))     ok = ingestConfig(payload, len);
+  else if (!strcmp(leaf, "config"))     { ok = ingestConfig(payload, len); if (ok) s_cfgFrom = 1; }
   else return false;
   if (!ok) {
     s_refused++;
@@ -314,6 +315,19 @@ void railboardBegin() {
 }
 
 void railboardPress() { s_diag = !s_diag; }
+
+// Off means off: a diag:true from Home Assistant's config is cleared too, until
+// that config arrives again.
+void railboardSetDiag(bool on) {
+  s_diag = on;
+  if (!on) s_cfg.diag = false;
+}
+
+bool railboardApplyConfig(const char *json, uint16_t len) {
+  if (!json || !len || !ingestConfig(json, len)) return false;
+  s_cfgFrom = 2;
+  return true;
+}
 
 void railboardTurn(int8_t delta) {
   (void)delta;              // two lists: either direction means "the other one"
@@ -646,6 +660,52 @@ void railboardRender() {
   }
 
   display.setFont(NULL);   // other pages draw with the built-in font and would inherit this one
+}
+
+void railboardStatusJson(JsonObject out) {
+  const time_t now    = time(nullptr);
+  const bool   synced = now > 1700000000;
+  out["crs"]     = RB_CRS;
+  out["station"] = stationName();
+  out["synced"]  = synced;
+  out["now"]     = synced ? (uint32_t)now : 0;
+  out["diag"]    = s_diag || s_cfg.diag;
+  out["diagKnob"] = s_diag;
+  out["diagCfg"]  = s_cfg.diag;
+
+  JsonObject cfg = out["cfg"].to<JsonObject>();
+  cfg["panels"]   = s_cfg.panels;
+  cfg["rows"]     = s_cfg.rows;
+  cfg["font"]     = s_cfg.large ? "large" : "small";
+  cfg["level"]    = s_cfg.level;
+  cfg["switch_s"] = s_cfg.switchS;
+  cfg["stale_s"]  = s_cfg.staleS;
+  cfg["from"]     = s_cfgFrom == 1 ? "ha" : (s_cfgFrom == 2 ? "web" : "build");
+
+  static const char *const keys[] = {"dep", "arr"};
+  for (uint8_t d = 0; d < 2; d++) {
+    const RbBoard &b = s_board[d];
+    JsonObject l = out[keys[d]].to<JsonObject>();
+    l["have"]  = b.have;
+    l["stale"] = isStale(b, now, synced);
+    if (!b.have) continue;
+    l["count"] = b.count;
+    l["ts"]    = b.ts;
+    l["rx"]    = (millis() - b.rxMs) / 1000UL;   // seconds since it reached the panel
+    l["rt"]    = (const char *)b.rt;
+  }
+
+  JsonObject ha = out["ha"].to<JsonObject>();
+  ha["have"] = s_ha.have;
+  if (s_ha.have) {
+    ha["at"]    = s_ha.at;
+    ha["code"]  = s_ha.code;
+    ha["err"]   = (const char *)s_ha.err;
+    ha["retry"] = s_ha.retry;
+    ha["left"]  = (const char *)s_ha.rl;
+  }
+  out["refused"]  = s_refused;
+  out["jsonPeak"] = (uint32_t)s_jsonPeak;
 }
 
 #endif  // RAILBOARD_ENABLED
