@@ -47,11 +47,12 @@ if git diff --cached --name-only | grep -qE '^(tools/luasim/gen_(world|tz)\.py|t
 fi
 
 # The portal is served as gzip from src/web/web_assets.h, made from the raw
-# strings in the web headers. Checked offline: the generator needs only them.
-if git diff --cached --name-only | grep -qE '^(tools/web_assets_gen\.py|src/web/(web_pages|web_panel_page|web_panel_js|web_assets)\.h)$'; then
+# strings in the web headers. The generator also holds the settings form against
+# the values /api/portal fills in (web.cpp). Checked offline: it needs only these.
+if git diff --cached --name-only | grep -qE '^(tools/web_assets_gen\.py|src/web/(web_pages|web_panel_page|web_panel_js|web_assets)\.h|src/web/web\.cpp)$'; then
   python3 tools/web_assets_gen.py --check || {
     echo
-    echo "pre-commit: the gzipped portal has drifted from the web headers."
+    echo "pre-commit: the gzipped portal has drifted from the web headers (see above)."
     echo "            run  python3 tools/web_assets_gen.py  and stage src/web/web_assets.h."
     exit 1
   }

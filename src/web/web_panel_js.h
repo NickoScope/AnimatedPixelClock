@@ -1,10 +1,11 @@
 // The Panel group's script, served from /panel.js as the gzip copy in
 // web_assets.h (tools/web_assets_gen.py). Included by web_panel_page.h.
 //
-// Loaded before portal.js on purpose: it removes the pages this build does not
-// carry (data-need) before portal.js collects the navigation. Everything else
-// waits for data. Only the Panel page in view is polled, and nothing while the
-// tab is hidden; the knob tester polls fastest, at 250 ms, one request at a time.
+// Loaded by portal.js once /api/portal has put this build's features in
+// #panelRoot's data-f, and portal.js has dropped the pages this build does not
+// carry (data-need). Everything else waits for data. Only the Panel page in view
+// is polled, and nothing while the tab is hidden; the knob tester polls fastest,
+// at 250 ms, one request at a time.
 #pragma once
 #include <Arduino.h>
 

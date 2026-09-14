@@ -17,7 +17,8 @@ OUT  = ROOT / "src/control/clock_styles.h"
 
 def main():
     html = SRC.read_text()
-    opts = re.findall(r'<option value="(\d+)"\s*%SEL_CLOCKSTYLE_\d+%>([^<]+)</option>', html)
+    select = re.search(r'<select name="clockStyle"[^>]*>(.*?)</select>', html, re.S)
+    opts = re.findall(r'<option value="(\d+)">([^<]+)</option>', select[1]) if select else []
     if not opts:
         raise SystemExit("clock_styles_gen: no clockStyle options found in web_pages.h")
 

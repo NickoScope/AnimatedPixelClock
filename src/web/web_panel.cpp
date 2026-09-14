@@ -115,23 +115,9 @@ extern bool httpForceViz;
 int getOptimalRefreshRate();
 
 // ---------------------------------------------------------------- plumbing
-// Documents for these routes come from PSRAM when there is some. Internal SRAM
-// is the scarce heap on this board - the HUB75 buffers and lwip live in it and
-// /api/info has shown its low-water mark near 16 KB - and a response here is
-// built, sent and freed within one request.
-class PanelJsonAllocator : public ArduinoJson::Allocator {
- public:
-  void *allocate(size_t n) override {
-    void *p = heap_caps_malloc(n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    return p ? p : heap_caps_malloc(n, MALLOC_CAP_8BIT);
-  }
-  void deallocate(void *p) override { heap_caps_free(p); }
-  void *reallocate(void *p, size_t n) override {
-    void *q = heap_caps_realloc(p, n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    return q ? q : heap_caps_realloc(p, n, MALLOC_CAP_8BIT);
-  }
-};
-static PanelJsonAllocator s_alloc;
+// Documents for these routes come from PSRAM when there is some: web.cpp's
+// allocator, which the config page's /api/portal uses too (web_panel.h).
+static ArduinoJson::Allocator &s_alloc = *webJsonAllocator();
 
 // Every request body here is a few dozen bytes.
 static const size_t BODY_MAX = 1024;
@@ -1082,10 +1068,8 @@ static void route(const char *uri, WebServer::THandlerFunction fn) {
 }
 
 void panelWebBegin() {
-  // WebServer keeps only the request headers it was told to collect, and
-  // readBody() needs this one.
-  static const char *kHeaders[] = {"Content-Type"};
-  server.collectHeaders(kHeaders, 1);
+  // readBody() needs Content-Type. setupWebServer() collects it: WebServer keeps
+  // one list of request headers, and a call here would replace the page's.
   route("/api/panel", handlePanel);
   route("/api/knob", handleKnob);
 #if defined(FLIGHTBOARD_ENABLED)

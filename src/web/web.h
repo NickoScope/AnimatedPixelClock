@@ -27,6 +27,7 @@ void handleRoot();
 void handlePortalCss();
 void handlePortalJs();
 void handleFavicon();
+void handlePortalValues();   // GET /api/portal: the values the page fills in
 void handleSave();
 void handleReset();
 void handleMetricsAPI();
