@@ -417,8 +417,8 @@ Run on this machine:
 
 - `matrix-waveshare-rgb` and `provision` build, 0 warnings. `tools/flag_matrix.py`:
   **24/24** as intended, including `rail direct + board` building and
-  `rail direct, no board` refused - run on `d8f2962` and again on the tip
-  rebased onto `ab4314c` (2026-09-14).
+  `rail direct, no board` refused - run on the branch at each base it was
+  rebased onto, last on the tip over `66bee4b` (2026-09-14).
 - `tools/railboard/check_direct.py`: time parsing (zones, fractions, refusals),
   the query, the token answer, the transform on the fixture with and without the
   parse filter, the sizes above, and C++ = Python on the fixture.
@@ -474,9 +474,10 @@ Design choices, taken from the owner's brief, the panel and the photograph:
 
 ## Cost
 
-`RAILBOARD_DIRECT_ENABLED` against its base `ab4314c`: **+24 568 B flash,
-+248 B RAM** (static; 1 934 297 → 1 958 865 and 92 316 → 92 564). Against
-`1c82839`, before the rebase, it was +24 572 B and +248 B. Most of the flash is
+`RAILBOARD_DIRECT_ENABLED` against its base `66bee4b`: **+24 664 B flash,
++248 B RAM** (static; 1 978 481 → 2 003 145 and 92 396 → 92 644). Measured
+against each base it was rebased onto: +24 572 B on `1c82839`, +24 568 B on
+`ab4314c`; RAM +248 B every time. Most of the flash is
 HTTPClient and WiFiClientSecure's use of mbedTLS certificate verification, which
 nothing else on the board linked before, plus the transform and the two roots.
 
