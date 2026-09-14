@@ -114,6 +114,14 @@ static void fail(int code, const char *why) {
 static bool isPost() { return server.method() == HTTP_POST; }
 
 static bool readBody(JsonDocument &doc) {
+  // Only a JSON content type. With it, a browser must ask this server first (a
+  // CORS preflight, an OPTIONS request) before another site's page may post
+  // here, and no route answers OPTIONS. A text/plain body needs no such
+  // question and would still arrive in arg("plain") - so it is refused.
+  if (!server.header("Content-Type").startsWith("application/json")) {
+    fail(415, "Content-Type must be application/json");
+    return false;
+  }
   if (!server.hasArg("plain")) { fail(400, "missing JSON body"); return false; }
   const String body = server.arg("plain");
   if (body.length() > BODY_MAX) { fail(413, "body too large"); return false; }
@@ -607,6 +615,10 @@ static void route(const char *uri, WebServer::THandlerFunction fn) {
 }
 
 void panelWebBegin() {
+  // WebServer keeps only the request headers it was told to collect, and
+  // readBody() needs this one.
+  static const char *kHeaders[] = {"Content-Type"};
+  server.collectHeaders(kHeaders, 1);
   route("/api/panel", handlePanel);
   route("/api/knob", handleKnob);
 #if defined(FLIGHTBOARD_ENABLED)

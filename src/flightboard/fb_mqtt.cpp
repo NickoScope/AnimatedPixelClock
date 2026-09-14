@@ -21,6 +21,33 @@ static const uint32_t FB_SETTLE_MS = 1200;
 // actually missing, and only then is a request worth paying for.
 static const uint32_t FB_GRACE_MS = 1500;
 
+// Paid requests. Home Assistant's flight board automation fetches AeroAPI for
+// a request it does not throttle, and its own description puts one direction
+// at about $0.01. Nothing here relies on the caller being careful - a knob, a
+// flapping broker or another site's page posting to the portal: one airport
+// and direction is asked for at most once per FB_ASK_FLOOR_MS, and all of them
+// together at most FB_ASK_MAX_PER_HOUR times an hour. Both numbers are budget
+// choices, not norms; the hourly cap bounds the worst case near $0.12 an hour.
+static const uint32_t FB_ASK_FLOOR_MS     = 15UL * 60UL * 1000UL;
+static const uint8_t  FB_ASK_MAX_PER_HOUR = 12;
+static const uint8_t  FB_ASK_AIRPORTS     = 8;
+static uint32_t s_askedAt[FB_ASK_AIRPORTS][2] = {};   // millis() of the last ask, 0 = never
+static uint32_t s_hourStart = 0;
+static uint8_t  s_hourAsks  = 0;
+
+static bool mayAsk(uint8_t apt, bool dep, uint32_t now) {
+  if (apt >= FB_ASK_AIRPORTS) return false;
+  if (now - s_hourStart >= 3600000UL) { s_hourStart = now; s_hourAsks = 0; }
+  if (s_hourAsks >= FB_ASK_MAX_PER_HOUR) return false;
+  const uint32_t at = s_askedAt[apt][dep];
+  return !at || (now - at) >= FB_ASK_FLOOR_MS;
+}
+
+static void noteAsked(uint8_t apt, bool dep, uint32_t now) {
+  s_askedAt[apt][dep] = now ? now : 1;
+  s_hourAsks++;
+}
+
 static char     s_subbed[96] = "";      // topic currently subscribed, "" = none
 static uint32_t s_dirtyAt    = 0;
 static uint32_t s_graceUntil = 0;
@@ -41,6 +68,16 @@ static void resubscribe() {
   char want[96];
   topicFor(want, sizeof(want));
   if (!strcmp(want, s_subbed)) {
+    if (!flightboardHasData()) {
+      // Back on the same airport after the knob went away and returned: both
+      // halves were dropped on the way, and a broker sends retained messages
+      // only for a new subscription. Subscribe afresh instead of paying for
+      // boards it already holds.
+      mqttBusUnsubscribe(s_subbed);
+      if (mqttBusSubscribe(want)) s_graceUntil = millis() + FB_GRACE_MS;
+      else s_subbed[0] = '\0';
+      return;
+    }
     // Same airport, a different choice of direction: whatever is retained is
     // already here, so only look for what is still missing.
     s_graceUntil = millis();
@@ -79,11 +116,12 @@ void fbMqttLoop() {
     s_graceUntil = 0;
     for (uint8_t i = 0; i < 2; i++) {
       const bool dep = (i == 1);
-      if (!flightboardWants(dep) || flightboardHasFreshBoard(dep)) continue;
+      const uint8_t apt = flightboardAirportIndex();
+      if (!flightboardWants(dep) || flightboardHasFreshBoard(dep) || !mayAsk(apt, dep, now)) continue;
       char body[64];
       snprintf(body, sizeof(body), "{\"apt\":\"%s\",\"dir\":\"%s\"}",
                flightboardAirport(), dep ? "dep" : "arr");
-      mqttBusPublish(FB_TOPIC_REQ, body);
+      if (mqttBusPublish(FB_TOPIC_REQ, body)) noteAsked(apt, dep, now);
     }
   }
 }

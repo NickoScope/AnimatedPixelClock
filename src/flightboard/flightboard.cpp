@@ -82,7 +82,11 @@ static int16_t updAgeMin(const FbBoard &b) {
   if (!b.have || !getLocalTime(&lt, 0)) return -1;
   int h, m;
   if (sscanf(b.upd, "%d:%d", &h, &m) != 2 || h < 0 || h > 23 || m < 0 || m > 59) return -1;
-  return (int16_t)(((lt.tm_hour * 60 + lt.tm_min) - (h * 60 + m) + 1440) % 1440);
+  const int16_t age = (int16_t)(((lt.tm_hour * 60 + lt.tm_min) - (h * 60 + m) + 1440) % 1440);
+  // A stamp up to an hour "in the future" is Home Assistant's clock running a
+  // little ahead of ours, not a board from yesterday. The payload carries no
+  // date, so a day-old board fetched within the same half hour still passes.
+  return age > 1440 - 60 ? 0 : age;
 }
 
 static void clearBoards() {
@@ -155,8 +159,10 @@ bool flightboardIngest(const char *json, uint16_t len) {
   if (arr.isNull()) return false;
   // A retained board for the airport just left can still be on its way when
   // the selection moves on; it must not land under the new name.
+  // A payload that does not name its airport is refused too: it cannot be
+  // told from one for another airport.
   const char *apt = doc["apt"] | "";
-  if (apt[0] && strcmp(apt, FB_AIRPORTS[s_aptIdx])) return false;
+  if (strcmp(apt, FB_AIRPORTS[s_aptIdx])) return false;
   const char *dir = doc["dir"] | "";
   if (strcmp(dir, "arr") && strcmp(dir, "dep")) return false;
   FbBoard &b = s_b[strcmp(dir, "dep") == 0];

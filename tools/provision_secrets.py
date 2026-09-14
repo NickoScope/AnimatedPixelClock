@@ -33,7 +33,7 @@ PLACEHOLDERS = {"192.168.x.x", "mqtt-user", "mqtt-password", "aisstream-key"}
 # What would break a -D flag in platformio.ini: whitespace splits the flag, a
 # quote or backslash breaks the escaping, ; or # after a space starts an ini
 # comment, and $ starts interpolation. Such a value is refused, not mangled.
-UNSAFE = re.compile(r"[\s\"\;#$']")
+UNSAFE = re.compile(r"[\s\"\\;#$']")
 
 
 def read_define(path, name, kind):
@@ -68,10 +68,13 @@ def do_import(flagship):
     if problems:
         print(f"\n{problems} problem(s) - nothing written.")
         sys.exit(1)
-    OUT.write_text("; Written by tools/provision_secrets.py import. Gitignored: never commit.\n"
-                   "[env:provision]\nbuild_flags =\n"
-                   "\t${env:matrix-waveshare-rgb.build_flags}\n" + "\n".join(lines) + "\n")
-    os.chmod(OUT, stat.S_IRUSR | stat.S_IWUSR)
+    # Created 0600 from the first byte, not chmod-ed after the secrets are in.
+    fd = os.open(OUT, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write("; Written by tools/provision_secrets.py import. Gitignored: never commit.\n"
+                "[env:provision]\nbuild_flags =\n"
+                "\t${env:matrix-waveshare-rgb.build_flags}\n" + "\n".join(lines) + "\n")
+    os.chmod(OUT, stat.S_IRUSR | stat.S_IWUSR)   # a file that already existed keeps its old mode through O_CREAT
     print(f"\nwrote {OUT.name}, readable by you only\n")
     check()
 

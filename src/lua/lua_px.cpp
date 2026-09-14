@@ -248,8 +248,12 @@ static int l_get(lua_State *L) {
 }
 
 static void blend_px(uint8_t *fb, int x, int y, double r, double g, double b, double a) {
-  if (a <= 0.0 || x < 0 || x >= W || y < 0 || y >= H) return;
+  if (!(a > 0.0) || x < 0 || x >= W || y < 0 || y >= H) return;   // also NaN
   if (a > 1.0) a = 1.0;
+  // Out-of-range or NaN channels would make the (int) casts below undefined.
+  r = r >= 0.0 ? (r <= 255.0 ? r : 255.0) : 0.0;
+  g = g >= 0.0 ? (g <= 255.0 ? g : 255.0) : 0.0;
+  b = b >= 0.0 ? (b <= 255.0 ? b : 255.0) : 0.0;
   uint8_t *p = &fb[(y * W + x) * 3];
   const double ir = 1.0 - a;
   const int nr = (int)(p[0] * ir + r * a), ng = (int)(p[1] * ir + g * a), nb = (int)(p[2] * ir + b * a);

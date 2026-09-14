@@ -62,6 +62,7 @@ const BaseType_t  kCore       = 0;      // Wi-Fi's core; loop() and the DMA refr
 const UBaseType_t kPriority   = 1;      // as the bench's task and loopTask
 const uint32_t    kIdleMs     = 1500;   // no render for this long: nobody is looking, stop drawing
 const uint32_t    kReportMs   = 30000;  // serial report period while an effect runs
+const uint8_t     kOverrunsAllowed = 3; // draws past the time budget in a row before the effect stops
 
 // A selection as one word, so the task can never read a new number with an
 // old index: (sequence << 8) | (index + 1). Index 0 in the low byte is "none".
@@ -138,6 +139,7 @@ void effectTask(void *) {
   TickType_t lastWake = xTaskGetTickCount();
   // Serial report while an effect runs: the numbers to read off the panel.
   uint32_t reportAt = 0, frames = 0, drawMaxUs = 0, instrMax = 0, lastPublishMs = 0;
+  uint8_t  overruns = 0;
   uint64_t drawSumUs = 0;
 
   for (;;) {
@@ -152,6 +154,7 @@ void effectTask(void *) {
       runningWord = want;
       running = selIndex(want);
       failed = false;
+      overruns = 0;
       if (running >= 0) {
         const LuaEffectScript &sc = kLuaEffectScripts[running];
         memset(s_work, 0, LUA_PX_BYTES);      // luasim starts every run on black
@@ -188,12 +191,24 @@ void effectTask(void *) {
     fillClock(s_canvas.clock, s_fx.periodSeconds());
     const int64_t t0 = esp_timer_get_time();
     if (!s_fx.draw()) {
+      // One frame past its time budget is dropped, not fatal: WiFi shares this
+      // core and can stretch a frame that normally fits (room_radar draws in
+      // ~380 ms of its 500). Only kOverrunsAllowed in a row stop the effect.
+      // The state survives a failed draw: it runs under lua_pcall.
+      if (strstr(s_fx.error(), "over the time budget") && ++overruns < kOverrunsAllowed) {
+        Serial.printf("[luafx] %s: frame dropped (%u in a row), %s\n",
+                      kLuaEffectScripts[running].id, (unsigned)overruns, s_fx.error());
+        vTaskDelay(1);
+        lastWake = xTaskGetTickCount();
+        continue;
+      }
       Serial.printf("[luafx] %s stopped: %s\n", kLuaEffectScripts[running].id, s_fx.error());
       publishError(runningWord, s_fx.error());
       s_fx.close();
       failed = true;
       continue;
     }
+    overruns = 0;
     const uint32_t us = (uint32_t)(esp_timer_get_time() - t0);
     memcpy(s_spare, s_work, LUA_PX_BYTES);
     portENTER_CRITICAL(&s_mux);

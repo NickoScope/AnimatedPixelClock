@@ -225,9 +225,9 @@ static void sampleTick(void *) {
   const bool raw = (digitalRead(CTRL_PIN_SW) == LOW);
   if (raw != s_swRaw) { s_swRaw = raw; s_swRawSinceMs = now; }
   if (raw != s_swDown && (now - s_swRawSinceMs) >= debounceMs) {
-    s_swDown = raw;
     if (raw) { s_swDownAtMs = now; s_swLongSent = false; }
     else if (!s_swLongSent && (now - s_swDownAtMs) < kSwShortMaxMs) push(CTRL_PRESS);
+    s_swDown = raw;                 // last: a reader never pairs it with an old press time
   }
   if (s_swDown && !s_swLongSent && (now - s_swDownAtMs) >= kSwLongMs) {
     s_swLongSent = true;
@@ -257,6 +257,10 @@ void controlBegin() {
   args.arg = nullptr;
   args.dispatch_method = ESP_TIMER_TASK;
   args.name = "ctrl";
+  // A periodic esp_timer that was held up (WiFi, a flash write) otherwise runs
+  // the missed callbacks back to back, and the 2 ms filter would see two
+  // samples microseconds apart as two milliseconds.
+  args.skip_unhandled_events = true;
   esp_timer_handle_t timer = nullptr;
   s_timerOk = esp_timer_create(&args, &timer) == ESP_OK &&
               esp_timer_start_periodic(timer, kSampleUs) == ESP_OK;
