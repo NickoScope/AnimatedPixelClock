@@ -74,11 +74,13 @@ static const int16_t MP_Y_DIAL      = 41;    // ticks on rows 41-43, the pointer
 static const int16_t MP_Y_WAIT      = 49;
 static const int16_t MP_X_DIAL0     = 4;
 static const int16_t MP_X_DIAL1     = 123;
-static const int16_t MP_Y_OV0       = 19;    // volume band, rows 19-44
-static const int16_t MP_Y_OV1       = 44;
+// The volume band, rows 16-43: from under the artist, so no row of the title
+// (17-24) is left showing above it - the first preview had two.
+static const int16_t MP_Y_OV0       = 16;
+static const int16_t MP_Y_OV1       = 43;
 static const int16_t MP_X_OV0       = 6;
 static const int16_t MP_X_OV1       = 122;
-static const int16_t MP_Y_OV_BAR    = 33;
+static const int16_t MP_Y_OV_BAR    = 31;
 static const int16_t MP_SCROLL_HOLD_MS = 1500;
 static const int16_t MP_SCROLL_END_MS  = 1000;
 static const int16_t MP_SCROLL_PX_S    = 24;
