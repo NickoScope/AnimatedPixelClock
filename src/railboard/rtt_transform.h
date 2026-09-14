@@ -45,6 +45,10 @@ struct Lists {
   char     stn[RB_STN_LEN];
   char     rt[RB_RT_LEN];
   uint16_t seen;          // services in the answer, before any filtering
+  // Why services or their events were left out - for a board that fetches and
+  // shows nothing. firstT/firstNow: the first advertised time met, and now.
+  uint16_t skipDisp, skipPax, noEvent, noSched, skipCall, skipTime;
+  int64_t  firstT, firstNow;
 };
 
 // A 200 answer. False when the document has no services array at all, which

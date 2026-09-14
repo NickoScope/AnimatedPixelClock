@@ -68,7 +68,11 @@ static void testTimes() {
   CHECK(rtt::parseTime("2026-09-14T13:05:07.123Z", &v) && v == 1789391107);
   CHECK(rtt::parseTime("1970-01-01T00:00:00Z", &v) && v == 0);
   CHECK(rtt::parseTime("2000-02-29T12:00:00Z", &v) && v == 951825600);
-  CHECK(!rtt::parseTime("2026-09-14T14:05:07", &v));        // no zone: refused, not guessed
+  // No zone: London civil time, as the live gb-nr answer gives it.
+  CHECK(rtt::parseTime("2026-09-14T14:05:07", &v) && v == 1789391107);   // BST
+  CHECK(rtt::parseTime("2026-01-14T13:05:07", &v) && v == 1768395907);   // GMT
+  CHECK(rtt::parseTime("2026-03-29T02:30:00", &v) && v == 1774747800);   // just after the March change: BST
+  CHECK(!rtt::parseTime("2026-09-14T14:05", &v));           // no seconds: refused
   CHECK(!rtt::parseTime("2026-13-14T14:05:07Z", &v));
   CHECK(!rtt::parseTime("2026-09-14T14:05:60Z", &v));
   CHECK(!rtt::parseTime("2026-09-14T14:05:07Zjunk", &v));

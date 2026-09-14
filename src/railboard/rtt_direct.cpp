@@ -87,6 +87,18 @@ struct Outcome {
 };
 
 portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
+
+// Diagnostics for a board that fetches and shows nothing: why services were
+// dropped, and the start of the services array exactly as RTT sent it. Only the
+// location answer is sampled - train data; the token exchange has its own
+// buffer and never passes through here. Both under s_mux.
+struct DirectDiag {
+  uint16_t seen, disp, pax, noEvent, noSched, call, time;
+  int64_t  firstT, firstNow;
+};
+DirectDiag   s_diag;
+const size_t kSampleMax = 900;
+char        *s_sample = nullptr;        // PSRAM, allocated on the first 200
 bool         s_running = false;     // under s_mux
 bool         s_ready   = false;     // under s_mux
 Outcome      s_done;                // under s_mux
@@ -356,6 +368,19 @@ void runFetch(Outcome &o) {
     } else if (r.code == 200) {
       if (r.big) { o.state = ST_BIG; goto done; }
       o.bodyBytes = (uint32_t)r.len;
+      if (!s_sample) s_sample = static_cast<char *>(heap_caps_calloc(1, kSampleMax + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+      if (s_sample) {
+        static const char kKey[] = "\"services\"";
+        size_t from = 0;
+        for (size_t at = 0; at + sizeof(kKey) - 1 <= r.len; at++)
+          if (!memcmp(body + at, kKey, sizeof(kKey) - 1)) { from = at; break; }
+        size_t n = r.len - from;
+        if (n > kSampleMax) n = kSampleMax;
+        portENTER_CRITICAL(&s_mux);
+        memcpy(s_sample, body + from, n);
+        s_sample[n] = '\0';
+        portEXIT_CRITICAL(&s_mux);
+      }
       CappedPsram alloc(kJsonCap, false);
       {
         JsonDocument filter(&alloc), doc(&alloc);
@@ -372,6 +397,12 @@ void runFetch(Outcome &o) {
         } else {
           o.services = s_result->seen;
           o.state = ST_OK;
+          const DirectDiag dg = {s_result->seen, s_result->skipDisp, s_result->skipPax, s_result->noEvent,
+                                 s_result->noSched, s_result->skipCall, s_result->skipTime,
+                                 s_result->firstT, s_result->firstNow};
+          portENTER_CRITICAL(&s_mux);
+          s_diag = dg;
+          portEXIT_CRITICAL(&s_mux);
         }
       }
     } else {
@@ -575,6 +606,24 @@ void rttDirectStatusJson(JsonObject out) {
   out["heapBefore"] = s_last.heapBefore;
   out["heapMin"]    = s_last.heapMin;
   out["stackFree"]  = s_last.stackFree;
+
+  DirectDiag dg;
+  char sample[kSampleMax + 1];
+  portENTER_CRITICAL(&s_mux);
+  dg = s_diag;
+  if (s_sample) memcpy(sample, s_sample, sizeof(sample));
+  else          sample[0] = '\0';
+  portEXIT_CRITICAL(&s_mux);
+  JsonObject sk = out["skips"].to<JsonObject>();
+  sk["seen"]          = dg.seen;
+  sk["notCall"]       = dg.disp;       // displayAs null or PASS
+  sk["notPassenger"]  = dg.pax;
+  sk["noEvent"]       = dg.noEvent;    // no arrival/departure object
+  sk["noAdvertised"]  = dg.noSched;    // no scheduleAdvertised
+  sk["callType"]      = dg.call;
+  sk["outsideWindow"] = dg.time;
+  if (dg.firstT) { sk["firstSched"] = (long long)dg.firstT; sk["now"] = (long long)dg.firstNow; }
+  out["sample"] = (const char *)sample;
 }
 
 #endif  // RAILBOARD_DIRECT_ENABLED

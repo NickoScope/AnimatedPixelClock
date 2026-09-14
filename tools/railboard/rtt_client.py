@@ -49,13 +49,25 @@ AUTH_FIRST_S, AUTH_MAX_S = 900, 6 * 3600
 RETRY_MIN_S, RETRY_MAX_S, RETRY_NONE_S = 60, 3600, 900
 
 CRS_RE = re.compile(r"[A-Z]{3}")
-_TIME_RE = re.compile(r"(\d{4})-(\d{2})-(\d{2})[Tt ](\d{2}):(\d{2}):(\d{2})(?:[.,]\d+)?(?:([Zz])|([+-])(\d{2}):?(\d{2}))")
+_TIME_RE = re.compile(r"(\d{4})-(\d{2})-(\d{2})[Tt ](\d{2}):(\d{2}):(\d{2})(?:[.,]\d+)?(?:([Zz])|([+-])(\d{2}):?(\d{2}))?")
+
+
+def _last_sunday_31(y, m):
+    d = _dt.date(y, m, 31)
+    return (d - _dt.date(1970, 1, 1)).days - (d.weekday() + 1) % 7
+
+
+def _is_bst(utc):
+    # uk_time.h isBst: 01:00 GMT on the last Sundays of March and October.
+    y = _dt.datetime.fromtimestamp(utc, _dt.timezone.utc).year
+    return _last_sunday_31(y, 3) * 86400 + 3600 <= utc < _last_sunday_31(y, 10) * 86400 + 3600
 
 
 # ── the transform ───────────────────────────────────────────────────────────
 def parse_time(s):
-    """RFC 3339 with a zone to UTC epoch seconds; None for anything else, a
-    time without a zone included (rtt_transform.cpp parseTime, rule for rule)."""
+    """RFC 3339 to UTC epoch seconds; None for anything else. A time without a
+    zone is London civil time: the live gb-nr answer gives station times with
+    neither Z nor an offset (rtt_transform.cpp parseTime, rule for rule)."""
     if not isinstance(s, str):
         return None
     m = _TIME_RE.fullmatch(s)
@@ -64,14 +76,16 @@ def parse_time(s):
     y, mo, d, h, mi, se = (int(m.group(i)) for i in range(1, 7))
     if not (1 <= mo <= 12 and 1 <= d <= 31 and h <= 23 and mi <= 59 and se <= 59):
         return None
-    off = 0
-    if not m.group(7):
+    days = (_dt.date(y, mo, 1) - _dt.date(1970, 1, 1)).days + d - 1
+    wall = days * 86400 + h * 3600 + mi * 60 + se
+    if m.group(7):
+        return wall
+    if m.group(8):
         oh, om = int(m.group(9)), int(m.group(10))
         if oh > 23 or om > 59:
             return None
-        off = (oh * 3600 + om * 60) * (-1 if m.group(8) == "-" else 1)
-    days = (_dt.date(y, mo, 1) - _dt.date(1970, 1, 1)).days + d - 1
-    return days * 86400 + h * 3600 + mi * 60 + se - off
+        return wall - (oh * 3600 + om * 60) * (-1 if m.group(8) == "-" else 1)
+    return wall - 3600 if _is_bst(wall - 3600) else wall
 
 
 def build_query(crs, now):

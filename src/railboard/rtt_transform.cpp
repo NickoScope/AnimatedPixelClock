@@ -104,7 +104,7 @@ void insertSorted(RbBoard &b, const RbService &sv) {
 }  // namespace
 
 bool parseTime(const char *s, int64_t *out) {
-  if (!s || strlen(s) < 20) return false;
+  if (!s || strlen(s) < 19) return false;
   int Y, M, D, h, m, sec;
   if (!digits(s, 4, &Y) || s[4] != '-' || !digits(s + 5, 2, &M) || s[7] != '-' ||
       !digits(s + 8, 2, &D))
@@ -120,6 +120,7 @@ bool parseTime(const char *s, int64_t *out) {
     while (*p >= '0' && *p <= '9') p++;
   }
   int offset = 0;
+  bool london = false;
   if (*p == 'Z' || *p == 'z') {
     p++;
   } else if (*p == '+' || *p == '-') {
@@ -132,11 +133,25 @@ bool parseTime(const char *s, int64_t *out) {
     offset = sign * (oh * 3600 + om * 60);
     p = q + 2;
   } else {
-    return false;
+    // No zone. The spec's StandardisedDateTime says UTC or an offset, but the
+    // live gb-nr answer gives the station's own clock time with neither -
+    // "scheduleAdvertised":"2026-09-14T18:31:00" for Guildford, read on the
+    // panel 2026-09-14 at 19:03 BST. Refusing it dropped every service. It is
+    // taken as London civil time.
+    london = true;
   }
   if (*p) return false;
   if (M < 1 || M > 12 || D < 1 || D > 31 || h > 23 || m > 59 || sec > 59) return false;
-  *out = uktime::daysFromCivil(Y, (unsigned)M, (unsigned)D) * 86400 + h * 3600 + m * 60 + sec - offset;
+  const int64_t wall = uktime::daysFromCivil(Y, (unsigned)M, (unsigned)D) * 86400 + h * 3600 + m * 60 + sec;
+  if (london) {
+    // BST if the hour before is in summer time. In the autumn repeat this picks
+    // the first (BST) instance; a spring-gap time, which no timetable uses,
+    // falls back to GMT.
+    const int64_t bst = wall - 3600;
+    *out = uktime::isBst(bst) ? bst : wall;
+  } else {
+    *out = wall - offset;
+  }
   return true;
 }
 
@@ -220,9 +235,9 @@ bool transform(JsonVariantConst root, int64_t nowUtc, const char *crs, Lists *ou
     JsonVariantConst disp = td["displayAs"];
     JsonVariantConst md = sv["scheduleMetadata"];
     // disp not in [none, 'PASS'] and md.inPassengerService (default true) is not false
-    if (disp.isNull() || isString(disp, "PASS")) continue;
+    if (disp.isNull() || isString(disp, "PASS")) { out->skipDisp++; continue; }
     JsonVariantConst pax = md["inPassengerService"];
-    if (pax.is<bool>() && !pax.as<bool>()) continue;
+    if (pax.is<bool>() && !pax.as<bool>()) { out->skipPax++; continue; }
 
     char op[RB_OP_LEN];
     if (isString(md["modeType"], "BUS") || isString(md["modeType"], "SCHEDULED_BUS") ||
@@ -241,14 +256,15 @@ bool transform(JsonVariantConst root, int64_t nowUtc, const char *crs, Lists *ou
     const char *call = td["scheduledCallType"].as<const char *>();
     for (uint8_t side = RB_DEP; side <= RB_ARR; side++) {
       JsonVariantConst ev = td[side == RB_DEP ? "departure" : "arrival"];
-      if (!ev.is<JsonObjectConst>()) continue;
+      if (!ev.is<JsonObjectConst>()) { out->noEvent++; continue; }
       const char *sched = truthyStr(ev["scheduleAdvertised"]);
-      if (!sched) continue;
+      if (!sched) { out->noSched++; continue; }
       const char *wrongCall = side == RB_DEP ? "ADVERTISED_SET_DOWN" : "ADVERTISED_PICK_UP";
-      if (call && (!strcmp(call, "OPERATIONAL_ONLY") || !strcmp(call, wrongCall))) continue;
+      if (call && (!strcmp(call, "OPERATIONAL_ONLY") || !strcmp(call, wrongCall))) { out->skipCall++; continue; }
 
       int64_t t = 0, x = 0;
       if (!parseTime(sched, &t)) t = 0;
+      if (!out->firstT) { out->firstT = t ? t : -1; out->firstNow = nowUtc; }
       const char *xs = truthyStr(ev["realtimeActual"]);
       if (!xs) xs = truthyStr(ev["realtimeForecast"]);
       if (!xs) xs = truthyStr(ev["realtimeEstimate"]);
@@ -264,7 +280,7 @@ bool transform(JsonVariantConst root, int64_t nowUtc, const char *crs, Lists *ou
       } else {
         show = t > 0 && when >= nowUtc - (actual ? 2 * grace : grace);
       }
-      if (!show) continue;
+      if (!show) { out->skipTime++; continue; }
 
       RbService row;
       memset(&row, 0, sizeof(row));

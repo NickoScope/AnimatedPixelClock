@@ -559,6 +559,11 @@ static uint8_t ctrlNextVisited(uint8_t from, int8_t d) {
 static void ctrlBrowse(int8_t d) {
   if (ctrlPage == PAGE_CLOCK && clockStyleBrowse(d)) return;   // next style, same page
   if (!ctrlPageCount()) return;
+  // A mode forced from the web - an uploaded clip via /api/anim/play, or
+  // /api/mode/ambient|clock|viz - held the screen whatever the knob chose:
+  // on the panel, 2026-09-14, a clip could not be left. Choosing a page
+  // releases it.
+  httpForceAmbient = httpForceClock = httpForceViz = false;
   ctrlPage = ctrlNextVisited(ctrlPage, d);
   if (ctrlPage == PAGE_CLOCK) clockStyleBrowseEnter(d);
   else ctrlToast(ctrlPageName(ctrlPage));
@@ -602,6 +607,7 @@ bool panelShowPage(uint8_t page) {
   carouselNote();             // held for the idle time, as if the knob had put it there
 #endif
   ctrlEntered = false;
+  httpForceAmbient = httpForceClock = httpForceViz = false;   // as a knob turn does
   ctrlPage = page;
   ctrlToast(page == PAGE_CLOCK ? nullptr : ctrlPageName(page));   // null: the style name
   // loop() sets these before it serves the web, so without this the frame drawn
