@@ -46,6 +46,34 @@ static void applyStyle(uint8_t id) {
   s_dirtyAt = millis();
 }
 
+// For the carousel: the style changes and its name shows, but nothing is
+// marked for saving. The carousel steps every slot, all day; saving each one
+// would rewrite the settings blob in NVS thousands of times for choices nobody
+// made. A knob turn afterwards saves whatever it lands on, as before.
+static void showStyle(uint8_t id) {
+  if (settings.clockStyle == id) return;
+  settings.clockStyle = id;
+  resetClockAnimationState();
+  s_toastAt = millis();
+}
+
+bool clockStyleCarouselNext() {
+  // The table's last entry is Custom rotation, which is a mode, not a look:
+  // the walk covers the entries before it.
+  const int8_t last = (int8_t)(CLOCK_STYLE_COUNT - 2);
+  const int8_t i = indexOf(settings.clockStyle);
+  if (i < 0 || i > last) {                 // unknown, or rotation: start the walk
+    showStyle(kClockStyles[0].id);
+    return true;
+  }
+  if (i == last) {                         // lap done: the first style waits for next time
+    showStyle(kClockStyles[0].id);
+    return false;
+  }
+  showStyle(kClockStyles[i + 1].id);
+  return true;
+}
+
 void clockStyleStep(int8_t delta) {
   int8_t i = indexOf(settings.clockStyle);
   // An unknown id means the settings hold a style the UI no longer offers -

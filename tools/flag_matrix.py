@@ -29,6 +29,8 @@ COMBOS = [
     ("bus + cards + encoder",  "-DCONTROL_ENCODER_ENABLED -DMQTT_BUS_ENABLED -DCARDS_ENABLED", True),
     ("+ carousel",             "-DCONTROL_ENCODER_ENABLED -DMQTT_BUS_ENABLED -DCARDS_ENABLED "
                                "-DCAROUSEL_ENABLED", True),
+    ("+ carousel, all styles", "-DCONTROL_ENCODER_ENABLED -DMQTT_BUS_ENABLED -DCARDS_ENABLED "
+                               "-DCAROUSEL_ENABLED -DCAROUSEL_ALL_STYLES", True),
     ("flight board + bus",     "-DFLIGHTBOARD_ENABLED -DMQTT_BUS_ENABLED -DFB_MQTT_ENABLED", True),
     ("yacht radar + encoder",  "-DYACHTRADAR_ENABLED -DCONTROL_ENCODER_ENABLED", True),
     ("lua only",               "-DNSLUA_ENABLED", True),
@@ -41,6 +43,7 @@ COMBOS = [
     ("world clock, no encoder", "-DWORLDCLOCK_ENABLED", False),
     ("flight MQTT without bus","-DFLIGHTBOARD_ENABLED -DFB_MQTT_ENABLED", False),
     ("carousel without knob",  "-DCAROUSEL_ENABLED", False),
+    ("all styles, no carousel", "-DCONTROL_ENCODER_ENABLED -DCAROUSEL_ALL_STYLES", False),
 ]
 
 # Built from bringup/ with their own source filters. When provision.cpp was

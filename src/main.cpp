@@ -105,13 +105,22 @@ static uint16_t ctrlPageSeconds(uint8_t page) {
 #if defined(CARDS_ENABLED)
   if (page >= PAGE_COUNT) {
     const uint16_t own = cardsDuration((uint8_t)(page - PAGE_COUNT));
+#if defined(CAROUSEL_ALL_STYLES)
+    return own ? own : CAROUSEL_SLOT_S; // a card may still ask for its own time
+#else
     return own ? own : 10;              // a card may ask for its own time
+#endif
   }
 #endif
+#if defined(CAROUSEL_ALL_STYLES)
+  (void)page;
+  return CAROUSEL_SLOT_S;               // every page, and every clock style, alike
+#else
 #if defined(WORLDCLOCK_ENABLED)
   if (page == PAGE_WORLDCLOCK) return 20;
 #endif
   return (page == PAGE_CLOCK) ? 25 : 15;
+#endif
 }
 #endif
 
@@ -459,7 +468,14 @@ void loop() {
   // chose stays where you left it until you have walked away from it.
   if (carouselDue(ctrlPageSeconds(ctrlPage))) {
     const uint8_t n = ctrlPageCount();
-    if (n) ctrlPage = (uint8_t)((ctrlPage + 1) % n);
+#if defined(CAROUSEL_ALL_STYLES)
+    // On the clock page each style takes a slot of its own; the page moves on
+    // once the last style has had its turn.
+    const bool stay = (ctrlPage == PAGE_CLOCK) && clockStyleCarouselNext();
+#else
+    const bool stay = false;
+#endif
+    if (!stay && n) ctrlPage = (uint8_t)((ctrlPage + 1) % n);
   }
   if (ctrlPage >= ctrlPageCount()) ctrlPage = PAGE_CLOCK;
 #endif

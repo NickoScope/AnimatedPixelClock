@@ -11,11 +11,21 @@
 #if defined(CAROUSEL_ENABLED) && !defined(CONTROL_ENCODER_ENABLED)
 #error "CAROUSEL_ENABLED needs CONTROL_ENCODER_ENABLED: it advances the knob's pages"
 #endif
+#if defined(CAROUSEL_ALL_STYLES) && !defined(CAROUSEL_ENABLED)
+#error "CAROUSEL_ALL_STYLES needs CAROUSEL_ENABLED: it changes what the carousel walks"
+#endif
 
 #if defined(CAROUSEL_ENABLED)
 
 // Seconds of no knob activity before the panel starts advancing by itself.
 #define CAROUSEL_IDLE_S 60
+
+#if defined(CAROUSEL_ALL_STYLES)
+// Show everything, one slot each: every page, and on the clock page every clock
+// style in turn, before moving on. The owner's call on 2026-09-14, while the
+// panel ran without its knob. Without the flag the pages keep their own times.
+#define CAROUSEL_SLOT_S 15
+#endif
 
 void carouselNote();                     // the knob was used; hold everything
 bool carouselDue(uint16_t pageSeconds);  // true once, when this page has had its turn
