@@ -5,17 +5,15 @@
 // swappable insert. This module owns the pins, the decoding and the gesture
 // timing; pages receive events and never touch a GPIO.
 //
-// Gestures, and what they mean everywhere:
+// Gestures - the owner's call on 2026-09-14, "the click is only select":
 //
-//   rotate       change the value this page is about
-//   short press  toggle this page's second axis
-//   long press   go to the next page
+//   rotate       browse: every clock style, then every page, then the cards
+//   click        select: enter a page that has controls of its own, where
+//                rotation then acts inside it; click again to come back out
+//   long press   the same as a click - the switch has one meaning
 //
-// Long press carries page switching rather than the "force refresh" the
-// original flight board note gave it. That note predates there being more than
-// one page, and switching is the one action every page needs; a refresh is
-// better handled by the page itself when a selection settles, with no gesture
-// at all.
+// Page switching used to ride on a long press. With the click kept for
+// selecting, rotation carries it, and a long press adds nothing of its own.
 
 #include <stdint.h>
 

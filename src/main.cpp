@@ -408,6 +408,85 @@ void setup() {
   }
 }
 
+#if defined(CONTROL_ENCODER_ENABLED)
+// ---------------------------------------------------------------- the knob
+// Rotation browses everything in one line - each clock style, then each page,
+// then the cards. A click selects: on a page with controls of its own it
+// enters, rotation then acts inside, and another click comes back out.
+static bool     ctrlEntered = false;
+static uint32_t ctrlLastEventMs = 0;
+static const uint32_t CTRL_ENTER_TIMEOUT_MS = 30000;   // walk away and it browses again
+
+static bool ctrlPageHasControls(uint8_t page) {
+#if defined(FLIGHTBOARD_ENABLED)
+  if (page == PAGE_FLIGHTBOARD) return true;
+#endif
+#if defined(YACHTRADAR_ENABLED)
+  if (page == PAGE_YACHTRADAR) return true;
+#endif
+  (void)page;
+  return false;
+}
+
+static const char *ctrlPageName(uint8_t page) {
+  if (page >= PAGE_COUNT) return "CARD";
+#if defined(WORLDCLOCK_ENABLED)
+  if (page == PAGE_WORLDCLOCK) return "WORLD CLOCK";
+#endif
+#if defined(FLIGHTBOARD_ENABLED)
+  if (page == PAGE_FLIGHTBOARD) return "FLIGHTS";
+#endif
+#if defined(YACHTRADAR_ENABLED)
+  if (page == PAGE_YACHTRADAR) return "YACHTS";
+#endif
+  return "CLOCK";
+}
+
+static const char *ctrlEnterHint(uint8_t page) {
+#if defined(FLIGHTBOARD_ENABLED)
+  if (page == PAGE_FLIGHTBOARD) return "TURN: AIRPORT";
+#endif
+#if defined(YACHTRADAR_ENABLED)
+  if (page == PAGE_YACHTRADAR) return "TURN: SCROLL";
+#endif
+  (void)page;
+  return "";
+}
+
+static void ctrlBrowse(int8_t d) {
+  if (ctrlPage == PAGE_CLOCK && clockStyleBrowse(d)) return;   // next style, same page
+  const int n = ctrlPageCount();
+  if (!n) return;
+  ctrlPage = (uint8_t)(((int)ctrlPage + (d > 0 ? 1 : -1) + n) % n);
+  if (ctrlPage == PAGE_CLOCK) clockStyleBrowseEnter(d);
+  else ctrlToast(ctrlPageName(ctrlPage));
+}
+
+#if defined(FLIGHTBOARD_ENABLED)
+// Inside the flight board the knob walks airport and direction together:
+// this direction, the other one, the next airport. The half is counted here,
+// so the order holds whichever direction the board showed when you came in.
+static bool fbSecondHalf = false;
+static char fbToast[32];
+static void fbKnob(int8_t d) {
+  if (d > 0) {
+    flightboardToggleDirection();
+    if (fbSecondHalf) flightboardStepAirport(+1);
+    fbSecondHalf = !fbSecondHalf;
+  } else {
+    flightboardToggleDirection();
+    if (!fbSecondHalf) flightboardStepAirport(-1);
+    fbSecondHalf = !fbSecondHalf;
+  }
+#if defined(FB_MQTT_ENABLED)
+  fbMqttSelectionChanged();   // resubscribes once the knob settles
+#endif
+  snprintf(fbToast, sizeof(fbToast), "%s %s", flightboardAirport(), flightboardDirection());
+  ctrlToast(fbToast);
+}
+#endif
+#endif  // CONTROL_ENCODER_ENABLED
+
 // ========== loop() ==========
 void loop() {
   // Feed watchdog
@@ -417,57 +496,50 @@ void loop() {
 #endif
 
 #if defined(CONTROL_ENCODER_ENABLED)
-  // One knob, several pages. Rotation and a short press mean whatever the page
-  // in front of you is about; a long press leaves it.
+  // One knob: rotation browses, a click selects (see "the knob" above loop()).
   //
   // The httpForce* flags these drive are named after the HTTP routes, but no
   // web route writes these two - they are set here and nowhere else. Two
   // consequences worth knowing: with the encoder compiled out both pages are
   // unreachable, and /api/status does not report them.
   controlLoop();
+  if (ctrlEntered && millis() - ctrlLastEventMs > CTRL_ENTER_TIMEOUT_MS) ctrlEntered = false;
   for (CtrlEvent e = controlTake(); e != CTRL_NONE; e = controlTake()) {
 #if defined(CAROUSEL_ENABLED)
     carouselNote();            // somebody is here; stop advancing on our own
 #endif
+    ctrlLastEventMs = millis();
+    // One meaning for the switch: held a little too long, it is still a click.
+    if (e == CTRL_LONG) e = CTRL_PRESS;
 #if defined(CARDS_ENABLED)
-    // A notification owns the screen, so the first press dismisses it and does
+    // A notification owns the screen, so the first click dismisses it and does
     // nothing else. Anything other than that would act on a page you cannot see.
-    if (cardsNotifyActive() && (e == CTRL_PRESS || e == CTRL_LONG)) {
+    if (cardsNotifyActive() && e == CTRL_PRESS) {
       cardsNotifyDismiss();
       continue;
     }
-    if (ctrlPage >= ctrlPageCount()) ctrlPage = PAGE_CLOCK;   // its card expired
+    if (ctrlPage >= ctrlPageCount()) { ctrlPage = PAGE_CLOCK; ctrlEntered = false; }  // card expired
 #endif
-    if (e == CTRL_LONG) {
-      ctrlPage = (uint8_t)((ctrlPage + 1) % ctrlPageCount());
-    } else if (ctrlPage >= PAGE_COUNT) {
-      // A card takes no input: whatever it shows was decided elsewhere.
-    } else {
-      switch (ctrlPage) {
+    if (e == CTRL_PRESS) {
+      if (ctrlPageHasControls(ctrlPage)) {
+        ctrlEntered = !ctrlEntered;
 #if defined(FLIGHTBOARD_ENABLED)
-      case PAGE_FLIGHTBOARD:
-        if (e == CTRL_CW)         flightboardStepAirport(+1);
-        else if (e == CTRL_CCW)   flightboardStepAirport(-1);
-        else if (e == CTRL_PRESS) flightboardToggleDirection();
-#if defined(FB_MQTT_ENABLED)
-        fbMqttSelectionChanged();   // resubscribes once the knob settles
+        if (ctrlEntered && ctrlPage == PAGE_FLIGHTBOARD) fbSecondHalf = false;
 #endif
-        break;
+        ctrlToast(ctrlEntered ? ctrlEnterHint(ctrlPage) : "TURN: PAGES");
+      }
+      continue;                // a page without controls has nothing to select
+    }
+    const int8_t d = (e == CTRL_CW) ? 1 : -1;
+    if (!ctrlEntered) { ctrlBrowse(d); continue; }
+    switch (ctrlPage) {
+#if defined(FLIGHTBOARD_ENABLED)
+    case PAGE_FLIGHTBOARD: fbKnob(d); break;
 #endif
 #if defined(YACHTRADAR_ENABLED)
-      case PAGE_YACHTRADAR:
-        if (e == CTRL_CW)         yachtRadarScroll(+1);
-        else if (e == CTRL_CCW)   yachtRadarScroll(-1);
-        else if (e == CTRL_PRESS) yachtRadarToggleSort();
-        break;
+    case PAGE_YACHTRADAR:  yachtRadarScroll(d); break;
 #endif
-      case PAGE_CLOCK:
-        if (e == CTRL_CW)         clockStyleStep(+1);
-        else if (e == CTRL_CCW)   clockStyleStep(-1);
-        else if (e == CTRL_PRESS) clockStyleToggleRotation();
-        break;
-      default: break;
-      }
+    default:               ctrlEntered = false; ctrlBrowse(d); break;
     }
   }
 #if defined(CAROUSEL_ENABLED)
@@ -712,9 +784,12 @@ void loop() {
     }
 
 #if defined(CONTROL_ENCODER_ENABLED)
-    // After everything else, before the flip: the toast has to sit on top of
-    // whatever the page drew, and every clock fills the panel.
-    if (ctrlPage == PAGE_CLOCK) clockStyleOverlay();
+    // After everything else, before the flip: a toast has to sit on top of
+    // whatever the page drew. Every page now, since pages announce themselves.
+    clockStyleOverlay();
+    // While a click has entered a page, an amber mark in the corner says the
+    // knob acts inside it rather than browsing.
+    if (ctrlEntered) display.fillRect(display.width() - 3, 0, 3, 3, display.color565(255, 160, 0));
 #endif
 #if defined(CARDS_ENABLED)
     // Last of all, because it replaces the page rather than decorating it.

@@ -24,6 +24,7 @@ static const uint32_t TOAST_MS = 1600;
 static const uint32_t SETTLE_MS = 2500;
 
 static uint32_t s_toastAt  = 0;
+static const char *s_toastText = nullptr;  // what the banner says; null = the style name
 static uint32_t s_dirtyAt  = 0;
 static uint8_t  s_beforeRotation = 0xFF;   // style to come back to, 0xFF = none
 
@@ -42,6 +43,7 @@ static void applyStyle(uint8_t id) {
   if (settings.clockStyle == id) return;
   settings.clockStyle = id;
   resetClockAnimationState();   // every clock keeps animation state; start clean
+  s_toastText = nullptr;
   s_toastAt = millis();
   s_dirtyAt = millis();
 }
@@ -54,6 +56,7 @@ static void showStyle(uint8_t id) {
   if (settings.clockStyle == id) return;
   settings.clockStyle = id;
   resetClockAnimationState();
+  s_toastText = nullptr;
   s_toastAt = millis();
 }
 
@@ -72,6 +75,30 @@ bool clockStyleCarouselNext() {
   }
   showStyle(kClockStyles[i + 1].id);
   return true;
+}
+
+bool clockStyleBrowse(int8_t delta) {
+  const int8_t last = (int8_t)(CLOCK_STYLE_COUNT - 2);   // Custom rotation sits after
+  int8_t i = indexOf(settings.clockStyle);
+  if (i < 0 || i > last) i = (delta > 0) ? -1 : (int8_t)(last + 1);  // unknown: from the edge
+  const int8_t j = (int8_t)(i + (delta > 0 ? 1 : -1));
+  if (j < 0 || j > last) return false;
+  s_beforeRotation = 0xFF;
+  applyStyle(kClockStyles[j].id);
+  return true;
+}
+
+void clockStyleBrowseEnter(int8_t delta) {
+  const int8_t last = (int8_t)(CLOCK_STYLE_COUNT - 2);
+  const uint8_t id = kClockStyles[delta > 0 ? 0 : last].id;
+  s_beforeRotation = 0xFF;
+  if (settings.clockStyle == id) { s_toastText = nullptr; s_toastAt = millis(); }
+  else applyStyle(id);
+}
+
+void ctrlToast(const char *text) {
+  s_toastText = text;
+  s_toastAt = millis();
 }
 
 void clockStyleStep(int8_t delta) {
@@ -109,7 +136,7 @@ void clockStyleOverlay() {
   if (!s_toastAt) return;
   if ((millis() - s_toastAt) > TOAST_MS) { s_toastAt = 0; return; }
 
-  const char *name = nameOf(settings.clockStyle);
+  const char *name = s_toastText ? s_toastText : nameOf(settings.clockStyle);
   display.setFont(&PicopixelFB);
   display.setTextWrap(false);
   // setTextSize is sticky global state and the animated clocks leave it
