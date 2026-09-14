@@ -10,8 +10,17 @@
 //   POST /api/panel         {"show":{"page":i[,"card":"name"]}} | {"style":id}
 //                           | {"enable":{"key":"world","on":false}}
 //                           | {"carousel":{"enabled":b,"idleS":n,"slotS":n,"allStyles":b}}
-//   GET  /api/flightboard   airports, airport, dir, board, mqtt
-//   POST /api/flightboard   {"airport":i,"dir":"arr"|"dep"|"alt"}
+//   GET  /api/flightboard   airport (id), dir, side, airports [{id, code, iata, name, tz,
+//                           kind builtin|custom}], limits, board, direct {key, state, budget,
+//                           bounds, usage, lists, last, sample}, tracked [...], mqtt
+//   POST /api/flightboard   {"airport":id,"dir":"arr"|"dep"|"alt"} and at most one of
+//                           {"add":{"icao":"KJFK","iata":"JFK","name":"NEW YORK",
+//                           "tz":"America/New_York"[,"select":true]}} | {"remove":id}
+//                           | {"track":"AF7301"} | {"untrack":"AF7301"}
+//                           | {"budget":{"floor_min":5..240,"day_cap":0..1000,"month_cap":0..20000}}
+//                           400 names the field; 409 a full list, a code already listed,
+//                           a flight already tracked; 404 untrack of a flight not tracked.
+//                           (src/flightboard/fb_settings.h, aero_direct.h)
 //   GET  /api/railboard     station, what is showing, lists, Home Assistant status, config, mqtt
 //   POST /api/railboard     {"crs":"GLD"} | {"diag":b} | {"reset":true}
 //                           | {"config":{"rows":1..8,"switch_s":3..600,"level":10..100,
@@ -67,7 +76,9 @@
 #include "../control/clock_styles.h"
 #include "../control/control.h"
 #include "../display/display.h"
+#include "../flightboard/aero_direct.h"
 #include "../flightboard/fb_mqtt.h"
+#include "../flightboard/fb_settings.h"
 #include "../flightboard/flightboard.h"
 #include "../mqtt/mqtt_bus.h"
 #include "../panel/panel.h"
@@ -426,36 +437,152 @@ static void handlePanel() {
 
 // ---------------------------------------------------------------- /api/flightboard
 #if defined(FLIGHTBOARD_ENABLED)
+// A string of at most max bytes, or refused. An absent key gives def.
+static bool fbStr(JsonVariantConst v, size_t max, const char **out, const char *def = nullptr) {
+  if (v.isNull() && def) { *out = def; return true; }
+  if (!v.is<const char *>()) return false;
+  const char *s = v.as<const char *>();
+  if (!s || strlen(s) > max) return false;
+  *out = s;
+  return true;
+}
+
 static void handleFlightboard() {
   if (isPost()) {
     JsonDocument in(&s_alloc);
     if (!readBody(in)) return;
-    long apt = flightboardAirportIndex();
+    // Every key known; at most one change besides the selection.
+    int actions = 0;
+    for (JsonPairConst kv : in.as<JsonObjectConst>()) {
+      const char *k = kv.key().c_str();
+      if (!strcmp(k, "airport") || !strcmp(k, "dir")) continue;
+      if (strcmp(k, "add") && strcmp(k, "remove") && strcmp(k, "track") && strcmp(k, "untrack") && strcmp(k, "budget")) {
+        char why[64];
+        snprintf(why, sizeof(why), "%.24s is not a field of /api/flightboard", k);
+        REJECT(400, why);
+      }
+      actions++;
+    }
+    if (actions > 1) REJECT(400, "send at most one of add, remove, track, untrack, budget");
+
+    long apt = flightboardAirportId();
     uint8_t mode = flightboardDirMode();
-    if (!in["airport"].isNull() && !intIn(in["airport"], 0, (long)flightboardAirportCount() - 1, &apt))
-      REJECT(400, "airport out of range");
+    FbAirport known;
+    if (!in["airport"].isNull() && (!intIn(in["airport"], 0, 255, &apt) || !flightboardAirportById((uint8_t)apt, &known)))
+      REJECT(400, "airport: no airport with that id");
     JsonVariantConst d = in["dir"];
     if (!d.isNull()) {
       const char *s = d.as<const char *>();
       if (!s || (strcmp(s, "arr") && strcmp(s, "dep") && strcmp(s, "alt"))) REJECT(400, "dir must be arr, dep or alt");
       mode = !strcmp(s, "arr") ? FB_DIR_ARR : !strcmp(s, "dep") ? FB_DIR_DEP : FB_DIR_ALT;
     }
-    panelSetFlightboard((uint8_t)apt, mode);
+
+#if defined(FLIGHTBOARD_DIRECT_ENABLED)
+    JsonVariantConst jAdd = in["add"], jRemove = in["remove"], jTrack = in["track"], jUntrack = in["untrack"],
+                     jBudget = in["budget"];
+    if (!jAdd.isNull()) {
+      if (!jAdd.is<JsonObjectConst>()) REJECT(400, "add must be an object");
+      for (JsonPairConst kv : jAdd.as<JsonObjectConst>()) {
+        const char *k = kv.key().c_str();
+        if (strcmp(k, "icao") && strcmp(k, "iata") && strcmp(k, "name") && strcmp(k, "tz") && strcmp(k, "select"))
+          REJECT(400, "add takes icao, iata, name, tz and select only");
+      }
+      const char *icao, *iata, *name, *tz;
+      // Refused rather than folded: the portal already writes these in capitals.
+      if (!fbStr(jAdd["icao"], 4, &icao)) REJECT(400, "add.icao must be 4 capitals or digits, starting with a letter");
+      if (!fbStr(jAdd["iata"], 3, &iata, "")) REJECT(400, "add.iata must be 3 capitals, or empty");
+      if (!fbStr(jAdd["name"], FB_APT_NAME_MAX, &name)) REJECT(400, "add.name must be 1 to 12 characters");
+      if (!fbStr(jAdd["tz"], FB_APT_TZ_MAX, &tz, "")) REJECT(400, "add.tz must be an IANA zone name such as Europe/Paris");
+      bool select = false;
+      if (!optBool(jAdd["select"], &select)) REJECT(400, "add.select must be true or false");
+      FbAirport a;
+      memset(&a, 0, sizeof(a));
+      strncpy(a.icao, icao, sizeof(a.icao) - 1);
+      strncpy(a.iata, iata, sizeof(a.iata) - 1);
+      strncpy(a.name, name, sizeof(a.name) - 1);
+      strncpy(a.tz, tz, sizeof(a.tz) - 1);
+      if (const char *why = flightboardAirportCheck(a)) REJECT(400, why);
+      uint8_t id;
+      if (const char *why = panelAddFlightAirport(a, &id)) REJECT(409, why);
+      if (select) apt = id;
+    } else if (!jRemove.isNull()) {
+      long id;
+      if (!intIn(jRemove, FB_APT_CUSTOM, FB_APT_CUSTOM + FB_APT_CUSTOM_MAX - 1, &id) ||
+          !flightboardCustomUsed((uint8_t)(id - FB_APT_CUSTOM)))
+        REJECT(400, "remove: only a custom airport can be deleted");
+      panelRemoveFlightAirport((uint8_t)id);
+      if (apt == id) apt = flightboardAirportId();          // the selection went with it
+    } else if (!jTrack.isNull()) {
+      const char *ident;
+      if (!fbStr(jTrack, 16, &ident)) REJECT(400, "track must be a flight ident such as AF7301");
+      bool full = false;
+      if (const char *why = aeroTrackAdd(ident, &full)) REJECT(full ? 409 : 400, why);
+    } else if (!jUntrack.isNull()) {
+      const char *ident;
+      char id[FB_IDENT_LEN];
+      if (!fbStr(jUntrack, 16, &ident) || !aero::normaliseIdent(ident, id, sizeof(id)))
+        REJECT(400, "untrack must be a flight ident such as AF7301");
+      if (!aeroTrackRemove(id)) REJECT(404, "untrack: that flight is not tracked");
+    } else if (!jBudget.isNull()) {
+      if (!jBudget.is<JsonObjectConst>()) REJECT(400, "budget must be an object");
+      fbs::Budget b = aeroDirectBudget();
+      char err[96];
+      if (fbs::apply(jBudget.as<JsonObjectConst>(), b, err, sizeof(err))) REJECT(400, err);
+      aeroDirectSetBudget(b);                                // in force now, in NVS "fbcfg" 2.5 s later
+    }
+#else
+    if (actions) REJECT(400, "custom airports, tracking and the budget need the direct AeroAPI build");
+#endif
+    // Tells the MQTT transport itself when the selection really changed.
+    if (!panelSetFlightboard((uint8_t)apt, mode)) REJECT(400, "airport: no airport with that id");
   }
   JsonDocument doc(&s_alloc);
   doc["success"] = true;
   pageInfo(doc, PANEL_KEY_FLIGHTS);
-  doc["airport"] = flightboardAirportIndex();
+  doc["airport"] = flightboardAirportId();
   doc["dir"]     = flightboardModeKey();
   doc["side"]    = flightboardShowingDepartures() ? "dep" : "arr";
   doc["altS"]    = FB_ALT_SECONDS;
   JsonArray airports = doc["airports"].to<JsonArray>();
-  for (uint8_t i = 0; i < flightboardAirportCount(); i++) {
-    JsonObject a = airports.add<JsonObject>();
-    a["code"] = flightboardAirportCode(i);
-    a["name"] = flightboardAirportLabel(i);
+  auto listAirport = [&airports](uint8_t id) {
+    FbAirport a;
+    if (!flightboardAirportById(id, &a)) return;
+    JsonObject o = airports.add<JsonObject>();
+    o["id"]   = id;
+    o["code"] = (const char *)a.icao;
+    o["iata"] = (const char *)a.iata;
+    o["name"] = (const char *)a.name;
+    o["tz"]   = (const char *)a.tz;
+    o["kind"] = flightboardAirportBuiltin(id) ? "builtin" : "custom";
+  };
+  for (uint8_t i = 0; i < flightboardBuiltinCount(); i++) listAirport(i);
+  for (uint8_t i = 0; i < FB_APT_CUSTOM_MAX; i++) listAirport((uint8_t)(FB_APT_CUSTOM + i));
+  JsonObject lim = doc["limits"].to<JsonObject>();
+  lim["custom"] = FB_APT_CUSTOM_MAX;
+  lim["name"]   = FB_APT_NAME_MAX;
+  lim["namePx"] = FB_APT_NAME_PX;
+  lim["track"]  = FB_TRACK_MAX;
+  // The header font's advance for ' ' to '~', so the portal measures a name
+  // the way flightboardAirportCheck will.
+  JsonArray adv = lim["advance"].to<JsonArray>();
+  for (char ch = ' '; ch <= '~'; ch++) {
+    const char one[2] = {ch, 0};
+    adv.add(flightboardNameWidth(one));
   }
   flightboardStatusJson(doc["board"].to<JsonObject>());
+#if defined(FLIGHTBOARD_DIRECT_ENABLED)
+  aeroDirectStatusJson(doc["direct"].to<JsonObject>());
+  JsonArray tracked = doc["tracked"].to<JsonArray>();
+  aeroDirectTracksJson(tracked);
+  for (uint8_t i = 0; i < tracked.size(); i++) {
+    char word[16], hm[6];
+    flightboardTrackLine(i, word, sizeof(word), hm, sizeof(hm));
+    tracked[i]["w"]  = word;                                 // as the pinned row prints it
+    tracked[i]["tm"] = hm;
+  }
+#else
+  doc["direct"]["built"] = false;
+#endif
 #if defined(FB_MQTT_ENABLED)
   mqttJson(doc["mqtt"].to<JsonObject>(), fbMqttStatus());
 #endif

@@ -36,7 +36,9 @@ static uint32_t s_hourStart = 0;
 static uint8_t  s_hourAsks  = 0;
 
 static bool mayAsk(uint8_t apt, bool dep, uint32_t now) {
-  if (apt >= FB_ASK_AIRPORTS) return false;
+  // Home Assistant serves the six built-in airports only: its automation
+  // refuses any other code, so asking for one would only fill the log.
+  if (apt >= FB_ASK_AIRPORTS || !flightboardAirportBuiltin(apt)) return false;
   if (now - s_hourStart >= 3600000UL) { s_hourStart = now; s_hourAsks = 0; }
   if (s_hourAsks >= FB_ASK_MAX_PER_HOUR) return false;
   const uint32_t at = s_askedAt[apt][dep];
@@ -95,11 +97,18 @@ static void resubscribe() {
 
 void fbMqttBegin() {
   mqttBusOnMessage(FB_TOPIC_STATE, onMessage);
-  resubscribe();
+  if (!flightboardDirectOwns()) resubscribe();
 }
 
 void fbMqttLoop() {
   const uint32_t now = millis();
+  // With an AeroAPI key the page is the direct fetch's: no subscription, and
+  // above all no request that would have Home Assistant pay for the same board.
+  if (flightboardDirectOwns()) {
+    if (s_subbed[0]) { mqttBusUnsubscribe(s_subbed); s_subbed[0] = '\0'; }
+    s_dirtyAt = s_graceUntil = 0;
+    return;
+  }
   if (s_dirtyAt && (now - s_dirtyAt) >= FB_SETTLE_MS) {
     s_dirtyAt = 0;
     resubscribe();
@@ -116,7 +125,7 @@ void fbMqttLoop() {
     s_graceUntil = 0;
     for (uint8_t i = 0; i < 2; i++) {
       const bool dep = (i == 1);
-      const uint8_t apt = flightboardAirportIndex();
+      const uint8_t apt = flightboardAirportId();
       if (!flightboardWants(dep) || flightboardHasFreshBoard(dep) || !mayAsk(apt, dep, now)) continue;
       char body[64];
       snprintf(body, sizeof(body), "{\"apt\":\"%s\",\"dir\":\"%s\"}",
@@ -131,6 +140,7 @@ void fbMqttSelectionChanged() { s_dirtyAt = millis(); }
 bool fbMqttConnected() { return mqttBusConnected(); }
 
 const char *fbMqttStatus() {
+  if (flightboardDirectOwns()) return "AEROAPI";
   if (s_dirtyAt || s_graceUntil) return "FETCHING";
   return mqttBusStatus();
 }

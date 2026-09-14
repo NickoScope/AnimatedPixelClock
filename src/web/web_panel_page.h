@@ -121,7 +121,7 @@ static const char PANEL_PAGES_HTML[] PROGMEM = R"PNL(<link rel="stylesheet" href
       <section class="page" data-page="pflights" data-need="flights">
         <div class="page-header">
           <h1 class="page-h1">Flight board</h1>
-          <p class="page-lede">Arrivals or departures for one of six airports, published by Home Assistant over MQTT. The choice here is the knob's choice too, and it is still there after a reboot.</p>
+          <p class="page-lede">Arrivals and departures for any airport, with up to three flights you follow pinned to the top row. With a FlightAware AeroAPI key the panel fetches them itself, within the budget below; without one, the six built-in airports come from Home Assistant over MQTT. The knob and this page choose the same airport, and it is still there after a reboot.</p>
         </div>
 
         <div class="card">
@@ -143,7 +143,7 @@ static const char PANEL_PAGES_HTML[] PROGMEM = R"PNL(<link rel="stylesheet" href
           <div class="page-actions">
             <button type="button" class="btn" data-show="flights"><span class="gl"></span> Show on panel</button>
           </div>
-          <p class="field-hint" id="fbMsg">Applies at once. The panel takes both directions from one subscription and asks Home Assistant only for a half that nothing retained covers.</p>
+          <p class="field-hint" id="fbMsg">Applies at once. A new airport's board is fetched when the page is next on the panel.</p>
         </div>
 
         <div class="card">
@@ -153,6 +153,69 @@ static const char PANEL_PAGES_HTML[] PROGMEM = R"PNL(<link rel="stylesheet" href
             <div class="pn-table pn-fb" id="fbRows"></div>
           </div>
           <dl class="pn-kv" id="fbFeed"></dl>
+        </div>
+
+        <div class="card" id="fbTrackCard" hidden>
+          <h2 class="card-title">Tracked flights <span class="tag" id="fbTrkCount">--</span></h2>
+          <div class="field">
+            <label class="field-label" for="fbIdent">Flight</label>
+            <input type="text" id="fbIdent" class="pn-crs" maxlength="10" autocomplete="off" spellcheck="false" autocapitalize="characters" placeholder="AFR7301" aria-describedby="fbTrkMsg">
+            <p class="field-hint" id="fbTrkMsg">--</p>
+          </div>
+          <div class="page-actions">
+            <button type="button" class="btn btn-accent" id="fbTrackAdd">Track</button>
+          </div>
+          <div class="pn-list" id="fbTracks"></div>
+          <p class="field-hint">A tracked flight takes the board's first row on arrivals and departures alike, taking turns when there are several. It is asked for more often as departure nears - every 6 h a day ahead, every 10 min in the last hour and while it taxies - and removes itself 2 h after landing, or 6 h after a cancelled departure. Times on this page are this browser's; the panel shows its own.</p>
+        </div>
+
+        <div class="card" id="fbAddCard" hidden>
+          <h2 class="card-title">Your airports <span class="tag" id="fbCount">--</span></h2>
+          <div class="pn-list" id="fbCustom"></div>
+          <div class="field">
+            <label class="field-label" for="fbFind">Find an airport</label>
+            <input type="search" id="fbFind" autocomplete="off" spellcheck="false" placeholder="JFK, RJTT, Sao Paulo">
+            <p class="field-hint" id="fbFindMsg">--</p>
+          </div>
+          <div class="pn-list" id="fbResults"></div>
+          <div id="fbAddForm" hidden>
+            <div class="field">
+              <label class="field-label" for="fbName">Name on the panel</label>
+              <input type="text" id="fbName" class="pn-crs pn-wcname" maxlength="12" autocomplete="off" spellcheck="false" autocapitalize="characters" aria-describedby="fbNameMsg">
+              <p class="field-hint" id="fbNameMsg">--</p>
+            </div>
+            <div class="page-actions">
+              <button type="button" class="btn btn-accent" id="fbAddSel">Add and choose</button>
+              <button type="button" class="btn" id="fbAdd">Add</button>
+            </div>
+          </div>
+          <p class="field-hint">Up to six airports of your own after the six built-in ones, walked by the knob in that order. Airport data: <a href="https://github.com/mwgg/Airports" target="_blank" rel="noopener">mwgg/Airports</a> (MIT), fetched by this browser from jsDelivr, about 1.2 MB once; the panel hears only the airport you add.</p>
+        </div>
+
+        <div class="card" id="fbBudgetCard" hidden>
+          <h2 class="card-title">AeroAPI budget <span class="tag" id="fbKeyTag">--</span></h2>
+          <div class="crt pn-board">
+            <div class="pn-count" id="fbUse"></div>
+          </div>
+          <div class="grid-2">
+            <div class="field" style="margin-bottom:0">
+              <label class="field-label" for="fbDay">Calls a day (UTC)</label>
+              <input type="number" id="fbDay" min="0" max="1000" step="1">
+            </div>
+            <div class="field" style="margin-bottom:0">
+              <label class="field-label" for="fbMonth">Calls a month (UTC)</label>
+              <input type="number" id="fbMonth" min="0" max="20000" step="1">
+            </div>
+            <div class="field" style="margin-bottom:0">
+              <label class="field-label" for="fbFloor">Minutes before a list is asked for again</label>
+              <input type="number" id="fbFloor" min="5" max="240" step="1">
+            </div>
+          </div>
+          <div class="page-actions">
+            <button type="button" class="btn" id="fbBudgetSave">Save budget</button>
+          </div>
+          <p class="field-hint" id="fbBudgetMsg">--</p>
+          <dl class="pn-kv" id="fbDirect"></dl>
         </div>
       </section>
 

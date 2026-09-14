@@ -7,6 +7,10 @@ the firmware: change the firmware and this render changes with it. Used to
 judge the layout before hardware exists.
 
   python3 tools/fb_render.py payload.json out.png [scale]
+
+The payload is the MQTT board, plus two optional keys the direct build adds:
+"name", the header name for an airport outside the built-in list, and
+"track", the pinned tracked-flight row: {"tm","fn","route","w","col":[r,g,b]}.
 """
 import json, sys, pathlib
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
@@ -25,6 +29,8 @@ GAP, CODE_GAP      = _g["FB_GAP"], _g["FB_CODE_GAP"]
 Y_HEADER, Y_RULE   = _g["FB_Y_HEADER"], _g["FB_Y_RULE"]
 Y_ROW0, ROW_H      = _g["FB_Y_ROW0"], _g["FB_ROW_H"]
 VISIBLE            = _g["FB_VISIBLE"]
+PIN_BG  = (_g["FB_PIN_BG_R"], _g["FB_PIN_BG_G"], _g["FB_PIN_BG_B"])
+PIN_BAR = (_g["FB_PIN_BAR_R"], _g["FB_PIN_BAR_G"], _g["FB_PIN_BAR_B"])
 
 APT = dict(zip(L["airports"], L["airport_names"]))
 ARR, DEP = L["status"]["arr"], L["status"]["dep"]
@@ -51,18 +57,38 @@ def main():
     img = Image.new("RGB", (W, H), (10, 13, 14)); px = img.load()
 
     dep = b["dir"] == "dep"; ST = DEP if dep else ARR
-    apt = APT.get(b["apt"], b["apt"])
+    apt = b.get("name") or APT.get(b["apt"], b["apt"])
     text(px, X_TIME, Y_HEADER, apt, (255,255,255))
     text(px, X_TIME + tw(apt) + 6, Y_HEADER, "DEPARTURES" if dep else "ARRIVALS", SIG)
     text(px, X_RIGHT - tw(b["upd"]), Y_HEADER, b["upd"], DIM)
     for x in range(W): px[x, Y_RULE] = RULE
 
+    first = 0
+    tr = b.get("track")
+    if tr:                                                # flightboard.cpp drawTracked()
+        y = Y_ROW0
+        for yy in range(y, y + ROW_H - 1):
+            for x in range(W): px[x, yy] = PIN_BG
+            px[0, yy] = PIN_BAR
+        text(px, X_TIME, y, tr["tm"], (235, 240, 245))
+        text(px, X_FLIGHT, y, tr["fn"], (235, 240, 245))
+        x_route = max(X_DEST, X_FLIGHT + tw(tr["fn"]) + _g["FB_PIN_ROUTE_GAP"])
+        x_word = X_RIGHT - tw(tr["w"])
+        text(px, x_word, y, tr["w"], tuple(tr["col"]))
+        route = tr.get("route", "")
+        if route and x_route + tw(route) + GAP > x_word:
+            route = route.split("-")[-1]
+            if x_route + tw(route) + GAP > x_word: route = ""
+        if route: text(px, x_route, y, route, (170, 190, 200))
+        first = 1
+
     rows, now = b["f"], b["now_idx"]
-    start = max(0, min(now - 1, len(rows) - VISIBLE))
-    for i in range(VISIBLE):
+    free = VISIBLE - first
+    start = max(0, min(now - 1, len(rows) - free))
+    for i in range(free):
         idx = start + i
         if idx >= len(rows): break
-        r = rows[idx]; y = Y_ROW0 + i * ROW_H; col = COL.get(r["st"], DIM)
+        r = rows[idx]; y = Y_ROW0 + (i + first) * ROW_H; col = COL.get(r["st"], DIM)
         if idx == now:
             for yy in range(y, y + ROW_H - 1): px[0, yy] = SIG
         text(px, X_TIME, y, r["tm"], col)
@@ -83,6 +109,7 @@ def main():
         if city: text(px, x_city, y, city, col)
 
     img.resize((W * S, H * S), Image.NEAREST).save(sys.argv[2])
-    print(f"{sys.argv[2]}  rows {start}..{start+VISIBLE-1} of {len(rows)}")
+    print(f"{sys.argv[2]}  rows {start}..{start+free-1} of {len(rows)}")
 
-main()
+if __name__ == "__main__":
+    main()

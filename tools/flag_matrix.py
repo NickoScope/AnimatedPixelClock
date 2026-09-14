@@ -32,6 +32,9 @@ COMBOS = [
     ("+ carousel, all styles", "-DCONTROL_ENCODER_ENABLED -DMQTT_BUS_ENABLED -DCARDS_ENABLED "
                                "-DCAROUSEL_ENABLED -DCAROUSEL_ALL_STYLES", True),
     ("flight board + bus",     "-DFLIGHTBOARD_ENABLED -DMQTT_BUS_ENABLED -DFB_MQTT_ENABLED", True),
+    ("flight direct, no MQTT", "-DFLIGHTBOARD_ENABLED -DFLIGHTBOARD_DIRECT_ENABLED -DCONTROL_ENCODER_ENABLED", True),
+    ("flight direct + MQTT",   "-DFLIGHTBOARD_ENABLED -DFLIGHTBOARD_DIRECT_ENABLED -DCONTROL_ENCODER_ENABLED "
+                               "-DMQTT_BUS_ENABLED -DFB_MQTT_ENABLED", True),
     ("yacht radar + encoder",  "-DYACHTRADAR_ENABLED -DCONTROL_ENCODER_ENABLED", True),
     ("lua only",               "-DNSLUA_ENABLED", True),
     ("lua effects + knob",     "-DNSLUA_ENABLED -DCONTROL_ENCODER_ENABLED -DLUA_EFFECTS_ENABLED", True),
@@ -39,7 +42,7 @@ COMBOS = [
     ("rail board + bus + knob", "-DRAILBOARD_ENABLED -DMQTT_BUS_ENABLED -DCONTROL_ENCODER_ENABLED", True),
     ("rail direct + board",    "-DRAILBOARD_DIRECT_ENABLED -DRAILBOARD_ENABLED -DMQTT_BUS_ENABLED "
                                "-DCONTROL_ENCODER_ENABLED", True),
-    ("everything",             "-DFLIGHTBOARD_ENABLED -DYACHTRADAR_ENABLED "
+    ("everything",             "-DFLIGHTBOARD_ENABLED -DFLIGHTBOARD_DIRECT_ENABLED -DYACHTRADAR_ENABLED "
                                "-DCONTROL_ENCODER_ENABLED -DMQTT_BUS_ENABLED "
                                "-DFB_MQTT_ENABLED -DCARDS_ENABLED -DCAROUSEL_ENABLED "
                                "-DNSLUA_ENABLED -DWORLDCLOCK_ENABLED -DRAILBOARD_ENABLED -DRAILBOARD_DIRECT_ENABLED "
@@ -50,6 +53,8 @@ COMBOS = [
     ("rail board without bus", "-DRAILBOARD_ENABLED -DCONTROL_ENCODER_ENABLED", False),
     ("rail direct, no board",  "-DRAILBOARD_DIRECT_ENABLED -DMQTT_BUS_ENABLED -DCONTROL_ENCODER_ENABLED", False),
     ("flight MQTT without bus","-DFLIGHTBOARD_ENABLED -DFB_MQTT_ENABLED", False),
+    ("flight direct, no board", "-DFLIGHTBOARD_DIRECT_ENABLED -DCONTROL_ENCODER_ENABLED", False),
+    ("flight direct, no knob", "-DFLIGHTBOARD_ENABLED -DFLIGHTBOARD_DIRECT_ENABLED", False),
     ("carousel without knob",  "-DCAROUSEL_ENABLED", False),
     ("all styles, no carousel", "-DCONTROL_ENCODER_ENABLED -DCAROUSEL_ALL_STYLES", False),
     ("lua effects, no nslua",  "-DCONTROL_ENCODER_ENABLED -DLUA_EFFECTS_ENABLED", False),

@@ -113,6 +113,7 @@ int getOptimalRefreshRate();
 #include "metrics/metrics.h"
 #include "flightboard/flightboard.h"
 #include "flightboard/fb_mqtt.h"
+#include "flightboard/aero_direct.h"
 #include "mqtt/mqtt_bus.h"
 #include "cards/cards.h"
 #include "control/carousel.h"
@@ -425,6 +426,11 @@ void setup() {
 #if defined(MQTT_BUS_ENABLED)
   mqttBusBegin();
 #endif
+#if defined(FLIGHTBOARD_DIRECT_ENABLED)
+  // Before fbMqttBegin(): with a key stored, the MQTT transport never subscribes.
+  // After panelBegin(), which restored the custom airports and the selection.
+  aeroDirectBegin();
+#endif
 #if defined(FLIGHTBOARD_ENABLED) && defined(FB_MQTT_ENABLED)
   fbMqttBegin();
 #endif
@@ -586,7 +592,7 @@ static void fbKnob(int8_t d) {
   fbMqttSelectionChanged();   // resubscribes once the knob settles
 #endif
   panelNoteFlightboard();     // and it is still this airport after a reboot
-  snprintf(fbToast, sizeof(fbToast), "%s", flightboardAirportLabel(flightboardAirportIndex()));
+  snprintf(fbToast, sizeof(fbToast), "%s", flightboardAirportLabel(flightboardAirportId()));
   ctrlToast(fbToast);
 }
 #endif
@@ -738,6 +744,11 @@ void loop() {
 #endif
 #if defined(FLIGHTBOARD_ENABLED) && defined(FB_MQTT_ENABLED)
   fbMqttLoop();
+#endif
+#if defined(FLIGHTBOARD_ENABLED)
+  // The AeroAPI fetch, while the page is up or was a moment ago, and trackers
+  // on their own cadence; nothing without FLIGHTBOARD_DIRECT_ENABLED.
+  flightboardTick(httpForceFlightboard);
 #endif
 #if defined(CARDS_ENABLED)
   cardsLoop();
