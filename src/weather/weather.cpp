@@ -2,9 +2,12 @@
  * AnimatedPixelClock - Weather Module (Open-Meteo)
  *
  * The fetch (DNS + TLS handshake + transfer) can block for seconds, so it
- * runs in its own task pinned to core 0 - never in loop(), where it would
- * visibly freeze a 60 Hz animation. Results are copied into `published`
- * under a spinlock; the render loop takes snapshots via getWeather().
+ * runs in a task pinned to core 0 - never in loop(), where it would visibly
+ * freeze a 60 Hz animation. The task lives for one fetch: loop() starts it
+ * when a fetch is due and it deletes itself, so its stack is not held in
+ * internal SRAM for the ten minutes between fetches. Results are copied into
+ * `published` under a spinlock; the render loop takes snapshots via
+ * getWeather().
  */
 
 #include "weather.h"
@@ -13,6 +16,7 @@
 #include <HTTPClient.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
+#include <esp_heap_caps.h>
 
 #include "../config/config.h"
 #include "../clocks/cycle_config.h"
@@ -21,11 +25,17 @@
 
 #define WEATHER_FETCH_INTERVAL_MS (10UL * 60UL * 1000UL)
 #define WEATHER_RETRY_INTERVAL_MS (60UL * 1000UL)
-#define WEATHER_IDLE_POLL_MS 5000UL
+#define WEATHER_CHECK_MS 1000UL
+#define WEATHER_TASK_STACK 8192
 
 static WeatherData published = {};
 static portMUX_TYPE weatherMux = portMUX_INITIALIZER_UNLOCKED;
-static TaskHandle_t weatherTaskHandle = nullptr;
+// fetchBusy is set by loop() before the task starts and cleared by the task
+// last, after it has written nextFetchMs; loop() reads nextFetchMs only while
+// fetchBusy is clear.
+static volatile bool fetchBusy = false;
+static volatile bool fetchKick = false;
+static volatile unsigned long nextFetchMs = 0;   // 0: due now
 
 bool weatherConfigured() {
   // 0,0 (middle of the Atlantic) doubles as the "unset" marker.
@@ -136,32 +146,43 @@ static bool fetchWeather() {
   return true;
 }
 
-static void weatherTask(void*) {
-  for (;;) {
-    if (!weatherConfigured() || !weatherOnScreen() ||
-        WiFi.status() != WL_CONNECTED) {
-      ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(WEATHER_IDLE_POLL_MS));
-      continue;
-    }
-    bool ok = false;
-    {
-      NetLockGuard net(NET_LOCK_WAIT_MS);
-      ok = net.held() && fetchWeather();
-    }
-    // Sleeps the full interval, but a settings change (new location, toggle)
-    // kicks the task awake early via weatherSettingsChanged().
-    ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(ok ? WEATHER_FETCH_INTERVAL_MS
-                                              : WEATHER_RETRY_INTERVAL_MS));
+static void weatherFetchTask(void*) {
+  bool ok = false;
+  {
+    NetLockGuard net(NET_LOCK_WAIT_MS);
+    ok = net.held() && fetchWeather();
+  }
+  nextFetchMs = millis() + (ok ? WEATHER_FETCH_INTERVAL_MS : WEATHER_RETRY_INTERVAL_MS);
+  fetchBusy = false;
+  vTaskDelete(nullptr);
+}
+
+void weatherLoop() {
+  if (fetchBusy) return;
+  const unsigned long now = millis();
+  static unsigned long lastCheckMs = 0;
+  if (!fetchKick && now - lastCheckMs < WEATHER_CHECK_MS) return;
+  lastCheckMs = now;
+  if (!weatherConfigured() || !weatherOnScreen() || WiFi.status() != WL_CONNECTED) return;
+  // A settings change (new location, toggle) fetches now instead of waiting.
+  if (!fetchKick && nextFetchMs && (long)(now - nextFetchMs) < 0) return;
+  if (netLockBusy()) return;   // another fetch holds the network; check again in a second
+  if (heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) < WEATHER_TASK_STACK + 1024) {
+    nextFetchMs = now + WEATHER_RETRY_INTERVAL_MS;
+    fetchKick = false;
+    return;
+  }
+  fetchKick = false;
+  fetchBusy = true;
+  // Core 0 below the Lua effect task: the Arduino loop (and the HUB75 DMA
+  // refresh) live on core 1.
+  if (xTaskCreatePinnedToCore(weatherFetchTask, "weather", WEATHER_TASK_STACK, nullptr, 0,
+                              nullptr, 0) != pdPASS) {
+    fetchBusy = false;
+    nextFetchMs = now + WEATHER_RETRY_INTERVAL_MS;
   }
 }
 
 void weatherSettingsChanged() {
-  if (weatherTaskHandle) xTaskNotifyGive(weatherTaskHandle);
-}
-
-void startWeatherTask() {
-  if (weatherTaskHandle) return;
-  // Core 0: the Arduino loop (and the HUB75 DMA refresh) live on core 1.
-  xTaskCreatePinnedToCore(weatherTask, "weather", 8192, nullptr, 0,   // below the Lua effect task
-                          &weatherTaskHandle, 0);
+  fetchKick = true;
 }

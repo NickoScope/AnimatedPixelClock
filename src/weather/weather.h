@@ -34,10 +34,9 @@ struct WeatherData {
   unsigned long fetchedAt;  // millis() of the last successful fetch
 };
 
-// Start the background fetch task (call once from setup(), after WiFi init).
-// The task idles cheaply while weather is disabled or unconfigured, so it is
-// safe to start unconditionally.
-void startWeatherTask();
+// Call every loop(). When weather is enabled, a screen can show it and a
+// fetch is due, starts a one-shot fetch task; otherwise returns at once.
+void weatherLoop();
 
 // Thread-safe snapshot of the latest data.
 WeatherData getWeather();

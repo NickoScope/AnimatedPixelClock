@@ -8,7 +8,8 @@
  * Verified hardware config baked in (Phase 1, real panels):
  *   - 2x Waveshare P2.5 64x64 HUB75E chained = 128x64
  *   - driver FM6126A, clkphase=false (fixes dropped rightmost column)
- *   - internal-SRAM DMA only (NOT PSRAM), double-buffered
+ *   - internal-SRAM DMA only (NOT PSRAM: stripes, flicker and failed TLS
+ *     certificate checks when tried on 2026-09-14), double-buffered
  *   - pin map identical to bringup/hello_matrix.cpp
  *
  * Board variants: define BOARD_WAVESHARE_RGB_MATRIX to select the pin map of

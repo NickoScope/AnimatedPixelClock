@@ -321,6 +321,19 @@ void cycleClockScreens() {
 }
 
 // ========== setup() ==========
+
+// MEM_TRACE: internal heap after each step of setup(), to find what eats it.
+// Build with PLATFORMIO_BUILD_FLAGS=-DMEM_TRACE; never in a release.
+#if defined(MEM_TRACE)
+#include <esp_heap_caps.h>
+#define MEMTRACE(tag) Serial.printf("[mem] %-16s internal %6u largest %6u psram %8u\n", tag, \
+    (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL), \
+    (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL), \
+    (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM))
+#else
+#define MEMTRACE(tag)
+#endif
+
 void setup() {
 #if defined(BOARD_HAS_PSRAM)
   tlsUsePsram();   // before anything opens TLS - see network/tls_psram.cpp
@@ -330,16 +343,28 @@ void setup() {
 
   // Load settings from flash
   loadSettings();
+  MEMTRACE("settings");
 
   // Mount the animation filesystem (formats the partition on first use)
   animStoreInit();
+  MEMTRACE("animstore");
 #if defined(CLIPS_SD_ENABLED)
   // The clip gallery on the TF card; without a card it says so and carries on.
   clipSdInit();
+  MEMTRACE("clip sd");
 #endif
 
   // Initialize display
   displayAvailable = initDisplay();
+  MEMTRACE("display");
+#if defined(MEM_TRACE)
+  Serial.printf("[mem] display refresh %d Hz, DMA buffer in %s\n", display.refreshRateHz(),
+#if defined(SPIRAM_DMA_BUFFER)
+                "PSRAM");
+#else
+                "internal SRAM");
+#endif
+#endif
 
   // Apply saved brightness setting
   if (displayAvailable) {
@@ -373,6 +398,7 @@ void setup() {
 
   if (!useManualWiFi) {
     initNetwork();
+  MEMTRACE("network");
   }
 
   // Keep the radio awake: WiFi modem sleep delays inbound ACKs to the beacon
@@ -382,6 +408,7 @@ void setup() {
 
   // Initialize NTP
   initNTP();
+  MEMTRACE("ntp");
 
   // Apply the scheduled dim/off level now that the time is (usually) synced, so
   // the panel comes up at the correct night brightness instead of the un-dimmed
@@ -400,7 +427,9 @@ void setup() {
   // Before controlBegin(), fbMqttBegin() and railboardBegin(), which subscribe
   // to whatever airport and station are selected by then.
   panelBegin();
+  MEMTRACE("panel");
   controlBegin();
+  MEMTRACE("control");
 #endif
 #if defined(NSLUA_ENABLED)
   // Phase 1: prove the runtime exists on this board and that the PSRAM
@@ -415,6 +444,7 @@ void setup() {
     nslua_bindings_dump();
 #if defined(LUA_EFFECTS_ENABLED)
     luaEffectsBegin();           // the effect task on core 0 and its frame buffers
+  MEMTRACE("lua effects");
 #endif
 #if defined(NSLUA_BENCH)
     nsluaBenchBegin();           // phase 6b bench build only
@@ -425,23 +455,28 @@ void setup() {
 #endif
 #if defined(MQTT_BUS_ENABLED)
   mqttBusBegin();
+  MEMTRACE("mqtt");
 #endif
 #if defined(FLIGHTBOARD_DIRECT_ENABLED)
   // Before fbMqttBegin(): with a key stored, the MQTT transport never subscribes.
   // After panelBegin(), which restored the custom airports and the selection.
   aeroDirectBegin();
+  MEMTRACE("aero");
 #endif
 #if defined(FLIGHTBOARD_ENABLED) && defined(FB_MQTT_ENABLED)
   fbMqttBegin();
+  MEMTRACE("fb mqtt");
 #endif
 #if defined(CARDS_ENABLED)
   cardsBegin();
+  MEMTRACE("cards");
 #endif
 #if defined(RAILBOARD_ENABLED)
   // Subscribes now, whatever page is up: the retained boards arrive within a
   // moment of the broker connecting, so the page is populated after a reboot
   // before anyone turns to it.
   railboardBegin();
+  MEMTRACE("railboard");
 #if defined(RAILBOARD_BOOT_PAGE)
   ctrlPage = PAGE_RAILBOARD;       // a panel that is a station board first
 #endif
@@ -459,9 +494,10 @@ void setup() {
 
   // Setup web server
   setupWebServer();
+  MEMTRACE("web");
 
   // Background weather fetcher (idles cheaply while weather is disabled)
-  startWeatherTask();
+  MEMTRACE("weather");
 
   // Show IP address for 5 seconds (configurable via web interface)
   if (displayAvailable && settings.showIPAtBoot) {
@@ -767,6 +803,7 @@ void loop() {
 #if defined(RAILBOARD_ENABLED)
   railboardLoop();           // the retained station selection, once connected
 #endif
+  weatherLoop();             // starts a one-shot fetch task when one is due
 
 #if defined(YACHTRADAR_ENABLED)
   // The AIS stream is held open only while its page is up: a websocket to
