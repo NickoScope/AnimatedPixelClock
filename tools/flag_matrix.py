@@ -46,8 +46,11 @@ COMBOS = [
                                "-DCONTROL_ENCODER_ENABLED -DMQTT_BUS_ENABLED "
                                "-DFB_MQTT_ENABLED -DCARDS_ENABLED -DCAROUSEL_ENABLED "
                                "-DNSLUA_ENABLED -DWORLDCLOCK_ENABLED -DRAILBOARD_ENABLED -DRAILBOARD_DIRECT_ENABLED "
-                               "-DLUA_EFFECTS_ENABLED -DCLIPS_SD_ENABLED", True),
+                               "-DLUA_EFFECTS_ENABLED -DCLIPS_SD_ENABLED -DMEDIAPLAYER_ENABLED", True),
     ("card clips + knob",      "-DCONTROL_ENCODER_ENABLED -DCLIPS_SD_ENABLED", True),
+    ("media + bus + knob",     "-DMEDIAPLAYER_ENABLED -DMQTT_BUS_ENABLED -DCONTROL_ENCODER_ENABLED", True),
+    ("media + carousel + cards", "-DMEDIAPLAYER_ENABLED -DMQTT_BUS_ENABLED -DCONTROL_ENCODER_ENABLED "
+                               "-DCAROUSEL_ENABLED -DCARDS_ENABLED", True),
     ("cards without the bus",  "-DCARDS_ENABLED", False),
     ("world clock, no encoder", "-DWORLDCLOCK_ENABLED", False),
     ("rail board without bus", "-DRAILBOARD_ENABLED -DCONTROL_ENCODER_ENABLED", False),
@@ -59,6 +62,10 @@ COMBOS = [
     ("all styles, no carousel", "-DCONTROL_ENCODER_ENABLED -DCAROUSEL_ALL_STYLES", False),
     ("lua effects, no nslua",  "-DCONTROL_ENCODER_ENABLED -DLUA_EFFECTS_ENABLED", False),
     ("card clips, no knob",    "-DCLIPS_SD_ENABLED", False),
+    ("media without the bus",  "-DMEDIAPLAYER_ENABLED -DCONTROL_ENCODER_ENABLED", False),
+    ("media without the knob", "-DMEDIAPLAYER_ENABLED -DMQTT_BUS_ENABLED", False),
+    ("media radio (phase 2)",  "-DMEDIAPLAYER_ENABLED -DMEDIAPLAYER_RADIO_ENABLED -DMQTT_BUS_ENABLED "
+                               "-DCONTROL_ENCODER_ENABLED", False),
 ]
 
 # Built from bringup/ with their own source filters. When provision.cpp was

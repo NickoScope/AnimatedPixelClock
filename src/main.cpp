@@ -84,6 +84,9 @@ enum CtrlPage : uint8_t {
 #if defined(YACHTRADAR_ENABLED)
   PAGE_YACHTRADAR,
 #endif
+#if defined(MEDIAPLAYER_ENABLED)
+  PAGE_MEDIA,                    // now playing on a Home Assistant player: src/media
+#endif
   PAGE_COUNT
 };
 static uint8_t ctrlPage = PAGE_CLOCK;
@@ -121,6 +124,7 @@ int getOptimalRefreshRate();
 #include "worldclock/worldclock.h"
 #include "lua/nslua_bench.h"
 #include "railboard/railboard.h"
+#include "media/media.h"
 #include "network/tls_psram.h"
 
 #if defined(CAROUSEL_ENABLED) && defined(CONTROL_ENCODER_ENABLED)
@@ -145,6 +149,9 @@ static uint16_t ctrlPageSeconds(uint8_t page) {
 #endif
 #if defined(RAILBOARD_ENABLED)
   if (page == PAGE_RAILBOARD) return 20;   // one list at a time: both get a turn at the default 10 s
+#endif
+#if defined(MEDIAPLAYER_ENABLED)
+  if (page == PAGE_MEDIA) return 20;       // docs/17-media-player.md 3.5
 #endif
   return (page == PAGE_CLOCK) ? 25 : 15;
 }
@@ -221,6 +228,10 @@ int getOptimalRefreshRate() {
 #if defined(RAILBOARD_ENABLED)
   // The header clock shows seconds; the data itself changes every 20 s.
   if (ctrlPage == PAGE_RAILBOARD) return 5;
+#endif
+#if defined(MEDIAPLAYER_ENABLED) && defined(CONTROL_ENCODER_ENABLED)
+  // 20 Hz while a title scrolls or the knob's countdown runs, else 5 Hz.
+  if (ctrlPage == PAGE_MEDIA) return mediaRefreshHz();
 #endif
 #if defined(FLIGHTBOARD_ENABLED)
   // A board that changes twice a minute; anything faster is wasted DMA.
@@ -481,6 +492,9 @@ void setup() {
   ctrlPage = PAGE_RAILBOARD;       // a panel that is a station board first
 #endif
 #endif
+#if defined(MEDIAPLAYER_ENABLED)
+  mediaBegin();                    // subscribes now: the retained state is in before the page is
+#endif
 
   // Configure hardware watchdog timer
   esp_task_wdt_init(15, true);
@@ -525,6 +539,9 @@ static bool ctrlPageHasControls(uint8_t page) {
 #if defined(RAILBOARD_ENABLED)
   if (page == PAGE_RAILBOARD) return true;
 #endif
+#if defined(MEDIAPLAYER_ENABLED)
+  if (page == PAGE_MEDIA) return true;
+#endif
   (void)page;
   return false;
 }
@@ -545,6 +562,9 @@ static const char *ctrlPageName(uint8_t page) {
 #endif
 #if defined(YACHTRADAR_ENABLED)
   if (page == PAGE_YACHTRADAR) return "YACHTS";
+#endif
+#if defined(MEDIAPLAYER_ENABLED)
+  if (page == PAGE_MEDIA) return "MEDIA";
 #endif
   return "CLOCK";
 }
@@ -586,6 +606,9 @@ uint8_t panelPageKey(uint8_t page) {
 #endif
 #if defined(YACHTRADAR_ENABLED)
   case PAGE_YACHTRADAR:  return PANEL_KEY_YACHTS;
+#endif
+#if defined(MEDIAPLAYER_ENABLED)
+  case PAGE_MEDIA:       return PANEL_KEY_MEDIA;
 #endif
   default:               return PANEL_KEY_NONE;
   }
@@ -721,6 +744,14 @@ void loop() {
     if (ctrlPage >= ctrlPageCount()) { ctrlPage = PAGE_CLOCK; ctrlEntered = false; }  // card expired
 #endif
     if (e == CTRL_PRESS) {
+#if defined(MEDIAPLAYER_ENABLED)
+      // Three stops where the other pages have two: TUNE, VOLUME, out.
+      if (ctrlPage == PAGE_MEDIA) {
+        ctrlEntered = mediaKnobClick(ctrlEntered);
+        ctrlToast(mediaKnobHint());
+        continue;
+      }
+#endif
       if (ctrlPageHasControls(ctrlPage)) {
         ctrlEntered = !ctrlEntered;
         ctrlToast(ctrlEntered ? ctrlEnterHint(ctrlPage) : "TURN: PAGES");
@@ -740,6 +771,9 @@ void loop() {
     // Inside the rail board the knob steps departures, arrivals, diagnostics;
     // the choice holds the 10 s alternation for RB_HOLD_S (railboard.h).
     case PAGE_RAILBOARD:   railboardKnob(d); break;
+#endif
+#if defined(MEDIAPLAYER_ENABLED)
+    case PAGE_MEDIA:       mediaKnob(d); break;
 #endif
     default:               ctrlEntered = false; ctrlBrowse(d); break;
     }
@@ -804,6 +838,9 @@ void loop() {
   railboardLoop();           // the retained station selection, once connected
 #endif
   weatherLoop();             // starts a one-shot fetch task when one is due
+#if defined(MEDIAPLAYER_ENABLED)
+  mediaLoop();               // the selection out, coalesced volume, the knob's timers
+#endif
 
 #if defined(YACHTRADAR_ENABLED)
   // The AIS stream is held open only while its page is up: a websocket to
@@ -943,6 +980,11 @@ void loop() {
     // like every page: the panel never shows a half-drawn board.
     if (ctrlPage == PAGE_RAILBOARD) {
       railboardRender();
+    } else
+#endif
+#if defined(MEDIAPLAYER_ENABLED)
+    if (ctrlPage == PAGE_MEDIA) {
+      mediaRender();
     } else
 #endif
 #if defined(YACHTRADAR_ENABLED)

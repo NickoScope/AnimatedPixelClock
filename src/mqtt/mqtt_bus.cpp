@@ -24,10 +24,12 @@ static const uint16_t MQTT_BUS_BUFFER = 2048;
 static const uint32_t MQTT_BUS_RETRY_MS = 5000;
 
 // In use with every page built in: cards 3 handlers and 3 subscriptions, the
-// flight board 1 and 1, the rail board 1 and 1. Past these limits a register or
-// subscribe call is refused, and a refused one is a page that never updates.
-#define MQTT_MAX_SUBS     6
-#define MQTT_MAX_HANDLERS 6
+// flight board 1 and 1, the rail board 1 and 1, the media player 1 and 1 - six
+// of each, which was the whole table, so it is eight: room for one more page
+// without another round of this. Past these limits a register or subscribe
+// call is refused, and a refused one is a page that never updates.
+#define MQTT_MAX_SUBS     8
+#define MQTT_MAX_HANDLERS 8
 #define MQTT_TOPIC_LEN    96
 
 static WiFiClient   s_net;

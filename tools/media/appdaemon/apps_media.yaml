@@ -1,0 +1,36 @@
+# Media player for the LED panel: add this entry to AppDaemon's apps.yaml
+# (/addon_configs/a0d7b954_appdaemon/apps/apps.yaml), after the others.
+#
+# Needs, in the same apps directory: matrix_media.py (one file, no helpers).
+# Needs, in AppDaemon's own secrets.yaml (/addon_configs/a0d7b954_appdaemon/secrets.yaml):
+#   matrix_media_mqtt_user   a broker login allowed to publish and subscribe under nickoscope_matrix/
+#   matrix_media_mqtt_pass   and its password
+# The whole install, and how to check it: src/media/README.md, "Home Assistant".
+
+matrix_media:
+  module: matrix_media
+  class: MatrixMedia
+  # The panel's six hex digits: portal > Panel > Media > Diagnostics > topics,
+  # or the boot log line "[media] topics nickoscope_matrix/<device>/media/...".
+  device: "000000"
+  # At most 8. The panel can follow and command these and nothing else.
+  players:
+    - media_player.nickoscope32_audio_s3
+    - media_player.eversolo_dmp_a8
+    - media_player.atom_voice_atom_speaker
+    - media_player.yandex_station_u00c533009fayb
+    - media_player.yandex_station_r1068ye002nbng
+  # Followed until the panel chooses; the panel's choice is retained and wins.
+  default_player: media_player.nickoscope32_audio_s3
+  # Music Assistant's config entry, for the radio favourites. An id, not a
+  # secret. Leave the line out and the app sends an empty favourites list.
+  ma_config_entry_id: 01KSTJEYV7QZEMM7CMJEWXVEHP
+  # The broker by IP: this container has no mDNS (the note on marta_bridge here).
+  mqtt_host: "192.168.4.35"
+  mqtt_port: 1883
+  mqtt_user: !secret matrix_media_mqtt_user
+  mqtt_pass: !secret matrix_media_mqtt_pass
+  keepalive: 60          # s: the same state again when nothing changes; the panel says STALE after 150
+  min_interval: 1        # s: at most one state payload this often
+  favs_refresh: 900      # s: how often Music Assistant's favourites are read again
+  # tags: {media_player.eversolo_dmp_a8: "EVS"}   # up to four of A-Z 0-9; default MA, YA or HA
