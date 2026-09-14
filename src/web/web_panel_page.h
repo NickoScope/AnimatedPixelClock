@@ -1,15 +1,18 @@
-// The portal's Panel group: markup, style and script. Only web.cpp includes
-// this, and only when CONTROL_ENCODER_ENABLED is defined.
+// The portal's Panel group: markup, style and script, as the source that
+// tools/web_assets_gen.py gzips into web_assets.h. Nothing here is compiled.
 //
-//   PANEL_NAV_HTML    streamed in place of %PANEL_NAV% in PAGE_HTML's sidebar
-//   PANEL_PAGES_HTML  streamed in place of %PANEL_PAGES%, after the settings form;
+//   PANEL_NAV_HTML    spliced in place of %PANEL_NAV% in PAGE_HTML's sidebar
+//   PANEL_PAGES_HTML  spliced in place of %PANEL_PAGES%, after the settings form;
 //                     outside it on purpose: nothing here is saved by "Save & apply",
 //                     every control applies itself through /api/*
 //   PANEL_CSS         served from /panel.css (cached like portal.css)
 //   PANEL_JS          served from /panel.js (web_panel_js.h)
 //
-// Both HTML blobs go through the same %TOKEN% resolver as PAGE_HTML, so a
-// percent sign followed by capitals must not appear in their text.
+// The markup is in the page of every build, hidden until /api/portal lists the
+// features this build carries: portal.js drops what is not listed (data-need),
+// and loads PANEL_CSS and PANEL_JS only where there is a Panel group - the
+// builds with CONTROL_ENCODER_ENABLED, the only ones that serve them. Nothing
+// is substituted at runtime; the generator refuses a %TOKEN% in the markup.
 //
 // Components are the portal's own - .card, .field, .check-row, .subcard, .note,
 // .chip, .crt, .status-readout - with a handful of additions prefixed pn-.
@@ -28,8 +31,7 @@ static const char PANEL_NAV_HTML[] PROGMEM = R"PNL(<div class="nav-group" data-n
         <button type="button" class="nav-item" data-nav="pknob">Knob</button>
       </div>)PNL";
 
-static const char PANEL_PAGES_HTML[] PROGMEM = R"PNL(<link rel="stylesheet" href="/panel.css?v=%ASSETVER%">
-      <div id="panelRoot" data-f="%PANEL_FEATURES%" hidden></div>
+static const char PANEL_PAGES_HTML[] PROGMEM = R"PNL(<div id="panelRoot" data-f="" hidden></div>
 
       <!-- NOW SHOWING -->
       <section class="page" data-page="pnow">
@@ -648,8 +650,7 @@ static const char PANEL_PAGES_HTML[] PROGMEM = R"PNL(<link rel="stylesheet" href
             <div>Turn one click at a time. Each click should add exactly one step. <strong>Two per click</strong>: the knob rests only at 11 - choose one every full cycle. <strong>One every two clicks</strong>: it also rests at 00 - choose one every half cycle. Counts are the decoder's, since boot; zeroing only resets this view.</div>
           </div>
         </div>
-      </section>
-      <script src="/panel.js?v=%ASSETVER%"></script>)PNL";
+      </section>)PNL";
 
 static const char PANEL_CSS[] PROGMEM = R"CSS(.pn-navtag{color:var(--accent-d)!important;background:var(--accent-soft)!important;border-color:var(--accent-line)!important}html.pn-live .save-bar{display:none}.pn-stage{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:16px;align-items:stretch}.pn-stage .oled-preview{margin-bottom:0}@media (max-width:720px){.pn-stage{grid-template-columns:1fr}}.pn-readout .sr-row{grid-template-columns:74px 1fr}.pn-readout .sr-row dd.warn{color:#ffb454;text-shadow:none}.pn-list{display:flex;flex-direction:column}.pn-row{display:flex;align-items:center;gap:12px;padding:10px 0;border-top:1px solid var(--line-soft)}.pn-row:first-child{border-top:0;padding-top:2px}.pn-row>.check-row,.pn-row>.pn-name{flex:1;min-width:0}.pn-name{font-size:14px;color:var(--ink-soft)}.pn-name strong{color:var(--ink);font-weight:600}.pn-name .ct-hint{display:block;color:var(--dim);font-size:12.5px;margin-top:2px}.pn-here{font-family:var(--mono);font-size:10px;letter-spacing:.05em;text-transform:uppercase;color:var(--accent-d);background:var(--accent-soft);border:1px solid var(--accent-line);border-radius:999px;padding:1px 8px;white-space:nowrap}.pn-row:not(.here) .pn-here{visibility:hidden}.btn-sm{padding:6px 12px;font-size:12.5px}.pn-cards{margin-top:10px}.pn-cards:empty::before{content:"No cards right now.";font-family:var(--mono);font-size:12px;color:var(--dim)}.pn-chips{margin:0}.pn-chips .chip{cursor:pointer;font-family:var(--mono);font-size:11.5px;letter-spacing:.03em;padding:6px 12px}.pn-seg button.on{background:var(--card);color:var(--ink);box-shadow:var(--shadow-card)}.pn-seg button{font-size:12px;padding:7px 14px}.pn-board,.pn-tester{padding:12px 14px}.pn-table{position:relative;z-index:1;display:grid;gap:2px 12px;font-size:12px;line-height:1.5;color:var(--crt-fg);text-shadow:0 0 6px var(--crt-glow);overflow-x:auto}.pn-fb{grid-template-columns:max-content max-content minmax(0,1fr) max-content}.pn-yr{grid-template-columns:minmax(0,1fr) max-content max-content max-content}.pn-table>span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.pn-table .h{color:var(--crt-dim);text-shadow:none;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase}.pn-table .r{text-align:right}.pn-table .dim,.pn-table .m0{color:var(--crt-dim);text-shadow:none}.pn-table .m1{color:#ffb454}.pn-table .now{box-shadow:inset 2px 0 0 #ffb400;padding-left:6px}.pn-table .empty{grid-column:1/-1;color:var(--crt-dim);text-shadow:none}.st-sched{color:#c8c8c8}.st-board{color:#00dcdc}.st-dep{color:#6e9bff}.st-land{color:#00c83c}.st-delay{color:#ffaa00}.st-canc{color:#ff4b4b}.pn-kv{display:grid;grid-template-columns:max-content 1fr;gap:6px 18px;margin:16px 0 0;font-size:13.5px}.pn-kv dt{font-family:var(--mono);font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--dim);padding-top:2px}.pn-kv dd{margin:0;color:var(--ink-soft)}.pn-ok{color:var(--ok)}.pn-warn{color:var(--warn)}.pn-err{color:var(--err)}.pn-radio input[type="radio"]{position:absolute;opacity:0;width:0;height:0}.pn-row input:disabled+.check-box{opacity:.5}.pn-row input:disabled~.check-text{cursor:default}.pn-radio .check-box{border-radius:999px}.pn-radio .check-row input:checked+.check-box::after{border-radius:999px;clip-path:none;width:8px;height:8px}.pn-sun{font-family:var(--mono);font-size:10.5px;letter-spacing:.04em;text-transform:uppercase;border-radius:999px;padding:1px 8px;border:1px solid var(--line);color:var(--dim);background:var(--paper-2);white-space:nowrap}.pn-sun.day{color:var(--warn);border-color:color-mix(in oklab,var(--warn) 40%,var(--line));background:color-mix(in oklab,var(--warn) 10%,var(--card))}.pn-count{position:relative;z-index:1;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:6px 0 2px}.pn-count div{text-align:center}.pn-count b{display:block;font-size:28px;font-weight:600;line-height:1.15;color:var(--crt-fg);text-shadow:0 0 8px var(--crt-glow);font-variant-numeric:tabular-nums}.pn-count span{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--crt-dim)}.pn-count b.bump{animation:pn-bump 450ms ease-out}@keyframes pn-bump{0%{color:#fff;text-shadow:0 0 14px var(--crt-glow)}100%{}}@media (prefers-reduced-motion:reduce){.pn-count b.bump{animation:none}}.pn-crs{font-family:var(--mono);text-transform:uppercase;letter-spacing:.14em;max-width:9em}.pn-stn{margin:8px 0 0;font-size:15px;color:var(--ink)}.pn-stn small{display:block;font-size:12.5px;color:var(--dim);margin-top:2px}@media (max-width:560px){.pn-count b{font-size:22px}.pn-row{flex-wrap:wrap}}.pn-wcname{letter-spacing:.08em;max-width:16em}#wcResults:not(:empty){margin:4px 0 12px}#wcFind{width:100%}.pn-colors{display:flex;flex-wrap:wrap;gap:4px}.pn-sw{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:6px;vertical-align:-1px;box-shadow:0 0 0 1px rgba(0,0,0,.25)}.pn-crs{font-family:var(--mono);text-transform:uppercase;letter-spacing:.14em;max-width:9em}.pn-stn{margin:8px 0 0;font-size:15px;color:var(--ink)}.pn-stn small{display:block;font-size:12.5px;color:var(--dim);margin-top:2px}@media (max-width:560px){.pn-count b{font-size:22px}.pn-row{flex-wrap:wrap}}.pn-thumb{width:64px;height:32px;flex:none;image-rendering:pixelated;background:#000;border-radius:3px}.pn-mp-bar{height:6px;margin-top:14px;border-radius:3px;background:var(--line-soft);overflow:hidden}.pn-mp-bar span{display:block;height:100%;width:0;background:var(--accent-d);transition:width .4s linear})CSS";
 

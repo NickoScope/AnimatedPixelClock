@@ -18,10 +18,9 @@
 #include "../timezones.h"
 #include "../viz/visualizer.h"
 #include "../weather/weather.h"
-#include "web_pages.h"
+#include "web_assets.h"   // the portal as gzip: page, style, script, icon, Panel group
 #include "web_panel.h"
 #if defined(CONTROL_ENCODER_ENABLED)
-#include "web_panel_page.h"   // the Panel group's markup, style and script
 static void handlePanelCss();
 static void handlePanelJs();
 #endif
@@ -35,10 +34,35 @@ static void handlePanelJs();
 #include <lwip/sockets.h>
 #include <errno.h>
 #include <esp_system.h>
+#include <esp_heap_caps.h>
 #include "../clocks/cycle_config.h"
 static String lastAnimationError;
 static bool writeAllGuarded(int sock, const char* data, size_t len, uint32_t totalDeadline);
 static void sendJsonGuarded(int code, const String& json);
+static void sendBytesGuarded(int code, const char* contentType, const char* data, size_t len);
+
+// JSON documents built for a response come from PSRAM when there is some.
+// Internal SRAM is the scarce heap on this board - the HUB75 buffers and lwip
+// live in it and /api/info has shown its low-water mark near 16 KB - and a
+// response is built, sent and freed within one request. web_panel.cpp's routes
+// use it too (web_panel.h).
+class WebJsonAllocator : public ArduinoJson::Allocator {
+ public:
+  void *allocate(size_t n) override {
+    void *p = heap_caps_malloc(n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    return p ? p : heap_caps_malloc(n, MALLOC_CAP_8BIT);
+  }
+  void deallocate(void *p) override { heap_caps_free(p); }
+  void *reallocate(void *p, size_t n) override {
+    void *q = heap_caps_realloc(p, n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    return q ? q : heap_caps_realloc(p, n, MALLOC_CAP_8BIT);
+  }
+};
+
+ArduinoJson::Allocator *webJsonAllocator() {
+  static WebJsonAllocator alloc;
+  return &alloc;
+}
 
 // ========== Web Server Object ==========
 WebServer server(80);
@@ -69,10 +93,16 @@ const char *webLastUri() { return s_uriRecorder.last; }
 
 void setupWebServer() {
  server.addHandler(&s_uriRecorder);   // first, so it sees every request
+ // WebServer keeps only the request headers it is told to collect, in one list
+ // that each call replaces: If-None-Match for the page, Content-Type for the
+ // Panel routes' readBody().
+ static const char* kHeaders[] = {"If-None-Match", "Content-Type"};
+ server.collectHeaders(kHeaders, 2);
  // Arduino's getSketchSize verifies the entire flash image. Cache it before
  // rendering starts, never repeat it in the five-second /api/info poll.
  runningFirmwareBytes = ESP.getSketchSize();
  server.on("/", handleRoot);
+ server.on("/api/portal", HTTP_GET, handlePortalValues);   // the page's values
  server.on("/portal.css", HTTP_GET, handlePortalCss);
  server.on("/portal.js", HTTP_GET, handlePortalJs);
  server.on("/favicon.svg", HTTP_GET, handleFavicon);
@@ -639,30 +669,31 @@ void handleAnimUploadDone() {
  }
 }
 
-// ========== Config Page (streamed PROGMEM template) ==========
-// The full HTML config page lives in web_pages.h as PAGE_HTML[] (flash).
-// resolvePlaceholder() supplies the dynamic values for each %TOKEN%, and
-// streamTemplate() walks the template emitting it through a single small
-// buffer. Peak heap during a page render is ~2 KB plus the largest single
-// placeholder value, instead of the whole ~58 KB page as one String.
+// ========== Config Page (static gzip + /api/portal) ==========
+// The page is one gzip blob in web_assets.h, the same for every build, and
+// nothing in it is filled in here: it fetches /api/portal for the setting values,
+// the color pickers, the timezone names and which Panel pages this build carries,
+// and keeps Save disabled until they are in. It used to be a %TOKEN% template
+// walked in loop(): 128 KB at 70-100 KB/s, the panel frozen for 1.8 s.
 
-// Resolve a single %NAME% placeholder. Returns false for unknown names so the
-// streamer leaves the literal text untouched.
-
-// RGB565 -> "#rrggbb" for the web color inputs.
-static String rgb565ToHex(uint16_t c) {
+// RGB565 -> "#rrggbb" for the web color inputs. out holds 8 bytes.
+static void rgb565ToHex(uint16_t c, char* out) {
   uint8_t r = (uint8_t)(((c >> 11) & 0x1F) * 255 / 31);
   uint8_t g = (uint8_t)(((c >> 5) & 0x3F) * 255 / 63);
   uint8_t b = (uint8_t)((c & 0x1F) * 255 / 31);
+  snprintf(out, 8, "#%02x%02x%02x", r, g, b);
+}
+
+static String rgb565ToHex(uint16_t c) {
   char buf[8];
-  snprintf(buf, sizeof(buf), "#%02x%02x%02x", r, g, b);
+  rgb565ToHex(c, buf);
   return String(buf);
 }
 
 // One editable color per row. `style` = the clock style this element belongs to
 // (its picker shows inside that style's settings subcard), -2 = PC-monitor stats
 // (own card on the Display-layout page, not a clock style). The per-style time
-// digit color is emitted separately (buildDigitRow) so it can also cover styles
+// digit color has its own row (DIGIT_STYLES) so it can also cover styles
 // that have no settings subcard. APPEND rows as modes are colored.
 struct SpriteColorRow { uint8_t slot; int style; const char* label; };
 static const SpriteColorRow SPRITE_COLOR_ROWS[] = {
@@ -717,35 +748,12 @@ static const SpriteColorRow SPRITE_COLOR_ROWS[] = {
     {COL_SCOPE_PEAK, -4, "Trace at full deflection"},
 };
 
-// One <label><input type=color></label> row for a single sprite-color slot.
-static String colorInputRow(uint8_t slot, const char* label) {
-  String s = F("<label style=\"display:flex;align-items:center;justify-content:space-between;gap:12px;padding:5px 0\"><span>");
-  s += label;
-  s += F("</span><input type=\"color\" name=\"color_");
-  s += String(slot);
-  s += F("\" value=\"");
-  s += rgb565ToHex(settings.spriteColors[slot]);
-  s += F("\"></label>");
-  return s;
+// The color slot of one style's time digits and colon.
+static uint8_t digitColorSlot(int style) {
+  return (uint8_t)(style == 16 ? COL_DIGITS_S16 : style == 15 ? COL_DIGITS_S15 : COL_DIGITS_S0 + style);
 }
 
-// Emit <input type=color> rows for one clock style (-2 = PC stats). "" if none.
-static String buildColorRows(int style) {
-  String s;
-  for (size_t i = 0; i < sizeof(SPRITE_COLOR_ROWS) / sizeof(SPRITE_COLOR_ROWS[0]); i++) {
-    const SpriteColorRow& r = SPRITE_COLOR_ROWS[i];
-    if (r.style != style) continue;
-    s += colorInputRow(r.slot, r.label);
-  }
-  return s;
-}
-
-// The per-style time-digit + colon color row (slot COL_DIGITS_S0 + style).
-static String buildDigitRow(int style) {
-  return colorInputRow((uint8_t)(style == 16 ? COL_DIGITS_S16 : style == 15 ? COL_DIGITS_S15 : COL_DIGITS_S0 + style), "Time digits + colon");
-}
-
-// Maps a clock style to its settings-subcard id. The bottom "Colors" card emits
+// Maps a clock style to its settings-subcard id. The page's bottom "Colors" card puts
 // each style's color rows in a <div id="<panelId>Colors"> that syncClockPanels()
 // shows/hides alongside the matching subcard. panelId MUST match STYLE_PANELS[]
 // in web_pages.h - a mismatch would silently hide that style's color rows.
@@ -762,328 +770,211 @@ static const StyleCard STYLE_CARDS[] = {
 // has no picker; its digit slot still exists and defaults to white.)
 static const int DIGIT_STYLES[] = {0, 1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16};
 
-// The single per-page "Colors" card on the Clock page: the selected style's sprite
-// rows (in a subcard div toggled by syncClockPanels), then that style's time-digit
-// color row (class "digitc", toggled by clock style value), then reset. PC-monitor
-// stat colors live on the Display-layout page (buildPcMetricsColorCard), not here.
-static String buildColorsCard() {
-  String out = F("<div class=\"card\"><h2 class=\"card-title\">Colors</h2>");
-  for (size_t i = 0; i < sizeof(STYLE_CARDS) / sizeof(STYLE_CARDS[0]); i++) {
-    String rows = buildColorRows(STYLE_CARDS[i].style);
-    if (rows.length() == 0) continue;  // this style has no sprite color rows yet
-    out += F("<div id=\"");
-    out += STYLE_CARDS[i].panelId;
-    out += F("Colors\" style=\"display:none\">");
-    out += rows;
-    out += F("</div>");
-  }
-  // Per-style time-digit color: one row per selectable style, JS reveals the one
-  // matching the current clock style (works for styles with no settings subcard).
-  for (size_t i = 0; i < sizeof(DIGIT_STYLES) / sizeof(DIGIT_STYLES[0]); i++) {
-    out += F("<div class=\"digitc\" data-ds=\"");
-    out += String(DIGIT_STYLES[i]);
-    out += F("\" style=\"display:none\">");
-    out += buildDigitRow(DIGIT_STYLES[i]);
-    out += F("</div>");
-  }
-  out += F("<label style=\"display:flex;align-items:center;gap:8px;margin-top:12px\"><input type=\"checkbox\" name=\"resetSpriteColors\" value=\"1\"> Reset all sprite colors to defaults on save</label>");
-  out += F("</div>");
+// "HH:MM" for a native time input. out holds 6 bytes.
+static const char* hhmm(char* out, uint8_t h, uint8_t m) {
+  snprintf(out, 6, "%02u:%02u", h % 24, m % 60);
   return out;
 }
 
-// Visualizer bar-gradient color rows (inside the Display page's viz card).
-static String buildVizColorRows() { return buildColorRows(-3); }
-
-// Oscilloscope color rows (same card, revealed only for that style).
-static String buildScopeColorRows() { return buildColorRows(-4); }
-
-// PC-monitor stat colors as their own card (Display-layout page). "" if none.
-static String buildPcMetricsColorCard() {
-  String rows = buildColorRows(-2);
-  if (rows.length() == 0) return String();
-  String out = F("<div class=\"card\"><h2 class=\"card-title\">Colors</h2>");
-  out += rows;
-  out += F("</div>");
-  return out;
+static void failPortalOom() {
+  server.send(503, "application/json", "{\"success\":false,\"error\":\"out of memory\"}");
 }
 
-static bool resolvePlaceholder(const char* n, String& out) {
-  if (!strcmp(n, "V_CYCLECONFIG")) { out = settings.cycleConfig; return true; }
+// GET /api/portal - what the config page shows that is not markup. "form" holds
+// the value of every control in the settings form, keyed by its name, as the
+// template used to substitute it. tools/web_assets_gen.py refuses a form control
+// this does not fill: the page would show its HTML default, and Save would write
+// that back.
+//
+// Same-origin only, unlike the other JSON routes (no Access-Control-Allow-Origin):
+// it carries the static IP setup and the weather key, which only the page itself
+// showed before. Built and serialized in PSRAM.
+void handlePortalValues() {
+  netMarkHttp();
+  JsonDocument doc(webJsonAllocator());
+  doc["ver"] = FIRMWARE_VERSION;
+  doc["built"] = __DATE__;
+  doc["ip"] = WiFi.localIP().toString();
+  doc["freeHeap"] = ESP.getFreeHeap();
+  doc["minBright"] = isZeroBrightnessAllowed() ? 0 : 1;
 #if defined(CONTROL_ENCODER_ENABLED)
-  // Which Panel pages this build carries; the script drops the others.
-  if (!strcmp(n, "PANEL_FEATURES")) { out = panelWebFeatures(); return true; }
+  doc["features"] = panelWebFeatures();   // the page drops the Panel parts not listed
+#else
+  doc["features"] = "";                   // no Panel group at all
 #endif
-  // --- Header / identity ---
-  if (!strcmp(n, "VER")) { out = String(FIRMWARE_VERSION); return true; }
-  if (!strcmp(n, "IP")) { out = WiFi.localIP().toString(); return true; }
-  if (!strcmp(n, "BUILT")) { out = String(__DATE__); return true; }
-  if (!strcmp(n, "ASSETVER")) {
-    String s = String(__DATE__) + __TIME__;
-    s.replace(" ", ""); s.replace(":", ""); // alnum only -> safe in a query string
-    out = s; return true;
+  doc["scopeTrailMax"] = SCOPE_TRAIL_MAX;
+  doc["scopeTrailDefault"] = SCOPE_TRAIL_DEFAULT;
+
+  // The color pickers, built by the page from the tables above.
+  JsonArray rows = doc["colorRows"].to<JsonArray>();
+  for (const SpriteColorRow& r : SPRITE_COLOR_ROWS) {
+    JsonArray row = rows.add<JsonArray>();
+    row.add(r.slot);
+    row.add(r.style);
+    row.add(r.label);
   }
-  if (!strcmp(n, "HEAP")) { out = String(ESP.getFreeHeap() / 1024.0, 1); return true; }
-  if (!strcmp(n, "DISPLAYMODEL")) { out = "HUB75 Matrix"; return true; }
-  if (!strcmp(n, "BOARDNAME")) { out = "ESP32-S3"; return true; }
-  // The Clock-page "Colors" card (selected style's pickers + its digit color).
-  if (!strcmp(n, "COLOR_GLOBAL")) { out = buildColorsCard(); return true; }
-  // PC-monitor stat colors card (Display-layout page).
-  if (!strcmp(n, "COLOR_PCMETRICS")) { out = buildPcMetricsColorCard(); return true; }
-  // Visualizer bar colors (rows only; the card lives in web_pages.h).
-  if (!strcmp(n, "COLOR_VIZ")) { out = buildVizColorRows(); return true; }
-  if (!strcmp(n, "COLOR_SCOPE")) { out = buildScopeColorRows(); return true; }
-  if (!strcmp(n, "CHK_SCOPEGRID")) { out = String(settings.scopeGrid ? "checked" : ""); return true; }
-  if (!strcmp(n, "CHK_SCOPEFILL")) { out = String(settings.scopeFill ? "checked" : ""); return true; }
-  if (!strcmp(n, "CHK_SCOPEFLAT")) { out = String(settings.scopeFlat ? "checked" : ""); return true; }
-  if (!strcmp(n, "V_SCOPEGAIN")) { out = String(settings.scopeGain); return true; }
-  if (!strcmp(n, "OPT_SCOPETRAIL")) {
-    for (int i = 0; i <= SCOPE_TRAIL_MAX; i++) {
-      out += "<option value=\"" + String(i) + "\"" + (settings.scopeTrail == i ? " selected" : "") + ">" + String(i);
-      if (i == SCOPE_TRAIL_DEFAULT) out += " (default)";
-      out += "</option>";
-    }
-    return true;
+  JsonArray cards = doc["styleCards"].to<JsonArray>();
+  for (const StyleCard& c : STYLE_CARDS) {
+    JsonArray card = cards.add<JsonArray>();
+    card.add(c.style);
+    card.add(c.panelId);
   }
-  if (!strcmp(n, "CHK_VIZSHOWCLOCK")) { out = String(settings.vizShowClock ? "checked" : ""); return true; }
-  if (!strcmp(n, "OPT_VIZSTYLE")) {
-    // Slot 4 is retired; ids stay stable for saved settings.
-    const uint8_t ids[] = {0, 1, 2, 3, 5, 6};
-    const char* names[] = {"Classic EQ", "Neon Mirror", "Phosphor Waterfall",
-                           "Purple LED Stage", "Starfield Overdrive", "Oscilloscope"};
-    for (int i = 0; i < 6; i++) {
-      out += "<option value=\"" + String(ids[i]) + "\"" + (settings.vizStyle == ids[i] ? " selected" : "") + ">" + names[i] + "</option>";
-    }
-    return true;
+  JsonArray digits = doc["digitRows"].to<JsonArray>();
+  for (int style : DIGIT_STYLES) {
+    JsonArray digit = digits.add<JsonArray>();
+    digit.add(style);
+    digit.add(digitColorSlot(style));
+  }
+  JsonArray colors = doc["spriteColors"].to<JsonArray>();
+  char hex[8];
+  for (int i = 0; i < COL_COUNT; i++) {
+    rgb565ToHex(settings.spriteColors[i], hex);
+    colors.add(hex);
   }
 
-  // --- Brightness help text and minimum ---
-  if (!strcmp(n, "MINBRIGHT")) { out = String(isZeroBrightnessAllowed() ? 0 : 1); return true; }
-  if (!strcmp(n, "HELP_DISPBRIGHT")) {
-    out = "Brightness control (1-100%). The panel can be turned fully off via the runtime API (/api/display/off).";
-    return true;
-  }
-  if (!strcmp(n, "HELP_DIMBRIGHT")) {
-    out = "Brightness level during scheduled dim period (minimum 1%).";
-    return true;
-  }
+  JsonObject form = doc["form"].to<JsonObject>();
 
-  // --- Ambient window hour dropdowns (whole hours) ---
-  if (!strcmp(n, "OPT_AMBSTART") || !strcmp(n, "OPT_AMBEND")) {
-    uint8_t selHour = (!strcmp(n, "OPT_AMBSTART")) ? settings.ambientStartHour
-                                                   : settings.ambientEndHour;
-    for (int i = 0; i < 24; i++) {
-      out += "<option value=\"" + String(i) + "\"" + (selHour == i ? " selected" : "") + ">" + String(i) + ":00</option>";
-    }
-    return true;
+  // Timezone: the region names, and the selected one. A custom zone (index 255)
+  // is matched by its POSIX string, which several regions share; the last match
+  // wins, as the browser kept the last of the options the template marked selected.
+  size_t tzCount;
+  const TimezoneRegion* regions = getSupportedTimezones(&tzCount);
+  JsonArray tz = doc["timezones"].to<JsonArray>();
+  int tzSelected = -1;   // none: "-- Select Region --"
+  for (size_t i = 0; i < tzCount; i++) {
+    tz.add(regions[i].name);
+    bool match = (settings.timezoneIndex < 255) ? (i == settings.timezoneIndex)
+                                                : (strcmp(settings.timezoneString, regions[i].posixString) == 0);
+    if (match) tzSelected = (int)i;
   }
+  form["timezoneRegion"] = tzSelected;
 
-  // --- Scheduled dim / power-off HH:MM values (native time inputs) ---
-  if (!strcmp(n, "V_DIMSTART") || !strcmp(n, "V_DIMEND") ||
-      !strcmp(n, "V_OFFSTART") || !strcmp(n, "V_OFFEND")) {
-    uint8_t h, m;
-    if (!strcmp(n, "V_DIMSTART"))      { h = settings.dimStartHour; m = settings.dimStartMinute; }
-    else if (!strcmp(n, "V_DIMEND"))   { h = settings.dimEndHour;   m = settings.dimEndMinute; }
-    else if (!strcmp(n, "V_OFFSTART")) { h = settings.offStartHour; m = settings.offStartMinute; }
-    else                               { h = settings.offEndHour;   m = settings.offEndMinute; }
-    char buf[6];
-    snprintf(buf, sizeof(buf), "%02u:%02u", h % 24, m % 60);
-    out = buf;
-    return true;
-  }
+  // --- Clock ---
+  form["clockStyle"] = settings.clockStyle;
+  form["cycleConfig"] = settings.cycleConfig;
+  form["tronBikeStyle"] = settings.tronBikeStyle;
+  form["marioBounceHeight"] = settings.marioBounceHeight;
+  form["marioBounceSpeed"] = settings.marioBounceSpeed;
+  form["marioWalkSpeed"] = settings.marioWalkSpeed;
+  form["marioSmoothAnimation"] = settings.marioSmoothAnimation;
+  form["marioIdleEncounters"] = settings.marioIdleEncounters;
+  form["marioEncounterFreq"] = settings.marioEncounterFreq;
+  form["marioEncounterSpeed"] = settings.marioEncounterSpeed;
+  form["spaceCharacterType"] = settings.spaceCharacterType;
+  form["spacePatrolSpeed"] = settings.spacePatrolSpeed;
+  form["spaceAttackSpeed"] = settings.spaceAttackSpeed;
+  form["spaceLaserSpeed"] = settings.spaceLaserSpeed;
+  form["spaceExplosionGravity"] = settings.spaceExplosionGravity;
+  form["pongBallSpeed"] = settings.pongBallSpeed;
+  form["pongBounceStrength"] = settings.pongBounceStrength;
+  form["pongBounceDamping"] = settings.pongBounceDamping;
+  form["pongPaddleWidth"] = settings.pongPaddleWidth;
+  form["pongHorizontalBounce"] = settings.pongHorizontalBounce;
+  form["pongDigitShatter"] = settings.pongDigitShatter;
+  form["pacmanSpeed"] = settings.pacmanSpeed;
+  form["pacmanEatingSpeed"] = settings.pacmanEatingSpeed;
+  form["pacmanMouthSpeed"] = settings.pacmanMouthSpeed;
+  form["pacmanPelletCount"] = settings.pacmanPelletCount;
+  form["pacmanPelletRandomSpacing"] = settings.pacmanPelletRandomSpacing;
+  form["pacmanBounceEnabled"] = settings.pacmanBounceEnabled;
+  form["snakeSpeed"] = settings.snakeSpeed;
+  form["snakeLength"] = settings.snakeLength;
+  form["snakeWallBorder"] = settings.snakeWallBorder;
+  form["snakeShowDate"] = settings.snakeShowDate;
+  form["tetrisFallSpeed"] = settings.tetrisFallSpeed;
+  form["tetrisDotSpeed"] = settings.tetrisDotSpeed;
+  form["tetrisBlockStyle"] = settings.tetrisBlockStyle;
+  form["tetrisAnimStyle"] = settings.tetrisAnimStyle;
+  form["tetrisDotOrder"] = settings.tetrisDotOrder;
+  form["tetrisDatePosition"] = settings.tetrisDatePosition;
+  form["tetrisIdleTumble"] = settings.tetrisIdleTumble;
+  form["tetrisSmallClock"] = settings.tetrisSmallClock;
+  form["tetrisSmallClockPos"] = settings.tetrisSmallClockPos;
+  form["tetrisSmoothGame"] = settings.tetrisSmoothGame;
+  form["tetrisDigitBounce"] = settings.tetrisDigitBounce;
+  form["tetrisShowDate"] = settings.tetrisShowDate;
+  form["asteroidsShipSpeed"] = settings.asteroidsShipSpeed;
+  form["asteroidsRockSpeed"] = settings.asteroidsRockSpeed;
+  form["asteroidsRockCount"] = settings.asteroidsRockCount;
+  form["asteroidsShowDate"] = settings.asteroidsShowDate;
+  form["asteroidsTransparent"] = settings.asteroidsTransparent;
+  form["dinoSpeed"] = settings.dinoSpeed;
+  form["dinoCactusFreq"] = settings.dinoCactusFreq;
+  form["dinoShowClouds"] = settings.dinoShowClouds;
+  form["dinoShowDate"] = settings.dinoShowDate;
+  form["matrixRainSpeed"] = settings.matrixRainSpeed;
+  form["matrixRainDensity"] = settings.matrixRainDensity;
+  form["matrixShowDate"] = settings.matrixShowDate;
+  form["matrixTransparent"] = settings.matrixTransparent;
+  form["weatherEnabled"] = settings.weatherEnabled;
+  // Four places through dtostrf, the digits String(float, 4) gave the template.
+  char num[24];
+  form["weatherLat"] = dtostrf(settings.weatherLat, 6, 4, num);
+  form["weatherLon"] = dtostrf(settings.weatherLon, 6, 4, num);
+  form["weatherFahrenheit"] = settings.weatherUseFahrenheit;
+  form["weatherApiKey"] = settings.weatherApiKey;
+  form["use24Hour"] = settings.use24Hour ? 1 : 0;
+  form["dateFormat"] = settings.dateFormat;
 
-  // --- Timezone region dropdown ---
-  if (!strcmp(n, "OPT_TZ")) {
-    size_t tzCount;
-    const TimezoneRegion* regions = getSupportedTimezones(&tzCount);
-    out += "<option value=\"\">-- Select Region --</option>\n";
-    for (size_t i = 0; i < tzCount; i++) {
-      bool isSelected = (settings.timezoneIndex < 255) ? (i == settings.timezoneIndex)
-                                                       : (strcmp(settings.timezoneString, regions[i].posixString) == 0);
-      out += "<option value=\"" + String(i) + "\"" + (isSelected ? " selected" : "") + ">" + String(regions[i].name) + "</option>\n";
-    }
-    return true;
-  }
+  // --- Display ---
+  char time[6];
+  form["colonBlinkMode"] = settings.colonBlinkMode;
+  form["colonBlinkRate"] = settings.colonBlinkRate;
+  form["displayBrightness"] = settings.displayBrightness;
+  form["enableScheduledDimming"] = settings.enableScheduledDimming;
+  form["dimStartTime"] = hhmm(time, settings.dimStartHour, settings.dimStartMinute);
+  form["dimEndTime"] = hhmm(time, settings.dimEndHour, settings.dimEndMinute);
+  form["dimBrightness"] = settings.dimBrightness;
+  form["enableScheduledOff"] = settings.enableScheduledOff;
+  form["offStartTime"] = hhmm(time, settings.offStartHour, settings.offStartMinute);
+  form["offEndTime"] = hhmm(time, settings.offEndHour, settings.offEndMinute);
+  form["ambientStyle"] = settings.ambientStyle;
+  form["ambientCustomFile"] = settings.ambientCustomFile;
+  form["ambientShowClock"] = settings.ambientShowClock;
+  form["ambientEnabled"] = settings.ambientEnabled;
+  form["ambientStartHour"] = settings.ambientStartHour;
+  form["ambientEndHour"] = settings.ambientEndHour;
+  form["notifyEnabled"] = settings.notifyEnabled;
+  form["notifyPosition"] = settings.notifyPosition;
 
-  // --- Per-setting placeholders (auto-generated, see gen_template.py) ---
-  if (!strcmp(n, "SEL_CLOCKSTYLE_0")) { out = String(settings.clockStyle == 0 ? "selected" : ""); return true; }
-  if (!strcmp(n, "SEL_CLOCKSTYLE_1")) { out = String(settings.clockStyle == 1 ? "selected" : ""); return true; }
-  if (!strcmp(n, "SEL_CLOCKSTYLE_2")) { out = String(settings.clockStyle == 2 ? "selected" : ""); return true; }
-  if (!strcmp(n, "SEL_CLOCKSTYLE_3")) { out = String(settings.clockStyle == 3 ? "selected" : ""); return true; }
-  if (!strcmp(n, "SEL_CLOCKSTYLE_5")) { out = String(settings.clockStyle == 5 ? "selected" : ""); return true; }
-  if (!strcmp(n, "SEL_CLOCKSTYLE_6")) { out = String(settings.clockStyle == 6 ? "selected" : ""); return true; }
-  if (!strcmp(n, "SEL_CLOCKSTYLE_7")) { out = String(settings.clockStyle == 7 ? "selected" : ""); return true; }
-  if (!strcmp(n, "SEL_CLOCKSTYLE_8")) { out = String(settings.clockStyle == 8 ? "selected" : ""); return true; }
-  if (!strcmp(n, "SEL_CLOCKSTYLE_9")) { out = String(settings.clockStyle == 9 ? "selected" : ""); return true; }
-  if (!strcmp(n, "SEL_CLOCKSTYLE_10")) { out = String(settings.clockStyle == 10 ? "selected" : ""); return true; }
-  if (!strcmp(n, "SEL_CLOCKSTYLE_11")) { out = String(settings.clockStyle == 11 ? "selected" : ""); return true; }
-  if (!strcmp(n, "SEL_CLOCKSTYLE_12")) { out = String(settings.clockStyle == 12 ? "selected" : ""); return true; }
-  if (!strcmp(n, "SEL_CLOCKSTYLE_16")) { out = String(settings.clockStyle == 16 ? "selected" : ""); return true; }
-  if (!strcmp(n, "SEL_TRONBIKESTYLE_0")) { out = String(settings.tronBikeStyle == 0 ? "selected" : ""); return true; }
-  if (!strcmp(n, "SEL_TRONBIKESTYLE_1")) { out = String(settings.tronBikeStyle == 1 ? "selected" : ""); return true; }
-  if (!strcmp(n, "SEL_CLOCKSTYLE_15")) { out = String(settings.clockStyle == 15 ? "selected" : ""); return true; }
-  if (!strcmp(n, "SEL_CLOCKSTYLE_14")) { out = String(settings.clockStyle == 14 ? "selected" : ""); return true; }
-  if (!strcmp(n, "DSP_CLOCKSTYLE_0")) { out = String(settings.clockStyle == 0 ? "block" : "none"); return true; }
-  if (!strcmp(n, "V_MARIOBOUNCEHEIGHT")) { out = String(settings.marioBounceHeight); return true; }
-  if (!strcmp(n, "F_MARIOBOUNCEHEIGHT")) { out = String(settings.marioBounceHeight / 10.0, 1); return true; }
-  if (!strcmp(n, "V_MARIOBOUNCESPEED")) { out = String(settings.marioBounceSpeed); return true; }
-  if (!strcmp(n, "F_MARIOBOUNCESPEED")) { out = String(settings.marioBounceSpeed / 10.0, 1); return true; }
-  if (!strcmp(n, "V_MARIOWALKSPEED")) { out = String(settings.marioWalkSpeed); return true; }
-  if (!strcmp(n, "F_MARIOWALKSPEED")) { out = String(settings.marioWalkSpeed / 10.0, 1); return true; }
-  if (!strcmp(n, "CHK_MARIOSMOOTHANIMATION")) { out = String(settings.marioSmoothAnimation ? "checked" : ""); return true; }
-  if (!strcmp(n, "CHK_MARIOIDLEENCOUNTERS")) { out = String(settings.marioIdleEncounters ? "checked" : ""); return true; }
-  if (!strcmp(n, "DSP_MARIOIDLEENCOUNTERS")) { out = String(settings.marioIdleEncounters ? "block" : "none"); return true; }
-  if (!strcmp(n, "SEL_MARIOENCOUNTERFREQ_0")) { out = String(settings.marioEncounterFreq == 0 ? "selected" : ""); return true; }
-  if (!strcmp(n, "SEL_MARIOENCOUNTERFREQ_1")) { out = String(settings.marioEncounterFreq == 1 ? "selected" : ""); return true; }
-  if (!strcmp(n, "SEL_MARIOENCOUNTERFREQ_2")) { out = String(settings.marioEncounterFreq == 2 ? "selected" : ""); return true; }
-  if (!strcmp(n, "SEL_MARIOENCOUNTERFREQ_3")) { out = String(settings.marioEncounterFreq == 3 ? "selected" : ""); return true; }
-  if (!strcmp(n, "SEL_MARIOENCOUNTERSPEED_0")) { out = String(settings.marioEncounterSpeed == 0 ? "selected" : ""); return true; }
-  if (!strcmp(n, "SEL_MARIOENCOUNTERSPEED_1")) { out = String(settings.marioEncounterSpeed == 1 ? "selected" : ""); return true; }
-  if (!strcmp(n, "SEL_MARIOENCOUNTERSPEED_2")) { out = String(settings.marioEncounterSpeed == 2 ? "selected" : ""); return true; }
-  if (!strcmp(n, "DSP_CLOCKSTYLE_5")) { out = String(settings.clockStyle == 5 ? "block" : "none"); return true; }
-  if (!strcmp(n, "V_PONGBALLSPEED")) { out = String(settings.pongBallSpeed); return true; }
-  if (!strcmp(n, "V_PONGBOUNCESTRENGTH")) { out = String(settings.pongBounceStrength); return true; }
-  if (!strcmp(n, "F_PONGBOUNCESTRENGTH")) { out = String(settings.pongBounceStrength / 10.0, 1); return true; }
-  if (!strcmp(n, "V_PONGBOUNCEDAMPING")) { out = String(settings.pongBounceDamping); return true; }
-  if (!strcmp(n, "F2_PONGBOUNCEDAMPING")) { out = String(settings.pongBounceDamping / 100.0, 2); return true; }
-  if (!strcmp(n, "V_PONGPADDLEWIDTH")) { out = String(settings.pongPaddleWidth); return true; }
-  if (!strcmp(n, "CHK_PONGHORIZONTALBOUNCE")) { out = String(settings.pongHorizontalBounce ? "checked" : ""); return true; }
-  if (!strcmp(n, "CHK_PONGDIGITSHATTER")) { out = String(settings.pongDigitShatter ? "checked" : ""); return true; }
-  if (!strcmp(n, "DSP_CLOCKSTYLE_6")) { out = String(settings.clockStyle == 6 ? "block" : "none"); return true; }
-  if (!strcmp(n, "V_PACMANSPEED")) { out = String(settings.pacmanSpeed); return true; }
-  if (!strcmp(n, "F_PACMANSPEED")) { out = String(settings.pacmanSpeed / 10.0, 1); return true; }
-  if (!strcmp(n, "V_PACMANEATINGSPEED")) { out = String(settings.pacmanEatingSpeed); return true; }
-  if (!strcmp(n, "F_PACMANEATINGSPEED")) { out = String(settings.pacmanEatingSpeed / 10.0, 1); return true; }
-  if (!strcmp(n, "V_PACMANMOUTHSPEED")) { out = String(settings.pacmanMouthSpeed); return true; }
-  if (!strcmp(n, "F_PACMANMOUTHSPEED")) { out = String(settings.pacmanMouthSpeed / 10.0, 1); return true; }
-  if (!strcmp(n, "V_PACMANPELLETCOUNT")) { out = String(settings.pacmanPelletCount); return true; }
-  if (!strcmp(n, "CHK_PACMANPELLETRANDOMSPACING")) { out = String(settings.pacmanPelletRandomSpacing ? "checked" : ""); return true; }
-  if (!strcmp(n, "CHK_PACMANBOUNCEENABLED")) { out = String(settings.pacmanBounceEnabled ? "checked" : ""); return true; }
-  if (!strcmp(n, "DSP_CLOCKSTYLE_34")) { out = String((settings.clockStyle == 3 || settings.clockStyle == 4) ? "block" : "none"); return true; }
-  if (!strcmp(n, "SEL_SPACECHARACTERTYPE_0")) { out = String(settings.spaceCharacterType == 0 ? "selected" : ""); return true; }
-  if (!strcmp(n, "SEL_SPACECHARACTERTYPE_1")) { out = String(settings.spaceCharacterType == 1 ? "selected" : ""); return true; }
-  if (!strcmp(n, "V_SPACEPATROLSPEED")) { out = String(settings.spacePatrolSpeed); return true; }
-  if (!strcmp(n, "F_SPACEPATROLSPEED")) { out = String(settings.spacePatrolSpeed / 10.0, 1); return true; }
-  if (!strcmp(n, "V_SPACEATTACKSPEED")) { out = String(settings.spaceAttackSpeed); return true; }
-  if (!strcmp(n, "F_SPACEATTACKSPEED")) { out = String(settings.spaceAttackSpeed / 10.0, 1); return true; }
-  if (!strcmp(n, "V_SPACELASERSPEED")) { out = String(settings.spaceLaserSpeed); return true; }
-  if (!strcmp(n, "F_SPACELASERSPEED")) { out = String(settings.spaceLaserSpeed / 10.0, 1); return true; }
-  if (!strcmp(n, "V_SPACEEXPLOSIONGRAVITY")) { out = String(settings.spaceExplosionGravity); return true; }
-  if (!strcmp(n, "F_SPACEEXPLOSIONGRAVITY")) { out = String(settings.spaceExplosionGravity / 10.0, 1); return true; }
-  if (!strcmp(n, "DSP_CLOCKSTYLE_7")) { out = String(settings.clockStyle == 7 ? "block" : "none"); return true; }
-  if (!strcmp(n, "V_SNAKESPEED")) { out = String(settings.snakeSpeed); return true; }
-  if (!strcmp(n, "F_SNAKESPEED")) { out = String(settings.snakeSpeed / 10.0, 1); return true; }
-  if (!strcmp(n, "V_SNAKELENGTH")) { out = String(settings.snakeLength); return true; }
-  if (!strcmp(n, "CHK_SNAKEWALLBORDER")) { out = String(settings.snakeWallBorder ? "checked" : ""); return true; }
-  if (!strcmp(n, "CHK_SNAKESHOWDATE")) { out = String(settings.snakeShowDate ? "checked" : ""); return true; }
-  if (!strcmp(n, "DSP_CLOCKSTYLE_8")) { out = String(settings.clockStyle == 8 ? "block" : "none"); return true; }
-  if (!strcmp(n, "V_TETRISFALLSPEED")) { out = String(settings.tetrisFallSpeed); return true; }
-  if (!strcmp(n, "F_TETRISFALLSPEED")) { out = String(settings.tetrisFallSpeed / 10.0, 1); return true; }
-  if (!strcmp(n, "SEL_TETRISBLOCKSTYLE_0")) { out = String(settings.tetrisBlockStyle == 0 ? "selected" : ""); return true; }
-  if (!strcmp(n, "SEL_TETRISBLOCKSTYLE_1")) { out = String(settings.tetrisBlockStyle == 1 ? "selected" : ""); return true; }
-  if (!strcmp(n, "CHK_TETRISIDLETUMBLE")) { out = String(settings.tetrisIdleTumble ? "checked" : ""); return true; }
-  if (!strcmp(n, "CHK_TETRISDIGITBOUNCE")) { out = String(settings.tetrisDigitBounce ? "checked" : ""); return true; }
-  if (!strcmp(n, "CHK_TETRISSMOOTHGAME")) { out = String(settings.tetrisSmoothGame ? "checked" : ""); return true; }
-  if (!strcmp(n, "SEL_TETRISANIMSTYLE_0")) { out = String(settings.tetrisAnimStyle == 0 ? "selected" : ""); return true; }
-  if (!strcmp(n, "SEL_TETRISANIMSTYLE_1")) { out = String(settings.tetrisAnimStyle == 1 ? "selected" : ""); return true; }
-  if (!strcmp(n, "V_TETRISDOTSPEED")) { out = String(settings.tetrisDotSpeed); return true; }
-  if (!strcmp(n, "F_TETRISDOTSPEED")) { out = String(settings.tetrisDotSpeed / 10.0, 1); return true; }
-  if (!strcmp(n, "SEL_TETRISDOTORDER_0")) { out = String(settings.tetrisDotOrder == 0 ? "selected" : ""); return true; }
-  if (!strcmp(n, "SEL_TETRISDOTORDER_1")) { out = String(settings.tetrisDotOrder == 1 ? "selected" : ""); return true; }
-  if (!strcmp(n, "CHK_TETRISSHOWDATE")) { out = String(settings.tetrisShowDate ? "checked" : ""); return true; }
-  if (!strcmp(n, "SEL_TETRISDATEPOSITION_0")) { out = String(settings.tetrisDatePosition == 0 ? "selected" : ""); return true; }
-  if (!strcmp(n, "SEL_TETRISDATEPOSITION_1")) { out = String(settings.tetrisDatePosition == 1 ? "selected" : ""); return true; }
-  if (!strcmp(n, "CHK_TETRISSMALLCLOCK")) { out = String(settings.tetrisSmallClock ? "checked" : ""); return true; }
-  if (!strcmp(n, "SEL_TETRISSMALLCLOCKPOS_0")) { out = String(settings.tetrisSmallClockPos == 0 ? "selected" : ""); return true; }
-  if (!strcmp(n, "SEL_TETRISSMALLCLOCKPOS_1")) { out = String(settings.tetrisSmallClockPos == 1 ? "selected" : ""); return true; }
-  if (!strcmp(n, "DSP_CLOCKSTYLE_10")) { out = String(settings.clockStyle == 10 ? "block" : "none"); return true; }
-  if (!strcmp(n, "V_ASTEROIDSSHIPSPEED")) { out = String(settings.asteroidsShipSpeed); return true; }
-  if (!strcmp(n, "F_ASTEROIDSSHIPSPEED")) { out = String(settings.asteroidsShipSpeed / 10.0, 1); return true; }
-  if (!strcmp(n, "V_ASTEROIDSROCKCOUNT")) { out = String(settings.asteroidsRockCount); return true; }
-  if (!strcmp(n, "V_ASTEROIDSROCKSPEED")) { out = String(settings.asteroidsRockSpeed); return true; }
-  if (!strcmp(n, "F_ASTEROIDSROCKSPEED")) { out = String(settings.asteroidsRockSpeed / 10.0, 1); return true; }
-  if (!strcmp(n, "CHK_ASTEROIDSSHOWDATE")) { out = String(settings.asteroidsShowDate ? "checked" : ""); return true; }
-  if (!strcmp(n, "CHK_ASTEROIDSTRANSPARENT")) { out = String(settings.asteroidsTransparent ? "checked" : ""); return true; }
-  if (!strcmp(n, "DSP_CLOCKSTYLE_11")) { out = String(settings.clockStyle == 11 ? "block" : "none"); return true; }
-  if (!strcmp(n, "V_DINOSPEED")) { out = String(settings.dinoSpeed); return true; }
-  if (!strcmp(n, "F_DINOSPEED")) { out = String(settings.dinoSpeed / 10.0, 1); return true; }
-  if (!strcmp(n, "SEL_DINOCACTUSFREQ_0")) { out = String(settings.dinoCactusFreq == 0 ? "selected" : ""); return true; }
-  if (!strcmp(n, "SEL_DINOCACTUSFREQ_1")) { out = String(settings.dinoCactusFreq == 1 ? "selected" : ""); return true; }
-  if (!strcmp(n, "SEL_DINOCACTUSFREQ_2")) { out = String(settings.dinoCactusFreq == 2 ? "selected" : ""); return true; }
-  if (!strcmp(n, "CHK_DINOSHOWCLOUDS")) { out = String(settings.dinoShowClouds ? "checked" : ""); return true; }
-  if (!strcmp(n, "CHK_DINOSHOWDATE")) { out = String(settings.dinoShowDate ? "checked" : ""); return true; }
-  if (!strcmp(n, "DSP_CLOCKSTYLE_12")) { out = String(settings.clockStyle == 12 ? "block" : "none"); return true; }
-  if (!strcmp(n, "V_MATRIXRAINSPEED")) { out = String(settings.matrixRainSpeed); return true; }
-  if (!strcmp(n, "F_MATRIXRAINSPEED")) { out = String(settings.matrixRainSpeed / 10.0, 1); return true; }
-  if (!strcmp(n, "SEL_MATRIXRAINDENSITY_0")) { out = String(settings.matrixRainDensity == 0 ? "selected" : ""); return true; }
-  if (!strcmp(n, "SEL_MATRIXRAINDENSITY_1")) { out = String(settings.matrixRainDensity == 1 ? "selected" : ""); return true; }
-  if (!strcmp(n, "SEL_MATRIXRAINDENSITY_2")) { out = String(settings.matrixRainDensity == 2 ? "selected" : ""); return true; }
-  if (!strcmp(n, "CHK_MATRIXSHOWDATE")) { out = String(settings.matrixShowDate ? "checked" : ""); return true; }
-  if (!strcmp(n, "CHK_MATRIXTRANSPARENT")) { out = String(settings.matrixTransparent ? "checked" : ""); return true; }
-  if (!strcmp(n, "DSP_CLOCKSTYLE_14")) { out = String(settings.clockStyle == 14 ? "block" : "none"); return true; }
-  if (!strcmp(n, "CHK_WEATHERENABLED")) { out = String(settings.weatherEnabled ? "checked" : ""); return true; }
-  if (!strcmp(n, "CHK_WEATHERF")) { out = String(settings.weatherUseFahrenheit ? "checked" : ""); return true; }
-  if (!strcmp(n, "V_WEATHERLAT")) { out = String(settings.weatherLat, 4); return true; }
-  if (!strcmp(n, "V_WEATHERLON")) { out = String(settings.weatherLon, 4); return true; }
-  if (!strcmp(n, "V_WEATHERKEY")) { out = String(settings.weatherApiKey); return true; }
-  if (!strcmp(n, "SEL_USE24HOUR")) { out = String(settings.use24Hour ? "selected" : ""); return true; }
-  if (!strcmp(n, "SEL_USE24HOUR_NOT")) { out = String(!settings.use24Hour ? "selected" : ""); return true; }
-  if (!strcmp(n, "SEL_DATEFORMAT_0")) { out = String(settings.dateFormat == 0 ? "selected" : ""); return true; }
-  if (!strcmp(n, "SEL_DATEFORMAT_1")) { out = String(settings.dateFormat == 1 ? "selected" : ""); return true; }
-  if (!strcmp(n, "SEL_DATEFORMAT_2")) { out = String(settings.dateFormat == 2 ? "selected" : ""); return true; }
-  if (!strcmp(n, "SEL_DATEFORMAT_3")) { out = String(settings.dateFormat == 3 ? "selected" : ""); return true; }
-  if (!strcmp(n, "SEL_COLONBLINKMODE_0")) { out = String(settings.colonBlinkMode == 0 ? "selected" : ""); return true; }
-  if (!strcmp(n, "SEL_COLONBLINKMODE_1")) { out = String(settings.colonBlinkMode == 1 ? "selected" : ""); return true; }
-  if (!strcmp(n, "SEL_COLONBLINKMODE_2")) { out = String(settings.colonBlinkMode == 2 ? "selected" : ""); return true; }
-  if (!strcmp(n, "V_COLONBLINKRATE")) { out = String(settings.colonBlinkRate); return true; }
-  if (!strcmp(n, "F_COLONBLINKRATE")) { out = String(settings.colonBlinkRate / 10.0, 1); return true; }
-  if (!strcmp(n, "V_DISPLAYBRIGHTNESS")) { out = String(settings.displayBrightness); return true; }
-  if (!strcmp(n, "PCT_DISPLAYBRIGHTNESS")) { out = String((settings.displayBrightness * 100) / 255); return true; }
-  if (!strcmp(n, "CHK_ENABLESCHEDULEDDIMMING")) { out = String(settings.enableScheduledDimming ? "checked" : ""); return true; }
-  if (!strcmp(n, "DSP_ENABLESCHEDULEDDIMMING")) { out = String(settings.enableScheduledDimming ? "block" : "none"); return true; }
-  if (!strcmp(n, "CHK_ENABLESCHEDULEDOFF")) { out = String(settings.enableScheduledOff ? "checked" : ""); return true; }
-  if (!strcmp(n, "DSP_ENABLESCHEDULEDOFF")) { out = String(settings.enableScheduledOff ? "block" : "none"); return true; }
-  if (!strcmp(n, "CHK_NOTIFYENABLED")) { out = String(settings.notifyEnabled ? "checked" : ""); return true; }
-  if (!strcmp(n, "SEL_NOTIFYPOSITION_0")) { out = String(settings.notifyPosition == 0 ? "selected" : ""); return true; }
-  if (!strcmp(n, "SEL_NOTIFYPOSITION_1")) { out = String(settings.notifyPosition == 1 ? "selected" : ""); return true; }
-  if (!strcmp(n, "CHK_AMBIENTENABLED")) { out = String(settings.ambientEnabled ? "checked" : ""); return true; }
-  if (!strcmp(n, "DSP_AMBIENTENABLED")) { out = String(settings.ambientEnabled ? "block" : "none"); return true; }
-  if (!strcmp(n, "SEL_AMBIENTSTYLE_0")) { out = String(settings.ambientStyle == 0 ? "selected" : ""); return true; }
-  if (!strcmp(n, "SEL_AMBIENTSTYLE_1")) { out = String(settings.ambientStyle == 1 ? "selected" : ""); return true; }
-  if (!strcmp(n, "SEL_AMBIENTSTYLE_3")) { out = String(settings.ambientStyle == 3 ? "selected" : ""); return true; }
-  if (!strcmp(n, "SEL_AMBIENTSTYLE_4")) { out = String(settings.ambientStyle == 4 ? "selected" : ""); return true; }
-  if (!strcmp(n, "SEL_AMBIENTSTYLE_5")) { out = String(settings.ambientStyle == 5 ? "selected" : ""); return true; }
-  if (!strcmp(n, "SEL_AMBIENTSTYLE_6")) { out = String(settings.ambientStyle == 6 ? "selected" : ""); return true; }
-  if (!strcmp(n, "V_AMBIENTCUSTOMFILE")) { out = String(settings.ambientCustomFile); return true; }
-  if (!strcmp(n, "CHK_AMBIENTSHOWCLOCK")) { out = String(settings.ambientShowClock ? "checked" : ""); return true; }
-  if (!strcmp(n, "V_DIMBRIGHTNESS")) { out = String(settings.dimBrightness); return true; }
-  if (!strcmp(n, "PCT_DIMBRIGHTNESS")) { out = String((settings.dimBrightness * 100) / 255); return true; }
-  if (!strcmp(n, "V_DEVICENAME")) { out = String(settings.deviceName); return true; }
-  if (!strcmp(n, "SEL_USESTATICIP_NOT")) { out = String(!settings.useStaticIP ? "selected" : ""); return true; }
-  if (!strcmp(n, "SEL_USESTATICIP")) { out = String(settings.useStaticIP ? "selected" : ""); return true; }
-  if (!strcmp(n, "DSP_USESTATICIP")) { out = String(settings.useStaticIP ? "block" : "none"); return true; }
-  if (!strcmp(n, "V_STATICIP")) { out = String(settings.staticIP); return true; }
-  if (!strcmp(n, "V_GATEWAY")) { out = String(settings.gateway); return true; }
-  if (!strcmp(n, "V_SUBNET")) { out = String(settings.subnet); return true; }
-  if (!strcmp(n, "V_DNS1")) { out = String(settings.dns1); return true; }
-  if (!strcmp(n, "V_DNS2")) { out = String(settings.dns2); return true; }
-  if (!strcmp(n, "V_NTPSERVER1")) { out = String(settings.ntpServer1); return true; }
-  if (!strcmp(n, "V_NTPSERVER2")) { out = String(settings.ntpServer2); return true; }
-  if (!strcmp(n, "CHK_SHOWIPATBOOT")) { out = String(settings.showIPAtBoot ? "checked" : ""); return true; }
-  if (!strcmp(n, "SEL_CLOCKPOSITION_0")) { out = String(settings.clockPosition == 0 ? "selected" : ""); return true; }
-  if (!strcmp(n, "SEL_CLOCKPOSITION_1")) { out = String(settings.clockPosition == 1 ? "selected" : ""); return true; }
-  if (!strcmp(n, "SEL_CLOCKPOSITION_2")) { out = String(settings.clockPosition == 2 ? "selected" : ""); return true; }
-  if (!strcmp(n, "V_CLOCKOFFSET")) { out = String(settings.clockOffset); return true; }
-  if (!strcmp(n, "CHK_SHOWCLOCK")) { out = String(settings.showClock ? "checked" : ""); return true; }
-  if (!strcmp(n, "SEL_DISPLAYROWMODE_0")) { out = String(settings.displayRowMode == 0 ? "selected" : ""); return true; }
-  if (!strcmp(n, "SEL_DISPLAYROWMODE_1")) { out = String(settings.displayRowMode == 1 ? "selected" : ""); return true; }
-  if (!strcmp(n, "SEL_DISPLAYROWMODE_2")) { out = String(settings.displayRowMode == 2 ? "selected" : ""); return true; }
-  if (!strcmp(n, "SEL_DISPLAYROWMODE_3")) { out = String(settings.displayRowMode == 3 ? "selected" : ""); return true; }
-  if (!strcmp(n, "CHK_USERPMKFORMAT")) { out = String(settings.useRpmKFormat ? "checked" : ""); return true; }
-  if (!strcmp(n, "CHK_USENETWORKMBFORMAT")) { out = String(settings.useNetworkMBFormat ? "checked" : ""); return true; }
-  if (!strcmp(n, "JS_MAXROWS")) { out = String(settings.displayRowMode==0?5:settings.displayRowMode==1?6:settings.displayRowMode==2?2:3); return true; }
-  if (!strcmp(n, "JS_ISLARGE")) { out = String(settings.displayRowMode>=2?"true":"false"); return true; }
+  // --- Audio visualizer ---
+  form["vizStyle"] = settings.vizStyle;
+  form["vizShowClock"] = settings.vizShowClock;
+  form["scopeGrid"] = settings.scopeGrid;
+  form["scopeFill"] = settings.scopeFill;
+  form["scopeFlat"] = settings.scopeFlat;
+  form["scopeTrail"] = settings.scopeTrail;
+  form["scopeGain"] = settings.scopeGain;
 
-  return false;
+  // --- Display layout ---
+  form["clockPosition"] = settings.clockPosition;
+  form["rowMode"] = settings.displayRowMode;
+  form["clockOffset"] = settings.clockOffset;
+  form["showClock"] = settings.showClock;
+  form["rpmKFormat"] = settings.useRpmKFormat;
+  form["netMBFormat"] = settings.useNetworkMBFormat;
+
+  // --- Network ---
+  form["deviceName"] = settings.deviceName;
+  form["useStaticIP"] = settings.useStaticIP ? 1 : 0;
+  form["staticIP"] = settings.staticIP;
+  form["gateway"] = settings.gateway;
+  form["subnet"] = settings.subnet;
+  form["dns1"] = settings.dns1;
+  form["dns2"] = settings.dns2;
+  form["showIPAtBoot"] = settings.showIPAtBoot;
+  form["ntpServer1"] = settings.ntpServer1;
+  form["ntpServer2"] = settings.ntpServer2;
+
+  if (doc.overflowed()) { failPortalOom(); return; }
+  const size_t n = measureJson(doc);
+  char* buf = (char*)heap_caps_malloc(n + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (!buf) buf = (char*)heap_caps_malloc(n + 1, MALLOC_CAP_8BIT);
+  if (!buf) { failPortalOom(); return; }
+  serializeJson(doc, buf, n + 1);
+  server.sendHeader("Cache-Control", "no-store");
+  sendBytesGuarded(200, "application/json", buf, n);
+  heap_caps_free(buf);
 }
 
 // ---- Guarded response streaming ----
@@ -1124,180 +1015,12 @@ static bool writeAllGuarded(int sock, const char* data, size_t len, uint32_t tot
   return true;
 }
 
-// Same guarantees as the page stream: bounded blocking, watchdog fed, stalled
-// client dropped. server.send() with a body does none of that.
-static void sendJsonGuarded(int code, const String& json) {
-  sendJsonBytesGuarded(code, json.c_str(), json.length());
-}
-
-void sendJsonBytesGuarded(int code, const char* data, size_t len) {
-  netMarkHttp();
-  server.sendHeader("Access-Control-Allow-Origin", "*");
+// A whole response body, after whatever headers are already queued: bounded
+// blocking, watchdog fed, stalled client dropped. server.send() with a body
+// does none of that.
+static void sendBytesGuarded(int code, const char* contentType, const char* data, size_t len) {
   server.setContentLength(len);
-  server.send(code, "application/json", "");
-  WiFiClient client = server.client();
-  int sock = client.fd();
-  if (sock < 0 ||
-      !writeAllGuarded(sock, data, len, millis() + STREAM_TOTAL_LIMIT_MS)) {
-    client.stop();
-  }
-}
-
-// sendContent() stand-in for the chunked template stream: same chunk framing,
-// bounded blocking. The whole chunk (size line + payload + trailer) goes out
-// as ONE send so the wire sees full segments - writing the tiny framing
-// pieces separately triggered Nagle/delayed-ACK ping-pong that made page
-// loads erratic. frame points at the buffer start; the payload must sit at
-// frame+6 and leave two spare bytes after it (see streamTemplate's malloc).
-static bool sendChunkGuarded(char* frame, size_t payloadLen, uint32_t totalDeadline) {
-  if (payloadLen == 0) return true;
-  WiFiClient client = server.client();
-  int sock = client.fd();
-  if (sock < 0 || !client.connected()) return false;
-  char head[8];
-  snprintf(head, sizeof(head), "%04x\r\n", (unsigned)payloadLen); // leading zeros are valid HEXDIG
-  memcpy(frame, head, 6);
-  frame[6 + payloadLen] = '\r';
-  frame[6 + payloadLen + 1] = '\n';
-  return writeAllGuarded(sock, frame, payloadLen + 8, totalDeadline);
-}
-
-// Stream PAGE_HTML from flash, resolving %TOKEN% placeholders on the fly.
-// Literal HTML and resolved values flow through one fixed buffer that is
-// flushed to the client only when full (HTTP chunked transfer).
-static const size_t TEMPLATE_BUF_SIZE = 4096;
-
-struct TemplateOut {
-  // Chunk frame layout: [6B size line][payload, up to TEMPLATE_BUF_SIZE][2B trailer].
-  // sendChunkGuarded() fills the framing in place around the payload.
-  char* buf;
-  size_t bufLen;
-  bool clientOk;
-  uint32_t deadline;
-
-  void flush() {
-    if (clientOk && bufLen > 0) clientOk = sendChunkGuarded(buf, bufLen, deadline);
-    bufLen = 0;
-  }
-
-  void emit(const char* data, size_t len) {
-    while (len > 0 && clientOk) {
-      size_t space = TEMPLATE_BUF_SIZE - bufLen;
-      size_t take = len < space ? len : space;
-      memcpy(buf + 6 + bufLen, data, take);
-      bufLen += take;
-      data += take;
-      len -= take;
-      if (bufLen >= TEMPLATE_BUF_SIZE) flush();
-    }
-  }
-};
-
-// A token that stands for a whole PROGMEM template rather than a value. Walked
-// in place, its own tokens resolved, so a large block costs no String copy: the
-// peak stays at the buffer plus the largest single value. Builds without the
-// block resolve the token to nothing.
-static bool nestedTemplate(const char* n, const char** tmpl, size_t* len) {
-  const bool nav = !strcmp(n, "PANEL_NAV"), pages = !strcmp(n, "PANEL_PAGES");
-  if (!nav && !pages) return false;
-#if defined(CONTROL_ENCODER_ENABLED)
-  *tmpl = nav ? PANEL_NAV_HTML : PANEL_PAGES_HTML;
-  *len = nav ? sizeof(PANEL_NAV_HTML) - 1 : sizeof(PANEL_PAGES_HTML) - 1;
-#else
-  *tmpl = "";
-  *len = 0;
-#endif
-  return true;
-}
-
-static void walkTemplate(TemplateOut& out, const char* tmpl, size_t tmplLen, int depth) {
-  // On ESP32 PROGMEM is memory-mapped, so the template is readable directly.
-  const char* end = tmpl + tmplLen;
-  const char* pos = tmpl;
-  const char* literalStart = tmpl;
-
-  while (pos < end && out.clientOk) {
-    if (*pos != '%') { pos++; continue; }
-    if (pos + 1 >= end || !(pos[1] >= 'A' && pos[1] <= 'Z')) { pos++; continue; }
-
-    const char* pEnd = pos + 1;
-    while (pEnd < end && *pEnd != '%' && (pEnd - pos) < 40) pEnd++;
-    if (pEnd >= end || *pEnd != '%') { pos++; continue; }
-
-    bool valid = true;
-    for (const char* c = pos + 1; c < pEnd; c++) {
-      if (!((*c >= 'A' && *c <= 'Z') || (*c >= '0' && *c <= '9') || *c == '_')) { valid = false; break; }
-    }
-    if (!valid) { pos++; continue; }
-
-    size_t nameLen = pEnd - pos - 1;
-    char name[40];
-    if (nameLen >= sizeof(name)) { pos++; continue; }
-    memcpy(name, pos + 1, nameLen);
-    name[nameLen] = '\0';
-
-    const char* inner;
-    size_t innerLen;
-    if (depth == 0 && nestedTemplate(name, &inner, &innerLen)) {   // one level deep, never recursive
-      if (pos > literalStart) out.emit(literalStart, pos - literalStart);
-      walkTemplate(out, inner, innerLen, depth + 1);
-      pos = pEnd + 1;
-      literalStart = pos;
-      continue;
-    }
-
-    String value;
-    if (resolvePlaceholder(name, value)) {
-      if (pos > literalStart) out.emit(literalStart, pos - literalStart);
-      if (value.length() > 0) out.emit(value.c_str(), value.length());
-      pos = pEnd + 1;
-      literalStart = pos;
-    } else {
-      pos++;
-    }
-  }
-
-  if (out.clientOk && end > literalStart) out.emit(literalStart, end - literalStart);
-}
-
-static void streamTemplate(const char* tmpl, size_t tmplLen) {
-  netMarkHttp();
-  TemplateOut out;
-  out.buf = (char*)malloc(6 + TEMPLATE_BUF_SIZE + 2);
-  if (!out.buf) {
-    server.send(503, "text/plain", "Out of memory");
-    return;
-  }
-  out.bufLen = 0;
-  out.clientOk = true;
-
-  server.setContentLength(CONTENT_LENGTH_UNKNOWN);
-  server.send(200, "text/html", "");
-  out.deadline = millis() + STREAM_TOTAL_LIMIT_MS;
-
-  walkTemplate(out, tmpl, tmplLen, 0);
-
-  if (out.clientOk) out.flush();
-  if (out.clientOk) {
-    server.sendContent(""); // terminating 0-length chunk
-  } else {
-    server.client().stop(); // stalled client - drop it, keep the clock alive
-  }
-  free(out.buf);
-}
-
-void handleRoot() {
-  streamTemplate(PAGE_HTML, sizeof(PAGE_HTML) - 1);
-}
-
-// Stream a static PROGMEM asset (CSS/JS) in chunks. These contain no %TOKEN%s,
-// so they are emitted verbatim and cached hard by the browser (fetched once).
-static void streamStatic(const char* data, size_t len, const char* contentType) {
-  netMarkHttp();
-  server.sendHeader("Cache-Control", "public, max-age=31536000, immutable");
-  server.setContentLength(len);
-  server.send(200, contentType, "");
-  // PROGMEM is memory-mapped on ESP32, so it can feed send() directly.
+  server.send(code, contentType, "");
   WiFiClient client = server.client();
   int sock = client.fd();
   if (sock < 0 ||
@@ -1306,25 +1029,68 @@ static void streamStatic(const char* data, size_t len, const char* contentType) 
   }
 }
 
+static void sendJsonGuarded(int code, const String& json) {
+  sendJsonBytesGuarded(code, json.c_str(), json.length());
+}
+
+void sendJsonBytesGuarded(int code, const char* data, size_t len) {
+  netMarkHttp();
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  sendBytesGuarded(code, "application/json", data, len);
+}
+
+// Send a gzip blob from web_assets.h (tools/web_assets_gen.py). Every browser
+// takes gzip, and no uncompressed copy is kept: the 4MB boards have no room for
+// two. PROGMEM is memory-mapped on ESP32, so the blob feeds send() directly.
+static void sendGzip(const uint8_t* gz, size_t len, const char* contentType, const char* cacheControl) {
+  netMarkHttp();
+  server.sendHeader("Cache-Control", cacheControl);
+  server.sendHeader("Content-Encoding", "gzip");
+  sendBytesGuarded(200, contentType, (const char*)gz, len);
+}
+
+// GET / - the page. It has no version in its URL, so unlike the assets it is not
+// kept for a year: the browser asks every time, and the ETag gets it a 304 until
+// a firmware with a different page is running.
+void handleRoot() {
+  server.sendHeader("ETag", WEB_INDEX_ETAG);
+  if (server.header("If-None-Match") == WEB_INDEX_ETAG) {
+    netMarkHttp();
+    server.sendHeader("Cache-Control", "no-cache");
+    // No body. WebServer writes a Content-Length regardless; let it describe the
+    // page the browser already holds rather than claim an empty one.
+    server.setContentLength(sizeof(WEB_INDEX_GZ));
+    server.send(304, "text/html", "");
+    return;
+  }
+  sendGzip(WEB_INDEX_GZ, sizeof(WEB_INDEX_GZ), "text/html", "no-cache");
+}
+
+// The assets, versioned by a hash of their bytes (?v=), and the icon: cached
+// hard by the browser, fetched once.
+static void streamStatic(const uint8_t* gz, size_t len, const char* contentType) {
+  sendGzip(gz, len, contentType, "public, max-age=31536000, immutable");
+}
+
 void handlePortalCss() {
-  streamStatic(PORTAL_CSS, sizeof(PORTAL_CSS) - 1, "text/css");
+  streamStatic(WEB_PORTAL_CSS_GZ, sizeof(WEB_PORTAL_CSS_GZ), "text/css");
 }
 
 void handlePortalJs() {
-  streamStatic(PORTAL_JS, sizeof(PORTAL_JS) - 1, "application/javascript");
+  streamStatic(WEB_PORTAL_JS_GZ, sizeof(WEB_PORTAL_JS_GZ), "application/javascript");
 }
 
 void handleFavicon() {
-  streamStatic(FAVICON_SVG, sizeof(FAVICON_SVG) - 1, "image/svg+xml");
+  streamStatic(WEB_FAVICON_GZ, sizeof(WEB_FAVICON_GZ), "image/svg+xml");
 }
 
 #if defined(CONTROL_ENCODER_ENABLED)
 static void handlePanelCss() {
-  streamStatic(PANEL_CSS, sizeof(PANEL_CSS) - 1, "text/css");
+  streamStatic(WEB_PANEL_CSS_GZ, sizeof(WEB_PANEL_CSS_GZ), "text/css");
 }
 
 static void handlePanelJs() {
-  streamStatic(PANEL_JS, sizeof(PANEL_JS) - 1, "application/javascript");
+  streamStatic(WEB_PANEL_JS_GZ, sizeof(WEB_PANEL_JS_GZ), "application/javascript");
 }
 #endif
 

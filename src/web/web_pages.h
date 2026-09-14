@@ -1,14 +1,20 @@
-// AUTO-GENERATED page template. See src/web/web.cpp (handleRoot/streamTemplate).
+// The config portal's page, style, script and icon, as the source that
+// tools/web_assets_gen.py gzips into web_assets.h. Nothing here is compiled.
 // Redesigned "paper docs" config portal (master-detail layout).
 //
-// Four PROGMEM blobs:
-//   PAGE_HTML  - markup + %TOKEN% placeholders, streamed/substituted by handleRoot().
-//   PORTAL_CSS - styles, served verbatim from /portal.css (no tokens, long cache).
-//   PORTAL_JS  - interactions, served verbatim from /portal.js (no tokens, long cache).
+// Four blobs:
+//   PAGE_HTML   - served from /; no version in its URL, so not cached for a year.
+//   PORTAL_CSS  - styles, served from /portal.css (versioned, long cache).
+//   PORTAL_JS   - interactions, served from /portal.js (versioned, long cache).
 //   FAVICON_SVG - brand mark, served from /favicon.svg and /favicon.ico.
 //
-// Keeping CSS/JS on their own cacheable routes leaves PAGE_HTML small so peak
-// heap during the token-substituted render stays low on the ESP32-C3.
+// The page is static and the same for every build. PORTAL_JS fills it from
+// /api/portal (handlePortalValues in web.cpp) and keeps Save disabled until it
+// has, so a control added to the settings form needs its value there too; the
+// generator refuses one that /api/portal does not fill. The generator resolves
+// three markers, the panel none: %PANEL_NAV% and %PANEL_PAGES% (web_panel_page.h)
+// and ?v=%ASSETVER% (a hash of the file the URL names). Any other %TOKEN% is
+// refused.
 #pragma once
 #include <Arduino.h>
 
@@ -20,14 +26,14 @@ static const char FAVICON_SVG[] PROGMEM =
 
 
 // ============================================================================
-//  PAGE_HTML - the only document with %TOKEN% placeholders (resolvePlaceholder).
+//  PAGE_HTML - the page. PORTAL_JS fills it in from /api/portal.
 // ============================================================================
 static const char PAGE_HTML[] PROGMEM = R"PAGE(<!doctype html>
 <html lang="en" data-accent="green" data-mode="light">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AnimatedPixelClock - Config Portal v%VER%</title>
+<title>AnimatedPixelClock - Config Portal</title>
 <meta name="theme-color" content="#f4f0e7">
 <script>(function(){try{var a=localStorage.getItem('soled_accent');if(a)document.documentElement.setAttribute('data-accent',a);var m=localStorage.getItem('soled_mode');if(m){document.documentElement.setAttribute('data-mode',m);var mt=document.querySelector('meta[name=theme-color]');if(mt)mt.setAttribute('content',m==='dark'?'#161512':'#f4f0e7');}}catch(e){}})();</script>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
@@ -41,7 +47,7 @@ static const char PAGE_HTML[] PROGMEM = R"PAGE(<!doctype html>
   <div class="tb-brand">
     <span class="brand-mark" aria-hidden="true"></span>
     <span class="tb-name">PixelClock</span>
-    <span class="tb-ver">v%VER%</span>
+    <span class="tb-ver" id="tbVer"></span>
   </div>
   <span class="tb-sep" aria-hidden="true"></span>
   <span class="tb-crumb" id="crumb">Clock</span>
@@ -98,8 +104,8 @@ static const char PAGE_HTML[] PROGMEM = R"PAGE(<!doctype html>
           <span class="sr-title" id="srTitle">connecting...</span>
         </div>
         <dl class="sr-rows">
-          <div class="sr-row"><dt>ip</dt><dd id="srIp">%IP%</dd></div>
-          <div class="sr-row"><dt>host</dt><dd><span id="srHost">%V_DEVICENAME%</span>.local</dd></div>
+          <div class="sr-row"><dt>ip</dt><dd id="srIp">--</dd></div>
+          <div class="sr-row"><dt>host</dt><dd><span id="srHost"></span>.local</dd></div>
           <div class="sr-row"><dt>uptime</dt><dd id="srUptime">--</dd></div>
           <div class="sr-row"><dt>rssi</dt><dd id="srRssi">--</dd></div>
         </dl>
@@ -107,14 +113,14 @@ static const char PAGE_HTML[] PROGMEM = R"PAGE(<!doctype html>
     </div>
 
     <div class="about">
-      <span class="line">AnimatedPixelClock &middot; <b>v%VER%</b></span>
+      <span class="line">AnimatedPixelClock &middot; <b id="aboutVer"></b></span>
       <a href="https://github.com/Keralots/AnimatedPixelClock" target="_blank" rel="noopener"><span class="gh" aria-hidden="true"></span>github.com/Keralots</a>
     </div>
   </aside>
 
   <main class="content">
     <div class="content-inner">
-      <form id="cfgForm" action="/save" method="POST">
+      <form id="cfgForm" class="cfg-wait" action="/save" method="POST">
 
         <!-- CLOCK -->
         <section class="page active" data-page="clock">
@@ -129,21 +135,21 @@ static const char PAGE_HTML[] PROGMEM = R"PAGE(<!doctype html>
               <label class="field-label" for="clockStyle">Clock style</label>
               <div class="select-wrap">
                 <select name="clockStyle" id="clockStyle">
-                  <option value="0" %SEL_CLOCKSTYLE_0%>Mario Animation</option>
-                  <option value="1" %SEL_CLOCKSTYLE_1%>Standard Clock</option>
-                  <option value="2" %SEL_CLOCKSTYLE_2%>Large Clock</option>
-                  <option value="3" %SEL_CLOCKSTYLE_3%>Space Invaders</option>
-                  <option value="5" %SEL_CLOCKSTYLE_5%>Arkanoid</option>
-                  <option value="6" %SEL_CLOCKSTYLE_6%>Pac-Man Clock</option>
-                  <option value="7" %SEL_CLOCKSTYLE_7%>Snake</option>
-                  <option value="8" %SEL_CLOCKSTYLE_8%>Tetris</option>
-                  <option value="10" %SEL_CLOCKSTYLE_10%>Asteroids</option>
-                  <option value="11" %SEL_CLOCKSTYLE_11%>Dino Runner</option>
-                  <option value="12" %SEL_CLOCKSTYLE_12%>Matrix Rain</option>
-                  <option value="14" %SEL_CLOCKSTYLE_14%>Weather Clock</option>
-                  <option value="15" %SEL_CLOCKSTYLE_15%>Bomberman</option>
-                  <option value="16" %SEL_CLOCKSTYLE_16%>TRON</option>
-                  <option value="9" %SEL_CLOCKSTYLE_9%>Custom rotation</option>
+                  <option value="0">Mario Animation</option>
+                  <option value="1">Standard Clock</option>
+                  <option value="2">Large Clock</option>
+                  <option value="3">Space Invaders</option>
+                  <option value="5">Arkanoid</option>
+                  <option value="6">Pac-Man Clock</option>
+                  <option value="7">Snake</option>
+                  <option value="8">Tetris</option>
+                  <option value="10">Asteroids</option>
+                  <option value="11">Dino Runner</option>
+                  <option value="12">Matrix Rain</option>
+                  <option value="14">Weather Clock</option>
+                  <option value="15">Bomberman</option>
+                  <option value="16">TRON</option>
+                  <option value="9">Custom rotation</option>
                 </select>
               </div>
             </div>
@@ -151,7 +157,7 @@ static const char PAGE_HTML[] PROGMEM = R"PAGE(<!doctype html>
             <div class="subcard" id="cycleSettings" style="display:none">
               <h3>Clock rotation</h3>
               <p class="field-hint">Enable clocks, move them into order, and set seconds per clock (5-3600). Weather is skipped until configured.</p>
-              <input type="hidden" id="cycleConfig" name="cycleConfig" value="%V_CYCLECONFIG%">
+              <input type="hidden" id="cycleConfig" name="cycleConfig">
               <div id="cycleRows"></div>
             </div>
             <div class="subcard" id="tronSettings" style="display:none">
@@ -159,8 +165,8 @@ static const char PAGE_HTML[] PROGMEM = R"PAGE(<!doctype html>
                 <label class="field-label" for="tronBikeStyle">Motorcycle variant</label>
                 <div class="select-wrap">
                   <select name="tronBikeStyle" id="tronBikeStyle">
-                    <option value="0" %SEL_TRONBIKESTYLE_0%>Motorcycle (side view)</option>
-                    <option value="1" %SEL_TRONBIKESTYLE_1%>Light cycle (top view)</option>
+                    <option value="0">Motorcycle (side view)</option>
+                    <option value="1">Light cycle (top view)</option>
                   </select>
                 </div>
                 <p class="field-hint">Choose a rider with visible wheels or a slim light cycle viewed from above. Applies to both bikes, including in Cycle All.</p>
@@ -169,53 +175,53 @@ static const char PAGE_HTML[] PROGMEM = R"PAGE(<!doctype html>
             </div>
 
             <!-- Mario -->
-            <div class="subcard" id="marioSettings" style="display:%DSP_CLOCKSTYLE_0%">
+            <div class="subcard" id="marioSettings" style="display:none">
               <div class="grid-2">
                 <div class="field" style="margin-bottom:0">
                   <label class="field-label" for="marioBounceHeight">Bounce height</label>
                   <div class="range-row">
-                    <input type="range" name="marioBounceHeight" id="marioBounceHeight" min="10" max="50" step="5" value="%V_MARIOBOUNCEHEIGHT%" data-div="10" data-fixed="1">
-                    <span class="range-val" data-for="marioBounceHeight">%F_MARIOBOUNCEHEIGHT%</span>
+                    <input type="range" name="marioBounceHeight" id="marioBounceHeight" min="10" max="50" step="5" data-div="10" data-fixed="1">
+                    <span class="range-val" data-for="marioBounceHeight"></span>
                   </div>
                   <p class="field-hint">How high digits bounce when Mario hits them. Default 3.5.</p>
                 </div>
                 <div class="field" style="margin-bottom:0">
                   <label class="field-label" for="marioBounceSpeed">Fall speed</label>
                   <div class="range-row">
-                    <input type="range" name="marioBounceSpeed" id="marioBounceSpeed" min="2" max="15" step="1" value="%V_MARIOBOUNCESPEED%" data-div="10" data-fixed="1">
-                    <span class="range-val" data-for="marioBounceSpeed">%F_MARIOBOUNCESPEED%</span>
+                    <input type="range" name="marioBounceSpeed" id="marioBounceSpeed" min="2" max="15" step="1" data-div="10" data-fixed="1">
+                    <span class="range-val" data-for="marioBounceSpeed"></span>
                   </div>
                   <p class="field-hint">How fast digits fall back down. Higher is faster. Default 0.6.</p>
                 </div>
                 <div class="field" style="margin-bottom:0">
                   <label class="field-label" for="marioWalkSpeed">Walk speed</label>
                   <div class="range-row">
-                    <input type="range" name="marioWalkSpeed" id="marioWalkSpeed" min="15" max="35" step="1" value="%V_MARIOWALKSPEED%" data-div="10" data-fixed="1">
-                    <span class="range-val" data-for="marioWalkSpeed">%F_MARIOWALKSPEED%</span>
+                    <input type="range" name="marioWalkSpeed" id="marioWalkSpeed" min="15" max="35" step="1" data-div="10" data-fixed="1">
+                    <span class="range-val" data-for="marioWalkSpeed"></span>
                   </div>
                   <p class="field-hint">How fast Mario walks. Higher is faster. Default 2.0.</p>
                 </div>
               </div>
               <label class="check-row standalone" style="margin-top:16px">
-                <input type="checkbox" name="marioSmoothAnimation" id="marioSmoothAnimation" %CHK_MARIOSMOOTHANIMATION%>
+                <input type="checkbox" name="marioSmoothAnimation" id="marioSmoothAnimation">
                 <span class="check-box" aria-hidden="true"></span>
                 <span class="check-text"><strong>Smooth animation</strong><span class="ct-hint">4-frame walk cycle for a smoother stride. Default off.</span></span>
               </label>
               <label class="check-row standalone" style="margin-top:12px">
-                <input type="checkbox" name="marioIdleEncounters" id="marioIdleEncounters" %CHK_MARIOIDLEENCOUNTERS%>
+                <input type="checkbox" name="marioIdleEncounters" id="marioIdleEncounters">
                 <span class="check-box" aria-hidden="true"></span>
                 <span class="check-text"><strong>Idle encounters</strong><span class="ct-hint">Goombas and Spinies appear between minute changes for Mario to defeat. Default off.</span></span>
               </label>
-              <div id="marioEncFields" style="display:%DSP_MARIOIDLEENCOUNTERS%">
+              <div id="marioEncFields" style="display:none">
                 <div class="grid-2" style="margin-top:14px">
                   <div class="field" style="margin-bottom:0">
                     <label class="field-label" for="marioEncounterFreq">Encounter frequency</label>
                     <div class="select-wrap">
                       <select name="marioEncounterFreq" id="marioEncounterFreq">
-                        <option value="0" %SEL_MARIOENCOUNTERFREQ_0%>Rare (25-35s)</option>
-                        <option value="1" %SEL_MARIOENCOUNTERFREQ_1%>Normal (15-25s)</option>
-                        <option value="2" %SEL_MARIOENCOUNTERFREQ_2%>Frequent (8-15s)</option>
-                        <option value="3" %SEL_MARIOENCOUNTERFREQ_3%>Chaotic (2-5s)</option>
+                        <option value="0">Rare (25-35s)</option>
+                        <option value="1">Normal (15-25s)</option>
+                        <option value="2">Frequent (8-15s)</option>
+                        <option value="3">Chaotic (2-5s)</option>
                       </select>
                     </div>
                   </div>
@@ -223,9 +229,9 @@ static const char PAGE_HTML[] PROGMEM = R"PAGE(<!doctype html>
                     <label class="field-label" for="marioEncounterSpeed">Encounter speed</label>
                     <div class="select-wrap">
                       <select name="marioEncounterSpeed" id="marioEncounterSpeed">
-                        <option value="0" %SEL_MARIOENCOUNTERSPEED_0%>Slow</option>
-                        <option value="1" %SEL_MARIOENCOUNTERSPEED_1%>Normal</option>
-                        <option value="2" %SEL_MARIOENCOUNTERSPEED_2%>Fast</option>
+                        <option value="0">Slow</option>
+                        <option value="1">Normal</option>
+                        <option value="2">Fast</option>
                       </select>
                     </div>
                   </div>
@@ -234,13 +240,13 @@ static const char PAGE_HTML[] PROGMEM = R"PAGE(<!doctype html>
             </div>
 
             <!-- Space Invaders / Ship (styles 3 + 4) -->
-            <div class="subcard" id="spaceSettings" style="display:%DSP_CLOCKSTYLE_34%">
+            <div class="subcard" id="spaceSettings" style="display:none">
               <div class="field">
                 <label class="field-label" for="spaceCharacterType">Character type</label>
                 <div class="select-wrap">
                   <select name="spaceCharacterType" id="spaceCharacterType">
-                    <option value="0" %SEL_SPACECHARACTERTYPE_0%>Space Invader</option>
-                    <option value="1" %SEL_SPACECHARACTERTYPE_1%>Space Ship (default)</option>
+                    <option value="0">Space Invader</option>
+                    <option value="1">Space Ship (default)</option>
                   </select>
                 </div>
                   <p class="field-hint">The character that patrols and attacks the digits.</p>
@@ -249,32 +255,32 @@ static const char PAGE_HTML[] PROGMEM = R"PAGE(<!doctype html>
                 <div class="field" style="margin-bottom:0">
                   <label class="field-label" for="spacePatrolSpeed">Patrol speed</label>
                   <div class="range-row">
-                    <input type="range" name="spacePatrolSpeed" id="spacePatrolSpeed" min="2" max="15" step="1" value="%V_SPACEPATROLSPEED%" data-div="10" data-fixed="1">
-                    <span class="range-val" data-for="spacePatrolSpeed">%F_SPACEPATROLSPEED%</span>
+                    <input type="range" name="spacePatrolSpeed" id="spacePatrolSpeed" min="2" max="15" step="1" data-div="10" data-fixed="1">
+                    <span class="range-val" data-for="spacePatrolSpeed"></span>
                   </div>
                   <p class="field-hint">How fast the character drifts during patrol. Default 0.5.</p>
                 </div>
                 <div class="field" style="margin-bottom:0">
                   <label class="field-label" for="spaceAttackSpeed">Attack speed</label>
                   <div class="range-row">
-                    <input type="range" name="spaceAttackSpeed" id="spaceAttackSpeed" min="10" max="40" step="5" value="%V_SPACEATTACKSPEED%" data-div="10" data-fixed="1">
-                    <span class="range-val" data-for="spaceAttackSpeed">%F_SPACEATTACKSPEED%</span>
+                    <input type="range" name="spaceAttackSpeed" id="spaceAttackSpeed" min="10" max="40" step="5" data-div="10" data-fixed="1">
+                    <span class="range-val" data-for="spaceAttackSpeed"></span>
                   </div>
                   <p class="field-hint">How fast it slides to attack position. Default 2.5.</p>
                 </div>
                 <div class="field" style="margin-bottom:0">
                   <label class="field-label" for="spaceLaserSpeed">Laser speed</label>
                   <div class="range-row">
-                    <input type="range" name="spaceLaserSpeed" id="spaceLaserSpeed" min="20" max="80" step="5" value="%V_SPACELASERSPEED%" data-div="10" data-fixed="1">
-                    <span class="range-val" data-for="spaceLaserSpeed">%F_SPACELASERSPEED%</span>
+                    <input type="range" name="spaceLaserSpeed" id="spaceLaserSpeed" min="20" max="80" step="5" data-div="10" data-fixed="1">
+                    <span class="range-val" data-for="spaceLaserSpeed"></span>
                   </div>
                   <p class="field-hint">How fast the laser extends downward. Default 4.0.</p>
                 </div>
                 <div class="field" style="margin-bottom:0">
                   <label class="field-label" for="spaceExplosionGravity">Explosion intensity</label>
                   <div class="range-row">
-                    <input type="range" name="spaceExplosionGravity" id="spaceExplosionGravity" min="3" max="10" step="1" value="%V_SPACEEXPLOSIONGRAVITY%" data-div="10" data-fixed="1">
-                    <span class="range-val" data-for="spaceExplosionGravity">%F_SPACEEXPLOSIONGRAVITY%</span>
+                    <input type="range" name="spaceExplosionGravity" id="spaceExplosionGravity" min="3" max="10" step="1" data-div="10" data-fixed="1">
+                    <span class="range-val" data-for="spaceExplosionGravity"></span>
                   </div>
                   <p class="field-hint">Fragment gravity - how fast debris falls. Default 0.5.</p>
                 </div>
@@ -282,149 +288,149 @@ static const char PAGE_HTML[] PROGMEM = R"PAGE(<!doctype html>
             </div>
 
             <!-- Arkanoid (style 5) -->
-            <div class="subcard" id="pongSettings" style="display:%DSP_CLOCKSTYLE_5%">
+            <div class="subcard" id="pongSettings" style="display:none">
               <div class="grid-2">
                 <div class="field" style="margin-bottom:0">
                   <label class="field-label" for="pongBallSpeed">Ball speed</label>
                   <div class="range-row">
-                    <input type="range" name="pongBallSpeed" id="pongBallSpeed" min="16" max="30" step="1" value="%V_PONGBALLSPEED%">
-                    <span class="range-val" data-for="pongBallSpeed">%V_PONGBALLSPEED%</span>
+                    <input type="range" name="pongBallSpeed" id="pongBallSpeed" min="16" max="30" step="1">
+                    <span class="range-val" data-for="pongBallSpeed"></span>
                   </div>
                   <p class="field-hint">How fast the ball moves. Default 18.</p>
                 </div>
                 <div class="field" style="margin-bottom:0">
                   <label class="field-label" for="pongBounceStrength">Bounce strength</label>
                   <div class="range-row">
-                    <input type="range" name="pongBounceStrength" id="pongBounceStrength" min="1" max="8" step="1" value="%V_PONGBOUNCESTRENGTH%" data-div="10" data-fixed="1">
-                    <span class="range-val" data-for="pongBounceStrength">%F_PONGBOUNCESTRENGTH%</span>
+                    <input type="range" name="pongBounceStrength" id="pongBounceStrength" min="1" max="8" step="1" data-div="10" data-fixed="1">
+                    <span class="range-val" data-for="pongBounceStrength"></span>
                   </div>
                   <p class="field-hint">How much digits wobble when hit. Default 0.3.</p>
                 </div>
                 <div class="field" style="margin-bottom:0">
                   <label class="field-label" for="pongBounceDamping">Bounce damping</label>
                   <div class="range-row">
-                    <input type="range" name="pongBounceDamping" id="pongBounceDamping" min="50" max="95" step="5" value="%V_PONGBOUNCEDAMPING%" data-div="100" data-fixed="2">
-                    <span class="range-val" data-for="pongBounceDamping">%F2_PONGBOUNCEDAMPING%</span>
+                    <input type="range" name="pongBounceDamping" id="pongBounceDamping" min="50" max="95" step="5" data-div="100" data-fixed="2">
+                    <span class="range-val" data-for="pongBounceDamping"></span>
                   </div>
                   <p class="field-hint">How quickly the wobble stops. Default 0.85.</p>
                 </div>
                 <div class="field" style="margin-bottom:0">
                   <label class="field-label" for="pongPaddleWidth">Paddle width</label>
                   <div class="range-row">
-                    <input type="range" name="pongPaddleWidth" id="pongPaddleWidth" min="10" max="40" step="2" value="%V_PONGPADDLEWIDTH%" data-suffix="px">
-                    <span class="range-val" data-for="pongPaddleWidth">%V_PONGPADDLEWIDTH%px</span>
+                    <input type="range" name="pongPaddleWidth" id="pongPaddleWidth" min="10" max="40" step="2" data-suffix="px">
+                    <span class="range-val" data-for="pongPaddleWidth"></span>
                   </div>
                   <p class="field-hint">Paddle size. Narrower is harder. Default 20px.</p>
                 </div>
               </div>
               <label class="check-row standalone" style="margin-top:16px">
-                <input type="checkbox" name="pongHorizontalBounce" id="pongHorizontalBounce" %CHK_PONGHORIZONTALBOUNCE%>
+                <input type="checkbox" name="pongHorizontalBounce" id="pongHorizontalBounce">
                 <span class="check-box" aria-hidden="true"></span>
                 <span class="check-text"><strong>Horizontal digit bounce</strong><span class="ct-hint">Digits bounce sideways when hit from the side. Default on.</span></span>
               </label>
               <label class="check-row standalone" style="margin-top:10px">
-                <input type="checkbox" name="pongDigitShatter" id="pongDigitShatter" %CHK_PONGDIGITSHATTER%>
+                <input type="checkbox" name="pongDigitShatter" id="pongDigitShatter">
                 <span class="check-box" aria-hidden="true"></span>
                 <span class="check-text"><strong>Digit shatter animation</strong><span class="ct-hint">Changed digits break into fragments and reassemble. Off = digits just blink and swap. Default on.</span></span>
               </label>
             </div>
 
             <!-- Pac-Man (style 6) -->
-            <div class="subcard" id="pacmanSettings" style="display:%DSP_CLOCKSTYLE_6%">
+            <div class="subcard" id="pacmanSettings" style="display:none">
               <div class="grid-2">
                 <div class="field" style="margin-bottom:0">
                   <label class="field-label" for="pacmanSpeed">Patrol speed</label>
                   <div class="range-row">
-                    <input type="range" name="pacmanSpeed" id="pacmanSpeed" min="5" max="30" step="1" value="%V_PACMANSPEED%" data-div="10" data-fixed="1">
-                    <span class="range-val" data-for="pacmanSpeed">%F_PACMANSPEED%</span>
+                    <input type="range" name="pacmanSpeed" id="pacmanSpeed" min="5" max="30" step="1" data-div="10" data-fixed="1">
+                    <span class="range-val" data-for="pacmanSpeed"></span>
                   </div>
                   <p class="field-hint">Patrol speed at the bottom. Default 1.0 px/frame.</p>
                 </div>
                 <div class="field" style="margin-bottom:0">
                   <label class="field-label" for="pacmanEatingSpeed">Eating speed</label>
                   <div class="range-row">
-                    <input type="range" name="pacmanEatingSpeed" id="pacmanEatingSpeed" min="10" max="50" step="1" value="%V_PACMANEATINGSPEED%" data-div="10" data-fixed="1">
-                    <span class="range-val" data-for="pacmanEatingSpeed">%F_PACMANEATINGSPEED%</span>
+                    <input type="range" name="pacmanEatingSpeed" id="pacmanEatingSpeed" min="10" max="50" step="1" data-div="10" data-fixed="1">
+                    <span class="range-val" data-for="pacmanEatingSpeed"></span>
                   </div>
                   <p class="field-hint">How fast Pac-Man eats digits. Default 2.0 px/frame.</p>
                 </div>
                 <div class="field" style="margin-bottom:0">
                   <label class="field-label" for="pacmanMouthSpeed">Mouth speed</label>
                   <div class="range-row">
-                    <input type="range" name="pacmanMouthSpeed" id="pacmanMouthSpeed" min="5" max="20" step="1" value="%V_PACMANMOUTHSPEED%" data-div="10" data-fixed="1">
-                    <span class="range-val" data-for="pacmanMouthSpeed">%F_PACMANMOUTHSPEED%</span>
+                    <input type="range" name="pacmanMouthSpeed" id="pacmanMouthSpeed" min="5" max="20" step="1" data-div="10" data-fixed="1">
+                    <span class="range-val" data-for="pacmanMouthSpeed"></span>
                   </div>
                   <p class="field-hint">Mouth open/close rate (waka-waka). Default 1.0 Hz.</p>
                 </div>
                 <div class="field" style="margin-bottom:0">
                   <label class="field-label" for="pacmanPelletCount">Pellets</label>
                   <div class="range-row">
-                    <input type="range" name="pacmanPelletCount" id="pacmanPelletCount" min="0" max="20" step="1" value="%V_PACMANPELLETCOUNT%">
-                    <span class="range-val" data-for="pacmanPelletCount">%V_PACMANPELLETCOUNT%</span>
+                    <input type="range" name="pacmanPelletCount" id="pacmanPelletCount" min="0" max="20" step="1">
+                    <span class="range-val" data-for="pacmanPelletCount"></span>
                   </div>
                   <p class="field-hint">Pellets shown during patrol. Default 8.</p>
                 </div>
               </div>
               <label class="check-row standalone" style="margin-top:16px">
-                <input type="checkbox" name="pacmanPelletRandomSpacing" id="pacmanPelletRandomSpacing" %CHK_PACMANPELLETRANDOMSPACING%>
+                <input type="checkbox" name="pacmanPelletRandomSpacing" id="pacmanPelletRandomSpacing">
                 <span class="check-box" aria-hidden="true"></span>
                 <span class="check-text"><strong>Randomize pellet spacing</strong><span class="ct-hint">Pellets appear at random positions during patrol. Default on.</span></span>
               </label>
               <label class="check-row standalone" style="margin-top:12px">
-                <input type="checkbox" name="pacmanBounceEnabled" id="pacmanBounceEnabled" %CHK_PACMANBOUNCEENABLED%>
+                <input type="checkbox" name="pacmanBounceEnabled" id="pacmanBounceEnabled">
                 <span class="check-box" aria-hidden="true"></span>
                 <span class="check-text"><strong>Digit bounce</strong><span class="ct-hint">New digits bounce into place after being eaten. Default on.</span></span>
               </label>
             </div>
 
             <!-- Snake (style 7) -->
-            <div class="subcard" id="snakeSettings" style="display:%DSP_CLOCKSTYLE_7%">
+            <div class="subcard" id="snakeSettings" style="display:none">
               <div class="grid-2">
                 <div class="field" style="margin-bottom:0">
                   <label class="field-label" for="snakeSpeed">Speed</label>
                   <div class="range-row">
-                    <input type="range" name="snakeSpeed" id="snakeSpeed" min="5" max="30" step="1" value="%V_SNAKESPEED%" data-div="10" data-fixed="1">
-                    <span class="range-val" data-for="snakeSpeed">%F_SNAKESPEED%</span>
+                    <input type="range" name="snakeSpeed" id="snakeSpeed" min="5" max="30" step="1" data-div="10" data-fixed="1">
+                    <span class="range-val" data-for="snakeSpeed"></span>
                   </div>
                   <p class="field-hint">How fast the snake slithers. Default 1.2 px/frame.</p>
                 </div>
                 <div class="field" style="margin-bottom:0">
                   <label class="field-label" for="snakeLength">Starting length</label>
                   <div class="range-row">
-                    <input type="range" name="snakeLength" id="snakeLength" min="4" max="12" step="1" value="%V_SNAKELENGTH%">
-                    <span class="range-val" data-for="snakeLength">%V_SNAKELENGTH%</span>
+                    <input type="range" name="snakeLength" id="snakeLength" min="4" max="12" step="1">
+                    <span class="range-val" data-for="snakeLength"></span>
                   </div>
                   <p class="field-hint">Body length at start; grows as it eats. Default 8.</p>
                 </div>
               </div>
               <label class="check-row standalone" style="margin-top:16px">
-                <input type="checkbox" name="snakeWallBorder" id="snakeWallBorder" %CHK_SNAKEWALLBORDER%>
+                <input type="checkbox" name="snakeWallBorder" id="snakeWallBorder">
                 <span class="check-box" aria-hidden="true"></span>
                 <span class="check-text"><strong>Arena border</strong><span class="ct-hint">Draw a Nokia-style frame around the playfield. Default off.</span></span>
               </label>
               <label class="check-row standalone" style="margin-top:12px">
-                <input type="checkbox" name="snakeShowDate" id="snakeShowDate" %CHK_SNAKESHOWDATE%>
+                <input type="checkbox" name="snakeShowDate" id="snakeShowDate">
                 <span class="check-box" aria-hidden="true"></span>
                 <span class="check-text"><strong>Show date</strong><span class="ct-hint">Off gives the snake the whole screen and centres the clock. Default off.</span></span>
               </label>
             </div>
 
             <!-- Tetris (style 8) -->
-            <div class="subcard" id="tetrisSettings" style="display:%DSP_CLOCKSTYLE_8%">
+            <div class="subcard" id="tetrisSettings" style="display:none">
               <div class="grid-2">
                 <div class="field" style="margin-bottom:0">
                   <label class="field-label" for="tetrisFallSpeed">Slab drop speed</label>
                   <div class="range-row">
-                    <input type="range" name="tetrisFallSpeed" id="tetrisFallSpeed" min="5" max="30" step="1" value="%V_TETRISFALLSPEED%" data-div="10" data-fixed="1">
-                    <span class="range-val" data-for="tetrisFallSpeed">%F_TETRISFALLSPEED%</span>
+                    <input type="range" name="tetrisFallSpeed" id="tetrisFallSpeed" min="5" max="30" step="1" data-div="10" data-fixed="1">
+                    <span class="range-val" data-for="tetrisFallSpeed"></span>
                   </div>
                   <p class="field-hint">Slab drop-in speed (Drop-in Slabs). Default 1.2.</p>
                 </div>
                 <div class="field" style="margin-bottom:0">
                   <label class="field-label" for="tetrisDotSpeed">Dot fall speed</label>
                   <div class="range-row">
-                    <input type="range" name="tetrisDotSpeed" id="tetrisDotSpeed" min="5" max="30" step="1" value="%V_TETRISDOTSPEED%" data-div="10" data-fixed="1">
-                    <span class="range-val" data-for="tetrisDotSpeed">%F_TETRISDOTSPEED%</span>
+                    <input type="range" name="tetrisDotSpeed" id="tetrisDotSpeed" min="5" max="30" step="1" data-div="10" data-fixed="1">
+                    <span class="range-val" data-for="tetrisDotSpeed"></span>
                   </div>
                   <p class="field-hint">Falling-dot speed. Lower is slower. Default 1.2.</p>
                 </div>
@@ -432,8 +438,8 @@ static const char PAGE_HTML[] PROGMEM = R"PAGE(<!doctype html>
                   <label class="field-label" for="tetrisBlockStyle">Block style</label>
                   <div class="select-wrap">
                     <select name="tetrisBlockStyle" id="tetrisBlockStyle">
-                      <option value="0" %SEL_TETRISBLOCKSTYLE_0%>LCD Grid (gaps)</option>
-                      <option value="1" %SEL_TETRISBLOCKSTYLE_1%>Solid Blocks</option>
+                      <option value="0">LCD Grid (gaps)</option>
+                      <option value="1">Solid Blocks</option>
                     </select>
                   </div>
                   <p class="field-hint">Look of the digit blocks. Default LCD Grid.</p>
@@ -442,8 +448,8 @@ static const char PAGE_HTML[] PROGMEM = R"PAGE(<!doctype html>
                   <label class="field-label" for="tetrisAnimStyle">Change animation</label>
                   <div class="select-wrap">
                     <select name="tetrisAnimStyle" id="tetrisAnimStyle">
-                      <option value="0" %SEL_TETRISANIMSTYLE_0%>Drop-in Slabs</option>
-                      <option value="1" %SEL_TETRISANIMSTYLE_1%>Falling Dots</option>
+                      <option value="0">Drop-in Slabs</option>
+                      <option value="1">Falling Dots</option>
                     </select>
                   </div>
                   <p class="field-hint">How a digit rebuilds on change. Default Falling Dots.</p>
@@ -452,8 +458,8 @@ static const char PAGE_HTML[] PROGMEM = R"PAGE(<!doctype html>
                   <label class="field-label" for="tetrisDotOrder">Dot build order</label>
                   <div class="select-wrap">
                     <select name="tetrisDotOrder" id="tetrisDotOrder">
-                      <option value="0" %SEL_TETRISDOTORDER_0%>Bottom-up</option>
-                      <option value="1" %SEL_TETRISDOTORDER_1%>Random</option>
+                      <option value="0">Bottom-up</option>
+                      <option value="1">Random</option>
                     </select>
                   </div>
                   <p class="field-hint">How dots fill in to form the digit. Default Bottom-up.</p>
@@ -462,19 +468,19 @@ static const char PAGE_HTML[] PROGMEM = R"PAGE(<!doctype html>
                   <label class="field-label" for="tetrisDatePosition">Date position</label>
                   <div class="select-wrap">
                     <select name="tetrisDatePosition" id="tetrisDatePosition">
-                      <option value="0" %SEL_TETRISDATEPOSITION_0%>Top</option>
-                      <option value="1" %SEL_TETRISDATEPOSITION_1%>Bottom</option>
+                      <option value="0">Top</option>
+                      <option value="1">Bottom</option>
                     </select>
                   </div>
                 </div>
               </div>
               <label class="check-row standalone" style="margin-top:16px">
-                <input type="checkbox" name="tetrisIdleTumble" id="tetrisIdleTumble" %CHK_TETRISIDLETUMBLE%>
+                <input type="checkbox" name="tetrisIdleTumble" id="tetrisIdleTumble">
                 <span class="check-box" aria-hidden="true"></span>
                 <span class="check-text"><strong>Block game</strong><span class="ct-hint">Auto-playing Tetris fills the bottom while idle (forces a centred, dateless clock). Default on.</span></span>
               </label>
               <label class="check-row standalone" style="margin-top:12px">
-                <input type="checkbox" name="tetrisSmallClock" id="tetrisSmallClock" %CHK_TETRISSMALLCLOCK%>
+                <input type="checkbox" name="tetrisSmallClock" id="tetrisSmallClock">
                 <span class="check-box" aria-hidden="true"></span>
                 <span class="check-text"><strong>Small corner clock</strong><span class="ct-hint">Shrink the clock to a corner and give the block game the full panel, so the stack can pile much higher before it resets. Turns the Block game on. Default off.</span></span>
               </label>
@@ -482,77 +488,77 @@ static const char PAGE_HTML[] PROGMEM = R"PAGE(<!doctype html>
                 <label class="field-label" for="tetrisSmallClockPos">Small clock corner</label>
                 <div class="select-wrap">
                   <select name="tetrisSmallClockPos" id="tetrisSmallClockPos">
-                    <option value="0" %SEL_TETRISSMALLCLOCKPOS_0%>Top-left</option>
-                    <option value="1" %SEL_TETRISSMALLCLOCKPOS_1%>Top-right</option>
+                    <option value="0">Top-left</option>
+                    <option value="1">Top-right</option>
                   </select>
                 </div>
                 <p class="field-hint">Which corner the small clock sits in.</p>
               </div>
               <label class="check-row standalone" style="margin-top:12px">
-                <input type="checkbox" name="tetrisSmoothGame" id="tetrisSmoothGame" %CHK_TETRISSMOOTHGAME%>
+                <input type="checkbox" name="tetrisSmoothGame" id="tetrisSmoothGame">
                 <span class="check-box" aria-hidden="true"></span>
                 <span class="check-text"><strong>Smooth play</strong><span class="ct-hint">Block game plays near-perfectly so rows stay flat and lines clear cleanly. Default off.</span></span>
               </label>
               <label class="check-row standalone" style="margin-top:12px">
-                <input type="checkbox" name="tetrisDigitBounce" id="tetrisDigitBounce" %CHK_TETRISDIGITBOUNCE%>
+                <input type="checkbox" name="tetrisDigitBounce" id="tetrisDigitBounce">
                 <span class="check-box" aria-hidden="true"></span>
                 <span class="check-text"><strong>Digit bounce</strong><span class="ct-hint">New digit bounces after it rebuilds. Default on.</span></span>
               </label>
               <label class="check-row standalone" style="margin-top:12px">
-                <input type="checkbox" name="tetrisShowDate" id="tetrisShowDate" %CHK_TETRISSHOWDATE%>
+                <input type="checkbox" name="tetrisShowDate" id="tetrisShowDate">
                 <span class="check-box" aria-hidden="true"></span>
                 <span class="check-text"><strong>Show date</strong><span class="ct-hint">Uncheck for a cleaner screen. Default on.</span></span>
               </label>
             </div>
 
             <!-- Asteroids (style 10) -->
-            <div class="subcard" id="asteroidsSettings" style="display:%DSP_CLOCKSTYLE_10%">
+            <div class="subcard" id="asteroidsSettings" style="display:none">
               <div class="grid-2">
                 <div class="field" style="margin-bottom:0">
                   <label class="field-label" for="asteroidsShipSpeed">Ship speed</label>
                   <div class="range-row">
-                    <input type="range" name="asteroidsShipSpeed" id="asteroidsShipSpeed" min="5" max="25" step="1" value="%V_ASTEROIDSSHIPSPEED%" data-div="10" data-fixed="1">
-                    <span class="range-val" data-for="asteroidsShipSpeed">%F_ASTEROIDSSHIPSPEED%</span>
+                    <input type="range" name="asteroidsShipSpeed" id="asteroidsShipSpeed" min="5" max="25" step="1" data-div="10" data-fixed="1">
+                    <span class="range-val" data-for="asteroidsShipSpeed"></span>
                   </div>
                   <p class="field-hint">Thrust and drift speed of the ship. Default 1.2.</p>
                 </div>
                 <div class="field" style="margin-bottom:0">
                   <label class="field-label" for="asteroidsRockSpeed">Asteroid speed</label>
                   <div class="range-row">
-                    <input type="range" name="asteroidsRockSpeed" id="asteroidsRockSpeed" min="3" max="20" step="1" value="%V_ASTEROIDSROCKSPEED%" data-div="10" data-fixed="1">
-                    <span class="range-val" data-for="asteroidsRockSpeed">%F_ASTEROIDSROCKSPEED%</span>
+                    <input type="range" name="asteroidsRockSpeed" id="asteroidsRockSpeed" min="3" max="20" step="1" data-div="10" data-fixed="1">
+                    <span class="range-val" data-for="asteroidsRockSpeed"></span>
                   </div>
                   <p class="field-hint">How fast the rocks drift. Default 0.8.</p>
                 </div>
                 <div class="field" style="margin-bottom:0">
                   <label class="field-label" for="asteroidsRockCount">Asteroid count</label>
                   <div class="range-row">
-                    <input type="range" name="asteroidsRockCount" id="asteroidsRockCount" min="1" max="4" step="1" value="%V_ASTEROIDSROCKCOUNT%">
-                    <span class="range-val" data-for="asteroidsRockCount">%V_ASTEROIDSROCKCOUNT%</span>
+                    <input type="range" name="asteroidsRockCount" id="asteroidsRockCount" min="1" max="4" step="1">
+                    <span class="range-val" data-for="asteroidsRockCount"></span>
                   </div>
                   <p class="field-hint">Wireframe rocks on screen. Default 2.</p>
                 </div>
               </div>
               <label class="check-row standalone" style="margin-top:16px">
-                <input type="checkbox" name="asteroidsShowDate" id="asteroidsShowDate" %CHK_ASTEROIDSSHOWDATE%>
+                <input type="checkbox" name="asteroidsShowDate" id="asteroidsShowDate">
                 <span class="check-box" aria-hidden="true"></span>
                 <span class="check-text"><strong>Show date</strong><span class="ct-hint">Off gives the ship the whole screen and centres the clock. Default off.</span></span>
               </label>
               <label class="check-row standalone" style="margin-top:12px">
-                <input type="checkbox" name="asteroidsTransparent" id="asteroidsTransparent" %CHK_ASTEROIDSTRANSPARENT%>
+                <input type="checkbox" name="asteroidsTransparent" id="asteroidsTransparent">
                 <span class="check-box" aria-hidden="true"></span>
                 <span class="check-text"><strong>Transparent digits</strong><span class="ct-hint">Rocks and ship fly through the digits instead of dodging solid time plates. Default on.</span></span>
               </label>
             </div>
 
             <!-- Dino Runner (style 11) -->
-            <div class="subcard" id="dinoSettings" style="display:%DSP_CLOCKSTYLE_11%">
+            <div class="subcard" id="dinoSettings" style="display:none">
               <div class="grid-2">
                 <div class="field" style="margin-bottom:0">
                   <label class="field-label" for="dinoSpeed">Run speed</label>
                   <div class="range-row">
-                    <input type="range" name="dinoSpeed" id="dinoSpeed" min="5" max="30" step="1" value="%V_DINOSPEED%" data-div="10" data-fixed="1">
-                    <span class="range-val" data-for="dinoSpeed">%F_DINOSPEED%</span>
+                    <input type="range" name="dinoSpeed" id="dinoSpeed" min="5" max="30" step="1" data-div="10" data-fixed="1">
+                    <span class="range-val" data-for="dinoSpeed"></span>
                   </div>
                   <p class="field-hint">How fast the world scrolls past. Default 1.2.</p>
                 </div>
@@ -560,34 +566,34 @@ static const char PAGE_HTML[] PROGMEM = R"PAGE(<!doctype html>
                   <label class="field-label" for="dinoCactusFreq">Cactus frequency</label>
                   <div class="select-wrap">
                     <select name="dinoCactusFreq" id="dinoCactusFreq">
-                      <option value="0" %SEL_DINOCACTUSFREQ_0%>Rare</option>
-                      <option value="1" %SEL_DINOCACTUSFREQ_1%>Normal</option>
-                      <option value="2" %SEL_DINOCACTUSFREQ_2%>Frequent</option>
+                      <option value="0">Rare</option>
+                      <option value="1">Normal</option>
+                      <option value="2">Frequent</option>
                     </select>
                   </div>
                   <p class="field-hint">How often a cactus rolls in to jump. Default Normal.</p>
                 </div>
               </div>
               <label class="check-row standalone" style="margin-top:16px">
-                <input type="checkbox" name="dinoShowClouds" id="dinoShowClouds" %CHK_DINOSHOWCLOUDS%>
+                <input type="checkbox" name="dinoShowClouds" id="dinoShowClouds">
                 <span class="check-box" aria-hidden="true"></span>
                 <span class="check-text"><strong>Clouds</strong><span class="ct-hint">Parallax clouds drifting in the background. Default on.</span></span>
               </label>
               <label class="check-row standalone" style="margin-top:12px">
-                <input type="checkbox" name="dinoShowDate" id="dinoShowDate" %CHK_DINOSHOWDATE%>
+                <input type="checkbox" name="dinoShowDate" id="dinoShowDate">
                 <span class="check-box" aria-hidden="true"></span>
                 <span class="check-text"><strong>Show date</strong><span class="ct-hint">Off centres the clock above the runner. Default off.</span></span>
               </label>
             </div>
 
             <!-- Matrix Rain (style 12) -->
-            <div class="subcard" id="matrixSettings" style="display:%DSP_CLOCKSTYLE_12%">
+            <div class="subcard" id="matrixSettings" style="display:none">
               <div class="grid-2">
                 <div class="field" style="margin-bottom:0">
                   <label class="field-label" for="matrixRainSpeed">Rain speed</label>
                   <div class="range-row">
-                    <input type="range" name="matrixRainSpeed" id="matrixRainSpeed" min="5" max="30" step="1" value="%V_MATRIXRAINSPEED%" data-div="10" data-fixed="1">
-                    <span class="range-val" data-for="matrixRainSpeed">%F_MATRIXRAINSPEED%</span>
+                    <input type="range" name="matrixRainSpeed" id="matrixRainSpeed" min="5" max="30" step="1" data-div="10" data-fixed="1">
+                    <span class="range-val" data-for="matrixRainSpeed"></span>
                   </div>
                   <p class="field-hint">How fast the glyphs fall. Default 1.2.</p>
                 </div>
@@ -595,30 +601,30 @@ static const char PAGE_HTML[] PROGMEM = R"PAGE(<!doctype html>
                   <label class="field-label" for="matrixRainDensity">Rain density</label>
                   <div class="select-wrap">
                     <select name="matrixRainDensity" id="matrixRainDensity">
-                      <option value="0" %SEL_MATRIXRAINDENSITY_0%>Sparse</option>
-                      <option value="1" %SEL_MATRIXRAINDENSITY_1%>Normal</option>
-                      <option value="2" %SEL_MATRIXRAINDENSITY_2%>Dense</option>
+                      <option value="0">Sparse</option>
+                      <option value="1">Normal</option>
+                      <option value="2">Dense</option>
                     </select>
                   </div>
                   <p class="field-hint">How many columns rain at once. Default Normal.</p>
                 </div>
               </div>
               <label class="check-row standalone" style="margin-top:16px">
-                <input type="checkbox" name="matrixShowDate" id="matrixShowDate" %CHK_MATRIXSHOWDATE%>
+                <input type="checkbox" name="matrixShowDate" id="matrixShowDate">
                 <span class="check-box" aria-hidden="true"></span>
                 <span class="check-text"><strong>Show date</strong><span class="ct-hint">Off centres the clock in the rain. Default off.</span></span>
               </label>
               <label class="check-row standalone" style="margin-top:12px">
-                <input type="checkbox" name="matrixTransparent" id="matrixTransparent" %CHK_MATRIXTRANSPARENT%>
+                <input type="checkbox" name="matrixTransparent" id="matrixTransparent">
                 <span class="check-box" aria-hidden="true"></span>
                 <span class="check-text"><strong>Transparent digits</strong><span class="ct-hint">Rain falls behind the digits instead of solid plates. Default off.</span></span>
               </label>
             </div>
 
             <!-- Weather Clock (style 14) -->
-            <div class="subcard" id="weatherSettings" style="display:%DSP_CLOCKSTYLE_14%">
+            <div class="subcard" id="weatherSettings" style="display:none">
               <label class="check-row standalone">
-                <input type="checkbox" name="weatherEnabled" id="weatherEnabled" %CHK_WEATHERENABLED%>
+                <input type="checkbox" name="weatherEnabled" id="weatherEnabled">
                 <span class="check-box" aria-hidden="true"></span>
                 <span class="check-text"><strong>Enable weather updates</strong><span class="ct-hint">Fetches conditions from Open-Meteo every 10 minutes (needs internet). Also adds a weather screen to Cycle All.</span></span>
               </label>
@@ -633,21 +639,21 @@ static const char PAGE_HTML[] PROGMEM = R"PAGE(<!doctype html>
               <div class="grid-2" style="margin-top:12px">
                 <div class="field" style="margin-bottom:0">
                   <label class="field-label" for="weatherLat">Latitude</label>
-                  <input type="number" name="weatherLat" id="weatherLat" step="0.0001" min="-90" max="90" value="%V_WEATHERLAT%">
+                  <input type="number" name="weatherLat" id="weatherLat" step="0.0001" min="-90" max="90">
                 </div>
                 <div class="field" style="margin-bottom:0">
                   <label class="field-label" for="weatherLon">Longitude</label>
-                  <input type="number" name="weatherLon" id="weatherLon" step="0.0001" min="-180" max="180" value="%V_WEATHERLON%">
+                  <input type="number" name="weatherLon" id="weatherLon" step="0.0001" min="-180" max="180">
                 </div>
               </div>
               <label class="check-row standalone" style="margin-top:16px">
-                <input type="checkbox" name="weatherFahrenheit" id="weatherFahrenheit" %CHK_WEATHERF%>
+                <input type="checkbox" name="weatherFahrenheit" id="weatherFahrenheit">
                 <span class="check-box" aria-hidden="true"></span>
                 <span class="check-text"><strong>Fahrenheit</strong><span class="ct-hint">Off shows Celsius.</span></span>
               </label>
               <div class="field" style="margin:16px 0 0">
                 <label class="field-label" for="weatherApiKey">API key (optional)</label>
-                <input type="text" name="weatherApiKey" id="weatherApiKey" maxlength="32" value="%V_WEATHERKEY%" placeholder="Leave empty for the free endpoint">
+                <input type="text" name="weatherApiKey" id="weatherApiKey" maxlength="32" placeholder="Leave empty for the free endpoint">
                 <p class="field-hint">Only needed with an Open-Meteo commercial subscription.</p>
               </div>
             </div>
@@ -660,8 +666,8 @@ static const char PAGE_HTML[] PROGMEM = R"PAGE(<!doctype html>
                 <label class="field-label" for="use24Hour">Time format</label>
                 <div class="select-wrap">
                   <select name="use24Hour" id="use24Hour">
-                    <option value="1" %SEL_USE24HOUR%>24-hour &middot; 14:30</option>
-                    <option value="0" %SEL_USE24HOUR_NOT%>12-hour &middot; 2:30 PM</option>
+                    <option value="1">24-hour &middot; 14:30</option>
+                    <option value="0">12-hour &middot; 2:30 PM</option>
                   </select>
                 </div>
               </div>
@@ -669,16 +675,16 @@ static const char PAGE_HTML[] PROGMEM = R"PAGE(<!doctype html>
                 <label class="field-label" for="dateFormat">Date format</label>
                 <div class="select-wrap">
                   <select name="dateFormat" id="dateFormat">
-                    <option value="0" %SEL_DATEFORMAT_0%>DD/MM/YYYY</option>
-                    <option value="1" %SEL_DATEFORMAT_1%>MM/DD/YYYY</option>
-                    <option value="2" %SEL_DATEFORMAT_2%>YYYY-MM-DD</option>
-                    <option value="3" %SEL_DATEFORMAT_3%>DD.MM.YYYY</option>
+                    <option value="0">DD/MM/YYYY</option>
+                    <option value="1">MM/DD/YYYY</option>
+                    <option value="2">YYYY-MM-DD</option>
+                    <option value="3">DD.MM.YYYY</option>
                   </select>
                 </div>
               </div>
             </div>
           </div>
-          %COLOR_GLOBAL%
+          <div id="colorsClock"></div>
         </section>
 
         <!-- DISPLAY -->
@@ -695,17 +701,17 @@ static const char PAGE_HTML[] PROGMEM = R"PAGE(<!doctype html>
                 <label class="field-label" for="colonBlinkMode">Clock colon</label>
                 <div class="select-wrap">
                   <select name="colonBlinkMode" id="colonBlinkMode">
-                    <option value="0" %SEL_COLONBLINKMODE_0%>Solid</option>
-                    <option value="1" %SEL_COLONBLINKMODE_1%>Blinking</option>
-                    <option value="2" %SEL_COLONBLINKMODE_2%>Off</option>
+                    <option value="0">Solid</option>
+                    <option value="1">Blinking</option>
+                    <option value="2">Off</option>
                   </select>
                 </div>
               </div>
               <div class="field" style="margin-bottom:0">
                 <label class="field-label" for="colonBlinkRate">Blink rate</label>
                 <div class="range-row">
-                  <input type="range" name="colonBlinkRate" id="colonBlinkRate" min="5" max="50" step="5" value="%V_COLONBLINKRATE%" data-div="10" data-fixed="1" data-suffix="Hz">
-                  <span class="range-val" data-for="colonBlinkRate">%F_COLONBLINKRATE%Hz</span>
+                  <input type="range" name="colonBlinkRate" id="colonBlinkRate" min="5" max="50" step="5" data-div="10" data-fixed="1" data-suffix="Hz">
+                  <span class="range-val" data-for="colonBlinkRate"></span>
                 </div>
                   <p class="field-hint">Blink speed. 1.0 Hz is once per second.</p>
               </div>
@@ -721,54 +727,54 @@ static const char PAGE_HTML[] PROGMEM = R"PAGE(<!doctype html>
             <div class="field">
               <label class="field-label" for="displayBrightness">Daytime brightness</label>
               <div class="range-row">
-                <input type="range" name="displayBrightness" id="displayBrightness" min="%MINBRIGHT%" max="255" step="5" value="%V_DISPLAYBRIGHTNESS%" data-pct="1">
-                <span class="range-val" data-for="displayBrightness">%PCT_DISPLAYBRIGHTNESS%%</span>
+                <input type="range" name="displayBrightness" id="displayBrightness" min="1" max="255" step="5" data-pct="1">
+                <span class="range-val" data-for="displayBrightness"></span>
               </div>
-              <p class="field-hint">%HELP_DISPBRIGHT%</p>
+              <p class="field-hint">Brightness control (1-100%). The panel can be turned fully off via the runtime API (/api/display/off).</p>
             </div>
           </div>
 
           <div class="card">
             <h2 class="card-title">Night mode</h2>
             <label class="check-row standalone">
-              <input type="checkbox" name="enableScheduledDimming" id="enableScheduledDimming" %CHK_ENABLESCHEDULEDDIMMING%>
+              <input type="checkbox" name="enableScheduledDimming" id="enableScheduledDimming">
               <span class="check-box" aria-hidden="true"></span>
               <span class="check-text"><strong>Scheduled dimming</strong><span class="ct-hint">Automatically dim the panel during set hours.</span></span>
             </label>
-            <div class="subcard" id="nightFields" style="display:%DSP_ENABLESCHEDULEDDIMMING%">
+            <div class="subcard" id="nightFields" style="display:none">
               <div class="grid-2">
                 <div class="field" style="margin-bottom:0">
                   <label class="field-label" for="dimStartTime">Dim from</label>
-                  <input type="time" name="dimStartTime" id="dimStartTime" value="%V_DIMSTART%">
+                  <input type="time" name="dimStartTime" id="dimStartTime">
                 </div>
                 <div class="field" style="margin-bottom:0">
                   <label class="field-label" for="dimEndTime">Until</label>
-                  <input type="time" name="dimEndTime" id="dimEndTime" value="%V_DIMEND%">
+                  <input type="time" name="dimEndTime" id="dimEndTime">
                 </div>
               </div>
               <div class="field" style="margin:18px 0 0">
                 <label class="field-label" for="dimBrightness">Night brightness</label>
                 <div class="range-row">
-                  <input type="range" name="dimBrightness" id="dimBrightness" min="%MINBRIGHT%" max="255" step="5" value="%V_DIMBRIGHTNESS%" data-pct="1">
-                  <span class="range-val" data-for="dimBrightness">%PCT_DIMBRIGHTNESS%%</span>
+                  <input type="range" name="dimBrightness" id="dimBrightness" min="1" max="255" step="5" data-pct="1">
+                  <span class="range-val" data-for="dimBrightness"></span>
                 </div>
-                <p class="field-hint">%HELP_DIMBRIGHT%</p>
+                <p class="field-hint">Brightness level during scheduled dim period (minimum 1%).</p>
               </div>
             </div>
             <label class="check-row standalone" style="margin-top:14px">
-              <input type="checkbox" name="enableScheduledOff" id="enableScheduledOff" %CHK_ENABLESCHEDULEDOFF%>
+              <input type="checkbox" name="enableScheduledOff" id="enableScheduledOff">
               <span class="check-box" aria-hidden="true"></span>
               <span class="check-text"><strong>Scheduled power off</strong><span class="ct-hint">Turn the panel fully dark during set hours to spare the LEDs. Home Assistant can also toggle it live via /api/display/on and /api/display/off.</span></span>
             </label>
-            <div class="subcard" id="offFields" style="display:%DSP_ENABLESCHEDULEDOFF%">
+            <div class="subcard" id="offFields" style="display:none">
               <div class="grid-2">
                 <div class="field" style="margin-bottom:0">
                   <label class="field-label" for="offStartTime">Off from</label>
-                  <input type="time" name="offStartTime" id="offStartTime" value="%V_OFFSTART%">
+                  <input type="time" name="offStartTime" id="offStartTime">
                 </div>
                 <div class="field" style="margin-bottom:0">
                   <label class="field-label" for="offEndTime">Until</label>
-                  <input type="time" name="offEndTime" id="offEndTime" value="%V_OFFEND%">
+                  <input type="time" name="offEndTime" id="offEndTime">
                 </div>
               </div>
             </div>
@@ -780,18 +786,18 @@ static const char PAGE_HTML[] PROGMEM = R"PAGE(<!doctype html>
               <label class="field-label" for="ambientStyle">Effect</label>
               <div class="select-wrap">
                 <select name="ambientStyle" id="ambientStyle">
-                  <option value="0" %SEL_AMBIENTSTYLE_0%>Space Invaders</option>
-                  <option value="1" %SEL_AMBIENTSTYLE_1%>Pac-Man chase</option>
-                  <option value="3" %SEL_AMBIENTSTYLE_3%>Starfield</option>
-                  <option value="4" %SEL_AMBIENTSTYLE_4%>Aquarium</option>
-                  <option value="5" %SEL_AMBIENTSTYLE_5%>Burning room (This is fine)</option>
-                  <option value="6" %SEL_AMBIENTSTYLE_6%>Custom animation (uploaded)</option>
+                  <option value="0">Space Invaders</option>
+                  <option value="1">Pac-Man chase</option>
+                  <option value="3">Starfield</option>
+                  <option value="4">Aquarium</option>
+                  <option value="5">Burning room (This is fine)</option>
+                  <option value="6">Custom animation (uploaded)</option>
                 </select>
               </div>
             </div>
             <div class="field" id="animCustomField" style="display:none;margin-top:16px">
               <label class="field-label" for="ambientCustomFile">Custom animation</label>
-              <div class="select-wrap"><select name="ambientCustomFile" id="ambientCustomFile" data-cur="%V_AMBIENTCUSTOMFILE%"></select></div>
+              <div class="select-wrap"><select name="ambientCustomFile" id="ambientCustomFile" data-cur=""></select></div>
               <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;align-items:center">
                 <input type="file" id="animFile" accept=".pca">
                 <button type="button" class="btn" id="animUploadBtn">Upload</button>
@@ -800,7 +806,7 @@ static const char PAGE_HTML[] PROGMEM = R"PAGE(<!doctype html>
               <p class="field-hint" id="animStatus">Convert and preview a GIF on the companion Animations page, or use tools/gif2pca.py. This uploader accepts converted .pca files. Short clips work on 4MB boards.</p>
             </div>
             <label class="check-row standalone" style="margin-top:16px">
-              <input type="checkbox" name="ambientShowClock" id="ambientShowClock" %CHK_AMBIENTSHOWCLOCK%>
+              <input type="checkbox" name="ambientShowClock" id="ambientShowClock">
               <span class="check-box" aria-hidden="true"></span>
               <span class="check-text"><strong>Show small clock</strong><span class="ct-hint">Keeps a small HH:MM in the corner of the effect.</span></span>
             </label>
@@ -810,19 +816,19 @@ static const char PAGE_HTML[] PROGMEM = R"PAGE(<!doctype html>
             </div>
             <p class="field-hint" id="ambRunStatus">Start runs the saved effect until you stop it (or the device reboots). Save first if you changed the effect.</p>
             <label class="check-row standalone" style="margin-top:16px">
-              <input type="checkbox" name="ambientEnabled" id="ambientEnabled" %CHK_AMBIENTENABLED%>
+              <input type="checkbox" name="ambientEnabled" id="ambientEnabled">
               <span class="check-box" aria-hidden="true"></span>
               <span class="check-text"><strong>Scheduled ambient mode</strong><span class="ct-hint">Also show the effect automatically during set hours.</span></span>
             </label>
-            <div class="subcard" id="ambientFields" style="display:%DSP_AMBIENTENABLED%">
+            <div class="subcard" id="ambientFields" style="display:none">
               <div class="grid-2">
                 <div class="field" style="margin-bottom:0">
                   <label class="field-label" for="ambientStartHour">From</label>
-                  <div class="select-wrap"><select name="ambientStartHour" id="ambientStartHour">%OPT_AMBSTART%</select></div>
+                  <div class="select-wrap"><select name="ambientStartHour" id="ambientStartHour"></select></div>
                 </div>
                 <div class="field" style="margin-bottom:0">
                   <label class="field-label" for="ambientEndHour">Until</label>
-                  <div class="select-wrap"><select name="ambientEndHour" id="ambientEndHour">%OPT_AMBEND%</select></div>
+                  <div class="select-wrap"><select name="ambientEndHour" id="ambientEndHour"></select></div>
                 </div>
               </div>
             </div>
@@ -831,7 +837,7 @@ static const char PAGE_HTML[] PROGMEM = R"PAGE(<!doctype html>
           <div class="card">
             <h2 class="card-title">Notifications</h2>
             <label class="check-row standalone">
-              <input type="checkbox" name="notifyEnabled" id="notifyEnabled" %CHK_NOTIFYENABLED%>
+              <input type="checkbox" name="notifyEnabled" id="notifyEnabled">
               <span class="check-box" aria-hidden="true"></span>
               <span class="check-text"><strong>Notification banner</strong><span class="ct-hint">Allow POST /api/notify to show a scrolling message over any screen (Home Assistant, scripts).</span></span>
             </label>
@@ -839,8 +845,8 @@ static const char PAGE_HTML[] PROGMEM = R"PAGE(<!doctype html>
               <label class="field-label" for="notifyPosition">Banner position</label>
               <div class="select-wrap">
                 <select name="notifyPosition" id="notifyPosition">
-                  <option value="0" %SEL_NOTIFYPOSITION_0%>Bottom</option>
-                  <option value="1" %SEL_NOTIFYPOSITION_1%>Top</option>
+                  <option value="0">Bottom</option>
+                  <option value="1">Top</option>
                 </select>
               </div>
               <p class="field-hint">Default edge for the banner. A request can override it per message.</p>
@@ -859,7 +865,7 @@ static const char PAGE_HTML[] PROGMEM = R"PAGE(<!doctype html>
             <h2 class="card-title">Effect</h2>
             <div class="field">
               <label class="field-label" for="vizStyle">Visualizer style</label>
-              <div class="select-wrap"><select name="vizStyle" id="vizStyle">%OPT_VIZSTYLE%</select></div>
+              <div class="select-wrap"><select name="vizStyle" id="vizStyle"><option value="0">Classic EQ</option><option value="1">Neon Mirror</option><option value="2">Phosphor Waterfall</option><option value="3">Purple LED Stage</option><option value="5">Starfield Overdrive</option><option value="6">Oscilloscope</option></select></div>
               <p class="field-hint">Classic EQ: original bars. Neon Mirror: cyan and magenta pulses. Phosphor Waterfall: scrolling green and amber trails. Purple LED Stage: curved purple and pink LED waves pulsing with the music. Starfield Overdrive: persistent music-pulsing trails, short hyperspace bursts and bright star tips. Oscilloscope: the live waveform on a lab-scope graticule with a phosphor trail; needs the companion app from this release. Save settings to apply.</p>
             </div>
             <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
@@ -868,7 +874,7 @@ static const char PAGE_HTML[] PROGMEM = R"PAGE(<!doctype html>
             </div>
             <p class="field-hint" id="vizRunStatus">Runs until you stop it; returns to normal mode if the audio stream stops for 10s (and resumes when the stream returns).</p>
             <label class="check-row standalone" style="margin-top:12px">
-              <input type="checkbox" name="vizShowClock" id="vizShowClock" %CHK_VIZSHOWCLOCK%>
+              <input type="checkbox" name="vizShowClock" id="vizShowClock">
               <span class="check-box" aria-hidden="true"></span>
               <span class="check-text"><strong>Show small clock</strong><span class="ct-hint">Keeps a small HH:MM in the corner over the bars.</span></span>
             </label>
@@ -878,34 +884,34 @@ static const char PAGE_HTML[] PROGMEM = R"PAGE(<!doctype html>
             <h2 class="card-title">Colors and options</h2>
             <div id="vizClassicColors" style="display:none">
               <p class="field-hint">Colors below apply to Classic EQ. The other styles use their own palettes.</p>
-              <div style="margin-top:8px">%COLOR_VIZ%</div>
+              <div style="margin-top:8px" id="colorsViz"></div>
             </div>
             <div id="vizScopeOptions" style="display:none">
               <p class="field-hint">Oscilloscope colors. Defaults: green graticule, yellow trace, red at full deflection.</p>
-              <div style="margin-top:8px">%COLOR_SCOPE%</div>
+              <div style="margin-top:8px" id="colorsScope"></div>
               <label class="check-row standalone" style="margin-top:12px">
-                <input type="checkbox" name="scopeGrid" id="scopeGrid" %CHK_SCOPEGRID%>
+                <input type="checkbox" name="scopeGrid" id="scopeGrid">
                 <span class="check-box" aria-hidden="true"></span>
                 <span class="check-text"><strong>Show graticule</strong><span class="ct-hint">The grid and centre line behind the trace. Default on.</span></span>
               </label>
               <label class="check-row standalone" style="margin-top:8px">
-                <input type="checkbox" name="scopeFill" id="scopeFill" %CHK_SCOPEFILL%>
+                <input type="checkbox" name="scopeFill" id="scopeFill">
                 <span class="check-box" aria-hidden="true"></span>
                 <span class="check-text"><strong>Fill to centre line</strong><span class="ct-hint">Solid silhouette instead of a bare line. Default off.</span></span>
               </label>
               <label class="check-row standalone" style="margin-top:8px">
-                <input type="checkbox" name="scopeFlat" id="scopeFlat" %CHK_SCOPEFLAT%>
+                <input type="checkbox" name="scopeFlat" id="scopeFlat">
                 <span class="check-box" aria-hidden="true"></span>
                 <span class="check-text"><strong>Flat trace color</strong><span class="ct-hint">One color everywhere instead of fading to the deflection color. Default off.</span></span>
               </label>
               <div class="field" style="margin-top:12px">
                 <label class="field-label" for="scopeTrail">Phosphor trail</label>
-                <div class="select-wrap"><select name="scopeTrail" id="scopeTrail">%OPT_SCOPETRAIL%</select></div>
+                <div class="select-wrap"><select name="scopeTrail" id="scopeTrail"></select></div>
                 <p class="field-hint">Ghost traces behind the live one. 0 is a single sharp line, 4 smears the most. Default 3.</p>
               </div>
               <div class="field" style="margin-top:12px">
                 <label class="field-label" for="scopeGain">Vertical gain (%)</label>
-                <input type="number" name="scopeGain" id="scopeGain" min="50" max="200" step="5" value="%V_SCOPEGAIN%">
+                <input type="number" name="scopeGain" id="scopeGain" min="50" max="200" step="5">
                 <p class="field-hint">Trace height, 50 to 200. Above 100 the loud parts flatten against the edges. Default 100.</p>
               </div>
               <label class="check-row standalone" style="margin-top:12px">
@@ -931,9 +937,9 @@ static const char PAGE_HTML[] PROGMEM = R"PAGE(<!doctype html>
                 <label class="field-label" for="clockPosition">Clock position</label>
                 <div class="select-wrap">
                   <select name="clockPosition" id="clockPosition">
-                    <option value="0" %SEL_CLOCKPOSITION_0%>Center (top)</option>
-                    <option value="1" %SEL_CLOCKPOSITION_1%>Left column &middot; row 1</option>
-                    <option value="2" %SEL_CLOCKPOSITION_2%>Right column &middot; row 1</option>
+                    <option value="0">Center (top)</option>
+                    <option value="1">Left column &middot; row 1</option>
+                    <option value="2">Right column &middot; row 1</option>
                   </select>
                 </div>
               </div>
@@ -941,21 +947,21 @@ static const char PAGE_HTML[] PROGMEM = R"PAGE(<!doctype html>
                 <label class="field-label" for="rowMode">Row mode</label>
                 <div class="select-wrap">
                   <select name="rowMode" id="rowMode">
-                    <option value="0" %SEL_DISPLAYROWMODE_0%>5 rows &middot; 13px (optimised)</option>
-                    <option value="1" %SEL_DISPLAYROWMODE_1%>6 rows &middot; 10px (compact)</option>
-                    <option value="2" %SEL_DISPLAYROWMODE_2%>Large 2-row (double size)</option>
-                    <option value="3" %SEL_DISPLAYROWMODE_3%>Large 3-row (double size)</option>
+                    <option value="0">5 rows &middot; 13px (optimised)</option>
+                    <option value="1">6 rows &middot; 10px (compact)</option>
+                    <option value="2">Large 2-row (double size)</option>
+                    <option value="3">Large 3-row (double size)</option>
                   </select>
                 </div>
               </div>
             </div>
             <div class="field">
               <label class="field-label" for="clockOffset">Clock offset (px)</label>
-              <input type="number" name="clockOffset" id="clockOffset" value="%V_CLOCKOFFSET%" min="-20" max="20">
+              <input type="number" name="clockOffset" id="clockOffset" min="-20" max="20">
               <p class="field-hint">Fine-tune the horizontal clock position, -20 to +20 pixels.</p>
             </div>
             <label class="check-row standalone">
-              <input type="checkbox" name="showClock" id="showClock" value="1" %CHK_SHOWCLOCK%>
+              <input type="checkbox" name="showClock" id="showClock" value="1">
               <span class="check-box" aria-hidden="true"></span>
               <span class="check-text"><strong>Show clock in metrics view</strong></span>
             </label>
@@ -965,18 +971,18 @@ static const char PAGE_HTML[] PROGMEM = R"PAGE(<!doctype html>
             <h2 class="card-title">Number formats</h2>
             <div class="check-list">
               <label class="check-row">
-                <input type="checkbox" name="rpmKFormat" id="rpmKFormat" %CHK_USERPMKFORMAT%>
+                <input type="checkbox" name="rpmKFormat" id="rpmKFormat">
                 <span class="check-box" aria-hidden="true"></span>
                 <span class="check-text"><strong>K-format for RPM</strong><span class="ct-hint">Show <code>1.8K</code> instead of <code>1800RPM</code> for fans and pumps.</span></span>
               </label>
               <label class="check-row">
-                <input type="checkbox" name="netMBFormat" id="netMBFormat" %CHK_USENETWORKMBFORMAT%>
+                <input type="checkbox" name="netMBFormat" id="netMBFormat">
                 <span class="check-box" aria-hidden="true"></span>
                 <span class="check-text"><strong>M-format for network</strong><span class="ct-hint">Show <code>1.2M</code> instead of <code>1200KB/s</code>.</span></span>
               </label>
             </div>
           </div>
-          %COLOR_PCMETRICS%
+          <div id="colorsPc"></div>
         </section>
 
         <!-- VISIBLE METRICS -->
@@ -1021,8 +1027,8 @@ static const char PAGE_HTML[] PROGMEM = R"PAGE(<!doctype html>
             <h2 class="card-title">Identity</h2>
             <div class="field" style="margin-bottom:0">
               <label class="field-label" for="deviceName">Device name</label>
-              <input type="text" name="deviceName" id="deviceName" value="%V_DEVICENAME%" maxlength="31" pattern="^[a-zA-Z][a-zA-Z0-9-]*$">
-              <p class="field-hint">Reachable at <code><span id="hostPreview">%V_DEVICENAME%</span>.local</code>. Letters, numbers and hyphens only.</p>
+              <input type="text" name="deviceName" id="deviceName" maxlength="31" pattern="^[a-zA-Z][a-zA-Z0-9-]*$">
+              <p class="field-hint">Reachable at <code><span id="hostPreview"></span>.local</code>. Letters, numbers and hyphens only.</p>
             </div>
           </div>
 
@@ -1032,18 +1038,18 @@ static const char PAGE_HTML[] PROGMEM = R"PAGE(<!doctype html>
               <label class="field-label" for="useStaticIP">Address mode</label>
               <div class="select-wrap">
                 <select name="useStaticIP" id="useStaticIP">
-                  <option value="0" %SEL_USESTATICIP_NOT%>DHCP &middot; automatic</option>
-                  <option value="1" %SEL_USESTATICIP%>Static IP</option>
+                  <option value="0">DHCP &middot; automatic</option>
+                  <option value="1">Static IP</option>
                 </select>
               </div>
             </div>
-            <div class="subcard" id="staticFields" style="display:%DSP_USESTATICIP%">
+            <div class="subcard" id="staticFields" style="display:none">
               <div class="grid-2">
-                <div class="field" style="margin-bottom:0"><label class="field-label" for="staticIP">Static IP</label><input type="text" name="staticIP" id="staticIP" value="%V_STATICIP%" placeholder="192.168.1.100" pattern="^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$"></div>
-                <div class="field" style="margin-bottom:0"><label class="field-label" for="gateway">Gateway</label><input type="text" name="gateway" id="gateway" value="%V_GATEWAY%" placeholder="192.168.1.1" pattern="^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$"></div>
-                <div class="field" style="margin-bottom:0"><label class="field-label" for="subnet">Subnet mask</label><input type="text" name="subnet" id="subnet" value="%V_SUBNET%" placeholder="255.255.255.0" pattern="^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$"></div>
-                <div class="field" style="margin-bottom:0"><label class="field-label" for="dns1">Primary DNS</label><input type="text" name="dns1" id="dns1" value="%V_DNS1%" placeholder="8.8.8.8" pattern="^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$"></div>
-                <div class="field" style="margin-bottom:0"><label class="field-label" for="dns2">Secondary DNS</label><input type="text" name="dns2" id="dns2" value="%V_DNS2%" placeholder="8.8.4.4" pattern="^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$"></div>
+                <div class="field" style="margin-bottom:0"><label class="field-label" for="staticIP">Static IP</label><input type="text" name="staticIP" id="staticIP" placeholder="192.168.1.100" pattern="^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$"></div>
+                <div class="field" style="margin-bottom:0"><label class="field-label" for="gateway">Gateway</label><input type="text" name="gateway" id="gateway" placeholder="192.168.1.1" pattern="^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$"></div>
+                <div class="field" style="margin-bottom:0"><label class="field-label" for="subnet">Subnet mask</label><input type="text" name="subnet" id="subnet" placeholder="255.255.255.0" pattern="^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$"></div>
+                <div class="field" style="margin-bottom:0"><label class="field-label" for="dns1">Primary DNS</label><input type="text" name="dns1" id="dns1" placeholder="8.8.8.8" pattern="^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$"></div>
+                <div class="field" style="margin-bottom:0"><label class="field-label" for="dns2">Secondary DNS</label><input type="text" name="dns2" id="dns2" placeholder="8.8.4.4" pattern="^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$"></div>
               </div>
             </div>
             <div class="note warn">
@@ -1051,7 +1057,7 @@ static const char PAGE_HTML[] PROGMEM = R"PAGE(<!doctype html>
               <div>Switching to a static IP reboots the device. Make sure the address doesn't clash with anything else on your network.</div>
             </div>
             <label class="check-row standalone" style="margin-top:16px">
-              <input type="checkbox" name="showIPAtBoot" id="showIPAtBoot" value="1" %CHK_SHOWIPATBOOT%>
+              <input type="checkbox" name="showIPAtBoot" id="showIPAtBoot" value="1">
               <span class="check-box" aria-hidden="true"></span>
               <span class="check-text"><strong>Show IP at startup</strong><span class="ct-hint">Display the IP address on the screen for 5 seconds after boot.</span></span>
             </label>
@@ -1060,8 +1066,8 @@ static const char PAGE_HTML[] PROGMEM = R"PAGE(<!doctype html>
           <div class="card">
             <h2 class="card-title">Time servers (NTP)</h2>
             <div class="grid-2">
-              <div class="field" style="margin-bottom:0"><label class="field-label" for="ntpServer1">Primary NTP</label><input type="text" name="ntpServer1" id="ntpServer1" value="%V_NTPSERVER1%" maxlength="63" placeholder="pool.ntp.org"></div>
-              <div class="field" style="margin-bottom:0"><label class="field-label" for="ntpServer2">Secondary NTP</label><input type="text" name="ntpServer2" id="ntpServer2" value="%V_NTPSERVER2%" maxlength="63" placeholder="time.nist.gov"></div>
+              <div class="field" style="margin-bottom:0"><label class="field-label" for="ntpServer1">Primary NTP</label><input type="text" name="ntpServer1" id="ntpServer1" maxlength="63" placeholder="pool.ntp.org"></div>
+              <div class="field" style="margin-bottom:0"><label class="field-label" for="ntpServer2">Secondary NTP</label><input type="text" name="ntpServer2" id="ntpServer2" maxlength="63" placeholder="time.nist.gov"></div>
             </div>
             <div style="margin-top:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
               <button type="button" class="btn" id="ntpTestBtn">Test</button>
@@ -1082,7 +1088,7 @@ static const char PAGE_HTML[] PROGMEM = R"PAGE(<!doctype html>
             <div class="field" style="margin-bottom:0">
               <label class="field-label" for="timezoneRegion">Timezone region</label>
               <div class="select-wrap">
-                <select name="timezoneRegion" id="timezoneRegion">%OPT_TZ%</select>
+                <select name="timezoneRegion" id="timezoneRegion"></select>
               </div>
               <p class="field-hint">The system automatically switches between standard and daylight saving time for the selected region.</p>
             </div>
@@ -1099,11 +1105,11 @@ static const char PAGE_HTML[] PROGMEM = R"PAGE(<!doctype html>
           <div class="card">
             <h2 class="card-title">Update over the air</h2>
             <div class="crt oled-preview" style="max-width:360px">
-              <div class="oled-pv-head"><span class="ttl">installed</span><span class="meta">%BOARDNAME% &middot; %DISPLAYMODEL%</span></div>
+              <div class="oled-pv-head"><span class="ttl">installed</span><span class="meta">ESP32-S3 &middot; HUB75 Matrix</span></div>
               <dl class="sr-rows" style="position:relative;z-index:1">
-                <div class="sr-row"><dt>version</dt><dd>v%VER%</dd></div>
-                <div class="sr-row"><dt>built</dt><dd>%BUILT%</dd></div>
-                <div class="sr-row"><dt>free heap</dt><dd id="fwHeap">%HEAP% KB</dd></div>
+                <div class="sr-row"><dt>version</dt><dd id="fwVer">--</dd></div>
+                <div class="sr-row"><dt>built</dt><dd id="fwBuilt">--</dd></div>
+                <div class="sr-row"><dt>free heap</dt><dd id="fwHeap">--</dd></div>
               </dl>
             </div>
             <div class="ota-drop" id="otaDrop">
@@ -1145,7 +1151,7 @@ static const char PAGE_HTML[] PROGMEM = R"PAGE(<!doctype html>
         </section>
 
       </form>
-      %PANEL_PAGES%
+      <div data-need="panel">%PANEL_PAGES%</div>
     </div>
   </main>
 </div>
@@ -1153,32 +1159,31 @@ static const char PAGE_HTML[] PROGMEM = R"PAGE(<!doctype html>
 
 <div class="save-bar">
   <div class="save-bar-inner">
-    <div class="save-meta clean" id="saveMeta"><span class="dot"></span><span class="txt">All saved</span></div>
-    <button type="submit" form="cfgForm" class="btn btn-accent btn-lg" id="saveBtn">Save &amp; apply</button>
+    <div class="save-meta wait" id="saveMeta"><span class="dot"></span><span class="txt">Loading settings...</span></div>
+    <button type="button" class="btn" id="cfgRetry" style="display:none">Retry</button>
+    <button type="submit" form="cfgForm" class="btn btn-accent btn-lg" id="saveBtn" disabled>Save &amp; apply</button>
   </div>
 </div>
 
-<script>window.SOLED={maxRows:%JS_MAXROWS%,isLarge:%JS_ISLARGE%,minBright:%MINBRIGHT%,ver:"%VER%"};</script>
 <script src="/portal.js?v=%ASSETVER%"></script>
 </body>
 </html>
 )PAGE";
 
 // ============================================================================
-//  PORTAL_CSS - served verbatim from /portal.css (no %TOKEN% substitution).
+//  PORTAL_CSS - served from /portal.css.
 // ============================================================================
-static const char PORTAL_CSS[] PROGMEM = R"CSS(:root{--paper:#f4f0e7;--paper-2:#efe9db;--sidebar:#f1ece0;--card:#fcfaf4;--card-2:#f6f1e6;--inset:#eee7d6;--ink:#24221c;--ink-soft:#3a382f;--mute:#6c675b;--dim:#8a8472;--faint:#a39c89;--line:#e4ddcc;--line-soft:#ece6d7;--line-2:#d4cbb5;--accent:#1f8a5b;--accent-d:#176c47;--accent-l:#2ba169;--accent-soft:rgba(31,138,91,0.12);--accent-line:rgba(31,138,91,0.32);--on-accent:#ffffff;--ok:#1f8a5b;--warn:#b8740d;--err:#c0392b;--crt-bg:#131e18;--crt-fg:#84f3ad;--crt-dim:#4d8a67;--crt-line:#0c140f;--crt-glow:rgba(132,243,173,0.35);--sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;--mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,"Liberation Mono",monospace;--r-sm:6px;--r-md:9px;--r-lg:14px;--sidebar-w:248px;--topbar-h:58px;--shadow-card:0 1px 2px rgba(80,65,35,0.05);--shadow-pop:0 14px 40px rgba(40,33,18,0.16)}[data-accent="amber"]{--accent:#b97512;--accent-d:#97600d;--accent-l:#cf8a1f;--accent-soft:rgba(185,117,18,0.13);--accent-line:rgba(185,117,18,0.34);--ok:#1f8a5b;--crt-bg:#1a1209;--crt-fg:#ffcf7a;--crt-dim:#9c7636;--crt-line:#0d0903;--crt-glow:rgba(255,207,122,0.38)}[data-mode="dark"]{--paper:#161512;--paper-2:#1e1c17;--sidebar:#131210;--card:#201e18;--card-2:#1a1813;--inset:#14130e;--ink:#ece7d8;--ink-soft:#d8d2c0;--mute:#aaa28c;--dim:#847c66;--faint:#5f5847;--line:#2c2920;--line-soft:#24211a;--line-2:#403b2c;--accent:#36b478;--accent-d:#44c98a;--accent-l:#2ba169;--accent-soft:rgba(54,180,120,0.16);--accent-line:rgba(54,180,120,0.40);--ok:#36b478;--shadow-card:0 1px 2px rgba(0,0,0,0.35)}[data-mode="dark"][data-accent="amber"]{--accent:#e0a23f;--accent-d:#f0b556;--accent-l:#c98c2f;--accent-soft:rgba(224,162,63,0.16);--accent-line:rgba(224,162,63,0.40);--crt-bg:#1a1209;--crt-fg:#ffcf7a;--crt-dim:#9c7636;--crt-line:#0d0903;--crt-glow:rgba(255,207,122,0.38)}*{box-sizing:border-box}html,body{margin:0;padding:0;background:var(--paper);color:var(--ink);font-family:var(--sans);font-size:15px;line-height:1.55;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;min-height:100vh}body{transition:background 200ms ease,color 200ms ease}a{color:var(--accent-d);text-decoration:none;transition:color 120ms ease}a:hover{color:var(--accent)}::selection{background:var(--accent-soft)}.app{background:var(--paper);min-height:100vh}.topbar{position:sticky;top:0;z-index:50;height:var(--topbar-h);display:flex;align-items:center;gap:14px;padding:0 24px;background:color-mix(in oklab,var(--paper) 90%,transparent);backdrop-filter:blur(10px) saturate(1.05);border-bottom:1px solid var(--line)}.tb-brand{display:flex;align-items:center;gap:10px;min-width:0}.brand-mark{width:28px;height:28px;border-radius:7px;background:var(--accent);display:grid;place-items:center;flex:none;box-shadow:0 0 0 3px var(--accent-soft)}.brand-mark::after{content:"";width:13px;height:13px;background:linear-gradient(#fff 0 0) 0 0 / 5.5px 5.5px no-repeat,linear-gradient(#fff 0 0) 7.5px 7.5px / 5.5px 5.5px no-repeat,linear-gradient(rgba(255,255,255,.55) 0 0) 7.5px 0 / 5.5px 5.5px no-repeat,linear-gradient(rgba(255,255,255,.55) 0 0) 0 7.5px / 5.5px 5.5px no-repeat}.tb-name{font-weight:600;color:var(--ink);letter-spacing:-0.01em;font-size:15px}.tb-ver{font-family:var(--mono);font-size:11px;color:var(--mute);background:var(--paper-2);border:1px solid var(--line);border-radius:999px;padding:2px 8px}.tb-sep{width:1px;height:22px;background:var(--line-2);margin:0 4px}.tb-crumb{font-size:14px;color:var(--mute);font-weight:500}.tb-right{margin-left:auto;display:flex;align-items:center;gap:12px}.hamburger{display:none;width:34px;height:34px;flex:none;padding:0;cursor:pointer;align-items:center;justify-content:center;background:var(--paper-2);border:1px solid var(--line);border-radius:8px;transition:background 120ms ease,border-color 120ms ease}.hamburger:hover{background:var(--card);border-color:var(--line-2)}.hamburger>span,.hamburger>span::before,.hamburger>span::after{content:"";display:block;width:16px;height:1.6px;border-radius:2px;background:var(--ink);transition:transform 180ms ease,opacity 120ms ease}.hamburger>span{position:relative}.hamburger>span::before{position:absolute;left:0;top:-5px}.hamburger>span::after{position:absolute;left:0;top:5px}html.nav-open .hamburger>span{background:transparent}html.nav-open .hamburger>span::before{transform:translateY(5px) rotate(45deg)}html.nav-open .hamburger>span::after{transform:translateY(-5px) rotate(-45deg)}.nav-scrim{display:none}.acc-pick{display:flex;align-items:center;gap:6px}.acc-pick .lab{font-family:var(--mono);font-size:10px;letter-spacing:0.07em;text-transform:uppercase;color:var(--faint);margin-right:2px}.acc-sw{width:22px;height:22px;border-radius:999px;border:2px solid transparent;cursor:pointer;padding:0;background:var(--paper-2);display:grid;place-items:center;transition:border-color 120ms ease,transform 80ms ease}.acc-sw:hover{transform:scale(1.08)}.acc-sw i{width:13px;height:13px;border-radius:999px;display:block}.acc-sw[data-acc="green"] i{background:#1f8a5b}.acc-sw[data-acc="amber"] i{background:#b97512}.acc-sw.on{border-color:var(--accent)}.mode-toggle{display:inline-flex;background:var(--paper-2);border:1px solid var(--line);border-radius:999px;padding:3px;gap:2px}.mode-toggle button{font:inherit;font-family:var(--mono);font-size:11.5px;cursor:pointer;border:0;background:transparent;color:var(--mute);padding:5px 11px;border-radius:999px;display:inline-flex;align-items:center;gap:6px;transition:background 120ms ease,color 120ms ease}.mode-toggle button:hover{color:var(--ink)}.mode-toggle button.on{background:var(--card);color:var(--ink);box-shadow:var(--shadow-card)}.mode-toggle .ic{width:11px;height:11px;border-radius:999px}.mode-toggle button[data-mode="light"] .ic{background:#e0a23f;box-shadow:0 0 0 2px color-mix(in oklab,#e0a23f 30%,transparent)}.mode-toggle button[data-mode="dark"] .ic{background:transparent;box-shadow:inset -3px -1px 0 0 var(--mute)}.workspace{display:grid;grid-template-columns:var(--sidebar-w) minmax(0,1fr);align-items:start;background:var(--paper);min-height:calc(100vh - var(--topbar-h))}.sidebar{position:sticky;top:var(--topbar-h);align-self:start;height:calc(100vh - var(--topbar-h));overflow-y:auto;border-right:1px solid var(--line);background:var(--sidebar);padding:22px 16px 78px;display:flex;flex-direction:column;gap:22px;scrollbar-width:thin;scrollbar-color:var(--line-2) transparent}.sidebar::-webkit-scrollbar{width:6px}.sidebar::-webkit-scrollbar-thumb{background:var(--line-2);border-radius:999px}.nav-group{display:flex;flex-direction:column;gap:2px}.nav-group + .nav-group{margin-top:14px}.nav-label{font-family:var(--mono);font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:var(--faint);padding:0 10px;margin-bottom:6px}.nav-item{display:flex;align-items:center;gap:9px;width:100%;text-align:left;padding:9px 11px;border-radius:8px;border:0;background:transparent;cursor:pointer;font:inherit;font-size:14px;color:var(--mute);position:relative;transition:background 120ms ease,color 120ms ease}.nav-item:hover{background:var(--paper-2);color:var(--ink)}.nav-item.active{background:var(--card);color:var(--ink);font-weight:600;box-shadow:var(--shadow-card)}.nav-item.active::before{content:"";position:absolute;left:0;top:8px;bottom:8px;width:3px;border-radius:3px;background:var(--accent)}.nav-item .nv-tag{margin-left:auto;font-family:var(--mono);font-size:9.5px;letter-spacing:0.04em;text-transform:uppercase;color:var(--dim);background:var(--paper-2);border:1px solid var(--line);border-radius:999px;padding:1px 6px;font-weight:500}.nav-item.active .nv-tag{background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent-d)}.sidebar-spacer{flex:1 1 auto;min-height:8px}.rail-label{font-family:var(--mono);font-size:10px;letter-spacing:0.09em;text-transform:uppercase;color:var(--faint);margin:0 0 8px 2px}.status-readout{background:var(--crt-bg);border:1px solid var(--crt-line);border-radius:var(--r-md);padding:12px 13px;position:relative;overflow:hidden;box-shadow:inset 0 0 24px rgba(0,0,0,.55),inset 0 0 3px var(--crt-glow);font-family:var(--mono)}.status-readout::after{content:"";position:absolute;inset:0;pointer-events:none;background:repeating-linear-gradient(0deg,rgba(0,0,0,.14) 0 1px,transparent 1px 3px)}.sr-head{display:flex;align-items:center;gap:8px;margin-bottom:10px;position:relative;z-index:1}.sr-led{width:8px;height:8px;border-radius:999px;flex:none;background:var(--crt-fg);box-shadow:0 0 7px var(--crt-glow)}.sr-led.online{animation:led-pulse 2.4s ease-in-out infinite}.sr-led.offline{background:var(--crt-dim);box-shadow:none;animation:none}@keyframes led-pulse{0%,100%{opacity:1}50%{opacity:.45}}@media (prefers-reduced-motion:reduce){.sr-led.online{animation:none}}.sr-title{font-size:10.5px;letter-spacing:0.05em;text-transform:uppercase;color:var(--crt-dim)}.sr-rows{display:flex;flex-direction:column;gap:5px;position:relative;z-index:1;margin:0}.sr-row{display:grid;grid-template-columns:50px 1fr;gap:9px;align-items:baseline;font-size:11.5px}.sr-row dt{color:var(--crt-dim)}.sr-row dd{margin:0;color:var(--crt-fg);text-shadow:0 0 6px var(--crt-glow);word-break:break-word}.about{font-family:var(--mono);font-size:11px;color:var(--faint);display:flex;flex-direction:column;gap:5px;padding:0 2px}.about .line b{color:var(--ink-soft);font-weight:600}.about a{display:inline-flex;align-items:center;gap:6px;color:var(--accent-d)}.about a:hover{color:var(--accent)}.about a .gh{width:11px;height:11px;border-radius:3px;background:var(--accent);flex:none}.content{padding:34px 40px 130px;min-width:0}.content-inner{max-width:860px}.page{display:none}.page.active{display:block}.page-header{margin-bottom:24px}.page-h1{margin:0;font-size:25px;font-weight:600;letter-spacing:-0.02em;color:var(--ink)}.page-lede{margin:7px 0 0;color:var(--mute);font-size:14.5px;max-width:64ch;text-wrap:pretty}.page-actions{display:flex;gap:10px;margin-top:16px;flex-wrap:wrap}.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r-lg);padding:22px 24px;margin-bottom:18px;box-shadow:var(--shadow-card)}.card-title{display:flex;align-items:center;gap:10px;font-size:15px;font-weight:600;color:var(--ink);margin:0 0 18px;letter-spacing:-0.01em}.card-title .tag{font-family:var(--mono);font-size:9.5px;letter-spacing:0.05em;text-transform:uppercase;color:var(--dim);background:var(--paper-2);border:1px solid var(--line);border-radius:999px;padding:2px 8px;font-weight:500}.field{margin-bottom:18px}.field:last-child{margin-bottom:0}.field-label{display:block;font-family:var(--mono);font-size:11px;letter-spacing:0.05em;text-transform:uppercase;color:var(--dim);margin:0 0 8px}.field-hint{color:var(--dim);font-size:12.5px;margin:7px 0 0;max-width:70ch;text-wrap:pretty}.field-hint code,.note code,.field-label code{font-family:var(--mono);font-size:0.9em;background:var(--inset);border:1px solid var(--line);border-radius:5px;padding:1px 6px;color:var(--ink-soft)}.select-wrap{position:relative;max-width:520px}.select-wrap::after{content:"";position:absolute;right:14px;top:50%;width:8px;height:8px;border-right:1.5px solid var(--mute);border-bottom:1.5px solid var(--mute);transform:translateY(-70%) rotate(45deg);pointer-events:none}select,input[type="text"],input[type="number"],input[type="time"]{appearance:none;-webkit-appearance:none;width:100%;max-width:520px;background:var(--card);color:var(--ink);border:1px solid var(--line-2);border-radius:var(--r-md);padding:11px 14px;font:inherit;font-size:14px;box-shadow:var(--shadow-card);transition:border-color 120ms ease,box-shadow 120ms ease}input[type="time"]{cursor:pointer}input[type="time"]::-webkit-calendar-picker-indicator{cursor:pointer;opacity:.6}[data-mode="dark"] input[type="time"]::-webkit-calendar-picker-indicator{filter:invert(1)}select{padding-right:36px;cursor:pointer}select:hover,input[type="text"]:hover,input[type="number"]:hover,input[type="time"]:hover{border-color:var(--line-2)}select:focus,input:focus{outline:none;border-color:var(--accent-line);box-shadow:0 0 0 3px var(--accent-soft)}input::placeholder{color:var(--faint)}.range-row{display:flex;align-items:center;gap:14px;max-width:520px}input[type="range"]{-webkit-appearance:none;appearance:none;flex:1;height:4px;border-radius:999px;background:var(--line-2);cursor:pointer;margin:12px 0}input[type="range"]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:18px;height:18px;border-radius:50%;background:var(--accent);border:3px solid var(--card);box-shadow:0 1px 4px rgba(0,0,0,.25);cursor:pointer;transition:transform 80ms ease}input[type="range"]::-webkit-slider-thumb:hover{transform:scale(1.12)}input[type="range"]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;background:var(--accent);border:3px solid var(--card);cursor:pointer}.range-val{font-family:var(--mono);font-size:13px;color:var(--accent-d);background:var(--accent-soft);border:1px solid var(--accent-line);border-radius:6px;padding:3px 9px;min-width:56px;text-align:center;flex:none}.check-list{display:flex;flex-direction:column}.check-row{display:flex;align-items:flex-start;gap:12px;cursor:pointer;padding:13px 0;border-top:1px solid var(--line-soft)}.check-row:first-child{border-top:0;padding-top:4px}.check-row.standalone{border-top:0;padding:0}.check-row input[type="checkbox"]{position:absolute;opacity:0;width:0;height:0}.check-box{flex:none;width:20px;height:20px;margin-top:0;border-radius:5px;border:1.5px solid var(--line-2);background:var(--card);display:grid;place-items:center;transition:background 120ms ease,border-color 120ms ease}.check-box::after{content:"";width:9px;height:9px;border-radius:2px;background:var(--on-accent);transform:scale(0);transition:transform 130ms cubic-bezier(.3,1.4,.5,1);clip-path:polygon(0 40%,38% 40%,38% 0,62% 0,62% 40%,100% 40%,100% 64%,62% 64%,62% 100%,38% 100%,38% 64%,0 64%)}.check-row input:checked + .check-box{border-color:var(--accent);background:var(--accent)}.check-row input:checked + .check-box::after{transform:scale(1)}.check-row input:focus-visible + .check-box{box-shadow:0 0 0 3px var(--accent-soft)}.check-text{font-size:14px;color:var(--ink-soft)}.check-text strong{color:var(--ink);font-weight:600}.check-text .ct-hint{display:block;color:var(--dim);font-size:12.5px;margin-top:2px}.subcard{margin-top:16px;padding:16px 18px;border-radius:var(--r-md);background:var(--card-2);border:1px solid var(--line)}.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:16px}@media (max-width:560px){.grid-2{grid-template-columns:1fr}}.divider{border:0;border-top:1px solid var(--line);margin:20px 0}.note{display:flex;gap:11px;align-items:flex-start;max-width:72ch;margin:16px 0 0;padding:12px 14px;background:var(--card-2);border:1px solid var(--line);border-left:2px solid var(--accent);border-radius:var(--r-sm);font-size:13.5px;color:var(--mute);text-wrap:pretty}.note.warn{border-left-color:var(--warn)}.note.plain{border-left-color:var(--line-2)}.note .note-k{flex:none;font-family:var(--mono);font-size:10.5px;letter-spacing:0.05em;text-transform:uppercase;color:var(--accent-d);margin-top:3px}.note.warn .note-k{color:var(--warn)}.note.plain .note-k{color:var(--dim)}.note strong{color:var(--ink);font-weight:600}.btn{font:inherit;font-weight:600;font-size:13.5px;display:inline-flex;align-items:center;gap:8px;padding:9px 15px;border-radius:var(--r-md);cursor:pointer;border:1px solid var(--line-2);background:var(--card);color:var(--ink);transition:background 120ms ease,border-color 120ms ease,filter 120ms ease,transform 80ms ease}.btn:hover{background:var(--card-2)}.btn:active{transform:translateY(1px)}.btn:disabled{opacity:.6;cursor:default}.btn .gl{width:12px;height:12px;flex:none;border-radius:2px;background:var(--accent)}.btn-accent{background:var(--accent);border-color:var(--accent-d);color:var(--on-accent)}.btn-accent .gl{background:var(--on-accent)}.btn-accent:hover{filter:brightness(1.05);background:var(--accent)}.btn-danger{color:var(--err);border-color:color-mix(in oklab,var(--err) 36%,var(--line-2))}.btn-danger:hover{background:color-mix(in oklab,var(--err) 8%,var(--card))}.btn-lg{padding:11px 20px;font-size:14px}.crt{background:var(--crt-bg);border:1px solid var(--crt-line);border-radius:var(--r-md);position:relative;overflow:hidden;font-family:var(--mono);box-shadow:inset 0 0 24px rgba(0,0,0,.55),inset 0 0 3px var(--crt-glow)}.crt::after{content:"";position:absolute;inset:0;pointer-events:none;background:repeating-linear-gradient(0deg,rgba(0,0,0,.14) 0 1px,transparent 1px 3px)}.oled-preview{max-width:100%;margin-bottom:18px;padding:14px 15px}.oled-pv-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;position:relative;z-index:1}.oled-pv-head .ttl{color:var(--crt-fg);font-size:12.5px;text-shadow:0 0 6px var(--crt-glow)}.oled-pv-head .meta{color:var(--crt-dim);font-size:11px}.oled-stage{position:relative;z-index:1;width:100%;max-width:384px;margin:0 auto;aspect-ratio:128 / 64}.oled-stage canvas{display:block;width:100%;height:100%;image-rendering:pixelated;image-rendering:crisp-edges;background:#060d09;border:1px solid var(--crt-line);border-radius:4px}[data-accent="amber"] .oled-stage canvas{background:#0c0803}.drop-cells{position:absolute;inset:0;pointer-events:none}.drop-cell{position:absolute;box-sizing:border-box;border:1px dashed transparent;border-radius:2px;pointer-events:auto;transition:background 100ms ease,border-color 100ms ease}.oled-stage.dragging .drop-cell{border-color:var(--crt-dim)}.drop-cell.over{border-color:var(--crt-fg);border-style:solid;background:rgba(132,243,173,0.16)}.drop-cell.filled{cursor:pointer}.oled-stage:not(.placing) .drop-cell.filled:hover{border-color:var(--crt-fg);border-style:solid;background:rgba(132,243,173,0.12)}.metric-row{border:1px solid var(--line);border-radius:var(--r-md);background:var(--card-2);margin-bottom:8px}.metric-row:hover{border-color:var(--line-2)}details.metric-row{overflow:hidden}.metric-sum{display:flex;align-items:center;gap:10px;padding:12px 14px;cursor:pointer;list-style:none;user-select:none}.metric-sum::-webkit-details-marker{display:none}.metric-sum .ms-main{display:flex;flex-direction:column;min-width:0;margin-right:auto}.metric-sum .ms-nm{font-weight:600;font-size:14px;color:var(--ink)}.metric-sum .ms-sub{font-family:var(--mono);font-size:11.5px;color:var(--dim);margin-top:2px}.metric-sum .ms-badge{flex:none;padding:2px 9px}.metric-sum .ms-chev{flex:none;width:8px;height:8px;border-right:1.5px solid var(--mute);border-bottom:1.5px solid var(--mute);transform:rotate(45deg);transition:transform 160ms ease}details.metric-row[open] .ms-chev{transform:rotate(-135deg)}.metric-body{padding:0 14px 14px;border-top:1px solid var(--line)}.chip-tray{display:flex;flex-wrap:wrap;gap:7px;margin:2px 0 14px;padding:11px 12px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--card-2);min-height:46px}.chip-tray.placing{border-color:var(--accent-line);border-style:dashed;background:var(--accent-soft)}.chip-empty{font-family:var(--mono);font-size:12px;color:var(--dim)}.chip{display:inline-flex;align-items:center;gap:7px;padding:5px 6px 5px 10px;border:1px solid var(--line-2);border-radius:999px;background:var(--card);cursor:grab;font-size:13px;color:var(--ink-soft);user-select:none;transition:border-color 120ms ease,background 120ms ease,box-shadow 120ms ease}.chip:hover{border-color:var(--accent-line)}.chip.drag-src{opacity:0.45}.chip.sel{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);background:var(--accent-soft)}.chip .cn{font-weight:600;color:var(--ink)}.chip .cb,.metric-sum .ms-badge{font-family:var(--mono);font-size:10.5px;letter-spacing:0.03em;color:var(--dim);background:var(--paper-2);border:1px solid var(--line);border-radius:999px}.chip .cb{padding:1px 7px}.chip.placed .cb,details.metric-row[data-placed="1"] .ms-badge{color:var(--accent-d);background:var(--accent-soft);border-color:var(--accent-line)}.oled-stage.placing .drop-cell{border-color:var(--crt-dim)}.metric-adv{display:grid;grid-template-columns:1fr 1fr;gap:10px 14px;margin-top:12px}.metric-adv .field-label{margin-bottom:5px}.metric-adv input,.metric-adv select{font-size:13px;padding:8px 11px}.metric-adv select{padding-right:32px}.metric-adv .full{grid-column:1 / -1}.ota-drop{border:1.5px dashed var(--line-2);border-radius:var(--r-md);padding:26px 20px;text-align:center;background:var(--card-2);transition:border-color 120ms ease,background 120ms ease}.ota-drop.drag{border-color:var(--accent);background:var(--accent-soft)}.ota-drop .px{width:22px;height:22px;margin:0 auto 10px;background:var(--accent)}.ota-drop .big{font-weight:600;color:var(--ink);font-size:15px}.ota-drop .small{color:var(--dim);font-size:13px;margin-top:4px}.ota-drop .browse{color:var(--accent-d);text-decoration:underline;text-underline-offset:2px;cursor:pointer;border:0;background:0;font:inherit}.ota-progress{margin-top:16px;display:none}.ota-progress.show{display:block}.ota-bar{height:10px;border-radius:999px;background:var(--inset);border:1px solid var(--line);overflow:hidden}.ota-bar>i{display:block;height:100%;width:0%;background:var(--accent);transition:width 240ms ease}.ota-pct{font-family:var(--mono);font-size:12px;color:var(--mute);margin-top:7px}.save-bar{position:fixed;left:0;right:0;bottom:0;z-index:40;background:color-mix(in oklab,var(--paper) 88%,transparent);backdrop-filter:blur(10px) saturate(1.1);border-top:1px solid var(--line)}.save-bar-inner{padding:12px 40px 12px calc(var(--sidebar-w) + 40px);display:flex;align-items:center;gap:14px;max-width:100%}.save-meta{font-family:var(--mono);font-size:12px;color:var(--dim);margin-right:auto;display:flex;align-items:center;gap:8px}.save-meta .dot{width:7px;height:7px;border-radius:999px;background:var(--warn);box-shadow:0 0 0 3px color-mix(in oklab,var(--warn) 18%,transparent)}.save-meta.clean .dot{background:var(--ok);box-shadow:0 0 0 3px var(--accent-soft)}@media (max-width:880px){.topbar{padding:0 12px;gap:10px}.hamburger{display:inline-flex}.tb-ver,.tb-sep,.tb-crumb{display:none}.acc-pick .lab{display:none}.workspace{grid-template-columns:1fr}.sidebar{position:fixed;top:var(--topbar-h);left:0;width:min(280px,84vw);height:calc(100vh - var(--topbar-h));height:calc(100dvh - var(--topbar-h));overflow-y:auto;z-index:46;border-right:1px solid var(--line);border-bottom:0;box-shadow:var(--shadow-pop);transform:translateX(-102%);transition:transform 220ms ease}html.nav-open .sidebar{transform:none}.nav-scrim{display:block;position:fixed;left:0;right:0;top:var(--topbar-h);bottom:0;z-index:45;background:rgba(20,16,8,0.42);opacity:0;visibility:hidden;transition:opacity 200ms ease,visibility 200ms ease}html.nav-open .nav-scrim{opacity:1;visibility:visible}.content{padding:24px 18px 130px}.save-bar-inner{padding:11px 16px}.save-meta .txt{display:none}}@media (max-width:560px){.page-h1{font-size:22px}.card{padding:18px 16px}.page-actions .btn{flex:1;justify-content:center}.metric-adv{grid-template-columns:1fr}}@media (max-width:410px){.topbar{gap:8px;padding:0 10px}.tb-brand{gap:7px}.tb-right{gap:8px}.mode-toggle button{padding:5px 9px;font-size:11px}.acc-sw{width:20px;height:20px}}@media (max-width:360px){.tb-name{display:none}.acc-pick{gap:4px}.mode-toggle button{font-size:0;gap:0;padding:6px 8px}})CSS";
+static const char PORTAL_CSS[] PROGMEM = R"CSS(:root{--paper:#f4f0e7;--paper-2:#efe9db;--sidebar:#f1ece0;--card:#fcfaf4;--card-2:#f6f1e6;--inset:#eee7d6;--ink:#24221c;--ink-soft:#3a382f;--mute:#6c675b;--dim:#8a8472;--faint:#a39c89;--line:#e4ddcc;--line-soft:#ece6d7;--line-2:#d4cbb5;--accent:#1f8a5b;--accent-d:#176c47;--accent-l:#2ba169;--accent-soft:rgba(31,138,91,0.12);--accent-line:rgba(31,138,91,0.32);--on-accent:#ffffff;--ok:#1f8a5b;--warn:#b8740d;--err:#c0392b;--crt-bg:#131e18;--crt-fg:#84f3ad;--crt-dim:#4d8a67;--crt-line:#0c140f;--crt-glow:rgba(132,243,173,0.35);--sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;--mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,"Liberation Mono",monospace;--r-sm:6px;--r-md:9px;--r-lg:14px;--sidebar-w:248px;--topbar-h:58px;--shadow-card:0 1px 2px rgba(80,65,35,0.05);--shadow-pop:0 14px 40px rgba(40,33,18,0.16)}[data-accent="amber"]{--accent:#b97512;--accent-d:#97600d;--accent-l:#cf8a1f;--accent-soft:rgba(185,117,18,0.13);--accent-line:rgba(185,117,18,0.34);--ok:#1f8a5b;--crt-bg:#1a1209;--crt-fg:#ffcf7a;--crt-dim:#9c7636;--crt-line:#0d0903;--crt-glow:rgba(255,207,122,0.38)}[data-mode="dark"]{--paper:#161512;--paper-2:#1e1c17;--sidebar:#131210;--card:#201e18;--card-2:#1a1813;--inset:#14130e;--ink:#ece7d8;--ink-soft:#d8d2c0;--mute:#aaa28c;--dim:#847c66;--faint:#5f5847;--line:#2c2920;--line-soft:#24211a;--line-2:#403b2c;--accent:#36b478;--accent-d:#44c98a;--accent-l:#2ba169;--accent-soft:rgba(54,180,120,0.16);--accent-line:rgba(54,180,120,0.40);--ok:#36b478;--shadow-card:0 1px 2px rgba(0,0,0,0.35)}[data-mode="dark"][data-accent="amber"]{--accent:#e0a23f;--accent-d:#f0b556;--accent-l:#c98c2f;--accent-soft:rgba(224,162,63,0.16);--accent-line:rgba(224,162,63,0.40);--crt-bg:#1a1209;--crt-fg:#ffcf7a;--crt-dim:#9c7636;--crt-line:#0d0903;--crt-glow:rgba(255,207,122,0.38)}*{box-sizing:border-box}html,body{margin:0;padding:0;background:var(--paper);color:var(--ink);font-family:var(--sans);font-size:15px;line-height:1.55;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;min-height:100vh}body{transition:background 200ms ease,color 200ms ease}a{color:var(--accent-d);text-decoration:none;transition:color 120ms ease}a:hover{color:var(--accent)}::selection{background:var(--accent-soft)}.app{background:var(--paper);min-height:100vh}.topbar{position:sticky;top:0;z-index:50;height:var(--topbar-h);display:flex;align-items:center;gap:14px;padding:0 24px;background:color-mix(in oklab,var(--paper) 90%,transparent);backdrop-filter:blur(10px) saturate(1.05);border-bottom:1px solid var(--line)}.tb-brand{display:flex;align-items:center;gap:10px;min-width:0}.brand-mark{width:28px;height:28px;border-radius:7px;background:var(--accent);display:grid;place-items:center;flex:none;box-shadow:0 0 0 3px var(--accent-soft)}.brand-mark::after{content:"";width:13px;height:13px;background:linear-gradient(#fff 0 0) 0 0 / 5.5px 5.5px no-repeat,linear-gradient(#fff 0 0) 7.5px 7.5px / 5.5px 5.5px no-repeat,linear-gradient(rgba(255,255,255,.55) 0 0) 7.5px 0 / 5.5px 5.5px no-repeat,linear-gradient(rgba(255,255,255,.55) 0 0) 0 7.5px / 5.5px 5.5px no-repeat}.tb-name{font-weight:600;color:var(--ink);letter-spacing:-0.01em;font-size:15px}.tb-ver{font-family:var(--mono);font-size:11px;color:var(--mute);background:var(--paper-2);border:1px solid var(--line);border-radius:999px;padding:2px 8px}.tb-sep{width:1px;height:22px;background:var(--line-2);margin:0 4px}.tb-crumb{font-size:14px;color:var(--mute);font-weight:500}.tb-right{margin-left:auto;display:flex;align-items:center;gap:12px}.hamburger{display:none;width:34px;height:34px;flex:none;padding:0;cursor:pointer;align-items:center;justify-content:center;background:var(--paper-2);border:1px solid var(--line);border-radius:8px;transition:background 120ms ease,border-color 120ms ease}.hamburger:hover{background:var(--card);border-color:var(--line-2)}.hamburger>span,.hamburger>span::before,.hamburger>span::after{content:"";display:block;width:16px;height:1.6px;border-radius:2px;background:var(--ink);transition:transform 180ms ease,opacity 120ms ease}.hamburger>span{position:relative}.hamburger>span::before{position:absolute;left:0;top:-5px}.hamburger>span::after{position:absolute;left:0;top:5px}html.nav-open .hamburger>span{background:transparent}html.nav-open .hamburger>span::before{transform:translateY(5px) rotate(45deg)}html.nav-open .hamburger>span::after{transform:translateY(-5px) rotate(-45deg)}.nav-scrim{display:none}.acc-pick{display:flex;align-items:center;gap:6px}.acc-pick .lab{font-family:var(--mono);font-size:10px;letter-spacing:0.07em;text-transform:uppercase;color:var(--faint);margin-right:2px}.acc-sw{width:22px;height:22px;border-radius:999px;border:2px solid transparent;cursor:pointer;padding:0;background:var(--paper-2);display:grid;place-items:center;transition:border-color 120ms ease,transform 80ms ease}.acc-sw:hover{transform:scale(1.08)}.acc-sw i{width:13px;height:13px;border-radius:999px;display:block}.acc-sw[data-acc="green"] i{background:#1f8a5b}.acc-sw[data-acc="amber"] i{background:#b97512}.acc-sw.on{border-color:var(--accent)}.mode-toggle{display:inline-flex;background:var(--paper-2);border:1px solid var(--line);border-radius:999px;padding:3px;gap:2px}.mode-toggle button{font:inherit;font-family:var(--mono);font-size:11.5px;cursor:pointer;border:0;background:transparent;color:var(--mute);padding:5px 11px;border-radius:999px;display:inline-flex;align-items:center;gap:6px;transition:background 120ms ease,color 120ms ease}.mode-toggle button:hover{color:var(--ink)}.mode-toggle button.on{background:var(--card);color:var(--ink);box-shadow:var(--shadow-card)}.mode-toggle .ic{width:11px;height:11px;border-radius:999px}.mode-toggle button[data-mode="light"] .ic{background:#e0a23f;box-shadow:0 0 0 2px color-mix(in oklab,#e0a23f 30%,transparent)}.mode-toggle button[data-mode="dark"] .ic{background:transparent;box-shadow:inset -3px -1px 0 0 var(--mute)}.workspace{display:grid;grid-template-columns:var(--sidebar-w) minmax(0,1fr);align-items:start;background:var(--paper);min-height:calc(100vh - var(--topbar-h))}.sidebar{position:sticky;top:var(--topbar-h);align-self:start;height:calc(100vh - var(--topbar-h));overflow-y:auto;border-right:1px solid var(--line);background:var(--sidebar);padding:22px 16px 78px;display:flex;flex-direction:column;gap:22px;scrollbar-width:thin;scrollbar-color:var(--line-2) transparent}.sidebar::-webkit-scrollbar{width:6px}.sidebar::-webkit-scrollbar-thumb{background:var(--line-2);border-radius:999px}.nav-group{display:flex;flex-direction:column;gap:2px}.nav-group + .nav-group{margin-top:14px}.nav-label{font-family:var(--mono);font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:var(--faint);padding:0 10px;margin-bottom:6px}.nav-item{display:flex;align-items:center;gap:9px;width:100%;text-align:left;padding:9px 11px;border-radius:8px;border:0;background:transparent;cursor:pointer;font:inherit;font-size:14px;color:var(--mute);position:relative;transition:background 120ms ease,color 120ms ease}.nav-item:hover{background:var(--paper-2);color:var(--ink)}.nav-item.active{background:var(--card);color:var(--ink);font-weight:600;box-shadow:var(--shadow-card)}.nav-item.active::before{content:"";position:absolute;left:0;top:8px;bottom:8px;width:3px;border-radius:3px;background:var(--accent)}.nav-item .nv-tag{margin-left:auto;font-family:var(--mono);font-size:9.5px;letter-spacing:0.04em;text-transform:uppercase;color:var(--dim);background:var(--paper-2);border:1px solid var(--line);border-radius:999px;padding:1px 6px;font-weight:500}.nav-item.active .nv-tag{background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent-d)}.sidebar-spacer{flex:1 1 auto;min-height:8px}.rail-label{font-family:var(--mono);font-size:10px;letter-spacing:0.09em;text-transform:uppercase;color:var(--faint);margin:0 0 8px 2px}.status-readout{background:var(--crt-bg);border:1px solid var(--crt-line);border-radius:var(--r-md);padding:12px 13px;position:relative;overflow:hidden;box-shadow:inset 0 0 24px rgba(0,0,0,.55),inset 0 0 3px var(--crt-glow);font-family:var(--mono)}.status-readout::after{content:"";position:absolute;inset:0;pointer-events:none;background:repeating-linear-gradient(0deg,rgba(0,0,0,.14) 0 1px,transparent 1px 3px)}.sr-head{display:flex;align-items:center;gap:8px;margin-bottom:10px;position:relative;z-index:1}.sr-led{width:8px;height:8px;border-radius:999px;flex:none;background:var(--crt-fg);box-shadow:0 0 7px var(--crt-glow)}.sr-led.online{animation:led-pulse 2.4s ease-in-out infinite}.sr-led.offline{background:var(--crt-dim);box-shadow:none;animation:none}@keyframes led-pulse{0%,100%{opacity:1}50%{opacity:.45}}@media (prefers-reduced-motion:reduce){.sr-led.online{animation:none}}.sr-title{font-size:10.5px;letter-spacing:0.05em;text-transform:uppercase;color:var(--crt-dim)}.sr-rows{display:flex;flex-direction:column;gap:5px;position:relative;z-index:1;margin:0}.sr-row{display:grid;grid-template-columns:50px 1fr;gap:9px;align-items:baseline;font-size:11.5px}.sr-row dt{color:var(--crt-dim)}.sr-row dd{margin:0;color:var(--crt-fg);text-shadow:0 0 6px var(--crt-glow);word-break:break-word}.about{font-family:var(--mono);font-size:11px;color:var(--faint);display:flex;flex-direction:column;gap:5px;padding:0 2px}.about .line b{color:var(--ink-soft);font-weight:600}.about a{display:inline-flex;align-items:center;gap:6px;color:var(--accent-d)}.about a:hover{color:var(--accent)}.about a .gh{width:11px;height:11px;border-radius:3px;background:var(--accent);flex:none}.content{padding:34px 40px 130px;min-width:0}.content-inner{max-width:860px}.page{display:none}.page.active{display:block}.page-header{margin-bottom:24px}.page-h1{margin:0;font-size:25px;font-weight:600;letter-spacing:-0.02em;color:var(--ink)}.page-lede{margin:7px 0 0;color:var(--mute);font-size:14.5px;max-width:64ch;text-wrap:pretty}.page-actions{display:flex;gap:10px;margin-top:16px;flex-wrap:wrap}.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r-lg);padding:22px 24px;margin-bottom:18px;box-shadow:var(--shadow-card)}.card-title{display:flex;align-items:center;gap:10px;font-size:15px;font-weight:600;color:var(--ink);margin:0 0 18px;letter-spacing:-0.01em}.card-title .tag{font-family:var(--mono);font-size:9.5px;letter-spacing:0.05em;text-transform:uppercase;color:var(--dim);background:var(--paper-2);border:1px solid var(--line);border-radius:999px;padding:2px 8px;font-weight:500}.field{margin-bottom:18px}.field:last-child{margin-bottom:0}.field-label{display:block;font-family:var(--mono);font-size:11px;letter-spacing:0.05em;text-transform:uppercase;color:var(--dim);margin:0 0 8px}.field-hint{color:var(--dim);font-size:12.5px;margin:7px 0 0;max-width:70ch;text-wrap:pretty}.field-hint code,.note code,.field-label code{font-family:var(--mono);font-size:0.9em;background:var(--inset);border:1px solid var(--line);border-radius:5px;padding:1px 6px;color:var(--ink-soft)}.select-wrap{position:relative;max-width:520px}.select-wrap::after{content:"";position:absolute;right:14px;top:50%;width:8px;height:8px;border-right:1.5px solid var(--mute);border-bottom:1.5px solid var(--mute);transform:translateY(-70%) rotate(45deg);pointer-events:none}select,input[type="text"],input[type="number"],input[type="time"]{appearance:none;-webkit-appearance:none;width:100%;max-width:520px;background:var(--card);color:var(--ink);border:1px solid var(--line-2);border-radius:var(--r-md);padding:11px 14px;font:inherit;font-size:14px;box-shadow:var(--shadow-card);transition:border-color 120ms ease,box-shadow 120ms ease}input[type="time"]{cursor:pointer}input[type="time"]::-webkit-calendar-picker-indicator{cursor:pointer;opacity:.6}[data-mode="dark"] input[type="time"]::-webkit-calendar-picker-indicator{filter:invert(1)}select{padding-right:36px;cursor:pointer}select:hover,input[type="text"]:hover,input[type="number"]:hover,input[type="time"]:hover{border-color:var(--line-2)}select:focus,input:focus{outline:none;border-color:var(--accent-line);box-shadow:0 0 0 3px var(--accent-soft)}input::placeholder{color:var(--faint)}.range-row{display:flex;align-items:center;gap:14px;max-width:520px}input[type="range"]{-webkit-appearance:none;appearance:none;flex:1;height:4px;border-radius:999px;background:var(--line-2);cursor:pointer;margin:12px 0}input[type="range"]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:18px;height:18px;border-radius:50%;background:var(--accent);border:3px solid var(--card);box-shadow:0 1px 4px rgba(0,0,0,.25);cursor:pointer;transition:transform 80ms ease}input[type="range"]::-webkit-slider-thumb:hover{transform:scale(1.12)}input[type="range"]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;background:var(--accent);border:3px solid var(--card);cursor:pointer}.range-val{font-family:var(--mono);font-size:13px;color:var(--accent-d);background:var(--accent-soft);border:1px solid var(--accent-line);border-radius:6px;padding:3px 9px;min-width:56px;text-align:center;flex:none}.check-list{display:flex;flex-direction:column}.check-row{display:flex;align-items:flex-start;gap:12px;cursor:pointer;padding:13px 0;border-top:1px solid var(--line-soft)}.check-row:first-child{border-top:0;padding-top:4px}.check-row.standalone{border-top:0;padding:0}.check-row input[type="checkbox"]{position:absolute;opacity:0;width:0;height:0}.check-box{flex:none;width:20px;height:20px;margin-top:0;border-radius:5px;border:1.5px solid var(--line-2);background:var(--card);display:grid;place-items:center;transition:background 120ms ease,border-color 120ms ease}.check-box::after{content:"";width:9px;height:9px;border-radius:2px;background:var(--on-accent);transform:scale(0);transition:transform 130ms cubic-bezier(.3,1.4,.5,1);clip-path:polygon(0 40%,38% 40%,38% 0,62% 0,62% 40%,100% 40%,100% 64%,62% 64%,62% 100%,38% 100%,38% 64%,0 64%)}.check-row input:checked + .check-box{border-color:var(--accent);background:var(--accent)}.check-row input:checked + .check-box::after{transform:scale(1)}.check-row input:focus-visible + .check-box{box-shadow:0 0 0 3px var(--accent-soft)}.check-text{font-size:14px;color:var(--ink-soft)}.check-text strong{color:var(--ink);font-weight:600}.check-text .ct-hint{display:block;color:var(--dim);font-size:12.5px;margin-top:2px}.subcard{margin-top:16px;padding:16px 18px;border-radius:var(--r-md);background:var(--card-2);border:1px solid var(--line)}.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:16px}@media (max-width:560px){.grid-2{grid-template-columns:1fr}}.divider{border:0;border-top:1px solid var(--line);margin:20px 0}.note{display:flex;gap:11px;align-items:flex-start;max-width:72ch;margin:16px 0 0;padding:12px 14px;background:var(--card-2);border:1px solid var(--line);border-left:2px solid var(--accent);border-radius:var(--r-sm);font-size:13.5px;color:var(--mute);text-wrap:pretty}.note.warn{border-left-color:var(--warn)}.note.plain{border-left-color:var(--line-2)}.note .note-k{flex:none;font-family:var(--mono);font-size:10.5px;letter-spacing:0.05em;text-transform:uppercase;color:var(--accent-d);margin-top:3px}.note.warn .note-k{color:var(--warn)}.note.plain .note-k{color:var(--dim)}.note strong{color:var(--ink);font-weight:600}.btn{font:inherit;font-weight:600;font-size:13.5px;display:inline-flex;align-items:center;gap:8px;padding:9px 15px;border-radius:var(--r-md);cursor:pointer;border:1px solid var(--line-2);background:var(--card);color:var(--ink);transition:background 120ms ease,border-color 120ms ease,filter 120ms ease,transform 80ms ease}.btn:hover{background:var(--card-2)}.btn:active{transform:translateY(1px)}.btn:disabled{opacity:.6;cursor:default}.btn .gl{width:12px;height:12px;flex:none;border-radius:2px;background:var(--accent)}.btn-accent{background:var(--accent);border-color:var(--accent-d);color:var(--on-accent)}.btn-accent .gl{background:var(--on-accent)}.btn-accent:hover{filter:brightness(1.05);background:var(--accent)}.btn-danger{color:var(--err);border-color:color-mix(in oklab,var(--err) 36%,var(--line-2))}.btn-danger:hover{background:color-mix(in oklab,var(--err) 8%,var(--card))}.btn-lg{padding:11px 20px;font-size:14px}.crt{background:var(--crt-bg);border:1px solid var(--crt-line);border-radius:var(--r-md);position:relative;overflow:hidden;font-family:var(--mono);box-shadow:inset 0 0 24px rgba(0,0,0,.55),inset 0 0 3px var(--crt-glow)}.crt::after{content:"";position:absolute;inset:0;pointer-events:none;background:repeating-linear-gradient(0deg,rgba(0,0,0,.14) 0 1px,transparent 1px 3px)}.oled-preview{max-width:100%;margin-bottom:18px;padding:14px 15px}.oled-pv-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;position:relative;z-index:1}.oled-pv-head .ttl{color:var(--crt-fg);font-size:12.5px;text-shadow:0 0 6px var(--crt-glow)}.oled-pv-head .meta{color:var(--crt-dim);font-size:11px}.oled-stage{position:relative;z-index:1;width:100%;max-width:384px;margin:0 auto;aspect-ratio:128 / 64}.oled-stage canvas{display:block;width:100%;height:100%;image-rendering:pixelated;image-rendering:crisp-edges;background:#060d09;border:1px solid var(--crt-line);border-radius:4px}[data-accent="amber"] .oled-stage canvas{background:#0c0803}.drop-cells{position:absolute;inset:0;pointer-events:none}.drop-cell{position:absolute;box-sizing:border-box;border:1px dashed transparent;border-radius:2px;pointer-events:auto;transition:background 100ms ease,border-color 100ms ease}.oled-stage.dragging .drop-cell{border-color:var(--crt-dim)}.drop-cell.over{border-color:var(--crt-fg);border-style:solid;background:rgba(132,243,173,0.16)}.drop-cell.filled{cursor:pointer}.oled-stage:not(.placing) .drop-cell.filled:hover{border-color:var(--crt-fg);border-style:solid;background:rgba(132,243,173,0.12)}.metric-row{border:1px solid var(--line);border-radius:var(--r-md);background:var(--card-2);margin-bottom:8px}.metric-row:hover{border-color:var(--line-2)}details.metric-row{overflow:hidden}.metric-sum{display:flex;align-items:center;gap:10px;padding:12px 14px;cursor:pointer;list-style:none;user-select:none}.metric-sum::-webkit-details-marker{display:none}.metric-sum .ms-main{display:flex;flex-direction:column;min-width:0;margin-right:auto}.metric-sum .ms-nm{font-weight:600;font-size:14px;color:var(--ink)}.metric-sum .ms-sub{font-family:var(--mono);font-size:11.5px;color:var(--dim);margin-top:2px}.metric-sum .ms-badge{flex:none;padding:2px 9px}.metric-sum .ms-chev{flex:none;width:8px;height:8px;border-right:1.5px solid var(--mute);border-bottom:1.5px solid var(--mute);transform:rotate(45deg);transition:transform 160ms ease}details.metric-row[open] .ms-chev{transform:rotate(-135deg)}.metric-body{padding:0 14px 14px;border-top:1px solid var(--line)}.chip-tray{display:flex;flex-wrap:wrap;gap:7px;margin:2px 0 14px;padding:11px 12px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--card-2);min-height:46px}.chip-tray.placing{border-color:var(--accent-line);border-style:dashed;background:var(--accent-soft)}.chip-empty{font-family:var(--mono);font-size:12px;color:var(--dim)}.chip{display:inline-flex;align-items:center;gap:7px;padding:5px 6px 5px 10px;border:1px solid var(--line-2);border-radius:999px;background:var(--card);cursor:grab;font-size:13px;color:var(--ink-soft);user-select:none;transition:border-color 120ms ease,background 120ms ease,box-shadow 120ms ease}.chip:hover{border-color:var(--accent-line)}.chip.drag-src{opacity:0.45}.chip.sel{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);background:var(--accent-soft)}.chip .cn{font-weight:600;color:var(--ink)}.chip .cb,.metric-sum .ms-badge{font-family:var(--mono);font-size:10.5px;letter-spacing:0.03em;color:var(--dim);background:var(--paper-2);border:1px solid var(--line);border-radius:999px}.chip .cb{padding:1px 7px}.chip.placed .cb,details.metric-row[data-placed="1"] .ms-badge{color:var(--accent-d);background:var(--accent-soft);border-color:var(--accent-line)}.oled-stage.placing .drop-cell{border-color:var(--crt-dim)}.metric-adv{display:grid;grid-template-columns:1fr 1fr;gap:10px 14px;margin-top:12px}.metric-adv .field-label{margin-bottom:5px}.metric-adv input,.metric-adv select{font-size:13px;padding:8px 11px}.metric-adv select{padding-right:32px}.metric-adv .full{grid-column:1 / -1}.ota-drop{border:1.5px dashed var(--line-2);border-radius:var(--r-md);padding:26px 20px;text-align:center;background:var(--card-2);transition:border-color 120ms ease,background 120ms ease}.ota-drop.drag{border-color:var(--accent);background:var(--accent-soft)}.ota-drop .px{width:22px;height:22px;margin:0 auto 10px;background:var(--accent)}.ota-drop .big{font-weight:600;color:var(--ink);font-size:15px}.ota-drop .small{color:var(--dim);font-size:13px;margin-top:4px}.ota-drop .browse{color:var(--accent-d);text-decoration:underline;text-underline-offset:2px;cursor:pointer;border:0;background:0;font:inherit}.ota-progress{margin-top:16px;display:none}.ota-progress.show{display:block}.ota-bar{height:10px;border-radius:999px;background:var(--inset);border:1px solid var(--line);overflow:hidden}.ota-bar>i{display:block;height:100%;width:0%;background:var(--accent);transition:width 240ms ease}.ota-pct{font-family:var(--mono);font-size:12px;color:var(--mute);margin-top:7px}.save-bar{position:fixed;left:0;right:0;bottom:0;z-index:40;background:color-mix(in oklab,var(--paper) 88%,transparent);backdrop-filter:blur(10px) saturate(1.1);border-top:1px solid var(--line)}.save-bar-inner{padding:12px 40px 12px calc(var(--sidebar-w) + 40px);display:flex;align-items:center;gap:14px;max-width:100%}.save-meta{font-family:var(--mono);font-size:12px;color:var(--dim);margin-right:auto;display:flex;align-items:center;gap:8px}.save-meta .dot{width:7px;height:7px;border-radius:999px;background:var(--warn);box-shadow:0 0 0 3px color-mix(in oklab,var(--warn) 18%,transparent)}.save-meta.clean .dot{background:var(--ok);box-shadow:0 0 0 3px var(--accent-soft)}@media (max-width:880px){.topbar{padding:0 12px;gap:10px}.hamburger{display:inline-flex}.tb-ver,.tb-sep,.tb-crumb{display:none}.acc-pick .lab{display:none}.workspace{grid-template-columns:1fr}.sidebar{position:fixed;top:var(--topbar-h);left:0;width:min(280px,84vw);height:calc(100vh - var(--topbar-h));height:calc(100dvh - var(--topbar-h));overflow-y:auto;z-index:46;border-right:1px solid var(--line);border-bottom:0;box-shadow:var(--shadow-pop);transform:translateX(-102%);transition:transform 220ms ease}html.nav-open .sidebar{transform:none}.nav-scrim{display:block;position:fixed;left:0;right:0;top:var(--topbar-h);bottom:0;z-index:45;background:rgba(20,16,8,0.42);opacity:0;visibility:hidden;transition:opacity 200ms ease,visibility 200ms ease}html.nav-open .nav-scrim{opacity:1;visibility:visible}.content{padding:24px 18px 130px}.save-bar-inner{padding:11px 16px}.save-meta .txt{display:none}}@media (max-width:560px){.page-h1{font-size:22px}.card{padding:18px 16px}.page-actions .btn{flex:1;justify-content:center}.metric-adv{grid-template-columns:1fr}}@media (max-width:410px){.topbar{gap:8px;padding:0 10px}.tb-brand{gap:7px}.tb-right{gap:8px}.mode-toggle button{padding:5px 9px;font-size:11px}.acc-sw{width:20px;height:20px}}@media (max-width:360px){.tb-name{display:none}.acc-pick{gap:4px}.mode-toggle button{font-size:0;gap:0;padding:6px 8px}}html:not(.cfg-feat) [data-need]{display:none!important}#cfgForm.cfg-wait .page:not([data-page="firmware"]) .card{opacity:.5;pointer-events:none}.save-meta.wait .dot{background:var(--dim);box-shadow:none}.save-meta.err{color:var(--err)}.save-meta.err .dot{background:var(--err);box-shadow:0 0 0 3px color-mix(in oklab,var(--err) 18%,transparent)}.save-meta.err .txt{display:inline})CSS";
 
 // ============================================================================
-//  PORTAL_JS - served verbatim from /portal.js (no %TOKEN% substitution).
-//  Reads runtime config from window.SOLED (emitted inline in PAGE_HTML).
+//  PORTAL_JS - served from /portal.js. Fills the page from /api/portal, and
+//  loads panel.css and panel.js where the build has a Panel group.
 // ============================================================================
 static const char PORTAL_JS[] PROGMEM = R"JS(
 (function () {
 'use strict';
 var $  = function (s, r) { return (r || document).querySelector(s); };
 var $$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
-var CFG = window.SOLED || {};
 var navToggle = $('#navToggle'), navScrim = $('#navScrim');
 function setNav(open) {
 document.documentElement.classList.toggle('nav-open', open);
@@ -1191,11 +1196,12 @@ document.addEventListener('keydown', function (e) { if (e.key === 'Escape') clos
 var navItems = $$('.nav-item');
 var pages = $$('.page');
 var crumb = $('#crumb');
-function showPage(key) {
+function showPage(key, quiet) {
 pages.forEach(function (p) { p.classList.toggle('active', p.dataset.page === key); });
 navItems.forEach(function (n) { n.classList.toggle('active', n.dataset.nav === key); });
 var active = navItems.filter(function (n) { return n.dataset.nav === key; })[0];
 if (active && crumb) crumb.textContent = (active.firstChild ? active.firstChild.textContent : active.textContent).trim();
+if (quiet) return;   // a fallback, not the reader's choice: nothing to remember
 window.scrollTo(0, 0);
 closeNav();
 try { localStorage.setItem('soled_section', key); } catch (e) {}
@@ -1220,8 +1226,9 @@ try { localStorage.setItem('soled_mode', mode); } catch (e) {}
 modeBtns.forEach(function (b) { b.addEventListener('click', function () { setMode(b.dataset.mode); }); });
 try { var m = localStorage.getItem('soled_mode'); if (m) setMode(m); } catch (e) {}
 var saveMeta = $('#saveMeta');
-function markDirty() { if (saveMeta) { saveMeta.classList.remove('clean'); $('.txt', saveMeta).textContent = 'Unsaved changes'; } }
-function markClean(txt) { if (saveMeta) { saveMeta.classList.add('clean'); $('.txt', saveMeta).textContent = txt || 'All saved'; } }
+var loaded = false;   // true once /api/portal has filled the form (loadValues)
+function markDirty() { if (loaded && saveMeta) { saveMeta.classList.remove('clean'); $('.txt', saveMeta).textContent = 'Unsaved changes'; } }
+function markClean(txt) { if (saveMeta) { saveMeta.className = 'save-meta clean'; $('.txt', saveMeta).textContent = txt || 'All saved'; } }
 var form = $('#cfgForm');
 form.addEventListener('input', markDirty);
 form.addEventListener('change', markDirty);
@@ -1234,14 +1241,15 @@ var div = parseFloat(inp.dataset.div || '1');
 var fixed = parseInt(inp.dataset.fixed || '0', 10);
 span.textContent = (inp.value / div).toFixed(fixed) + suf;
 }
-$$('input[type="range"]').forEach(function (inp) { fmtRange(inp); inp.addEventListener('input', function () { fmtRange(inp); }); });
+$$('input[type="range"]').forEach(function (inp) { inp.addEventListener('input', function () { fmtRange(inp); }); });
 function toggle(el, on) { if (el) el.style.display = on ? '' : 'none'; }
+var syncs = [];   // what shows or hides with a value: run again once the values are in
 var nightChk = $('#enableScheduledDimming');
-if (nightChk) { var fn = function () { toggle($('#nightFields'), nightChk.checked); }; nightChk.addEventListener('change', fn); fn(); }
+if (nightChk) { var fn = function () { toggle($('#nightFields'), nightChk.checked); }; nightChk.addEventListener('change', fn); syncs.push(fn); }
 var offChk = $('#enableScheduledOff');
-if (offChk) { var fo = function () { toggle($('#offFields'), offChk.checked); }; offChk.addEventListener('change', fo); fo(); }
+if (offChk) { var fo = function () { toggle($('#offFields'), offChk.checked); }; offChk.addEventListener('change', fo); syncs.push(fo); }
 var ambChk = $('#ambientEnabled');
-if (ambChk) { var fa = function () { toggle($('#ambientFields'), ambChk.checked); }; ambChk.addEventListener('change', fa); fa(); }
+if (ambChk) { var fa = function () { toggle($('#ambientFields'), ambChk.checked); }; ambChk.addEventListener('change', fa); syncs.push(fa); }
 function ambCall(path, okMsg) {
 fetch(path).then(function (r) { return r.json(); })
 .then(function () { var s = $('#ambRunStatus'); if (s) s.textContent = okMsg; })
@@ -1282,8 +1290,7 @@ if (vizScopeO) vizScopeO.style.display = (v === '6') ? '' : 'none';
 if (vizOptCard) vizOptCard.style.display = (v === '0' || v === '6') ? '' : 'none';
 }
 if (vizStyleSel) vizStyleSel.addEventListener('change', syncVizPanels);
-syncVizPanels();
-animRefresh();
+syncs.push(syncVizPanels);
 var animUp = $('#animUploadBtn');
 if (animUp) animUp.addEventListener('click', function () {
 var fi = $('#animFile');
@@ -1311,11 +1318,11 @@ if (vizStart) vizStart.addEventListener('click', function () { vizCall('/api/mod
 var vizStop = $('#vizStopBtn');
 if (vizStop) vizStop.addEventListener('click', function () { vizCall('/api/mode/auto', 'Back to normal mode.'); });
 var staticSel = $('#useStaticIP');
-if (staticSel) { var fs = function () { toggle($('#staticFields'), staticSel.value === '1'); }; staticSel.addEventListener('change', fs); fs(); }
+if (staticSel) { var fs = function () { toggle($('#staticFields'), staticSel.value === '1'); }; staticSel.addEventListener('change', fs); syncs.push(fs); }
 var marioEnc = $('#marioIdleEncounters');
-if (marioEnc) { var fe = function () { toggle($('#marioEncFields'), marioEnc.checked); }; marioEnc.addEventListener('change', fe); fe(); }
+if (marioEnc) { var fe = function () { toggle($('#marioEncFields'), marioEnc.checked); }; marioEnc.addEventListener('change', fe); syncs.push(fe); }
 var tetSmallClk = $('#tetrisSmallClock');
-if (tetSmallClk) { var ftsc = function () { toggle($('#tetrisSmallClockField'), tetSmallClk.checked); }; tetSmallClk.addEventListener('change', ftsc); ftsc(); }
+if (tetSmallClk) { var ftsc = function () { toggle($('#tetrisSmallClockField'), tetSmallClk.checked); }; tetSmallClk.addEventListener('change', ftsc); syncs.push(ftsc); }
 var STYLE_PANELS = { '0':'marioSettings','3':'spaceSettings','4':'spaceSettings','5':'pongSettings','6':'pacmanSettings','7':'snakeSettings','8':'tetrisSettings','10':'asteroidsSettings','11':'dinoSettings','12':'matrixSettings','14':'weatherSettings','16':'tronSettings' };
 var ALL_PANELS = ['marioSettings','spaceSettings','pongSettings','pacmanSettings','snakeSettings','tetrisSettings','asteroidsSettings','dinoSettings','matrixSettings','weatherSettings','tronSettings'];
 var clockStyle = $('#clockStyle');
@@ -1334,7 +1341,7 @@ var c = document.getElementById(show + 'Colors'); if (c) c.style.display = '';
 var dc = document.querySelector('.digitc[data-ds="' + clockStyle.value + '"]');
 if (dc) dc.style.display = '';
 }
-if (clockStyle) { clockStyle.addEventListener('change', syncClockPanels); syncClockPanels(); }
+if (clockStyle) { clockStyle.addEventListener('change', syncClockPanels); syncs.push(syncClockPanels); }
 var wgBtn = $('#weatherGeoBtn');
 if (wgBtn) wgBtn.addEventListener('click', function () {
 var q = $('#weatherCity').value.trim(); if (!q) return;
@@ -1359,8 +1366,8 @@ var sh = $('#srHost'); if (sh) sh.textContent = v;
 });
 var metricsData = [];
 var DEVTIME = '12:34';
-var MAX_ROWS = CFG.maxRows || 5;
-var IS_LARGE = !!CFG.isLarge;
+var MAX_ROWS = 5;
+var IS_LARGE = false;
 function rowGeom() {
 var rm = parseInt($('#rowMode').value, 10);
 IS_LARGE = (rm >= 2);
@@ -1707,14 +1714,17 @@ if (data.metrics) data.metrics.forEach(function (d) { var m = byId(d.id); if (m)
 renderFrame();
 }).catch(function () {});
 }
+function startMetrics() {   // once the values are in: the preview draws with the row mode and clock settings
 fetch('/metrics').then(function (r) { return r.json(); }).then(function (data) {
 if (data.time) DEVTIME = data.time;
 if (data.metrics && data.metrics.length) { metricsData = data.metrics; renderMetrics(); buildDropCells(); buildChipTray(); renderFrame(); }
 else { $('#metricsList').innerHTML = '<p class="field-hint">No metrics received yet. Start the companion app on your PC.</p>'; buildDropCells(); buildChipTray(); renderFrame(); }
 setInterval(pollMetrics, 1500);
 }).catch(function () { $('#metricsList').innerHTML = '<p class="field-hint">Could not load metrics from the device.</p>'; });
+}
 form.addEventListener('submit', function (e) {
 e.preventDefault();
+if (!loaded) return;   // never from a half-loaded form; Save stays disabled until then
 saveFormState();
 var btn = $('#saveBtn'); var orig = btn.textContent;
 btn.disabled = true; btn.textContent = 'Saving...';
@@ -1813,9 +1823,13 @@ return (d > 0 ? d + 'd ' : '') + p2(h) + ':' + p2(m) + ':' + p2(s);
 
 var cycleInput = $('#cycleConfig'), cycleRows = $('#cycleRows');
 var cycleNames = {0:'Mario',1:'Standard',2:'Large',3:'Space Invaders',5:'Arkanoid',6:'Pac-Man',7:'Snake',8:'Tetris',10:'Asteroids',11:'Dino Runner',12:'Matrix Rain',14:'Weather',15:'Bomberman',16:'TRON'};
-var cycleItems = cycleInput.value.split(',').map(function(v) { var p=v.split(':'); return {id:Number(p[0]),seconds:Number(p[1]),enabled:Number(p[1])>0}; });
-if (!cycleItems.some(function(v){return v.id===15;})) cycleItems.push({id:15,seconds:300,enabled:false});
-if (!cycleItems.some(function(v){return v.id===16;})) cycleItems.push({id:16,seconds:300,enabled:false});
+var cycleItems = [];
+function initCycle() {
+ cycleItems = cycleInput.value.split(',').map(function(v) { var p=v.split(':'); return {id:Number(p[0]),seconds:Number(p[1]),enabled:Number(p[1])>0}; });
+ if (!cycleItems.some(function(v){return v.id===15;})) cycleItems.push({id:15,seconds:300,enabled:false});
+ if (!cycleItems.some(function(v){return v.id===16;})) cycleItems.push({id:16,seconds:300,enabled:false});
+ drawCycle(); showCycle();
+}
 function saveCycle() { cycleInput.value=cycleItems.map(function(v){return v.id+':'+(v.enabled?v.seconds:0);}).join(','); cycleInput.dispatchEvent(new Event('change',{bubbles:true})); }
 function drawCycle() {
  cycleRows.innerHTML='';
@@ -1832,7 +1846,7 @@ function drawCycle() {
  });
 }
 function showCycle(){ $('#cycleSettings').style.display=$('#clockStyle').value==='9'?'':'none'; }
-$('#clockStyle').addEventListener('change',showCycle);drawCycle();showCycle();
+$('#clockStyle').addEventListener('change',showCycle);
 function updateDiagnostics(d) {
  var reset={1:'Power on',3:'Software restart',4:'Panic',5:'Interrupt watchdog',6:'Task watchdog',7:'Watchdog',9:'Brownout'};
  var lines=['Firmware: '+d.version+' ('+d.build+')','Chip: '+d.chip,'Flash: '+(d.flashBytes/1048576).toFixed(0)+' MiB','Firmware size: '+Math.round(d.firmwareBytes/1024)+' KiB','Free heap: '+Math.round(d.freeHeap/1024)+' KiB','Lowest heap: '+Math.round(d.minFreeHeap/1024)+' KiB','Largest block: '+Math.round(d.largestHeapBlock/1024)+' KiB','Storage: '+Math.round(d.animationFreeBytes/1024)+' / '+Math.round(d.animationStorageBytes/1024)+' KiB free','Reset: '+(reset[d.resetReason]||d.resetReason),'Time synced: '+(d.ntpSynced?'yes':'no'),'Animation: '+(d.animationPlaying?'playing':'idle')];
@@ -1857,6 +1871,114 @@ if (led) { led.classList.toggle('online', !!d.pcOnline); led.classList.toggle('o
 if (title) title.textContent = (d.pcOnline ? 'PC online' : 'PC offline') + ' · ' + (d.mode || 'clock');
 }).catch(function () {});
 }
+// ---- Values ----
+// The page is one static file for every build, and /api/portal fills it in.
+// Until it has, the settings stay dimmed and Save stays disabled, so nothing is
+// saved from a half-loaded form. The Panel group's markup is in every copy of
+// the page: the parts this build does not carry go here, and panel.css and
+// panel.js are loaded only where there is a Panel group.
+var saveBtn = $('#saveBtn'), cfgRetry = $('#cfgRetry'), featuresIn = false;
+function applyFeatures(list) {
+if (featuresIn) return;
+featuresIn = true;
+var F = {}, root = $('#panelRoot'), html = document.documentElement;
+String(list || '').split(' ').forEach(function (k) { if (k) F[k] = 1; });
+$$('[data-need]').forEach(function (el) { if (!F[el.getAttribute('data-need')] && el.parentNode) el.parentNode.removeChild(el); });
+if (!$('section.page.active')) showPage('clock', true);   // the remembered page is one this build lacks
+if (!F.panel || !root) { html.classList.add('cfg-feat'); return; }
+root.setAttribute('data-f', list);
+var css = document.createElement('link');
+css.rel = 'stylesheet'; css.href = '/panel.css?v=%ASSETVER%';
+css.onload = css.onerror = function () { html.classList.add('cfg-feat'); };
+document.head.appendChild(css);
+var js = document.createElement('script');
+js.src = '/panel.js?v=%ASSETVER%';
+document.body.appendChild(js);
+}
+function colorRow(slot, label, hex) {
+return '<label style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:5px 0"><span>' + esc(label) + '</span><input type="color" name="color_' + slot + '" value="' + hex + '"></label>';
+}
+function colorRows(d, style) {
+return d.colorRows.filter(function (r) { return r[1] === style; }).map(function (r) { return colorRow(r[0], r[2], d.spriteColors[r[0]]); }).join('');
+}
+function place(id, html, outer) { var el = document.getElementById(id); if (el) el[outer ? 'outerHTML' : 'innerHTML'] = html; }
+function buildColors(d) {
+// The Clock page's card: each style's sprite rows and its time-digit row, shown by syncClockPanels.
+var html = '<div class="card"><h2 class="card-title">Colors</h2>';
+d.styleCards.forEach(function (c) {
+var rows = colorRows(d, c[0]);
+if (rows) html += '<div id="' + c[1] + 'Colors" style="display:none">' + rows + '</div>';
+});
+d.digitRows.forEach(function (r) {
+html += '<div class="digitc" data-ds="' + r[0] + '" style="display:none">' + colorRow(r[1], 'Time digits + colon', d.spriteColors[r[1]]) + '</div>';
+});
+html += '<label style="display:flex;align-items:center;gap:8px;margin-top:12px"><input type="checkbox" name="resetSpriteColors" value="1"> Reset all sprite colors to defaults on save</label></div>';
+place('colorsClock', html, true);
+var pc = colorRows(d, -2);
+place('colorsPc', pc ? '<div class="card"><h2 class="card-title">Colors</h2>' + pc + '</div>' : '', true);
+place('colorsViz', colorRows(d, -3));
+place('colorsScope', colorRows(d, -4));
+}
+function fillOptions(sel, list) {
+sel.innerHTML = '';
+list.forEach(function (o) { var e = document.createElement('option'); e.value = o[0]; e.textContent = o[1]; sel.appendChild(e); });
+}
+function applyValues(d) {
+var el = form.elements, v = d.form, i, hours = [], trail = [];
+// The minimum first: a range clamps a value below it.
+el.namedItem('displayBrightness').min = el.namedItem('dimBrightness').min = d.minBright;
+for (i = 0; i < 24; i++) hours.push([i, i + ':00']);
+fillOptions(el.namedItem('ambientStartHour'), hours);
+fillOptions(el.namedItem('ambientEndHour'), hours);
+for (i = 0; i <= d.scopeTrailMax; i++) trail.push([i, i + (i === d.scopeTrailDefault ? ' (default)' : '')]);
+fillOptions(el.namedItem('scopeTrail'), trail);
+fillOptions(el.namedItem('timezoneRegion'), [['', '-- Select Region --']].concat(d.timezones.map(function (n, k) { return [k, n]; })));
+buildColors(d);
+Object.keys(v).forEach(function (n) {
+var c = el.namedItem(n);
+if (!c) return;
+if (n === 'ambientCustomFile') c.dataset.cur = v[n];   // its options come from /api/anim/list
+else if (c.type === 'checkbox') c.checked = !!v[n];
+else {
+c.value = v[n];
+// No option matches: the first, as a select with none marked selected showed.
+if (c.tagName === 'SELECT' && c.selectedIndex < 0) c.selectedIndex = 0;
+}
+});
+document.title = 'AnimatedPixelClock - Config Portal v' + d.ver;
+['tbVer', 'aboutVer', 'fwVer'].forEach(function (id) { $('#' + id).textContent = 'v' + d.ver; });
+$('#fwBuilt').textContent = d.built;
+$('#fwHeap').textContent = (d.freeHeap / 1024).toFixed(1) + ' KB';
+$('#srIp').textContent = d.ip;
+$('#srHost').textContent = $('#hostPreview').textContent = v.deviceName;
+syncs.forEach(function (fn) { fn(); });
+$$('input[type="range"]').forEach(function (inp) { fmtRange(inp); });
+initCycle();
+}
+function cfgState(txt, cls) { saveMeta.className = 'save-meta ' + cls; $('.txt', saveMeta).textContent = txt; }
+function loadValues() {
+cfgRetry.style.display = 'none';
+cfgState('Loading settings...', 'wait');
+fetch('/api/portal', { cache: 'no-store' }).then(function (r) {
+if (!r.ok) throw new Error('HTTP ' + r.status);
+return r.json();
+}).then(function (d) {
+applyFeatures(d.features);
+applyValues(d);
+loaded = true;
+form.classList.remove('cfg-wait');
+saveBtn.disabled = false;
+markClean();
+animRefresh();
+startMetrics();
+}).catch(function (err) {
+cfgState('Settings did not load (' + (err && err.message ? err.message : err) + ')', 'err');
+cfgRetry.style.display = '';
+});
+}
+cfgRetry.addEventListener('click', loadValues);
+loadValues();
+
 refreshStatus();
 setInterval(refreshStatus, 5000);
 })();

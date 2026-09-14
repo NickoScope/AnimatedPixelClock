@@ -8,10 +8,14 @@
 // the 4MB boards pay nothing for any of this.
 
 #include <Arduino.h>
+#include <ArduinoJson.h>
 
 // web.cpp's guarded JSON sender, for a body that is not an Arduino String
 // (bounded blocking, watchdog fed, a stalled client dropped). Every build.
 void sendJsonBytesGuarded(int code, const char *data, size_t len);
+
+// web.cpp's allocator for response documents: PSRAM when there is some. Every build.
+ArduinoJson::Allocator *webJsonAllocator();
 
 #if defined(CONTROL_ENCODER_ENABLED)
 
