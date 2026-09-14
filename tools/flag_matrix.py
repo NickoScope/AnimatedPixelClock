@@ -58,7 +58,13 @@ IMAGES = ["provision", "matrix-waveshare-rgb-bringup"]
 
 def main():
     base = (ROOT / "platformio.ini").read_text()
-    tmp  = pathlib.Path("/tmp/pio_flag_matrix.ini")
+    # Inside this tree's own .pio, not /tmp. On 2026-09-14 a worktree and the
+    # main tree ran the matrix at the same time: both wrote /tmp/pio_flag_matrix.ini,
+    # so between writing its env and building it each run could pick up the
+    # other's flags - a green row that was never built, the very failure this
+    # script exists to prevent. Each checkout already has its own .pio/build.
+    tmp  = ROOT / ".pio" / "flag_matrix.ini"
+    tmp.parent.mkdir(exist_ok=True)
     bad  = 0
     for name, flags, must in COMBOS:
         tmp.write_text(base + "\n[env:flagtest]\nextends = env:matrix-waveshare-rgb\n"

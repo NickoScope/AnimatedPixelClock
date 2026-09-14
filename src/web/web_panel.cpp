@@ -12,10 +12,9 @@
 //                           | {"carousel":{"enabled":b,"idleS":n,"slotS":n,"allStyles":b}}
 //   GET  /api/flightboard   airports, airport, dir, board, mqtt
 //   POST /api/flightboard   {"airport":i,"dir":"arr"|"dep"|"alt"}
-//   GET  /api/railboard     station, lists, Home Assistant status, config, mqtt
-//   POST /api/railboard     {"diag":b} | {"config":{"panels":1..2,"rows":1..3,
-//                           "font":"small"|"large","level":10..100,"switch_s":3..600,
-//                           "stale_s":30..3600}}
+//   GET  /api/railboard     station, what is showing, lists, Home Assistant status, config, mqtt
+//   POST /api/railboard     {"crs":"GLD"} | {"diag":b} | {"config":{"rows":1..8,
+//                           "level":10..100,"switch_s":3..600,"stale_s":30..3600}}
 //   GET  /api/worldclock    mask, cities, home, utc
 //   POST /api/worldclock    {"home":i}
 //   GET  /api/knob          settings, defaults, bounds, stats
@@ -431,6 +430,17 @@ static void handleRailboard() {
     JsonVariantConst diag = in["diag"];
     if (!diag.isNull() && !diag.is<bool>()) REJECT(400, "diag must be true or false");
 
+    // Exactly three capitals, as the panel stores it and as the MQTT topic
+    // carries it. Lower case is refused rather than folded: the portal folds
+    // it as you type, so anything else reaching here is not the portal.
+    char crs[4] = "";
+    JsonVariantConst jcrs = in["crs"];
+    if (!jcrs.isNull()) {
+      const char *s = jcrs.as<const char *>();
+      if (!s || !railboardValidStation(s)) REJECT(400, "crs must be three capital letters A-Z");
+      memcpy(crs, s, sizeof(crs));
+    }
+
     char cfgJson[160] = "";
     JsonVariantConst cfg = in["config"];
     if (!cfg.isNull()) {
@@ -441,23 +451,19 @@ static void handleRailboard() {
       JsonDocument out(&s_alloc);
       out["v"] = 1;
       static const struct { const char *key; long lo, hi; } R[] = {
-        {"panels", 1, 2}, {"rows", 1, 3}, {"level", 10, 100}, {"switch_s", 3, 600}, {"stale_s", 30, 3600}};
+        {"rows", 1, 8}, {"level", 10, 100}, {"switch_s", 3, 600}, {"stale_s", 30, 3600}};
       for (const auto &r : R) {
         if (cfg[r.key].isNull()) continue;
         long v;
         if (!intIn(cfg[r.key], r.lo, r.hi, &v)) REJECT(400, "config value out of range");
         out[r.key] = v;
       }
-      JsonVariantConst font = cfg["font"];
-      if (!font.isNull()) {
-        const char *s = font.as<const char *>();
-        if (!s || (strcmp(s, "small") && strcmp(s, "large"))) REJECT(400, "config.font must be small or large");
-        out["font"] = s;
-      }
       if (measureJson(out) >= sizeof(cfgJson)) REJECT(400, "config too large");
       serializeJson(out, cfgJson, sizeof(cfgJson));
     }
 
+    // Kept across reboots by src/panel, which also tells the rail board.
+    if (crs[0] && !panelSetRailStation(crs)) REJECT(500, "station refused");
     if (cfgJson[0] && !railboardApplyConfig(cfgJson, (uint16_t)strlen(cfgJson))) REJECT(500, "config refused");
     if (!diag.isNull()) railboardSetDiag(diag.as<bool>());
   }

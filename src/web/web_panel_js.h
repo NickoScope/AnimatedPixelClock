@@ -56,7 +56,7 @@ function segSet(id, v) {
 }
 
 var NAMES = { clock: 'Clock', world: 'World clock', flights: 'Flight board', trains: 'Rail board', yachts: 'Yacht radar', cards: 'Card', other: 'Page' };
-var HINTS = { clock: 'Always on - where the panel falls back to', world: 'Daylight map and the time', flights: 'Arrivals and departures', trains: 'Station departures and arrivals', yachts: 'AIS vessels in the bay', other: 'Always visited' };
+var HINTS = { clock: 'Always on - where the panel falls back to', world: 'Daylight map and the time', flights: 'Arrivals and departures', trains: 'Departures, then arrivals, for one station', yachts: 'AIS vessels in the bay', other: 'Always visited' };
 var pageIdx = {}, lastPanel = null;
 
 // ---------------------------------------------------------------- polling
@@ -236,11 +236,12 @@ function drawNow(d) {
     for (i = 0; i < 7; i++) { y = 11 + i * 7; R(c, 2, y, 17, 5, fg); R(c, 22, y, 22, 5, fg); R(c, 50, y, 14 + (i * 37) % 30, 5, fg); R(c, 104, y, 22, 5, dim); }
     R(c, 0, 18, 1, 6, AMBER);
   } else if (n.key === 'trains') {
-    T(c, 0, 1, 'STATION', 5, '#fff'); T(c, 128, 1, n.time, 5, '#fff', 'right');
-    [0, 64].forEach(function (x0, k) {
-      T(c, x0, 8, k ? 'ARRIVALS' : 'DEPARTURES', 5, AMBER);
-      for (var j = 0; j < 3; j++) { var yy = 15 + j * 14; R(c, x0, yy, 17, 5, fg); R(c, x0 + 20, yy, 26, 5, dim); R(c, x0 + 55, yy, 5, 5, '#fff'); R(c, x0, yy + 7, 26 + (j * 11) % 20, 5, fg); }
-    });
+    // railboard.cpp's departures screen: white title and headings, amber rows, the clock at the foot.
+    var RBA = '#ff9600';
+    T(c, 2, 0, 'Departures', 7, '#fff'); T(c, 88, 2, 'Plat', 5, '#fff', 'right'); T(c, 93, 2, 'Expt', 5, '#fff');
+    T(c, 2, 9, 'Time', 5, '#fff'); T(c, 22, 9, 'Destination', 5, '#fff');
+    for (i = 0; i < 6; i++) { y = 16 + i * 7; R(c, 2, y, 16, 5, RBA); R(c, 22, y, 26 + (i * 23) % 34, 5, RBA); R(c, 85, y, 3, 5, RBA); R(c, 93, y, i === 2 ? 17 : 24, 5, i === 3 ? '#ff2418' : RBA); }
+    T(c, 2, 58, 'Page 1 of 2', 5, RBA); T(c, 126, 57, n.time, 7, RBA, 'right');
   } else if (n.key === 'yachts') {
     c.strokeStyle = dim; c.lineWidth = SK * 0.5;
     [31, 20, 10].forEach(function (r) { c.beginPath(); c.arc(31.5 * SK, 32 * SK, r * SK, 0, 2 * Math.PI); c.stroke(); });
@@ -390,7 +391,46 @@ if ($('fbApt')) $('fbApt').addEventListener('change', function () { postFb({ air
 seg('fbDir', function (v) { postFb({ dir: v }); });
 
 // ---------------------------------------------------------------- rail board
-var rbEditing = false;
+var rbEditing = false, rbCrsDirty = false, rbPresetSig = '';
+// Presets: each code exactly as National Rail's own station page heads it, read
+// on 2026-09-14 (nationalrail.co.uk/stations/<name>/). Any other code can be typed.
+var RB_PRESETS = [['GLD', 'Guildford'], ['WAT', 'London Waterloo'], ['WOK', 'Woking'], ['RDG', 'Reading'], ['GTW', 'Gatwick Airport'], ['LRD', 'London Road (Guildford)']];
+function renderPresets(crs) {
+  var host = $('rbPresets'); if (!host || rbPresetSig === crs) return;
+  rbPresetSig = crs; host.innerHTML = '';
+  RB_PRESETS.forEach(function (p) {
+    var b = document.createElement('button');
+    b.type = 'button'; b.className = 'chip' + (p[0] === crs ? ' sel' : '');
+    b.textContent = p[1] + ' · ' + p[0];
+    b.addEventListener('click', function () { var ci = $('rbCrs'); if (ci) ci.value = p[0]; setStation(p[0]); });
+    host.appendChild(b);
+  });
+}
+// The panel refuses anything but three capitals with 400; checked here first so
+// the message can say what is wrong with what was typed.
+function setStation(code, btn) {
+  if (!/^[A-Z]{3}$/.test(code)) {
+    note('rbStnMsg', 'A station code is exactly three letters, A to Z' + (code ? ' - "' + code + '" is not one.' : '.'), true);
+    var ci = $('rbCrs'); if (ci) ci.focus();
+    return;
+  }
+  api('/api/railboard', { crs: code }).then(function (d) {
+    rbCrsDirty = false; rbPresetSig = ''; renderRb(d);
+    note('rbStnMsg', code + ' is the station now, kept across reboots. Home Assistant fetches it within 20 s.');
+    if (btn) flash(btn, 'Set');
+  }).catch(function (err) { note('rbStnMsg', err.message, true); });
+}
+if ($('rbCrs')) {
+  $('rbCrs').addEventListener('input', function () {
+    var up = this.value.toUpperCase();
+    if (up !== this.value) this.value = up;
+    rbCrsDirty = true;
+    var bad = /[^A-Z]/.test(up);
+    note('rbStnMsg', bad ? 'Letters only, A to Z.' : '', bad);
+  });
+  $('rbCrs').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); setStation(this.value, $('rbSet')); } });
+  $('rbSet').addEventListener('click', function () { setStation($('rbCrs').value, this); });
+}
 function londonTime(ts) {
   try { return new Date(ts * 1000).toLocaleTimeString('en-GB', { timeZone: 'Europe/London' }); } catch (e) { return new Date(ts * 1000).toISOString().slice(11, 19) + ' UTC'; }
 }
@@ -401,7 +441,15 @@ function listLine(l, now) {
 }
 function renderRb(d) {
   pageIdx.trains = d.page;
-  setText('rbStation', cap(d.station));
+  // RTT's own spelling, mixed case, as the panel prints it; the code until a board has named it.
+  var named = d.named ? d.station : '';
+  setText('rbStation', named ? named + ' (' + d.crs + ')' : d.crs);
+  setText('rbNow', named ? named + ' · ' + d.crs : d.crs + ' · no board has named it yet');
+  setText('rbStnTag', d.select.sent ? 'sent to home assistant' : 'not sent yet');
+  var ci = $('rbCrs'); if (ci && !focused(ci) && !rbCrsDirty) ci.value = d.crs;
+  renderPresets(d.crs);
+  var LIST = { dep: 'departures', arr: 'arrivals', diag: 'diagnostics' };
+  setText('rbList', (LIST[d.list] || '--') + (d.knob !== 'auto' ? ' · chosen with the knob, ' + d.holdS + ' s left' : (d.list === 'diag' ? ' · pinned' : ' · alternating every ' + d.cfg.switch_s + ' s')));
   setText('rbTag', d.showing ? 'on screen' : 'not on screen');
   var stale = d.dep.stale && d.arr.stale;
   var led = $('rbLed'); if (led) { led.classList.toggle('online', !stale); led.classList.toggle('offline', stale); }
@@ -418,16 +466,16 @@ function renderRb(d) {
   setText('rbFrom', { ha: 'from Home Assistant', web: 'from this page', build: 'build defaults' }[d.cfg.from] || '--');
   if (rbEditing) return;
   var c = d.cfg;
-  $('rbPanels').value = c.panels; $('rbFont').value = c.font; $('rbRows').value = c.rows;
+  $('rbRows').value = c.rows;
   $('rbSwitch').value = c.switch_s; $('rbStale').value = c.stale_s; $('rbLevel').value = c.level;
   setText('rbLevelV', c.level + ' pc');
 }
-each(document.querySelectorAll('#rbPanels,#rbFont,#rbRows,#rbSwitch,#rbStale,#rbLevel'), function (el) {
+each(document.querySelectorAll('#rbRows,#rbSwitch,#rbStale,#rbLevel'), function (el) {
   el.addEventListener('input', function () { rbEditing = true; if (el.id === 'rbLevel') setText('rbLevelV', el.value + ' pc'); });
   el.addEventListener('change', function () { rbEditing = true; });
 });
 if ($('rbApply')) $('rbApply').addEventListener('click', function () {
-  var btn = this, cfg = { panels: +$('rbPanels').value, font: $('rbFont').value, rows: +$('rbRows').value,
+  var btn = this, cfg = { rows: +$('rbRows').value,
     switch_s: +$('rbSwitch').value, stale_s: +$('rbStale').value, level: +$('rbLevel').value };
   api('/api/railboard', { config: cfg }).then(function (d) { rbEditing = false; renderRb(d); note('rbMsg', 'Applied until Home Assistant sends its config again or the panel reboots.'); flash(btn, 'Applied'); })
     .catch(function (err) { note('rbMsg', err.message, true); });
