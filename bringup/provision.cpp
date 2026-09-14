@@ -1,14 +1,16 @@
 // One-shot provisioning: put the secrets this board needs into NVS.
 //
-// Nothing secret is committed. Values arrive as build flags, are written once,
-// and the board is then flashed with the real firmware. Reading them back is
-// not offered - NVS is where they live now.
+// Nothing secret is committed. Values arrive as build flags from
+// provision_secrets.ini (gitignored; template provision_secrets.example.ini),
+// are written once, and the board is then flashed with the real firmware.
+// Reading them back is not offered - NVS is where they live now.
 //
-//   pio run -e provision -t upload \
-//     --project-option="build_flags=-DPROV_MQTT_HOST=\\\"192.168.4.35\\\"
-//                                   -DPROV_MQTT_USER=\\\"mqtt\\\"
-//                                   -DPROV_MQTT_PASS=\\\"...\\\"
-//                                   -DPROV_AIS_KEY=\\\"...\\\""
+//   cp provision_secrets.example.ini provision_secrets.ini   # then edit it
+//   pio run -e provision -t upload
+//   pio run -e provision -t clean                           # drop the cache
+//
+// An earlier version of this comment passed the values with
+// --project-option, which this PlatformIO (6.1) does not have.
 //
 // Namespaces, matching the modules that read them:
 //   "fb" host/port/user/pass   flight board broker   (src/flightboard/fb_mqtt.cpp)

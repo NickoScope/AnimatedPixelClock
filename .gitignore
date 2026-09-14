@@ -28,3 +28,6 @@ tools/luasim/luasim
 tools/luasim/font_picopixel.inc
 tools/luasim/*.raw
 # previews ARE committed - they are the only record of what an effect looks like
+
+# Broker credentials and API keys for env:provision - never committed
+provision_secrets.ini
