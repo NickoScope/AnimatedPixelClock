@@ -904,6 +904,101 @@ local function begin_aim(s)
   phase, ptime = "aim", 0
 end
 
+-- ---------------------------------------------------------------- the HUD
+-- As in a game: the time top right, the score top left, each on its own dark
+-- plate so it reads over rail, cloth and balls alike, and drawn last so no
+-- ball ever covers it. Both plates sit between the pockets, which stay in view.
+
+-- Seven-segment digits, 4 x 7, as rects worked out once.
+local SEGMENTS = {[0] = "abcdef", "bc", "abdeg", "abcdg", "bcfg", "acdfg", "acdefg", "abc", "abcdefg", "abcdfg"}
+local SEG_RECT = {a = {0, 0, 4, 1}, b = {3, 0, 1, 4}, c = {3, 3, 1, 4}, d = {0, 6, 4, 1},
+                  e = {0, 3, 1, 4}, f = {0, 0, 1, 4}, g = {0, 3, 4, 1}}
+local DIGIT = {}
+for d = 0, 9 do
+  local list = {}
+  for s in SEGMENTS[d]:gmatch(".") do list[#list + 1] = SEG_RECT[s] end
+  DIGIT[d] = list
+end
+
+local function seg_digit(x, y, d, r, g, b)
+  local list = DIGIT[d]
+  for i = 1, #list do
+    local s = list[i]
+    px.rect(x + s[1], y + s[2], s[3], s[4], r, g, b, true)
+  end
+end
+
+local PLATE_EDGE = {120, 92, 30}
+local function plate(x, y, w, h)
+  px.rect(x, y, w, h, PLATE_EDGE[1], PLATE_EDGE[2], PLATE_EDGE[3], true)
+  px.rect(x + 1, y + 1, w - 2, h - 2, 0, 0, 0, true)
+end
+
+-- HH:MM, white, with the colon blinking amber on the second. The plate ends
+-- short of the top-right pocket.
+local CLOCK_X = 92
+local function draw_clock(t)
+  local n = px.now()
+  plate(CLOCK_X, 0, 25, 11)
+  local x, y = CLOCK_X + 2, 2
+  seg_digit(x, y, n.hour // 10, 255, 255, 255)
+  seg_digit(x + 5, y, n.hour % 10, 255, 255, 255)
+  if (t * 60) % 1 < 0.5 then
+    px.rect(x + 10, y + 1, 1, 2, 255, 170, 0, true)
+    px.rect(x + 10, y + 4, 1, 2, 255, 170, 0, true)
+  end
+  seg_digit(x + 12, y, n.min // 10, 255, 255, 255)
+  seg_digit(x + 17, y, n.min % 10, 255, 255, 255)
+end
+
+-- A small ball in the colour of the ball on; after a red it cycles through
+-- the colours, any of which may be played.
+local function ball_dot(x, y, kind)
+  local c = KINDS[kind].col
+  px.rect(x, y + 1, 3, 1, c[1], c[2], c[3], true)
+  px.rect(x + 1, y, 1, 3, c[1], c[2], c[3], true)
+  px.pixel(x + 1, y + 1, min(255, c[1] + 90), min(255, c[2] + 90), min(255, c[3] + 90))
+end
+
+-- Both scores, the player at the table in yellow; then the break in amber,
+-- or for a moment the foul that just happened.
+local function draw_score(t)
+  local s1, s2 = tostring(game.score[1]), tostring(game.score[2])
+  local extra, er, eg, eb
+  if game.msg and game.msg ~= "FRAME" then
+    extra, er, eg, eb = game.msg, 255, 80, 40
+  elseif game.brk > 0 then
+    extra, er, eg, eb = "(" .. game.brk .. ")", 255, 170, 0
+  end
+  local w1, w2 = px.width(s1), px.width(s2)
+  local w = 7 + w1 + 3 + w2 + (extra and (3 + px.width(extra)) or 0) + 1
+  plate(9, 0, w, 9)
+  if game.on then
+    ball_dot(11, 3, game.on == "colour" and COLOURS[floor(t * 120) % 6 + 1] or game.on)
+  end
+  local x = 16
+  local hot, cold = {255, 215, 0}, {185, 185, 185}
+  local c1 = game.player == 1 and hot or cold
+  local c2 = game.player == 2 and hot or cold
+  px.text(x, 0, s1, c1[1], c1[2], c1[3])
+  x = x + w1 + 3
+  px.text(x, 0, s2, c2[1], c2[2], c2[3])
+  if extra then px.text(x + w2 + 3, 0, extra, er, eg, eb) end
+end
+
+-- Between frames: the score of the frame just played and the frames won.
+local function draw_frame_over()
+  local w = 58
+  local x, y = (W - w) // 2, 21
+  plate(x, y, w, 21)
+  local l1 = "FRAME"
+  local l2 = game.score[1] .. " - " .. game.score[2]
+  local l3 = "FRAMES " .. game.frames[1] .. "-" .. game.frames[2]
+  px.text(x + (w - px.width(l1)) // 2, y, l1, 255, 170, 0)
+  px.text(x + (w - px.width(l2)) // 2, y + 6, l2, 255, 255, 255)
+  px.text(x + (w - px.width(l3)) // 2, y + 12, l3, 185, 185, 185)
+end
+
 -- ---------------------------------------------------------------- draw
 function draw()
   local dt = frame_dt()
@@ -979,7 +1074,9 @@ function draw()
     draw_cue(c.x - shot.dx * shot.speed * ptime, c.y - shot.dy * shot.speed * ptime, shot.dx, shot.dy, 0)
   end
 
-  -- temporary scoreboard for checking the game; the HUD replaces it
-  px.text(8, 5, string.format("%d-%d B%d %s", game.score[1], game.score[2], game.brk, game.on or "-"), 255, 255, 255)
-  if game.msg then px.text(8, 54, game.msg, 255, 200, 0) end
+  -- the HUD, last of all, so nothing is ever drawn over it
+  local t = px.t()
+  if phase == "over" then draw_frame_over() end
+  draw_score(t)
+  draw_clock(t)
 end
