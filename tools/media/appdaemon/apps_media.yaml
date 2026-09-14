@@ -2,9 +2,8 @@
 # (/addon_configs/a0d7b954_appdaemon/apps/apps.yaml), after the others.
 #
 # Needs, in the same apps directory: matrix_media.py (one file, no helpers).
-# Needs, in AppDaemon's own secrets.yaml (/addon_configs/a0d7b954_appdaemon/secrets.yaml):
-#   matrix_media_mqtt_user   a broker login allowed to publish and subscribe under nickoscope_matrix/
-#   matrix_media_mqtt_pass   and its password
+# The broker login is the one flight_board already reads from AppDaemon's
+# secrets.yaml (nicko_mqtt_user, nicko_mqtt_pass): nothing new to enter.
 # The whole install, and how to check it: src/media/README.md, "Home Assistant".
 
 matrix_media:
@@ -28,8 +27,8 @@ matrix_media:
   # The broker by IP: this container has no mDNS (the note on marta_bridge here).
   mqtt_host: "192.168.4.35"
   mqtt_port: 1883
-  mqtt_user: !secret matrix_media_mqtt_user
-  mqtt_pass: !secret matrix_media_mqtt_pass
+  mqtt_user: !secret nicko_mqtt_user     # the login flight_board already uses here
+  mqtt_pass: !secret nicko_mqtt_pass
   keepalive: 60          # s: the same state again when nothing changes; the panel says STALE after 150
   min_interval: 1        # s: at most one state payload this often
   favs_refresh: 900      # s: how often Music Assistant's favourites are read again

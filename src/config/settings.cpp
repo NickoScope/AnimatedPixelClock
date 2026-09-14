@@ -706,7 +706,18 @@ void loadSettings() {
   Serial.println("Settings loaded (v2.0 - Compact Grid Layout)");
 }
 
+// A style change used to call saveSettings(), which writes 129 keys. The style
+// is one key, so one key is written: 0-3 ms on the panel (2026-09-14). That was
+// not the stall it was suspected of: loopMaxMs still read 724 ms after a style
+// change with this in place, so that stall comes from somewhere else.
+void saveClockStyle() {
+  preferences.begin("pcmonitor", false);
+  preferences.putInt("clockStyle", settings.clockStyle);
+  preferences.end();
+}
+
 void saveSettings() {
+  const unsigned long savedFromMs = millis();
   sanitizeBrightnessSettings();
   preferences.begin("pcmonitor", false); // Read-write
   preferences.putString("cycleConfig", settings.cycleConfig);
@@ -877,5 +888,5 @@ void saveSettings() {
 
   preferences.end();
 
-  Serial.println("Settings saved (v2.0)!");
+  Serial.printf("Settings saved (v2.0) in %lu ms\n", millis() - savedFromMs);
 }

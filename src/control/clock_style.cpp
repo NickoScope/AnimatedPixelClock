@@ -17,10 +17,11 @@
 // tells you nothing until the clock happens to do something recognisable.
 static const uint32_t TOAST_MS = 1600;
 
-// saveSettings() rewrites the whole settings blob in NVS. Spinning through
-// fifteen styles would be fifteen writes for fourteen choices nobody made, so
-// the write waits until the knob stops moving. Flash wear is the reason; the
-// side benefit is that a fast spin costs one write, not fifteen.
+// A style is saved as one NVS key (saveClockStyle), not the whole settings set.
+// Spinning through fifteen styles would still be fifteen writes for fourteen
+// choices nobody made, so the write waits until the knob stops moving. Flash
+// wear is the reason; the side benefit is that a fast spin costs one write,
+// not fifteen.
 static const uint32_t SETTLE_MS = 2500;
 
 static uint32_t s_toastAt  = 0;
@@ -135,7 +136,9 @@ void clockStyleToggleRotation() {
 void clockStyleTick() {
   if (s_dirtyAt && (millis() - s_dirtyAt) > SETTLE_MS) {
     s_dirtyAt = 0;
-    saveSettings();
+    const uint32_t t0 = millis();
+    saveClockStyle();
+    Serial.printf("[style] saved style %u in %u ms\n", (unsigned)settings.clockStyle, (unsigned)(millis() - t0));
   }
 }
 

@@ -228,9 +228,9 @@ simpler in Jinja, and a call_service per change would land in the recorder.
 #    Check "players" and "default_player" there too.
 
 # 1. The broker login, by hand, in AppDaemon's secrets (never echoed):
-#    /addon_configs/a0d7b954_appdaemon/secrets.yaml
-#      matrix_media_mqtt_user: <a login allowed to publish and subscribe under nickoscope_matrix/>
-#      matrix_media_mqtt_pass: <its password>
+#    /addon_configs/a0d7b954_appdaemon/secrets.yaml: nothing new. The app reads
+#      nicko_mqtt_user and nicko_mqtt_pass, the broker login flight_board already
+#      uses there (installed that way on the owner's AppDaemon, 2026-09-14).
 
 # 2. The app into AppDaemon's apps directory:
 scp tools/media/appdaemon/matrix_media.py nickohome:/tmp/
