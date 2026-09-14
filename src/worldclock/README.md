@@ -14,6 +14,7 @@ breathes.
 
 - Long press on the knob: the page after the clock. The carousel gives it 20 s.
 - Build flag `WORLDCLOCK_ENABLED`; needs `CONTROL_ENCODER_ENABLED` (`#error` otherwise).
+- The portal's *World clock* page: preview, home, and adding cities.
 
 ## Home's time and name
 
@@ -53,13 +54,130 @@ Why this way:
   name and the dot rise and fall together and read as one thing.
 - 10 s is half the 20 s the carousel gives the page, so a change made while
   the page is up is seen pulsing and then seen settled within one visit.
-- The pulse starts on the page's first frame after the change, not at the
-  moment of the change. A change made while another page is showing is
-  announced when the world clock is next on screen.
+- The pulse starts on the page's first frame after the change. A change made
+  while another page is showing is announced when the world clock is next on
+  screen. A change made in the portal also puts the page on screen, since the
+  owner asked to see the new home there.
 
 A city just added and made home, caught at the bottom of a breath:
 
 ![](../../tools/luasim/preview/world_custom_added@6x.png)
+
+## Cities
+
+Six are built in: Cannes, Moscow, New York, London, Dubai, Almaty. They cannot
+be deleted. Up to **six more** can be added from the portal and deleted again.
+
+Six because the map is 64×32 dots and Europe already holds three of the
+built-in cities within a few dots of each other. Twelve orange dots is about
+what the map carries before they stop reading as places, and the portal's list
+stays one screen long. Memory is not the limit: a city is 134 bytes in NVS
+and 136 in RAM.
+
+Every city has an id that never moves: 0–5 for the built-in list, 100–105 for
+the added slots, and 200 for a city made at the panel's location (below),
+which is never stored. Deleting one added city leaves the others' ids alone, so
+a stored home still means the same place.
+
+A city is checked by `worldClockCheck()` on every way in: from the portal, from
+NVS at boot, and from the IP lookup.
+
+| | rule |
+|---|---|
+| name | 1–20 characters of `A–Z 0–9 space . - '`, no space at an end or two in a row, at most 72 px of Picopixel advance |
+| lat | on the map: 58 S to 78 N (the mask's rows) |
+| lon | −180 up to, not including, 180 |
+| zone | an IANA name found in `tzdb.h`; the panel supplies the POSIX string itself. A string that `posixTzParse()` refuses is refused |
+
+Same-name cities are refused (409): two rows nobody can tell apart.
+
+### NVS
+
+Namespace `panel`, written by `panelTick()` once changes stop arriving, like
+every other panel setting. Only what differs from NVS is written.
+
+| key | type | |
+|---|---|---|
+| `wcHome` | u8 | the chosen home's id. Absent = never chosen: home follows the location. Values 0–5 mean what they meant before custom cities |
+| `wcC0`–`wcC5` | blob, 134 B | an added city: version byte 1, name[21], lat and lon as float, POSIX string[64], IANA name[40]. Absent = empty slot |
+
+A record of the wrong length or version is skipped at boot, not repaired. A
+stored home that is no city any more is removed at the next save, so a city
+later added to that slot is not mistaken for the owner's choice.
+
+## Home when nobody chose one
+
+[`wc_home.cpp`](wc_home.cpp), in order, each step only when the one before has
+nothing to say:
+
+1. **The owner's choice** from the portal (radio button, or *Add and make
+   home*). It always wins and is kept. Choosing the city made at the location
+   stores it as an added city first. *Follow the panel's location* forgets the
+   choice.
+2. **The weather location**, when `settings.weatherLat/Lon` is set. The
+   built-in or added city within **25 km** is home. A circle the size of
+   Greater London (1 572 km², Wikipedia) has a radius of 22.4 km, so a panel
+   anywhere in a city that size is named after it. Nice, 26.5 km from Cannes by
+   the geocoder's own coordinates, stays a place of its own. With no city that
+   close, a city is made there, named **HOME**, in the panel's own zone.
+   Open-Meteo documents no reverse geocoding (its geocoding API page has only
+   `/v1/search`), so there is no better name to give it.
+3. **The panel's public IP**, when there is no choice and no location:
+   `https://free.freeipapi.com/api/v1/json`, called once NTP has synced, at
+   most once per boot. Its `cityName` is folded to the page's capitals, its
+   first `timeZones` entry gives the zone, and the nearest-city rule of step 2
+   applies. Provider notes, read on 2026-09-14:
+   - freeipapi.com's free tier has TLS and no key, allows "10 requests per 10
+     seconds, up to 60 per minute", and is for "commercial and non-commercial
+     use";
+   - ipapi.co's free plan is "not for production use";
+   - ip-api.com's terms list SSL among what the pro plan adds;
+   - ipinfo.io's free plan stops at the country.
+4. **The zone**, until the lookup answers or if it fails: the built-in city
+   whose UTC offset is the panel's own zone's right now. The first wins a tie,
+   and the closest offset wins when none is equal. Rechecked every minute, so
+   it follows NTP arriving and summer time.
+
+The order puts what the owner said first, then what the owner configured, then
+a guess from the network, then a guess from the clock.
+
+## Adding a city from the portal
+
+The browser asks [Open-Meteo's geocoder](https://open-meteo.com/en/docs/geocoding-api)
+itself, not the panel:
+
+```
+GET https://geocoding-api.open-meteo.com/v1/search?name=Cannes&count=3&language=en&format=json
+Origin: http://192.168.1.50
+
+HTTP/1.1 200 OK
+access-control-allow-origin: *
+access-control-allow-methods: GET, OPTIONS
+
+{"results":[{"name":"Cannes","latitude":43.55135,"longitude":7.01275,
+ "timezone":"Europe/Paris","country":"France", ...}]}
+```
+
+(curl, 2026-09-14.) A GET with no custom headers is a CORS "simple request",
+which needs no preflight (MDN), and the answer allows any origin. So no proxy
+is needed. The panel is spared a TLS handshake, the largest allocation this
+firmware makes (`weather.cpp`), for every pause in typing, and hears only the
+city that is added. The same site's OPTIONS answers 404, so a request that did
+need a preflight would fail.
+
+Open-Meteo's terms: free for non-commercial use, "less than 10'000 API calls
+per day, 5'000 per hour and 600 per minute", CC BY 4.0 with attribution. The
+portal sends one request per pause in typing (350 ms) and credits Open-Meteo
+and GeoNames under the search box.
+
+Picking a result fills the name with a first guess by `worldClockFitName`'s
+rules (capitals without accents, cut after a word or before a hyphen to fit
+72 px). It is measured with the font advances the panel reports in
+`GET /api/worldclock`, so the width meter reads what the panel will check. The
+portal's copy of those rules gives the same answer as the C++ for 14 of 14
+test names.
+
+API: [`web_panel.cpp`](../web/web_panel.cpp), top of the file.
 
 ## Zones
 
@@ -91,21 +209,19 @@ reads the same `/usr/share/zoneinfo` footers.
 
 ## One source
 
-The land mask and the city list are written by
+The land mask and the built-in cities are written by
 [`tools/luasim/gen_world.py`](../../tools/luasim/gen_world.py) into both
 `worldmap.h` here and the Lua prototype
 [`world_clock.lua`](../../tools/luasim/scripts/world_clock.lua). A city's zone
-is its IANA name there. The POSIX string written beside it comes from `tzdb.h`,
-the same table the portal's cities use. To change the built-in cities, edit
-`CITIES` and rerun it. The pre-commit hook runs `gen_tz.py --check` and
-`gen_world.py --check`, which need no network, and refuses a commit where the
-copies disagree.
-
-Cities built in: Cannes, Moscow, New York, London, Dubai, Almaty.
+is its IANA name there. The POSIX string written beside it comes from
+`tzdb.h`, the same table the portal's cities use. To change the built-in
+cities, edit `CITIES` and rerun it. The pre-commit hook runs `gen_tz.py --check`
+and `gen_world.py --check`, which need no network, and refuses a commit where
+the copies disagree.
 
 ## How it was checked
 
-`python3 tools/luasim/fx_parity.py --quick` runs three checks on the world clock:
+`python3 tools/luasim/fx_parity.py --quick` runs these world clock checks:
 
 - **The page against its prototype.** `wchost` compiles `worldclock.cpp` and
   `posix_tz.cpp` for the host against a stand-in display. It renders the page
@@ -122,20 +238,33 @@ Cities built in: Cannes, Moscow, New York, London, Dubai, Almaty.
   Python 3.9's zoneinfo starts it a day early; POSIX (XBD 8.3) and libc agree
   with each other. 14 malformed strings must be refused, and are. A negative
   control requires a one-week change in a rule to show up.
+- **Name folding.** `worldClockFitName` on 9 names with known answers: accents,
+  a Cyrillic name that folds to nothing, a hyphenated one cut before the
+  hyphen, a Welsh one cut at exactly 72 px.
 - The Lua runtime's own parity (luasim against `fxhost`) still covers the
   script, as it does every script.
 
-Not yet on hardware.
+What parity does **not** cover: custom cities beyond the one slot the harness
+fills, the city made at the location, NVS, the IP lookup, the web API and the
+portal. They exist only at run time, and the prototype has no way to express
+them.
+
+Not yet on hardware: nothing here has run on the board.
 
 ## Cost
 
-Against 1c82839, the same build without these changes: **+5 432 B flash,
-+1 144 B RAM**. The zone table is not linked yet, since nothing looks a zone
-up by name so far.
+`pio run -e matrix-waveshare-rgb` against fb60bb0, the same branch without
+these changes: **+38 468 B flash, +2 200 B RAM** (2 004 849 → 2 043 317 and
+92 940 → 95 140).
 
-- The mask is 32 × `uint64_t`, 256 bytes of flash.
+- The zone table is 11 315 B of the flash, and the mask 256 B.
+- The RAM is city copies: six custom slots in the page and six more in
+  src/panel as "what NVS holds" (12 × 136 B), plus home, the city made at the
+  location and the IP answer (3 × 136 B).
 - The colour table is 32×64 `uint16_t`, computed once a minute, so a frame is
   774 pixel writes and no trigonometry.
+- The IP lookup's task has 8 KB of stack while it runs, once per boot, and only
+  when there is neither a choice nor a location.
 - Refresh drops to 10 fps on this page: only the home dot and the name move.
 
 ## Honest limits
@@ -147,3 +276,10 @@ up by name so far.
 - A POSIX string holds one rule for ever. A zone that changes its rules after
   tzdata 2026c is wrong until `tzdb.h` is regenerated and the firmware is
   rebuilt. Morocco's Ramadan changes cannot be written as a POSIX rule at all.
+- The IP lookup uses `setInsecure()`, as the weather fetch does, so someone on
+  the network path could answer for freeipapi.com and move home. It sends the
+  panel's public IP to freeipapi.com.
+- IP location is the ISP's idea of where the line ends, often the nearest big
+  city, and wrong behind a VPN. Setting the weather location, or choosing a
+  home, replaces it.
+- Open-Meteo's geocoder is free for non-commercial use only.
