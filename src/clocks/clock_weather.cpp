@@ -161,6 +161,7 @@ void displayClockWithWeather() {
   }
 
   // --- Weather block ---
+  weatherNoteShown();   // fetches run only while this page is drawn
   WeatherData wx = getWeather();
   display.setTextSize(1);
 

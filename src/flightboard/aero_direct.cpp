@@ -525,6 +525,9 @@ void take(const Outcome &o, uint32_t nowMs) {
 bool nextJob(const AeroWant &w, int64_t now, uint32_t nowMs, Job *j, bool *board) {
   memset(j, 0, sizeof(*j));
   j->now = now;
+  // Nothing, tracked flights included, is called while the page is off the
+  // panel (the owner's brief, 2026-09-14).
+  if (!w.visible) return false;
   for (uint8_t i = 0; i < s_trkN; i++) {
     if (s_trk[i].nextAt > now) continue;
     j->kind = JOB_TRACK;
@@ -534,7 +537,7 @@ bool nextJob(const AeroWant &w, int64_t now, uint32_t nowMs, Job *j, bool *board
     *board = false;
     return true;
   }
-  if (!w.visible || !w.icao || !w.icao[0]) return false;
+  if (!w.icao || !w.icao[0]) return false;
   // Coming flights before past ones: most of the rows on screen are ahead of now.
   static const aero::List kOrder[] = {aero::ARR_NEXT, aero::DEP_NEXT, aero::ARR_PAST, aero::DEP_PAST};
   for (aero::List l : kOrder) {

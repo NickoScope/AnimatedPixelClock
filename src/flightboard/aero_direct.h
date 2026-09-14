@@ -38,9 +38,11 @@
 #include "aero_transform.h"
 #include "fb_settings.h"
 
-// Board lists stay wanted for this long after the page leaves the screen, so a
-// knob turned past the page and back does not count as a new visit. A choice.
-static const uint32_t AERO_VISIBLE_GRACE_S = 120;
+// How long the page counts as on screen after it leaves. 0: nothing is called
+// off the panel, tracked flights included (the owner's brief, 2026-09-14). It
+// was 120 s, so that a knob turned past the page and back was not a new visit;
+// the list floors still keep that from costing a call.
+static const uint32_t AERO_VISIBLE_GRACE_S = 0;
 
 struct AeroWant {
   const char *icao;        // the selected airport

@@ -827,8 +827,8 @@ void loop() {
   fbMqttLoop();
 #endif
 #if defined(FLIGHTBOARD_ENABLED)
-  // The AeroAPI fetch, while the page is up or was a moment ago, and trackers
-  // on their own cadence; nothing without FLIGHTBOARD_DIRECT_ENABLED.
+  // The AeroAPI fetch, lists and tracked flights alike, only while the page is
+  // up; nothing without FLIGHTBOARD_DIRECT_ENABLED.
   flightboardTick(httpForceFlightboard);
 #endif
 #if defined(CARDS_ENABLED)

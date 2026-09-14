@@ -34,9 +34,13 @@ struct WeatherData {
   unsigned long fetchedAt;  // millis() of the last successful fetch
 };
 
-// Call every loop(). When weather is enabled, a screen can show it and a
-// fetch is due, starts a one-shot fetch task; otherwise returns at once.
+// Call every loop(). While the weather clock is on the panel and a fetch is
+// due, starts a one-shot fetch task; otherwise returns at once.
 void weatherLoop();
+
+// The weather clock calls this each frame it draws. Off screen nothing is
+// fetched.
+void weatherNoteShown();
 
 // Thread-safe snapshot of the latest data.
 WeatherData getWeather();

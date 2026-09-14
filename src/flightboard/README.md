@@ -235,7 +235,7 @@ so it is one result set at most.
 | guard | default | bounds | why |
 |---|---|---|---|
 | lists for the selected airport only | | | |
-| board lists only while the page is on screen or was within | 120 s | fixed | a knob turned past the page and back is not a new visit |
+| board lists and tracked flights only while the page is on screen, and after it leaves for | 0 s | fixed | the owner's brief, 2026-09-14: nothing is called off the panel. It was 120 s; the list floors keep a quick return from costing a call |
 | floor per list, per airport and direction | 15 min (past lists 30) | 5–240 min | coming flights change more than landed ones; 5 min is about the fastest a status moves |
 | calls per UTC day, board and trackers together | 30 | 0–1000 | 0 turns the fetch off, with no fallback to Home Assistant (confirmed by the owner); 1000 is $5 a day |
 | of which the board may use, while flights are tracked | all but a fifth | fixed | a board can wait, a take-off cannot |

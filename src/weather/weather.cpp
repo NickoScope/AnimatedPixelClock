@@ -43,16 +43,16 @@ bool weatherConfigured() {
          !(settings.weatherLat == 0 && settings.weatherLon == 0);
 }
 
-// The TLS handshake is the largest allocation this firmware makes, so it only
-// runs when a screen can actually show the result.
+// A fetch runs only while the weather clock is on the panel: when it comes into
+// view with data older than the interval, and once an interval while it stays.
+// Off screen nothing is fetched, and no task, TLS session or buffer exists (the
+// owner's brief, 2026-09-14). The last result is a few bytes in `published`.
+static unsigned long shownMs = 0;   // loop() only: the page draws, weatherLoop() reads
+
+void weatherNoteShown() { shownMs = millis() | 1; }
+
 static bool weatherOnScreen() {
-  if (settings.clockStyle == 14) return true;
-  if (settings.clockStyle != 9) return false;
-  CycleEntry entries[CYCLE_COUNT];
-  if (!parseCycleConfig(settings.cycleConfig, entries)) return true;
-  for (unsigned i = 0; i < CYCLE_COUNT; ++i)
-    if (entries[i].style == 14 && entries[i].seconds) return true;
-  return false;
+  return shownMs && millis() - shownMs < 3000UL;
 }
 
 WeatherData getWeather() {

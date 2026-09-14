@@ -587,7 +587,7 @@ Run on this machine:
 
 Design choices, taken from the owner's brief, the panel and the photograph:
 
-- Direct fetch every 30 s (the brief); 120 s and 15 min when the quota runs low;
+- Direct fetch only while the page is on screen, nothing off it (the owner's brief, 2026-09-14); every 30 s there (the brief); 120 s and 15 min when the quota runs low;
   floor max(500, limit-day / 10).
 - A refused token: 15 min doubling to 6 h. Errors: 60, 120, 300 s.
   `Retry-After` clamped to 60 s – 1 h.

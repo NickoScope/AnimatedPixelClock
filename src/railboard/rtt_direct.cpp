@@ -30,9 +30,9 @@ const char *const kNvsNs       = "rb";
 // day's quota is shared: this side slows down as it runs out and leaves the
 // rest to Home Assistant.
 const uint32_t kIntervalS  = 30;        // the owner's brief, while the page is on screen
-// Off screen the board still stays fresh enough to show at once, but a poll is
-// a TLS handshake on core 0 beside the effects; every 5 min is a CPU choice.
-const uint32_t kBackgroundS = 300;
+// Off screen nothing is fetched: no task, no TLS session, no buffers (the
+// owner's brief, 2026-09-14). Coming into view fetches at once unless the last
+// good board is younger than kIntervalS.
 const uint32_t kSlowS      = 120;       // remaining-day <= 2 x floor
 const uint32_t kTrickleS   = 900;       // remaining-day <= floor, or none left this hour
 const int32_t  kFloorMin   = 500;       // floor = max(500, limit-day / 10)
@@ -453,7 +453,7 @@ uint32_t nextDelayS(const Outcome &o) {
   switch (o.state) {
   case ST_OK: {
     s_errStreak = 0;
-    uint32_t d = s_onScreen ? kIntervalS : kBackgroundS;
+    uint32_t d = kIntervalS;
     if (o.leftDay >= 0) {
       const int32_t floor = o.limitDay > 0 && o.limitDay / 10 > kFloorMin ? o.limitDay / 10 : kFloorMin;
       if (o.leftDay <= floor)            d = kTrickleS;
@@ -554,6 +554,7 @@ bool rttDirectLoop(const char *crs, rtt::Lists *out, int64_t *fetchedAt) {
   }
   if (running) return handed;
 
+  if (!s_onScreen) return handed;                                           // off screen nothing is fetched
   if ((int32_t)(nowMs - s_nextAtMs) < 0) return handed;
   if (WiFi.status() != WL_CONNECTED) { s_blocked = ST_NOWIFI; return handed; }
   if (time(nullptr) < 1700000000) { s_blocked = ST_NOCLOCK; return handed; }   // certificates need the date
