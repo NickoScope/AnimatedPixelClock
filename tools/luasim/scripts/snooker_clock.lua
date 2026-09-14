@@ -216,10 +216,240 @@ local function rack()
 end
 rack()
 
+-- ---------------------------------------------------------------- physics
+-- Units are px and seconds. A rolling ball slows at a constant rate; balls
+-- collide elastically as equal masses, losing a little; cushions give back
+-- less. Sub-steps keep any ball under a pixel of travel per step, so nothing
+-- passes through another ball or a cushion.
+local DECEL  = 34          -- px/s^2
+local STOP   = 2.0         -- px/s: slower than this is at rest
+local E_BALL = 0.94
+local E_CUSH = 0.72
+local VMAX   = 230         -- px/s, a power shot
+local XMIN, XMAX = OX + R, OX + TL - R
+local YMIN, YMAX = OY + R, OY + TW - R
+
+-- What happened during the current stroke, for the rules.
+local stroke = {first = nil, potted = {}, spin = 0}
+
+local function pocket_check(b)
+  for i = 1, 6 do
+    local p = POCKETS[i]
+    local dx, dy = b.x - p[1], b.y - p[2]
+    if dx * dx + dy * dy < p[3] * p[3] then
+      b.alive, b.drop, b.pxx, b.pyy = false, 0, p[1], p[2]
+      b.vx, b.vy = 0, 0
+      stroke.potted[#stroke.potted + 1] = b
+      return true
+    end
+  end
+  return false
+end
+
+local function cushion(b)
+  if b.x < XMIN then
+    b.x, b.vx, b.vy = 2 * XMIN - b.x, -b.vx * E_CUSH, b.vy * 0.96
+  elseif b.x > XMAX then
+    b.x, b.vx, b.vy = 2 * XMAX - b.x, -b.vx * E_CUSH, b.vy * 0.96
+  end
+  if b.y < YMIN then
+    b.y, b.vy, b.vx = 2 * YMIN - b.y, -b.vy * E_CUSH, b.vx * 0.96
+  elseif b.y > YMAX then
+    b.y, b.vy, b.vx = 2 * YMAX - b.y, -b.vy * E_CUSH, b.vx * 0.96
+  end
+end
+
+-- Contact between a and b along n, a moving into b. The first thing the white
+-- touches is recorded, and that is when follow or draw takes hold: the cue
+-- ball's own forward roll, or backspin, added to its path after the impact.
+local function collide(a, b, nx, ny)
+  local vn = (a.vx - b.vx) * nx + (a.vy - b.vy) * ny
+  if vn <= 0 then return end
+  local cue, other = nil, nil
+  if a.kind == "white" then cue, other = a, b elseif b.kind == "white" then cue, other = b, a end
+  local cvx, cvy = 0, 0
+  if cue and not stroke.first then cvx, cvy = cue.vx, cue.vy end
+  local jn = vn * (1 + E_BALL) / 2
+  a.vx, a.vy = a.vx - jn * nx, a.vy - jn * ny
+  b.vx, b.vy = b.vx + jn * nx, b.vy + jn * ny
+  if cue and not stroke.first then
+    stroke.first = other
+    cue.vx, cue.vy = cue.vx + stroke.spin * cvx, cue.vy + stroke.spin * cvy
+  end
+end
+
+local moving = {}
+local function substep(h)
+  local n, nm = #balls, 0
+  for i = 1, n do
+    local b = balls[i]
+    b.mv = false
+    if b.alive and (b.vx ~= 0 or b.vy ~= 0) then
+      local s = sqrt(b.vx * b.vx + b.vy * b.vy)
+      local ns = s - DECEL * h
+      if ns <= STOP then
+        b.vx, b.vy = 0, 0
+      else
+        local k = ns / s
+        b.vx, b.vy = b.vx * k, b.vy * k
+        b.x, b.y = b.x + b.vx * h, b.y + b.vy * h
+        if not pocket_check(b) then
+          cushion(b)
+          b.mv = true
+          nm = nm + 1
+          moving[nm] = i
+        end
+      end
+    end
+  end
+  -- Only pairs with a moving ball in them, each pair once.
+  for m = 1, nm do
+    local ia = moving[m]
+    local a = balls[ia]
+    for ib = 1, n do
+      local b = balls[ib]
+      if ib ~= ia and b.alive and not (b.mv and ib < ia) then
+        local dx = b.x - a.x
+        if dx < BD and dx > -BD then
+          local dy = b.y - a.y
+          if dy < BD and dy > -BD then
+            local d2 = dx * dx + dy * dy
+            if d2 < BD * BD and d2 > 1e-6 then
+              local d = sqrt(d2)
+              local nx, ny = dx / d, dy / d
+              collide(a, b, nx, ny)
+              local push = (BD - d) / 2
+              a.x, a.y = a.x - nx * push, a.y - ny * push
+              b.x, b.y = b.x + nx * push, b.y + ny * push
+            end
+          end
+        end
+      end
+    end
+  end
+  return nm
+end
+
+-- Advance the table by dt. Returns true while anything is still moving or
+-- dropping into a pocket.
+local function simulate(dt)
+  local vmax = 0
+  for _, b in ipairs(balls) do
+    if b.alive then
+      local v = abs(b.vx) + abs(b.vy)
+      if v > vmax then vmax = v end
+    elseif b.drop then
+      b.drop = b.drop + dt
+      b.x = b.x + (b.pxx - b.x) * min(1, dt * 14)
+      b.y = b.y + (b.pyy - b.y) * min(1, dt * 14)
+      if b.drop > 0.3 then b.drop = nil end
+    end
+  end
+  local busy = false
+  if vmax > 0 then
+    local nsub = min(14, floor(vmax * dt / 0.9) + 1)
+    local h = dt / nsub
+    for _ = 1, nsub do
+      if substep(h) > 0 then busy = true end
+    end
+  end
+  for _, b in ipairs(balls) do if b.drop then busy = true end end
+  return busy
+end
+
+-- ---------------------------------------------------------------- the cue
+-- The stick lies along the shot, behind the white: it swings round onto the
+-- line, draws back, and strikes. Drawn as a shadow, the ash shaft and the dark
+-- butt, with a chalked tip.
+local SHAFT, BUTT, TIP, CUE_SHADOW = {225, 185, 120}, {95, 42, 18}, {120, 170, 255}, {0, 56, 20}
+
+local function draw_cue(cx, cy, dx, dy, gap)
+  local tx, ty = cx - dx * (R + gap), cy - dy * (R + gap)
+  local mx, my = tx - dx * 30, ty - dy * 30
+  local ex, ey = tx - dx * 48, ty - dy * 48
+  local f = floor
+  px.line(f(tx + 1.5), f(ty + 1.5), f(ex + 1.5), f(ey + 1.5), CUE_SHADOW[1], CUE_SHADOW[2], CUE_SHADOW[3])
+  px.line(f(tx + 0.5), f(ty + 0.5), f(mx + 0.5), f(my + 0.5), SHAFT[1], SHAFT[2], SHAFT[3])
+  px.line(f(mx + 0.5), f(my + 0.5), f(ex + 0.5), f(ey + 0.5), BUTT[1], BUTT[2], BUTT[3])
+  px.pixel(f(tx + 0.5), f(ty + 0.5), TIP[1], TIP[2], TIP[3])
+end
+
+-- ---------------------------------------------------------------- time
+-- Time comes from px.t(), a phase over 60 s, so the table moves at wall-clock
+-- speed at any frame rate. A long gap (the page just opened, or luasim's
+-- coarse frames) is capped: the game slows rather than jumps.
+local last_t
+local function frame_dt()
+  local t = px.t()
+  local dt = last_t and (t - last_t) or 0.05
+  if dt < 0 then dt = dt + 1 end
+  last_t = t
+  return min(0.1, dt * 60)
+end
+
+-- ---------------------------------------------------------------- break-off demo
+-- Milestone 2: the break and the physics. The game comes next.
+local phase, ptime = "aim", 0
+local shot = {dx = 1, dy = 0, speed = 0, spin = 0}
+local aim_x, aim_y = 1, 0
+
+local function plan_break()
+  local c = balls[1]
+  c.x, c.y = BAULK_X - 1.5, CY + D_R * 0.5
+  local best
+  for _, b in ipairs(balls) do
+    if b.kind == "red" and (not best or b.x > best.x + 0.1 or (abs(b.x - best.x) <= 0.1 and b.y > best.y)) then best = b end
+  end
+  local tx, ty = best.x, best.y + BD * 0.9
+  local dx, dy = tx - c.x, ty - c.y
+  local d = sqrt(dx * dx + dy * dy)
+  shot.dx, shot.dy, shot.speed, shot.spin = dx / d, dy / d, 205, 0
+  aim_x, aim_y = shot.dx, shot.dy
+end
+plan_break()
+
+local function cue_ball() return balls[1] end
+
 -- ---------------------------------------------------------------- draw
 function draw()
+  local dt = frame_dt()
+  ptime = ptime + dt
+  local c = cue_ball()
+
+  if phase == "aim" and ptime > 1.0 then
+    phase, ptime = "draw", 0
+  elseif phase == "draw" and ptime > 0.7 then
+    phase, ptime = "strike", 0
+  elseif phase == "strike" and ptime > 0.06 then
+    stroke = {first = nil, potted = {}, spin = shot.spin}
+    c.vx, c.vy = shot.dx * shot.speed, shot.dy * shot.speed
+    phase, ptime = "roll", 0
+  elseif phase == "roll" then
+    if not simulate(dt) and ptime > 0.3 then phase, ptime = "rest", 0 end
+  elseif phase == "rest" and ptime > 2.0 then
+    rack(); plan_break()
+    phase, ptime = "aim", 0
+  end
+
   draw_static()
   for _, b in ipairs(balls) do
-    if b.alive then draw_sprite(SPRITES[b.kind][1], b.x, b.y) end
+    if b.alive then
+      draw_sprite(SPRITES[b.kind][1], b.x, b.y)
+    elseif b.drop then
+      draw_sprite(SPRITES[b.kind][b.drop < 0.12 and 2 or 3], b.x, b.y)
+    end
+  end
+
+  if phase == "aim" or phase == "draw" or phase == "strike" then
+    local gap = 2
+    if phase == "draw" then
+      local u = min(1, ptime / 0.5)
+      gap = 2 + 8 * u * (2 - u)
+    elseif phase == "strike" then
+      gap = 10 * (1 - ptime / 0.06)
+    end
+    draw_cue(c.x, c.y, aim_x, aim_y, gap)
+  elseif phase == "roll" and ptime < 0.12 then
+    draw_cue(c.x - shot.dx * shot.speed * ptime, c.y - shot.dy * shot.speed * ptime, shot.dx, shot.dy, 0)
   end
 end
