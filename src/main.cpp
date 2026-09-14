@@ -25,6 +25,9 @@
 #include "config/config.h"
 #include "utils/utils.h"
 #include "timezones.h"
+#if defined(CLIPS_SD_ENABLED)
+#include "clips/clip_sd.h"
+#endif
 
 // ========== External Objects ==========
 extern WiFiUDP udp;              // Defined in network.cpp
@@ -329,6 +332,10 @@ void setup() {
 
   // Mount the animation filesystem (formats the partition on first use)
   animStoreInit();
+#if defined(CLIPS_SD_ENABLED)
+  // The clip gallery on the TF card; without a card it says so and carries on.
+  clipSdInit();
+#endif
 
   // Initialize display
   displayAvailable = initDisplay();

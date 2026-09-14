@@ -31,6 +31,9 @@
 #include "../display/display.h"
 #include "ambient.h"
 #include "anim_store.h"
+#if defined(CLIPS_SD_ENABLED)
+#include "../clips/clip_sd.h"
+#endif
 
 static PcaHeader pcaHdr;
 static uint16_t pcaPalette[PCA_MAX_PALETTE];
@@ -54,10 +57,26 @@ static bool pcaFailed = false;         // last attempt failed; retried on a time
 static unsigned long pcaRetryAt = 0;   // next automatic retry (2s backoff)
 // Why the last open/playback attempt failed (kept across invalidate for
 // /api/anim/list diagnostics): 0=ok 1=gate 2=validate 3=header-read
-// 4=first-frame 5=prefetch-read 6=alloc
+// 4=first-frame 5=prefetch-read 6=alloc 7=card clip (open or read)
 static uint8_t pcaFailReason = 0;
 
-bool ambientCustomPlaying() { return pcaOpen && !pcaFailed; }
+#if defined(CLIPS_SD_ENABLED)
+// A card clip ("sd:<name>", clips/clip_sd.h) plays through the reader task's
+// ring instead. This file holds no handle to it, so rule 1 holds by
+// construction, and taking a frame is a copy from PSRAM, so rule 2 does too.
+static bool sdAsked = false;             // the reader has been asked for this clip
+static bool sdShown = false;             // pcaFrame holds one of its frames
+static bool sdLate = false;              // the frame due now was already counted late
+static unsigned long sdNextAdvance = 0;
+static unsigned long sdRetryAt = 0;
+#endif
+
+bool ambientCustomPlaying() {
+#if defined(CLIPS_SD_ENABLED)
+  if (clipSdIsRef(settings.ambientCustomFile)) return clipSdState() == CLIP_SD_PLAYING;
+#endif
+  return pcaOpen && !pcaFailed;
+}
 
 uint8_t ambientCustomFailReason() { return pcaFailReason; }
 
@@ -67,6 +86,13 @@ void ambientCustomInvalidate() {
   pcaOpen = false;
   pcaFailed = false;
   pcaIndex = -1;
+#if defined(CLIPS_SD_ENABLED)
+  // Whoever calls this is about to change or delete what plays: the reader
+  // lets go of the card file first (a short wait, see clipSdStop).
+  clipSdStop();
+  sdAsked = false;
+  sdShown = false;
+#endif
 }
 
 // Transient open per read - rule 1 in the header comment.
@@ -140,7 +166,7 @@ void ambientCustomPrefetch() {
   pcaWantPrefetch = false;
 }
 
-static void pcaDrawFrame() {
+static void pcaDrawFrame(const uint16_t* palette) {
   for (int y = 0; y < SCREEN_HEIGHT; y++) {
     const uint8_t* row = pcaFrame + y * (SCREEN_WIDTH / 2);
     int x = 0;
@@ -154,13 +180,51 @@ static void pcaDrawFrame() {
         if (nidx != idx) break;
         run++;
       }
-      display.drawFastHLine(x, y, run, pcaPalette[idx & (PCA_MAX_PALETTE - 1)]);
+      display.drawFastHLine(x, y, run, palette[idx & (PCA_MAX_PALETTE - 1)]);
       x += run;
     }
   }
 }
 
+#if defined(CLIPS_SD_ENABLED)
+static void sdFrame() {
+  const unsigned long now = millis();
+  if (!sdAsked || (clipSdState() == CLIP_SD_FAILED && now >= sdRetryAt)) {
+    clipSdPlay(settings.ambientCustomFile + 3);
+    sdAsked = true;
+    sdShown = false;
+    sdRetryAt = now + 2000;  // the flash player's retry pace
+  }
+  const ClipSdState st = clipSdState();
+  if (st == CLIP_SD_FAILED) {
+    pcaFailReason = 7;
+    ambientInvadersFrame();
+    return;
+  }
+  if (st == CLIP_SD_PLAYING && (!sdShown || now >= sdNextAdvance)) {
+    if (sdShown && now - sdNextAdvance > 2000) sdNextAdvance = now;  // ambient was off a while: resync
+    uint16_t ms;
+    if (clipSdTake(pcaFrame, &ms)) {
+      sdNextAdvance = (sdShown ? sdNextAdvance : now) + ms;
+      sdShown = true;
+      sdLate = false;
+      pcaFailReason = 0;
+    } else if (sdShown && !sdLate) {
+      clipSdMissed();  // an underrun: the frame on screen stays another tick
+      sdLate = true;
+    }
+  }
+  if (sdShown) pcaDrawFrame(clipSdPalette());
+}
+#endif
+
 void ambientCustomFrame() {
+#if defined(CLIPS_SD_ENABLED)
+  if (clipSdIsRef(settings.ambientCustomFile)) {
+    sdFrame();
+    return;
+  }
+#endif
   if (!pcaOpen) {
     // A failed attempt shows the Invaders fallback but retries every 2s: open
     // can fail transiently (e.g. during the post-save page-reload burst)
@@ -200,5 +264,5 @@ void ambientCustomFrame() {
     // Prefetch not done yet (loop was busy): hold the current frame one
     // more render tick rather than reading flash inside the render path.
   }
-  pcaDrawFrame();
+  pcaDrawFrame(pcaPalette);
 }
