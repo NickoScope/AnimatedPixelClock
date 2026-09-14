@@ -460,4 +460,49 @@ bool     yachtRadarHasData() { return s_count > 0; }
 uint8_t  yachtRadarCount()   { return s_count; }
 uint32_t yachtRadarAge()     { return s_lastPos ? millis() - s_lastPos : 0xFFFFFFFFUL; }
 
+void yachtRadarSetSortBySize(bool bySize) {
+  if (bySize != s_bySize) yachtRadarToggleSort();
+}
+
+// Whether NVS holds a key. Read once and remembered: the key only changes by
+// flashing the provisioning image, which reboots. isKey() rather than
+// getString(), which logs an error for a missing key.
+static bool keyStored() {
+  static int8_t known = -1;
+  if (s_open) return true;                   // begin() opens only with a key
+  if (known < 0) {
+    known = 0;
+    Preferences p;
+    if (p.begin("yr", true)) {
+      known = p.isKey("ais") ? 1 : 0;
+      p.end();
+    }
+  }
+  return known == 1 && !s_noKey;             // stored but empty: begin() said so
+}
+
+void yachtRadarStatusJson(JsonObject out) {
+  out["keyPresent"] = keyStored();
+  out["open"]       = s_open;               // only while the page is on screen
+  out["connected"]  = s_conn;
+  out["count"]      = s_count;
+  out["logged"]     = s_logged;
+  out["bySize"]     = s_bySize;
+  if (s_lastPos) out["age"] = (millis() - s_lastPos) / 1000UL;
+  uint8_t idx[YR_MAX_VESSELS];
+  for (uint8_t i = 0; i < s_count; i++) idx[i] = i;
+  sortRows(idx, s_count);
+  JsonArray list = out["vessels"].to<JsonArray>();
+  for (uint8_t k = 0; k < s_count; k++) {
+    const YrVessel &v = s_v[idx[k]];
+    JsonObject o = list.add<JsonObject>();
+    if (v.name[0]) o["name"] = (const char *)v.name;
+    else           o["mmsi"] = v.mmsi;
+    o["km"]  = distDac(v) / YR_DAC_PER_KM;
+    o["sog"] = v.sog;
+    if (v.length_m) o["len"] = v.length_m;
+    o["m"]   = (uint8_t)motionOf(v);          // 0 anchored, 1 manoeuvring, 2 under way
+  }
+}
+
 #endif  // YACHTRADAR_ENABLED

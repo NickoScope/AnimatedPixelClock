@@ -142,6 +142,7 @@ void cardsLoop() {
 
 uint8_t     cardsCount()          { return s_count; }
 const char *cardsName(uint8_t i)  { return i < s_count ? s_cards[i].name : ""; }
+const char *cardsTitle(uint8_t i) { return i < s_count ? s_cards[i].title : ""; }
 uint16_t    cardsDuration(uint8_t i) { return i < s_count ? s_cards[i].duration : 0; }
 bool        cardsNotifyActive()   { return s_nUntil != 0; }
 void        cardsNotifyDismiss()  { s_nUntil = 0; }

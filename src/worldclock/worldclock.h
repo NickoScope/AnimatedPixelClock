@@ -8,6 +8,7 @@
 // both read the same generated mask and city list.
 
 #include <stdint.h>
+#include <ArduinoJson.h>
 
 #if defined(WORLDCLOCK_ENABLED)
 
@@ -17,5 +18,15 @@
 
 // Draws one frame. The caller has already cleared the screen.
 void worldClockRender();
+
+// Home is the city whose dot breathes. The generated list puts it first; the
+// web portal can pick another one (persisted by src/panel).
+uint8_t worldClockCityCount();
+uint8_t worldClockHome();
+void    worldClockSetHome(uint8_t city);
+
+// The map and the cities, for the portal's preview: the same mask and the same
+// list the page draws, so the two cannot disagree.
+void    worldClockMapJson(JsonObject out);
 
 #endif

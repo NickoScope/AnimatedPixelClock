@@ -144,6 +144,8 @@ void mqttBusLoop() {
 
 bool mqttBusConnected() { return s_mq.connected(); }
 
+bool mqttBusConfigured() { return !s_host.isEmpty(); }
+
 const char *mqttBusStatus() {
   if (s_noBroker)                    return "NO BROKER";
   if (WiFi.status() != WL_CONNECTED) return "NO WIFI";

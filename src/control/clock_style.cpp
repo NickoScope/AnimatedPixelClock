@@ -96,6 +96,13 @@ void clockStyleBrowseEnter(int8_t delta) {
   else applyStyle(id);
 }
 
+bool clockStyleSelect(uint8_t id) {
+  if (indexOf(id) < 0) return false;
+  s_beforeRotation = 0xFF;      // an explicit choice, as with the knob
+  applyStyle(id);
+  return true;
+}
+
 void ctrlToast(const char *text) {
   s_toastText = text;
   s_toastAt = millis();

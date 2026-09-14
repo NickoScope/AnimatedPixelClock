@@ -19,6 +19,23 @@
 
 #if defined(CONTROL_ENCODER_ENABLED)
 
+// Build-time defaults. The web portal can change all four while the panel runs
+// (controlConfigure, persisted by src/panel); these are what it starts from.
+// CTRL_REVERSE 1 if clockwise walks backwards - instead of swapping A and B.
+#ifndef CTRL_REVERSE
+#define CTRL_REVERSE 0
+#endif
+#ifndef CTRL_ENC_LOCKOUT_MS
+#define CTRL_ENC_LOCKOUT_MS 10
+#endif
+#ifndef CTRL_SW_DEBOUNCE_MS
+#define CTRL_SW_DEBOUNCE_MS 20
+#endif
+// -1 find out from the knob (default), 0 detents at 11 only, 1 at 11 and 00.
+#ifndef CTRL_ENC_HALF_DETENT
+#define CTRL_ENC_HALF_DETENT -1
+#endif
+
 enum CtrlEvent : uint8_t {
   CTRL_NONE = 0,
   CTRL_CW,          // one detent clockwise
@@ -35,5 +52,20 @@ CtrlEvent controlTake();          // pop one event, CTRL_NONE when the queue is 
 // press completes, so the gesture is discoverable rather than folklore.
 bool      controlHeld();
 uint32_t  controlHeldMs();
+
+// Called from loop() (the web handlers run there). The sampling timer picks the
+// values up on its next tick; a changed detent mode restarts the learning.
+void      controlConfigure(bool reverse, uint16_t lockoutMs, uint16_t debounceMs, int8_t detent);
+
+// What the decoder has seen since boot, for the portal's knob tester. Counts
+// are of decoded gestures, including any the full queue had to drop.
+struct CtrlStats {
+  uint32_t cw, ccw, press, longPress;
+  uint8_t  last;           // CtrlEvent
+  uint32_t lastMs;         // millis() of the last event, 0 = none yet
+  int8_t   detent;         // in force now: -1 still learning, 0 at 11, 1 at 11 and 00
+  bool     timer;          // sampled at 1 kHz; false = at loop speed
+};
+void      controlStats(CtrlStats *out);
 
 #endif  // CONTROL_ENCODER_ENABLED

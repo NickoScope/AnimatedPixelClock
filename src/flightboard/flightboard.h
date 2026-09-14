@@ -22,6 +22,7 @@
 #if defined(FLIGHTBOARD_ENABLED)
 
 #include <stdint.h>
+#include <ArduinoJson.h>
 
 #define FB_MAX_ROWS 15   // the HA side sends at most 15
 #define FB_FN_LEN   9
@@ -52,6 +53,19 @@ const char *flightboardAirport();
 const char *flightboardDirection();
 void flightboardStepAirport(int8_t delta);
 void flightboardToggleDirection();
+
+// The selection by index, for the web portal and for restoring it at boot. The
+// caller tells the transport (fbMqttSelectionChanged) - this only records it.
+uint8_t     flightboardAirportCount();
+uint8_t     flightboardAirportIndex();
+bool        flightboardDeparturesSelected();
+const char *flightboardAirportCode(uint8_t i);    // ICAO, "" out of range
+const char *flightboardAirportLabel(uint8_t i);   // the name the page shows
+void        flightboardSelect(uint8_t airport, bool departures);
+
+// The board as it stands: what the last payload was for (which can lag the
+// selection by one fetch), its age, and its rows.
+void flightboardStatusJson(JsonObject out);
 
 #endif  // FLIGHTBOARD_ENABLED
 #endif  // FLIGHTBOARD_H

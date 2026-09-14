@@ -37,6 +37,7 @@ static const int16_t TIME_X = 1, TIME_Y = 50;
 // rather than a brightness keeps the blend identical to the Lua prototype's.
 static uint16_t s_colour[WORLD_ROWS][WORLD_COLS];
 static int     s_forMinute = -1;
+static uint8_t s_home = 0;               // index into kWorldCities
 
 static bool landAt(uint8_t r, uint8_t c) {
   return (kWorldMask[r] >> c) & 1ULL;
@@ -107,7 +108,7 @@ void worldClockRender() {
     const int16_t r = (int16_t)((WORLD_TOP - city.lat) / (WORLD_TOP - WORLD_BOTTOM) * WORLD_ROWS);
     if (c < 0 || c >= WORLD_COLS || r < 0 || r >= WORLD_ROWS) continue;
     float a = 1.0f;
-    if (i == 0) a = 0.65f + 0.35f * fabsf(sinf((float)PI * millis() / 1000.0f));  // home breathes
+    if (i == s_home) a = 0.65f + 0.35f * fabsf(sinf((float)PI * millis() / 1000.0f));  // home breathes
     display.fillRect(c * 2, r * 2, 2, 2,
                      display.color565((uint8_t)(255 * a), (uint8_t)(140 * a), (uint8_t)(40 * a)));
   }
@@ -130,6 +131,38 @@ void worldClockRender() {
     drawDigit(x, TIME_Y, lt.tm_min % 10, white);
   } else {
     display.fillRect(x, TIME_Y + 5, 13, 2, white);
+  }
+}
+
+uint8_t worldClockCityCount() { return (uint8_t)WORLD_CITY_COUNT; }
+uint8_t worldClockHome()      { return s_home; }
+
+void worldClockSetHome(uint8_t city) {
+  if (city < WORLD_CITY_COUNT) s_home = city;
+}
+
+void worldClockMapJson(JsonObject out) {
+  out["cols"]   = WORLD_COLS;
+  out["rows"]   = WORLD_ROWS;
+  out["top"]    = WORLD_TOP;
+  out["bottom"] = WORLD_BOTTOM;
+  out["home"]   = s_home;
+  // One 16-digit hex string a row, bit c (from the least significant end) set =
+  // land at column c, exactly as kWorldMask stores it. JSON numbers would lose
+  // the low bits of a 64-bit row in a browser.
+  JsonArray mask = out["mask"].to<JsonArray>();
+  for (uint8_t r = 0; r < WORLD_ROWS; r++) {
+    char hex[17];
+    snprintf(hex, sizeof(hex), "%08lX%08lX", (unsigned long)(kWorldMask[r] >> 32),
+             (unsigned long)(kWorldMask[r] & 0xFFFFFFFFULL));
+    mask.add(hex);   // a char array: copied into the document
+  }
+  JsonArray cities = out["cities"].to<JsonArray>();
+  for (uint8_t i = 0; i < WORLD_CITY_COUNT; i++) {
+    JsonObject c = cities.add<JsonObject>();
+    c["name"] = kWorldCities[i].name;
+    c["lat"]  = kWorldCities[i].lat;
+    c["lon"]  = kWorldCities[i].lon;
   }
 }
 
