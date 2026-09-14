@@ -36,6 +36,8 @@
 
 #if defined(RAILBOARD_ENABLED)
 
+#include "rb_settings.h"
+
 #if !defined(MQTT_BUS_ENABLED)
 #error "RAILBOARD_ENABLED needs MQTT_BUS_ENABLED: the data arrives over src/mqtt/mqtt_bus"
 #endif
@@ -88,7 +90,13 @@ const char *railboardStation();
 // schema, same clamps; it lasts until Home Assistant's retained config arrives
 // again (every reconnect) or the panel reboots, because Home Assistant owns it.
 void railboardStatusJson(JsonObject out);
-bool railboardApplyConfig(const char *json, uint16_t len);
 void railboardSetDiag(bool on);    // pin the diagnostics view, or release it
+
+// Board settings (rb_settings.h). The portal's are in force at once, kept in
+// NVS "rbcfg", and win over Home Assistant's .../config until reset, which
+// returns to Home Assistant's config if one has arrived, else the build's.
+rbs::Settings railboardSettings();                  // in force
+void railboardSetSettings(const rbs::Settings &s);   // ignored unless rbs::valid()
+void railboardResetSettings();
 
 #endif  // RAILBOARD_ENABLED

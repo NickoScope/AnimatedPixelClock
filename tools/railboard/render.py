@@ -38,6 +38,13 @@ STR = {m[1]: m[2] for m in re.finditer(
     r'static const char \*const (RB_\w+)\s*=\s*"([^"]*)";', SRC)}
 DEF = {m[1]: m[2].strip('"') for m in re.finditer(r'#define (RB_\w+)\s+("[^"]*"|\d+)', HDR)}
 MODEL = (ROOT / "src/railboard/rb_model.h").read_text()   # the sizes moved there with the direct fetch
+SETTINGS = (ROOT / "src/railboard/rb_settings.h").read_text()
+PALETTE = {m[1]: (int(m[2]), int(m[3]), int(m[4])) for m in re.finditer(
+    r'\{"(\w+)",\s*(\d+),\s*(\d+),\s*(\d+)\}', re.search(r"kPalette\[\]\s*=\s*\{(.*?)\n\};", SETTINGS, re.S)[1])}
+_ORDER = list(PALETTE)
+_dflt = re.search(r"s\.rowColour = (\w+); s\.headColour = (\w+); s\.dueColour = (\w+);\s*s\.dueMin = (\d+); s\.clockSeconds = (\w+);", SETTINGS)
+DEFAULTS = {"row_color": _dflt[1].lower(), "head_color": _dflt[2].lower(), "due_color": _dflt[3].lower(),
+            "due_min": int(_dflt[4]), "clock_seconds": _dflt[5] == "true"}
 MAX_SVC = int(re.search(r"#define RB_MAX_SVC\s+(\d+)", MODEL)[1])
 NAME_LEN = int(re.search(r"#define RB_NAME_LEN\s+(\d+)", MODEL)[1])
 STN_LEN = int(re.search(r"#define RB_STN_LEN\s+(\d+)", MODEL)[1])
@@ -197,8 +204,15 @@ def ago(prefix, s):
         return f"{prefix}{s // 60} MIN AGO"
     return f"{prefix}{s // 3600} H AGO"
 
+def due_soon(sv, now, due_min):
+    """rb_settings.h dueSoon()."""
+    if not due_min or sv["st"] == "canc":
+        return False
+    when = sv["x"] or sv["t"]
+    return bool(when) and when - now <= due_min * 60
+
 def draw_headings(f, which, sc):
-    white = f.col(WHITE)
+    white = f.col(PALETTE[sc["cfg"]["head_color"]])
     f.put_big(X_LEFT, Y_TITLE, TITLES[which], white)
     if which == 1:
         f.put_right(X_TIME_R, Y_HEAD1, H_TIME, white)
@@ -215,9 +229,9 @@ def draw_headings(f, which, sc):
     stn = (b0 and b0["stn"]) or (b1 and b1["stn"]) or sc["crs"]
     f.put_right(X_RIGHT, Y_HEAD2, fit_name(stn, X_RIGHT - used - 2 * GAP), f.col(DIM))
 
-def draw_service(f, which, top, sv):
+def draw_service(f, which, top, sv, cfg, now):
     canc = sv["st"] == "canc"
-    amber = f.col(AMBER)
+    amber = f.col(PALETTE[cfg["due_color"] if due_soon(sv, now, cfg["due_min"]) else cfg["row_color"]])
     expt = hhmm(sv["x"]) if has_time(sv) else ST_WORDS[ST_KEYS.index(sv["st"])]
     f.put(X_EXPT, top, expt, f.col(RED) if canc else amber)
     plat_left = X_PLAT_R
@@ -235,7 +249,7 @@ def draw_service(f, which, top, sv):
 
 def draw_board(f, which, sc, page_half):
     b, cfg, now = sc["boards"][which], sc["cfg"], sc["now"]
-    amber = f.col(AMBER)
+    amber = f.col(PALETTE[cfg["row_color"]])
     if b is None:
         f.put(X_LEFT, Y_ROW0, f"{WAITING} {sc['crs']}" if sc["connected"] else sc["mqtt"], amber)
         f.put(X_LEFT, Y_FOOT, STALE, amber)
@@ -250,18 +264,18 @@ def draw_board(f, which, sc, page_half):
             f.put(X_LEFT, Y_ROW0, EMPTY, amber)
     elif page == 0:
         for r in range(min(n, ROWS_PAGE)):
-            draw_service(f, which, Y_ROW0 + r * PITCH, b["s"][idx[r]])
+            draw_service(f, which, Y_ROW0 + r * PITCH, b["s"][idx[r]], cfg, now)
     else:
         f.put(X_LEFT, Y_ROW0, CONTINUED, amber)
         r, k = 1, ROWS_PAGE
         while k < n and r < ROWS_PAGE:
-            draw_service(f, which, Y_ROW0 + r * PITCH, b["s"][idx[k]])
+            draw_service(f, which, Y_ROW0 + r * PITCH, b["s"][idx[k]], cfg, now)
             r, k = r + 1, k + 1
     f.put(X_LEFT, Y_FOOT, STALE if stale else f"{PAGE} {page + 1} {OF} {pages}", amber)
 
-def draw_clock(f, now):
-    clk = f"{civil(now):%H:%M:%S}"
-    f.put_big(X_RIGHT - big_w(clk), Y_CLOCK, clk, f.col(AMBER))
+def draw_clock(f, now, cfg):
+    clk = f"{civil(now):%H:%M:%S}" if cfg["clock_seconds"] else f"{civil(now):%H:%M}"
+    f.put_big(X_RIGHT - big_w(clk), Y_CLOCK, clk, f.col(PALETTE[cfg["row_color"]]))
 
 def diag_line(f, line, label, value, value_col, right):
     top = 1 + line * PITCH
@@ -318,7 +332,7 @@ def render(sc):
         which = 0 if sc["view"] == "dep" else 1
         draw_headings(f, which, sc)
         draw_board(f, which, sc, sc["page_half"])
-        draw_clock(f, sc["now"])
+        draw_clock(f, sc["now"], sc["cfg"])
     return f.img
 
 # ── output ───────────────────────────────────────────────────────────────────
@@ -351,13 +365,19 @@ SCENES = [
     ("long_name",         "dep",  "long_name_departures.json", None,                    "status_ok.json",  NOW,       {"crs": "LRD"}),
     ("diagnostics",       "diag", "normal_departures.json",    "normal_arrivals.json",  "status_net.json", NOW + 600, {}),
     ("waiting",           "dep",  None,                        None,                    None,              NOW,       {}),
+    # Settings (rb_settings.h). The scenes above use the defaults: amber rows, white
+    # headings, green within 3 min - so 14:08 at 14:05:14 is already green there.
+    ("due_soon_arrivals", "arr",  "normal_departures.json",    "normal_arrivals.json",  "status_ok.json",  NOW,       {"cfg": {"due_min": 5}}),
+    ("colours",           "dep",  "delay_departures.json",     "cancel_arrivals.json",  "status_ok.json",  NOW + 60,  {"cfg": {"row_color": "yellow", "head_color": "cyan", "clock_seconds": False}}),
+    ("colours_white",     "arr",  "delay_departures.json",     "cancel_arrivals.json",  "status_ok.json",  NOW,       {"cfg": {"row_color": "white", "head_color": "amber", "due_color": "green", "due_min": 10}}),
 ]
 RAW = ("departures", "arrivals")   # also written 1:1, 128 x 64
 
 def main():
     PREVIEW.mkdir(exist_ok=True)
-    cfg = load("config_small.json")
+    base = {**DEFAULTS, **load("config_small.json")}
     for name, view, dep, arr, status, now, extra in SCENES:
+        cfg = {**base, **extra.get("cfg", {})}
         sc = {"view": view, "boards": [ingest_board(load(dep)), ingest_board(load(arr))],
               "status": load(status), "cfg": cfg, "now": now, "crs": extra.get("crs", DEF["RB_CRS"]),
               "connected": True, "mqtt": "CONNECTING", "page_half": extra.get("page_half", False)}

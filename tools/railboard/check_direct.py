@@ -9,6 +9,8 @@
    and indented, through the same filter - body bytes and parse peak.
 3. If tools/railboard/rtt_client.py is there, runs its Python port of the same
    transform on the small fixture and requires the identical lists.
+4. Compiles and runs tools/railboard/settings_host_test.cpp: the portal's
+   settings validation and the "due soon" rule (src/railboard/rb_settings.h).
 
   python3 tools/railboard/check_direct.py
 """
@@ -58,6 +60,14 @@ def main():
             else:
                 print(" ", line)
         bad = r.returncode != 0
+
+        exe2 = tmp / "settings_host_test"
+        subprocess.run(["c++", "-std=c++17", "-O2", "-Wall", "-Wextra", "-Werror", "-I", str(ROOT / "src/railboard"),
+                        "-I", libs[0], str(HERE / "settings_host_test.cpp"), "-o", str(exe2)], check=True)
+        r2 = subprocess.run([str(exe2)], capture_output=True, text=True)
+        for line in r2.stdout.splitlines():
+            print(" ", line)
+        bad = bad or r2.returncode != 0
 
         client = HERE / "rtt_client.py"
         if client.exists() and lists is not None:
