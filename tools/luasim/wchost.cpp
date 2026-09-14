@@ -22,6 +22,8 @@
 //
 //   wchost --tz   reads "POSIX<TAB>utc" lines, writes the offset east of UTC
 //                 in seconds, or "reject", one line each
+//   wchost --fit  reads UTF-8 place names, writes worldClockFitName's answer
+//                 and its width in pixels, "NAME|px", one line each
 // ============================================================
 #include <cstdio>
 #include <cstdlib>
@@ -47,8 +49,20 @@ static int tzMode() {
   return 0;
 }
 
+static int fitMode() {
+  static char line[512];
+  while (fgets(line, sizeof(line), stdin)) {
+    line[strcspn(line, "\n")] = '\0';
+    char out[WC_NAME_MAX + 1];
+    worldClockFitName(line, out, sizeof(out));
+    printf("%s|%d\n", out, worldClockNameWidth(out));
+  }
+  return 0;
+}
+
 int main(int argc, char **argv) {
   if (argc >= 2 && !strcmp(argv[1], "--tz")) return tzMode();
+  if (argc >= 2 && !strcmp(argv[1], "--fit")) return fitMode();
   if (argc < 4) {
     fprintf(stderr, "usage: wchost script.lua frames out.raw [--start HH:MM] [--yday N] [--utc H] "
                     "[--year Y] [--sweep] [--home ID] [--custom NAME|lat|lon|POSIX] [--settled] [--always]\n"

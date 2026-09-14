@@ -264,6 +264,67 @@ void worldClockSetAuto(const WcCity *city) {
   if (s_homeReady && s_home == WC_ID_AUTO) refreshHome();
 }
 
+// U+00C0 to U+017F, Latin-1 Supplement and Latin Extended-A, as base capitals.
+// '?' marks the few that become two letters (below) or nothing (the signs).
+static const char kLatinBase[] =
+  "AAAAAA?CEEEEIIII" "DNOOOOO?OUUUUY??"   // U+00C0: A-grave .. I-diaeresis, Eth .. sharp s
+  "AAAAAA?CEEEEIIII" "DNOOOOO?OUUUUY?Y"   // U+00E0: the lower case
+  "AAAAAACCCCCCCCDD" "DDEEEEEEEEEEGGGG"   // U+0100: A-macron .. d-caron, D-stroke .. g-breve
+  "GGGGHHHHIIIIIIII" "II??JJKKKLLLLLLL"   // U+0120: G-dot .. i-ogonek, I-dot .. L-middle-dot
+  "LLLNNNNNNNNNOOOO" "OO??RRRRRRSSSSSS"   // U+0140: l-middle-dot .. o-breve, O-double-acute .. s-cedilla
+  "SSTTTTTTUUUUUUUU" "UUUUWWYYYZZZZZZS";  // U+0160: S-caron .. u-ring, U-double-acute .. long s
+
+void worldClockFitName(const char *utf8, char *out, size_t n) {
+  char buf[64];
+  size_t k = 0;
+  auto put = [&](char ch) {
+    if (k + 1 < sizeof(buf)) buf[k++] = ch;
+  };
+  const unsigned char *p = (const unsigned char *)(utf8 ? utf8 : "");
+  while (*p) {
+    unsigned cp = 0xFFFD;
+    size_t len = 1;
+    if (*p < 0x80) {
+      cp = *p;
+    } else if ((p[0] & 0xE0) == 0xC0 && (p[1] & 0xC0) == 0x80) {
+      cp = ((p[0] & 0x1Fu) << 6) | (p[1] & 0x3Fu);
+      len = 2;
+    } else {
+      while ((p[len] & 0xC0) == 0x80) len++;   // longer or broken: skipped whole
+    }
+    p += len;
+    const char *two = (cp == 0xC6 || cp == 0xE6) ? "AE" : (cp == 0xDE || cp == 0xFE) ? "TH" : cp == 0xDF ? "SS"
+                    : (cp == 0x132 || cp == 0x133) ? "IJ" : (cp == 0x152 || cp == 0x153) ? "OE" : nullptr;
+    if (two) { put(two[0]); put(two[1]); continue; }
+    char ch = ' ';                              // spaces, and anything the font cannot show, part words
+    if (cp >= 'a' && cp <= 'z') ch = (char)(cp - 32);
+    else if ((cp >= 'A' && cp <= 'Z') || (cp >= '0' && cp <= '9') || cp == '.' || cp == '-' || cp == '\'') ch = (char)cp;
+    else if (cp >= 0xC0 && cp <= 0x17F && kLatinBase[cp - 0xC0] != '?') ch = kLatinBase[cp - 0xC0];
+    put(ch);
+  }
+  // One space between words, none at the ends.
+  size_t m = 0;
+  for (size_t i = 0; i < k; i++) {
+    if (buf[i] == ' ' && (m == 0 || buf[m - 1] == ' ')) continue;
+    buf[m++] = buf[i];
+  }
+  while (m && buf[m - 1] == ' ') m--;
+  // As much as fits; whole words when at least one whole word does.
+  size_t cut = 0, whole = 0;
+  int w = 0;
+  for (size_t i = 0; i < m && i < WC_NAME_MAX; i++) {
+    w += glyphFor(buf[i]).xAdvance;
+    if (w > WC_NAME_PX) break;
+    cut = i + 1;
+    if (i + 1 == m || buf[i + 1] == ' ' || buf[i + 1] == '-') whole = i + 1;
+  }
+  if (cut < m && whole) cut = whole;
+  while (cut && (buf[cut - 1] == ' ' || buf[cut - 1] == '-')) cut--;
+  if (cut > n - 1) cut = n - 1;
+  memcpy(out, buf, cut);
+  out[cut] = '\0';
+}
+
 // ---------------------------------------------------------------- home
 uint8_t worldClockHome()       { return s_home; }
 bool    worldClockHomeChosen() { return s_chosen; }

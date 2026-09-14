@@ -1,5 +1,8 @@
 #include "posix_tz.h"
 
+// Only the world clock looks zones up; other builds carry none of this.
+#if defined(WORLDCLOCK_ENABLED)
+
 #include <string.h>
 
 #include "tzdb.h"
@@ -191,3 +194,5 @@ const char *tzdbPosix(const char *iana) {
 
 const char *tzdbVersion() { return TZDB_VERSION; }
 uint16_t    tzdbCount()   { return (uint16_t)TZDB_COUNT; }
+
+#endif  // WORLDCLOCK_ENABLED

@@ -11,6 +11,7 @@
 // both read the same generated mask and city list, and tools/luasim/fx_parity.py
 // renders this file on the host against it, pixel for pixel.
 
+#include <stddef.h>
 #include <stdint.h>
 
 #if defined(WORLDCLOCK_ENABLED)
@@ -50,6 +51,11 @@ bool        worldClockSlotUsed(uint8_t slot);
 // The city at the panel's location, made when nobody chose a home and no city
 // is near it; nullptr removes it.
 void        worldClockSetAuto(const WcCity *city);
+// A place name from outside - UTF-8, any case - as the page can draw it: Latin
+// letters without their accents, capitals, and cut after a word or before a
+// hyphen to fit the room; mid-word only when not even one word fits.
+// out is "" when nothing drawable is left.
+void        worldClockFitName(const char *utf8, char *out, size_t n);
 
 // ---------------------------------------------------------------- home
 uint8_t  worldClockHome();

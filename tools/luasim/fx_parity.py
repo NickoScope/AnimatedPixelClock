@@ -65,6 +65,15 @@ TZ_REFUSE = ["", "CET", "CET-1CEST", "AB-1", "<AB>-1", "CET-25", "CET-1CEST,M13.
              "CET-1CEST,M3.6.0,M10.5.0", "CET-1CEST,M3.5.7,M10.5.0", "CET-1CEST,M3.5.0/168,M10.5.0",
              "CET-1CEST,M3.5.0,M10.5.0/3x", "CET-1 ", "CET-1CEST,J0,J300", "CET-1CEST,366,300"]
 
+# worldClockFitName on names an IP lookup may hand back, expected by hand from
+# Picopixel's advances (L A F R P G Y 4, N 5, W 6, I 2): the Welsh one fills
+# 72 px exactly at 17 letters, and has no word break to prefer.
+FIT_CASES = [
+    ("Zürich", "ZURICH"), ("São Paulo", "SAO PAULO"), ("Łódź", "LODZ"), ("Straße", "STRASSE"),
+    ("Москва", ""), ("  le   Cannet ", "LE CANNET"), ("Ho Chi Minh City", "HO CHI MINH CITY"),
+    ("Petropavlovsk-Kamchatsky", "PETROPAVLOVSK"), ("Llanfairpwllgwyngyll", "LLANFAIRPWLLGWYNG"),
+]
+
 # The bench on the panel (src/lua/nslua_bench.cpp, phase 6b): kCompute took
 # 64.1 ms per nslua_run, of which 2.54 ms is the fresh sandboxed state.
 BENCH_COMPUTE = "local x = 0 for i = 1, 50000 do x = x + i % 7 end\nfunction draw() end\n"
@@ -232,6 +241,20 @@ def tz_check():
     return len(bad)
 
 
+def fit_check():
+    r = subprocess.run([str(SIM / "wchost"), "--fit"], input="".join(f"{a}\n" for a, _ in FIT_CASES),
+                       capture_output=True, text=True, check=True)
+    bad = 0
+    for (name, want), line in zip(FIT_CASES, r.stdout.splitlines()):
+        got, px = line.rsplit("|", 1)
+        ok = got == want and int(px) <= 72
+        bad += not ok
+        if not ok:
+            print(f"    fit {name!r}: got {got!r} ({px} px), want {want!r}")
+    print(f"worldClockFitName: {len(FIT_CASES) - bad}/{len(FIT_CASES)} names as expected")
+    return bad
+
+
 def wc_script(tmp, home, extra, table):
     s, n = re.subn(r"^local HOME, CHANGED_AT = .*$", f"local HOME, CHANGED_AT = {home}", WC_SCRIPT.read_text(), flags=re.M)
     if n != 1:
@@ -298,6 +321,7 @@ def main():
                 print(f"  {s.name:18s} {label:24s} {'identical' if ok else f'{fr} frames, {px} px, max {worst}':>22s}")
         bad += wc_parity(tmp)
         bad += tz_check()
+        bad += fit_check()
         if quick:
             return
         print("\nmeasurements, 12:34 case, 240 frames (instructions exact; times are this host's)")

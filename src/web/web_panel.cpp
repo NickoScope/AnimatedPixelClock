@@ -15,8 +15,15 @@
 //   GET  /api/railboard     station, what is showing, lists, Home Assistant status, config, mqtt
 //   POST /api/railboard     {"crs":"GLD"} | {"diag":b} | {"config":{"rows":1..8,
 //                           "level":10..100,"switch_s":3..600,"stale_s":30..3600}}
-//   GET  /api/worldclock    mask, cities, home, utc
-//   POST /api/worldclock    {"home":i}
+//   GET  /api/worldclock    mask, cities [{id, kind builtin|custom|auto, name, lat, lon, tz}],
+//                           home, homeChosen, homeSource chosen|location|ip|zone, homeTime,
+//                           homeOffset, pulseMs, limits {custom, name, namePx, advance}, tzdb, utc
+//   POST /api/worldclock    one of {"home":id}
+//                           | {"add":{"name":"SAN FRANCISCO","lat":37.77,"lon":-122.42,
+//                           "tz":"America/Los_Angeles"[,"home":true]}}
+//                           | {"remove":id} | {"auto":true}
+//                           400 bad input; 409 no free slot, or the name is on the map.
+//                           A POST that changes home puts the page on the panel.
 //   GET  /api/knob          settings, defaults, bounds, stats
 //   POST /api/knob          {"reverse":b,"lockoutMs":n,"debounceMs":n,"detent":-1..1}
 //                           | {"defaults":true}
@@ -52,6 +59,8 @@
 #include "../railboard/railboard.h"
 #include "../utils/utils.h"
 #include "../viz/visualizer.h"
+#include "../worldclock/posix_tz.h"
+#include "../worldclock/wc_home.h"
 #include "../worldclock/worldclock.h"
 #include "../yachtradar/yachtradar.h"
 #if defined(LUA_EFFECTS_ENABLED)
@@ -486,20 +495,106 @@ static void handleRailboard() {
 
 // ---------------------------------------------------------------- /api/worldclock
 #if defined(WORLDCLOCK_ENABLED)
+// A string of at most max bytes; anything else is refused.
+static bool strIn(JsonVariantConst v, size_t max, const char **out) {
+  if (!v.is<const char *>()) return false;
+  const char *s = v.as<const char *>();
+  if (!s || strlen(s) > max) return false;
+  *out = s;
+  return true;
+}
+
 static void handleWorldclock() {
   if (isPost()) {
     JsonDocument in(&s_alloc);
     if (!readBody(in)) return;
-    long home;
-    if (!intIn(in["home"], 0, (long)worldClockDefaultCount() - 1, &home)) REJECT(400, "home out of range");
-    panelSetWorldHome((uint8_t)home);
+    JsonVariantConst jHome = in["home"], jAdd = in["add"], jRemove = in["remove"], jAuto = in["auto"];
+    if ((int)!jHome.isNull() + !jAdd.isNull() + !jRemove.isNull() + !jAuto.isNull() != 1)
+      REJECT(400, "send exactly one of home, add, remove, auto");
+    const uint8_t beforeId = worldClockHome();
+    WcCity before, after;
+    worldClockCity(beforeId, &before);
+
+    if (!jHome.isNull()) {
+      long id;
+      WcCity c;
+      if (!intIn(jHome, 0, 255, &id) || !worldClockCity((uint8_t)id, &c)) REJECT(400, "home: no city with that id");
+      if (const char *why = panelSetWorldHome((uint8_t)id)) REJECT(409, why);
+    } else if (!jAdd.isNull()) {
+      if (!jAdd.is<JsonObjectConst>()) REJECT(400, "add must be an object");
+      WcCity c;
+      memset(&c, 0, sizeof(c));
+      const char *name, *tz;
+      // Refused rather than folded: the portal already writes the name in the
+      // panel's capitals, so anything else reaching here is not the portal.
+      if (!strIn(jAdd["name"], WC_NAME_MAX, &name)) REJECT(400, "add.name must be text of at most 20 characters");
+      // is<float>() holds for any JSON number, integers included (ArduinoJson
+      // 7.4.3, Converter<float>::checkJson tests the number bit), and for no string.
+      if (!jAdd["lat"].is<float>() || !jAdd["lon"].is<float>()) REJECT(400, "add.lat and add.lon must be numbers");
+      if (!strIn(jAdd["tz"], WC_IANA_MAX, &tz)) REJECT(400, "add.tz must be an IANA zone name");
+      const char *posix = tzdbPosix(tz);
+      if (!posix) REJECT(400, "add.tz is not a zone this panel knows");
+      bool makeHome = false;
+      if (!optBool(jAdd["home"], &makeHome)) REJECT(400, "add.home must be true or false");
+      strncpy(c.name, name, sizeof(c.name) - 1);
+      strncpy(c.iana, tz, sizeof(c.iana) - 1);
+      strncpy(c.posix, posix, sizeof(c.posix) - 1);
+      c.lat = jAdd["lat"].as<float>();
+      c.lon = jAdd["lon"].as<float>();
+      if (const char *why = worldClockCheck(c)) REJECT(400, why);
+      uint8_t id;
+      if (const char *why = panelAddWorldCity(c, &id)) REJECT(409, why);
+      if (makeHome) panelSetWorldHome(id);          // cannot fail: the city was just added
+    } else if (!jRemove.isNull()) {
+      long id;
+      if (!intIn(jRemove, WC_ID_CUSTOM, WC_ID_CUSTOM + WC_CUSTOM_MAX - 1, &id) ||
+          !worldClockSlotUsed((uint8_t)(id - WC_ID_CUSTOM)))
+        REJECT(400, "remove: only a custom city can be deleted");
+      panelRemoveWorldCity((uint8_t)id);
+    } else {
+      if (!jAuto.is<bool>() || !jAuto.as<bool>()) REJECT(400, "auto must be true");
+      panelForgetWorldHome();
+    }
+
+    // The owner asked that a new home show on the panel, name pulsing: so it
+    // is put on screen, held like a knob turn, whichever page was up.
+    worldClockCity(worldClockHome(), &after);
+    if (worldClockHome() != beforeId || strcmp(after.name, before.name)) {
+      const int page = pageOf(PANEL_KEY_WORLD);
+      if (page >= 0) panelShowPage((uint8_t)page);
+    }
   }
   JsonDocument doc(&s_alloc);
   doc["success"] = true;
   pageInfo(doc, PANEL_KEY_WORLD);
   worldClockMapJson(doc.as<JsonObject>());
   const time_t t = time(nullptr);
-  doc["utc"] = t > 1700000000 ? (uint32_t)t : 0;   // 0: no NTP yet, the page is all night
+  const bool synced = t > 1700000000;
+  doc["utc"] = synced ? (uint32_t)t : 0;   // 0: no NTP yet, the page is all night
+  doc["homeChosen"] = worldClockHomeChosen();
+  doc["homeSource"] = wcHomeSource();
+  if (synced) {
+    // The panel's own reading, so the portal shows the time the page draws.
+    const int32_t off = worldClockHomeOffset((int64_t)t);
+    const int64_t local = (int64_t)t + off;
+    char hm[6];
+    snprintf(hm, sizeof(hm), "%02d:%02d", (int)((local / 3600) % 24), (int)((local / 60) % 60));
+    doc["homeTime"]   = hm;
+    doc["homeOffset"] = off;
+  }
+  doc["pulseMs"] = worldClockPulseLeftMs();
+  JsonObject lim = doc["limits"].to<JsonObject>();
+  lim["custom"] = WC_CUSTOM_MAX;
+  lim["name"]   = WC_NAME_MAX;
+  lim["namePx"] = WC_NAME_PX;
+  // The page font's advance for ' ' to '~': the portal measures a name the way
+  // worldClockCheck will, rather than guessing at a font it does not have.
+  JsonArray adv = lim["advance"].to<JsonArray>();
+  for (char ch = ' '; ch <= '~'; ch++) {
+    const char one[2] = {ch, 0};
+    adv.add(worldClockNameWidth(one));
+  }
+  doc["tzdb"] = tzdbVersion();
   sendDoc(doc);
 }
 #endif
