@@ -48,6 +48,10 @@ static const uint8_t FB_PIN_BAR_R = 0;
 static const uint8_t FB_PIN_BAR_G = 170;
 static const uint8_t FB_PIN_BAR_B = 255;
 static const int16_t FB_PIN_GATE_MIN = 60;   // the gate replaces ON TIME this long before departure
+// Air between the ident and the route. A 3-letter ICAO ident (AFR7301, 27 px)
+// ends at x 49 and the route column starts at 50: one pixel read as one word
+// in the preview, so the route moves right until four are clear.
+static const int16_t FB_PIN_ROUTE_GAP = 4;
 
 struct FbRow {
   char     fn[FB_FN_LEN];
@@ -358,10 +362,9 @@ static void rebuildDirect() {
     for (uint8_t i = 0; i < board.count; i++) {
       FbRow &r = b.rows[i];
       const aero::Cand &c = board.rows[i];
-      memcpy(r.fn, c.fn, sizeof(r.fn));
-      memcpy(r.ct, c.ct, sizeof(r.ct));
-      memcpy(r.cy, c.cy[0] ? c.cy : c.ct, sizeof(r.cy) < sizeof(c.cy) ? sizeof(r.cy) : sizeof(c.cy));
-      r.cy[sizeof(r.cy) - 1] = '\0';
+      copyField(r.fn, sizeof(r.fn), c.fn);
+      copyField(r.ct, sizeof(r.ct), c.ct);
+      copyField(r.cy, sizeof(r.cy), c.cy[0] ? c.cy : c.ct);   // no city: the code, as the MQTT ingest does
       r.st = (FbStatus)c.st;
       localHm(c.t, r.tm, sizeof(r.tm));
     }
@@ -479,8 +482,9 @@ static void drawTracked(int16_t top, uint32_t nowMs) {
   display.setCursor(FB_X_FLIGHT, base);
   display.print(fn);
   display.getTextBounds(fn, 0, 0, &bx, &by, &bw, &bh);
-  const int16_t xRoute = FB_X_FLIGHT + (int16_t)bw + FB_CODE_GAP > FB_X_DEST ? FB_X_FLIGHT + (int16_t)bw + FB_CODE_GAP
-                                                                            : FB_X_DEST;
+  const int16_t xRoute = FB_X_FLIGHT + (int16_t)bw + FB_PIN_ROUTE_GAP > FB_X_DEST
+                           ? FB_X_FLIGHT + (int16_t)bw + FB_PIN_ROUTE_GAP
+                           : FB_X_DEST;
 
   char buf[16];
   uint16_t col;

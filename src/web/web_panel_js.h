@@ -502,51 +502,356 @@ setInterval(function () {   // the home dot breathes, in both previews
 }, 100);
 
 // ---------------------------------------------------------------- flight board
+// The airport search runs in this browser against mwgg/Airports (MIT), pinned
+// to one commit on jsDelivr: checked 2026-09-14, access-control-allow-origin: *,
+// 1.17 MB brotli, cached as immutable. The panel hears only the airport added,
+// and checks all of it again.
+var FB_DB_URL = 'https://cdn.jsdelivr.net/gh/mwgg/Airports@2473bd8f135c10c3c0edc8af58f9aad742541575/airports.json';
+var FB_FIND_HINT = 'A code (JFK, RJTT) or two letters or more of a name or city. The first search loads the list into this browser.';
+var FB_TRK_HINT = 'An airline code and a flight number: AFR7301 or AF7301, BAW336 or BA336. FlightAware recommends the ICAO form, three letters; the IATA form can match another airline.';
+var FB_ST = { wait: 'waiting for the first answer', notfound: 'no flight by that ident from a day ago to two days ahead',
+  sched: 'scheduled', delayed: 'delayed', taxi: 'left the gate', enroute: 'in the air', landed: 'landed',
+  cancelled: 'cancelled', diverted: 'diverted' };
+var fbLast = null, fbDb = null, fbDbWait = null, fbPick = null, fbSeq = 0, fbTimer = null;
+var fbSigCustom = '', fbSigTracks = '', fbBudgetDirty = false;
+
+function fbDirect(d) { return !!(d && d.direct && d.direct.built); }
+function fbDur(s) {
+  if (s == null || s < 0) return '--';
+  if (s < 90) return Math.round(s) + ' s';
+  if (s < 5400) return Math.round(s / 60) + ' min';
+  var h = Math.floor(s / 3600), m = Math.round((s % 3600) / 60);
+  return h + ' h' + (m ? ' ' + m + ' min' : '');
+}
+function fbTime(t) { if (!t) return '--:--'; var d = new Date(t * 1000); return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2); }
+function fbFold(s) { return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase(); }
+function fbPost(body, done, msgId) {
+  return api('/api/flightboard', body).then(function (d) { fbSigCustom = fbSigTracks = ''; renderFb(d); note(msgId, done); return d; })
+    .catch(function (err) { note(msgId, err.message, true); });
+}
 function pollFb() { return api('/api/flightboard').then(renderFb); }
+
 function renderFb(d) {
-  pageIdx.flights = d.page;
-  var sel = $('fbApt');
-  if (sel && !sel.options.length) d.airports.forEach(function (a, i) {
-    var o = document.createElement('option'); o.value = i; o.textContent = cap(a.name) + ' · ' + a.code; sel.appendChild(o);
-  });
+  fbLast = d; pageIdx.flights = d.page;
+  var sel = $('fbApt'), sig = JSON.stringify(d.airports);
+  if (sel && sel.getAttribute('data-sig') !== sig) {
+    sel.innerHTML = '';
+    d.airports.forEach(function (a) {
+      var o = document.createElement('option'); o.value = a.id;
+      o.textContent = cap(a.name) + ' · ' + a.code + (a.kind === 'custom' ? ' · yours' : '');
+      sel.appendChild(o);
+    });
+    sel.setAttribute('data-sig', sig);
+  }
   if (sel && !focused(sel)) sel.value = d.airport;
   segSet('fbDir', d.dir);
   setText('fbTag', d.showing ? 'on screen' : 'not on screen');
-  var b = d.board || {}, rows = $('fbRows'), html = '';
+
+  var b = d.board || {}, rows = $('fbRows'), trk = d.tracked || [], direct = fbDirect(d);
+  var html = '<span class="h">time</span><span class="h">flight</span><span class="h">to / from</span><span class="h r">status</span>';
+  // The pinned rows, on the panel's own dark blue band.
+  var PIN = ' style="background:#001a46;color:#ebf0f5;text-shadow:none"';
+  trk.forEach(function (t) {
+    html += '<span' + PIN + '>' + esc(t.tm) + '</span><span' + PIN + '>' + esc(t.fn || t.ident) + '</span><span' + PIN + '>' +
+      esc(t.from ? t.from + '-' + t.to : '') + '</span><span class="r"' + PIN + '>' + esc(t.w) + '</span>';
+  });
   if (b.have) {
     setText('fbHead', cap(b.name) + ' ' + (b.dir === 'dep' ? 'departures' : 'arrivals') + (d.dir === 'alt' ? ' · swaps every ' + d.altS + ' s' : ''));
-    setText('fbAge', 'received ' + ago(b.age));
-    html = '<span class="h">time</span><span class="h">flight</span><span class="h">to / from</span><span class="h r">status</span>';
+    setText('fbAge', (b.source === 'aeroapi' ? 'data ' : 'received ') + ago(b.age));
     (b.rows || []).forEach(function (r, i) {
       var cls = 'st-' + (r.st || 'sched');
       html += '<span class="' + cls + (i === b.now ? ' now' : '') + '">' + esc(r.tm) + '</span><span class="' + cls + '">' + esc(r.fn) +
         '</span><span class="' + cls + '">' + esc(r.ct) + ' ' + esc(cap(r.cy !== r.ct ? r.cy : '')) + '</span><span class="r ' + cls + '">' + esc(r.w) + '</span>';
     });
-    if (!(b.rows || []).length) html += '<span class="empty">The board is empty.</span>';
+    if (!(b.rows || []).length) html += '<span class="empty">No flights within two hours of now.</span>';
   } else {
     setText('fbHead', 'no board yet'); setText('fbAge', '--');
-    html = '<span class="empty">' + esc(d.mqtt ? d.mqtt.status : 'No data') + '</span>';
+    var why = direct && d.direct.key ? d.direct.state : b.source === 'none' ? 'This airport needs an AeroAPI key.' : (d.mqtt ? d.mqtt.status : 'No data');
+    html += '<span class="empty">' + esc(why) + '</span>';
   }
   if (rows) rows.innerHTML = html;
-  var feed = $('fbFeed'), kv = [];
-  var sides = b.sides || {};
+
+  var feed = $('fbFeed'), kv = [], sides = b.sides || {};
+  kv.push(['source', b.source === 'aeroapi' ? 'FlightAware AeroAPI, fetched by the panel' : b.source === 'mqtt' ? 'Home Assistant over MQTT' : 'none: only the six built-in airports come from Home Assistant', b.source === 'none' ? 'pn-warn' : '']);
   ['arr', 'dep'].forEach(function (k) {
     var s = sides[k] || {}, wanted = d.dir === 'alt' || d.dir === k;
-    kv.push([k === 'arr' ? 'arrivals' : 'departures', s.have ? s.n + ' flights, fetched by HA ' + s.upd : (wanted ? 'waiting for Home Assistant' : 'not shown'), s.have || !wanted ? '' : 'pn-warn']);
+    kv.push([k === 'arr' ? 'arrivals' : 'departures', s.have ? s.n + ' flights, data from ' + s.upd : (wanted ? 'waiting' : 'not shown'), s.have || !wanted ? '' : 'pn-warn']);
   });
-  if (d.mqtt) {
+  if (d.mqtt && b.source === 'mqtt') {
     kv.push(['broker', d.mqtt.configured ? 'configured' : 'not configured', d.mqtt.configured ? '' : 'pn-warn']);
     kv.push(['mqtt', d.mqtt.connected ? 'connected' : 'not connected', d.mqtt.connected ? 'pn-ok' : 'pn-warn']);
     kv.push(['state', String(d.mqtt.status).toLowerCase()]);
   }
-  if (feed) feed.innerHTML = kv.map(function (x) { return '<dt>' + x[0] + '</dt><dd class="' + (x[2] || '') + '">' + esc(x[1]) + '</dd>'; }).join('');
+  if (feed) feed.innerHTML = kv.map(function (x) { return '<dt>' + esc(x[0]) + '</dt><dd class="' + (x[2] || '') + '">' + esc(x[1]) + '</dd>'; }).join('');
+
+  renderFbTracks(d);
+  renderFbCustom(d);
+  renderFbBudget(d);
 }
-function postFb(body) {
-  api('/api/flightboard', body).then(function (d) { renderFb(d); note('fbMsg', 'Applied. Kept across reboots; the board follows once the choice has settled.'); })
-    .catch(function (err) { note('fbMsg', err.message, true); });
+
+// ---- tracked flights
+function fbIdentWhy(v) {
+  if (!v) return '';
+  if (!/^[A-Z0-9]+$/.test(v)) return 'Letters and digits only.';
+  if (!/^(?:[A-Z]{3}|[A-Z0-9]{2})[0-9]{1,4}[A-Z]?$/.test(v) || /^[0-9]{2}/.test(v) && !/^[A-Z]{3}/.test(v)) return 'An airline code, then 1 to 4 digits: AFR7301, BA336.';
+  return '';
 }
-if ($('fbApt')) $('fbApt').addEventListener('change', function () { postFb({ airport: +this.value }); });
-seg('fbDir', function (v) { postFb({ dir: v }); });
+function fbCheckIdent() {
+  var n = $('fbIdent'), btn = $('fbTrackAdd'); if (!n || !fbLast) return;
+  var v = n.value.replace(/\s+/g, ''), why = fbIdentWhy(v), trk = fbLast.tracked || [];
+  if (!why && trk.some(function (t) { return t.ident === v; })) why = 'That flight is already tracked.';
+  if (!why && trk.length >= fbLast.limits.track) why = 'Three flights are tracked already: remove one first.';
+  if (!why && !fbLast.direct.key) why = 'No AeroAPI key is stored on the panel yet.';
+  note('fbTrkMsg', why || FB_TRK_HINT, !!why);
+  if (btn) btn.disabled = !v || !!why;
+}
+function renderFbTracks(d) {
+  var card = $('fbTrackCard'); if (!card) return;
+  card.hidden = !fbDirect(d);
+  if (card.hidden) return;
+  var trk = d.tracked || [];
+  setText('fbTrkCount', trk.length + ' of ' + d.limits.track);
+  fbCheckIdent();
+  var sig = JSON.stringify(trk);
+  if (sig === fbSigTracks) return;
+  fbSigTracks = sig;
+  var host = $('fbTracks'); if (!host) return;
+  host.innerHTML = trk.length ? '' : '<p class="field-hint">No flight is tracked.</p>';
+  trk.forEach(function (t) {
+    var what = [], when = [];
+    if (t.from) what.push(t.from + ' to ' + t.to);
+    var dep = t.dep || {}, arr = t.arr || {};
+    if (dep.act || dep.est || dep.sched) what.push((dep.act ? 'left the gate ' : 'departs ') + fbTime(dep.act || dep.est || dep.sched) +
+      (!dep.act && dep.est && dep.sched && dep.est !== dep.sched ? ' (scheduled ' + fbTime(dep.sched) + ')' : ''));
+    if (arr.act || arr.est || arr.sched) what.push((arr.act ? 'landed ' : 'arrives ') + fbTime(arr.act || arr.est || arr.sched));
+    if (t.gate) what.push('gate ' + t.gate);
+    if (t.age != null) when.push('asked ' + fbDur(t.age) + ' ago');
+    when.push(t.nextIn < 0 ? 'no more calls' : t.nextIn === 0 ? 'due' : 'next in ' + fbDur(t.nextIn));
+    if (t.expiresIn != null) when.push('removes itself in ' + fbDur(t.expiresIn));
+    if (t.http && t.http !== 200) when.push('last answer HTTP ' + t.http);
+    if (t.current === false) when.push('nothing current under this ident');
+    var row = document.createElement('div');
+    row.className = 'pn-row';
+    row.innerHTML = '<div class="pn-name"><strong>' + esc(t.ident) + '</strong> ' + esc(t.w) + ' · ' + esc(FB_ST[t.state] || t.state) +
+      '<span class="ct-hint">' + esc(what.join(' · ') || '--') + '</span><span class="ct-hint">' + esc(when.join(' · ')) +
+      '</span></div><button type="button" class="btn btn-sm">Remove</button>';
+    row.querySelector('button').addEventListener('click', function () {
+      fbPost({ untrack: t.ident }, t.ident + ' is no longer tracked.', 'fbTrkMsg');
+    });
+    host.appendChild(row);
+  });
+}
+function fbTrack() {
+  var n = $('fbIdent'); if (!n) return;
+  var v = n.value.replace(/\s+/g, '');
+  fbPost({ track: v }, v + ' is tracked: the panel asks for it within a few seconds.', 'fbTrkMsg')
+    .then(function (d) { if (d) { n.value = ''; fbCheckIdent(); } });
+}
+
+// ---- custom airports
+function renderFbCustom(d) {
+  var card = $('fbAddCard'); if (!card) return;
+  card.hidden = !fbDirect(d);
+  if (card.hidden) return;
+  var custom = d.airports.filter(function (a) { return a.kind === 'custom'; });
+  setText('fbCount', custom.length + ' of ' + d.limits.custom);
+  fbCheckName();
+  var sig = JSON.stringify([custom, d.airport]);
+  if (sig === fbSigCustom) return;
+  fbSigCustom = sig;
+  var host = $('fbCustom'); if (!host) return;
+  host.innerHTML = custom.length ? '' : '<p class="field-hint">None yet: find one below.</p>';
+  custom.forEach(function (a) {
+    var row = document.createElement('div');
+    row.className = 'pn-row' + (a.id === d.airport ? ' here' : '');
+    row.innerHTML = '<div class="pn-name"><strong>' + esc(cap(a.name)) + '</strong><span class="ct-hint">' +
+      esc([a.code, a.iata, a.tz].filter(Boolean).join(' · ')) + '</span></div><span class="pn-here">on the board</span>' +
+      '<button type="button" class="btn btn-sm" data-a="pick">Choose</button><button type="button" class="btn btn-sm" data-a="del">Delete</button>';
+    row.querySelector('[data-a="pick"]').addEventListener('click', function () {
+      fbPost({ airport: a.id }, cap(a.name) + ' is on the board.', 'fbMsg');
+    });
+    row.querySelector('[data-a="del"]').addEventListener('click', function () {
+      if (confirm('Delete ' + cap(a.name) + ' from your airports?')) fbPost({ remove: a.id }, cap(a.name) + ' deleted.', 'fbFindMsg');
+    });
+    host.appendChild(row);
+  });
+}
+function fbLoadDb() {
+  if (fbDb) return Promise.resolve(fbDb);
+  if (!fbDbWait) {
+    fbDbWait = fetch(FB_DB_URL).then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function (o) {
+        var list = [];
+        Object.keys(o).forEach(function (k) {
+          var a = o[k] || {};
+          if (!/^[A-Z][A-Z0-9]{3}$/.test(a.icao || '') || !/^[A-Za-z]+\/[A-Za-z0-9_+\-\/]+$/.test(a.tz || '') || a.tz.length > 39) return;
+          list.push({ icao: a.icao, iata: /^[A-Z]{3}$/.test(a.iata || '') ? a.iata : '', name: a.name || '', city: a.city || '',
+            country: a.country || '', tz: a.tz, key: fbFold((a.name || '') + ' ' + (a.city || '')) });
+        });
+        fbDb = list;
+        return list;
+      })
+      .catch(function (e) { fbDbWait = null; throw e; });
+  }
+  return fbDbWait;
+}
+function fbFind(q) {
+  var seq = ++fbSeq, list = $('fbResults');
+  if (!list) return;
+  if (q.length < 2) { list.innerHTML = ''; note('fbFindMsg', FB_FIND_HINT); return; }
+  note('fbFindMsg', fbDb ? 'Searching...' : 'Loading the airport list, about 1.2 MB, once...');
+  fbLoadDb().then(function (db) {
+    if (seq !== fbSeq || !fbLast) return;
+    var Q = fbFold(q.trim()), exact = [], withIata = [], rest = [];
+    db.forEach(function (a) {
+      if (a.iata === Q || a.icao === Q) exact.push(a);
+      else if (a.key.indexOf(Q) >= 0) (a.iata ? withIata : rest).push(a);
+    });
+    var found = exact.concat(withIata, rest).slice(0, 8);
+    list.innerHTML = '';
+    note('fbFindMsg', found.length ? 'Pick one to add it.' : 'Nothing found. Try the code, or the English spelling.');
+    found.forEach(function (a) {
+      var listed = fbLast.airports.some(function (x) { return x.code === a.icao; });
+      var row = document.createElement('div');
+      row.className = 'pn-row';
+      row.innerHTML = '<div class="pn-name"><strong>' + esc(a.name) + '</strong><span class="ct-hint">' +
+        esc([a.icao, a.iata, [a.city, a.country].filter(Boolean).join(', '), a.tz].filter(Boolean).join(' · ')) +
+        (listed ? ' · already listed' : '') + '</span></div><button type="button" class="btn btn-sm"' + (listed ? ' disabled' : '') + '>Pick</button>';
+      row.querySelector('button').addEventListener('click', function () { fbChoose(a); });
+      list.appendChild(row);
+    });
+  }).catch(function (err) {
+    if (seq === fbSeq) note('fbFindMsg', 'Could not load the airport list (' + err.message + '). It is fetched by this browser, which needs the internet.', true);
+  });
+}
+function fbAdv(ch) { var a = fbLast.limits.advance, i = ch.charCodeAt(0) - 32; return a[i >= 0 && i < a.length ? i : 0]; }
+function fbWidth(s) { var w = 0; for (var i = 0; i < s.length; i++) w += fbAdv(s.charAt(i)); return w; }
+// A first guess at the header name, by the panel's rules: capitals without
+// accents, cut after a word when too wide.
+function fbFit(s) {
+  var lim = fbLast.limits, w = 0, cut = 0, whole = 0;
+  var t = fbFold(s).replace(/[^A-Z0-9.' -]+/g, ' ').replace(/ +/g, ' ').trim();
+  for (var i = 0; i < t.length && i < lim.name; i++) {
+    w += fbAdv(t.charAt(i));
+    if (w > lim.namePx) break;
+    cut = i + 1;
+    if (i + 1 === t.length || t.charAt(i + 1) === ' ' || t.charAt(i + 1) === '-') whole = i + 1;
+  }
+  if (cut < t.length && whole) cut = whole;
+  return t.slice(0, cut).replace(/[ -]+$/, '');
+}
+function fbCheckName() {
+  var n = $('fbName'); if (!n || !fbLast || !fbPick) return;
+  var lim = fbLast.limits, v = n.value, w = fbWidth(v), why = '';
+  var full = fbLast.airports.filter(function (a) { return a.kind === 'custom'; }).length >= lim.custom;
+  if (!v) why = 'Give it a name.';
+  else if (/[^A-Z0-9.' -]/.test(v)) why = "Capitals A-Z, digits, space and . - ' only: the panel's font has nothing else.";
+  else if (/^ | $|  /.test(v)) why = 'No space at either end, and no two in a row.';
+  else if (w > lim.namePx) why = 'Too wide for the header: ' + w + ' of ' + lim.namePx + ' px.';
+  else if (fbLast.airports.some(function (a) { return a.code === fbPick.icao; })) why = 'That airport is already in the list.';
+  else if (full) why = 'All ' + lim.custom + ' of your airports are in use: delete one first.';
+  note('fbNameMsg', why || ([fbPick.icao, fbPick.iata, fbPick.tz].filter(Boolean).join(' · ') + ' · ' + w + ' of ' + lim.namePx + ' px'), !!why);
+  each([$('fbAdd'), $('fbAddSel')], function (b) { if (b) b.disabled = !!why; });
+}
+function fbChoose(a) {
+  fbPick = a;
+  var form = $('fbAddForm'), n = $('fbName');
+  if (form) form.hidden = false;
+  if (n) { n.value = fbFit(a.city || a.name) || fbFit(a.name); n.focus(); }
+  fbCheckName();
+}
+function fbAddAirport(select) {
+  var n = $('fbName'); if (!fbPick || !n) return;
+  var name = n.value;
+  fbPost({ add: { icao: fbPick.icao, iata: fbPick.iata, name: name, tz: fbPick.tz, select: select } },
+    cap(name) + (select ? ' added and on the board.' : ' added.'), 'fbFindMsg')
+    .then(function (d) {
+      if (!d) return;
+      fbPick = null;
+      var form = $('fbAddForm'), q = $('fbFind'), list = $('fbResults');
+      if (form) form.hidden = true;
+      if (q) q.value = '';
+      if (list) list.innerHTML = '';
+    });
+}
+
+// ---- budget
+function renderFbBudget(d) {
+  var card = $('fbBudgetCard'); if (!card) return;
+  card.hidden = !fbDirect(d);
+  if (card.hidden) return;
+  var x = d.direct, u = x.usage || {}, bu = x.budget || {}, bo = x.bounds || {};
+  setText('fbKeyTag', x.key ? 'key stored' : 'no key');
+  var money = function (v) { return '$' + (v || 0).toFixed(2); };
+  var use = $('fbUse');
+  if (use) use.innerHTML = [[u.today + '/' + bu.day_cap, 'calls today'], [u.month + '/' + bu.month_cap, 'this month'],
+    [money(u.usdMonth), 'spent, est.'], [money(u.usdMonthCap), 'month at most']]
+    .map(function (c) { return '<div><b>' + esc(c[0]) + '</b><span>' + esc(c[1]) + '</span></div>'; }).join('');
+  if (!fbBudgetDirty) {
+    [['fbDay', 'day_cap'], ['fbMonth', 'month_cap'], ['fbFloor', 'floor_min']].forEach(function (f) {
+      var el = $(f[0]); if (!el || focused(el)) return;
+      el.value = bu[f[1]];
+      if (bo[f[1]]) { el.min = bo[f[1]][0]; el.max = bo[f[1]][1]; }
+    });
+  }
+  var bmsg = $('fbBudgetMsg');
+  if (bmsg && !bmsg.classList.contains('pn-err') && !fbBudgetDirty)
+    note('fbBudgetMsg', 'At $' + u.usdPerCall + ' a call - FlightAware lists $0.005 a result set for these endpoints on every tier, and each call here asks for one - a day cap of ' +
+      bu.day_cap + ' is at most ' + money(bu.day_cap * 0.005 * 31) + ' in a 31-day month, and the month cap stops it at ' + money(u.usdMonthCap) +
+      '. Every call made counts, answered or not. Home Assistant\'s own calls on the same account are not counted here. 0 turns the direct fetch off.');
+  var kv = [];
+  kv.push(['key', x.key ? 'stored on the panel (never shown)' : 'not stored: python3 tools/provision_secrets.py aeroapi-from-ha', x.key ? '' : 'pn-warn']);
+  kv.push(['state', String(x.state).toLowerCase() + (x.waitS ? ', next call in ' + fbDur(x.waitS) : ''), /cap|auth|rate|tls|net|http|bad|nomem|refused/i.test(x.state) ? 'pn-warn' : '']);
+  if (x.last) kv.push(['last call', x.last.what + ' ' + x.last.for + ' · ' + (x.last.http > 0 ? 'HTTP ' + x.last.http : String(x.last.state).toLowerCase()) +
+    ' · ' + Math.round((x.last.bytes || 0) / 1024) + ' KB · ' + fbDur(x.last.ago) + ' ago']);
+  (x.lists || []).forEach(function (l) {
+    if (!l.have && !l.refusedWaitS) return;
+    kv.push([l.name.replace('_', ' '), l.have ? l.kept + ' kept of ' + l.seen + ', ' + fbDur(l.age) + ' old' + (l.more ? ' · more pages not fetched' : '') : 'refused, again in ' + fbDur(l.refusedWaitS), l.more || l.refusedWaitS ? 'pn-warn' : '']);
+  });
+  if ((d.tracked || []).length) kv.push(['board share', 'the board may use ' + u.boardDayCap + ' of today\'s ' + bu.day_cap + ' calls while flights are tracked']);
+  kv.push(['since boot', x.calls + ' calls, ' + x.fails + ' failed; one at a time, ' + u.spacingS + ' s apart']);
+  if (u.dayEndsInS != null) kv.push(['day resets', 'in ' + fbDur(u.dayEndsInS) + ' (midnight UTC)']);
+  if (x.last && x.last.heapMin) kv.push(['memory', 'internal free ' + Math.round(x.last.heapMin / 1024) + ' KB at the lowest, stack spare ' + x.last.stackFree + ' B']);
+  var host = $('fbDirect');
+  if (host) host.innerHTML = kv.map(function (r) { return '<dt>' + esc(r[0]) + '</dt><dd class="' + (r[2] || '') + '">' + esc(r[1]) + '</dd>'; }).join('');
+}
+function fbSaveBudget() {
+  var num = function (id) { var el = $(id); return el ? Number(el.value) : NaN; };
+  var body = { day_cap: num('fbDay'), month_cap: num('fbMonth'), floor_min: num('fbFloor') };
+  var bad = Object.keys(body).filter(function (k) { return !Number.isInteger(body[k]); });
+  if (bad.length) { note('fbBudgetMsg', 'Whole numbers only: ' + bad.join(', ') + '.', true); return; }
+  fbPost({ budget: body }, 'Budget saved: in force now, kept across reboots.', 'fbBudgetMsg')
+    .then(function (d) { if (d) fbBudgetDirty = false; });
+}
+
+if ($('fbApt')) $('fbApt').addEventListener('change', function () { fbPost({ airport: +this.value }, 'Applied. Kept across reboots.', 'fbMsg'); });
+seg('fbDir', function (v) { fbPost({ dir: v }, 'Applied. Kept across reboots.', 'fbMsg'); });
+if ($('fbFind')) {
+  note('fbFindMsg', FB_FIND_HINT);
+  $('fbFind').addEventListener('input', function () {
+    var q = this.value.trim();
+    clearTimeout(fbTimer);
+    fbTimer = setTimeout(function () { fbFind(q); }, 300);
+  });
+  $('fbName').addEventListener('input', function () {
+    var at = this.selectionStart, up = this.value.toUpperCase();
+    if (up !== this.value) { this.value = up; this.setSelectionRange(at, at); }
+    fbCheckName();
+  });
+  $('fbAdd').addEventListener('click', function () { fbAddAirport(false); });
+  $('fbAddSel').addEventListener('click', function () { fbAddAirport(true); });
+}
+if ($('fbIdent')) {
+  $('fbIdent').addEventListener('input', function () {
+    var at = this.selectionStart, up = this.value.toUpperCase();
+    if (up !== this.value) { this.value = up; this.setSelectionRange(at, at); }
+    fbCheckIdent();
+  });
+  $('fbIdent').addEventListener('keydown', function (e) { if (e.key === 'Enter' && !$('fbTrackAdd').disabled) fbTrack(); });
+  $('fbTrackAdd').addEventListener('click', fbTrack);
+}
+each([$('fbDay'), $('fbMonth'), $('fbFloor')], function (el) { if (el) el.addEventListener('input', function () { fbBudgetDirty = true; }); });
+if ($('fbBudgetSave')) $('fbBudgetSave').addEventListener('click', fbSaveBudget);
 
 // ---------------------------------------------------------------- rail board
 var rbEditing = false, rbCrsDirty = false, rbPresetSig = '';

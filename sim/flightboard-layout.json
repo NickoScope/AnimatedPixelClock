@@ -16,7 +16,7 @@
     "EDDF",
     "EHAM"
   ],
-  "digest": "c0c485484937fde4",
+  "digest": "0d5b7ae42975fecc",
   "font": "PicopixelFB",
   "geom": {
     "FB_ASCENT": 4,
@@ -30,6 +30,7 @@
     "FB_PIN_BG_G": 26,
     "FB_PIN_BG_R": 0,
     "FB_PIN_GATE_MIN": 60,
+    "FB_PIN_ROUTE_GAP": 4,
     "FB_ROW_H": 7,
     "FB_VISIBLE": 7,
     "FB_X_DEST": 50,

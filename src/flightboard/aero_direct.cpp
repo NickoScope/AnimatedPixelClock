@@ -533,8 +533,9 @@ bool nextJob(const AeroWant &w, int64_t now, uint32_t nowMs, Job *j, bool *board
   static const aero::List kOrder[] = {aero::ARR_NEXT, aero::DEP_NEXT, aero::ARR_PAST, aero::DEP_PAST};
   for (aero::List l : kOrder) {
     if (aero::listDeparts(l) ? !w.dep : !w.arr) continue;
-    const ListCache &c = s_lists[l];
+    ListCache &c = s_lists[l];
     if (held(c.holdUntilMs, nowMs)) continue;
+    c.holdUntilMs = 0;                          // run out: cleared, as the global wait is
     const uint32_t floorMs = (uint32_t)s_budget.floorMin * 60000UL * (aero::listPast(l) ? 2 : 1);
     if (c.have && nowMs - c.atMs < floorMs) continue;
     j->kind = JOB_LIST;
@@ -595,6 +596,10 @@ void aeroDirectLoop(const AeroWant &w) {
       else i++;
     }
   }
+
+  // A wait that has run out is cleared, so that millis() wrapping 49 days on
+  // cannot make it look active again.
+  if (s_holdUntilMs && !held(s_holdUntilMs, nowMs)) s_holdUntilMs = 0;
 
   if (!s_keyStored) { s_blocked = ST_NOKEY; return; }
   if (running) return;
