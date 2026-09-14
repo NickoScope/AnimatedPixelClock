@@ -1,0 +1,7 @@
+# The owner's audio, and the clips and previews made from it, stay with him:
+# none of it goes into git.
+*.wav
+*.flac
+*.mp3
+*.pca
+*.gif
