@@ -8,7 +8,8 @@ nothing and reports success. Three combinations were reported green that day
 that had never been built at all.
 
 This writes a scratch env into a copy of platformio.ini and checks the RETURN
-CODE, which cannot be fooled.
+CODE, which cannot be fooled. It then builds the two images the bring-up
+flashes before the firmware, which nothing else ever builds.
 
   python3 tools/flag_matrix.py
 """
@@ -42,6 +43,11 @@ COMBOS = [
     ("carousel without knob",  "-DCAROUSEL_ENABLED", False),
 ]
 
+# Built from bringup/ with their own source filters. When provision.cpp was
+# added next to hello_matrix.cpp the bring-up image stopped linking - two
+# setup()s - and nobody knew until the hardware was on the desk.
+IMAGES = ["provision", "matrix-waveshare-rgb-bringup"]
+
 def main():
     base = (ROOT / "platformio.ini").read_text()
     tmp  = pathlib.Path("/tmp/pio_flag_matrix.ini")
@@ -50,7 +56,7 @@ def main():
         tmp.write_text(base + "\n[env:flagtest]\nextends = env:matrix-waveshare-rgb\n"
                               f"build_flags =\n\t{COMMON}\n\t{flags}\n")
         r = subprocess.run([str(PIO), "run", "-e", "flagtest", "--project-conf", str(tmp)],
-                           capture_output=True, text=True)
+                           capture_output=True, text=True, cwd=ROOT)
         built = r.returncode == 0
         good  = built == must
         note  = "" if must else ("guard held" if not built else "GUARD MISSING")
@@ -58,7 +64,14 @@ def main():
               f"{'ok' if good else 'UNEXPECTED':10s} {note}")
         bad += not good
     tmp.unlink(missing_ok=True)
-    print(f"\n{len(COMBOS) - bad}/{len(COMBOS)} behaved as intended")
+    for env in IMAGES:
+        r = subprocess.run([str(PIO), "run", "-e", env], capture_output=True, text=True, cwd=ROOT)
+        built = r.returncode == 0
+        print(f"  {'image ' + env:26s} {'builds' if built else 'FAILS':8s} "
+              f"{'ok' if built else 'UNEXPECTED':10s}")
+        bad += not built
+    total = len(COMBOS) + len(IMAGES)
+    print(f"\n{total - bad}/{total} behaved as intended")
     sys.exit(1 if bad else 0)
 
 main()
