@@ -636,23 +636,110 @@ function renderRb(d) {
   setText('rbRt', rt ? rt.toLowerCase() : '--');
   setText('rbMq', (d.mqtt.connected ? 'connected' : String(d.mqtt.status).toLowerCase()) + (d.mqtt.configured ? '' : ' · no broker stored') + ' · refused ' + d.refused);
   var dg = $('rbDiag'); if (dg && !focused(dg)) dg.checked = !!d.diag;
-  setText('rbFrom', { ha: 'from Home Assistant', web: 'from this page', build: 'build defaults' }[d.cfg.from] || '--');
-  if (rbEditing) return;
-  var c = d.cfg;
-  $('rbRows').value = c.rows;
-  $('rbSwitch').value = c.switch_s; $('rbStale').value = c.stale_s; $('rbLevel').value = c.level;
-  setText('rbLevelV', c.level + ' pc');
+  setText('rbFrom', { ha: 'from Home Assistant', web: 'set on this page', build: 'build defaults' }[d.cfg.from] || '--');
+  rbLast = d;
+  renderRbSettings(d);
 }
-each(document.querySelectorAll('#rbRows,#rbSwitch,#rbStale,#rbLevel'), function (el) {
-  el.addEventListener('input', function () { rbEditing = true; if (el.id === 'rbLevel') setText('rbLevelV', el.value + ' pc'); });
-  el.addEventListener('change', function () { rbEditing = true; });
-});
-if ($('rbApply')) $('rbApply').addEventListener('click', function () {
-  var btn = this, cfg = { rows: +$('rbRows').value,
-    switch_s: +$('rbSwitch').value, stale_s: +$('rbStale').value, level: +$('rbLevel').value };
-  api('/api/railboard', { config: cfg }).then(function (d) { rbEditing = false; renderRb(d); note('rbMsg', 'Applied until Home Assistant sends its config again or the panel reboots.'); flash(btn, 'Applied'); })
-    .catch(function (err) { note('rbMsg', err.message, true); });
-});
+
+// ---- board settings: every control posts its own key at once (src/railboard/rb_settings.h)
+var rbLast = null, rbSegsBuilt = {};
+var RB_EXPT = { ok: 'On time', canc: 'Cancelled', arr: 'Arrived', nr: '', late: '' };
+function rbHex(d, name) {
+  var cols = (d.cfg.bounds && d.cfg.bounds.colors) || [], i;
+  for (i = 0; i < cols.length; i++) if (cols[i].name === name && /^#[0-9a-f]{6}$/i.test(cols[i].hex)) return cols[i].hex;
+  return '#ff9600';
+}
+function rbColourSeg(id, d, value, key) {
+  var g = $(id); if (!g) return;
+  var cols = (d.cfg.bounds && d.cfg.bounds.colors) || [];
+  if (!rbSegsBuilt[id] && cols.length) {
+    rbSegsBuilt[id] = true; g.innerHTML = '';
+    cols.forEach(function (c) {
+      var b = document.createElement('button'), sw = document.createElement('span');
+      b.type = 'button'; b.setAttribute('data-v', c.name);
+      sw.className = 'pn-sw'; sw.style.background = /^#[0-9a-f]{6}$/i.test(c.hex) ? c.hex : '#888';
+      b.appendChild(sw); b.appendChild(document.createTextNode(c.name));
+      g.appendChild(b);
+    });
+    seg(id, function (v) { var o = {}; o[key] = v; postRbCfg(o); });
+  }
+  segSet(id, value);
+}
+function rbFillSelect(sel, lo, hi, label) {
+  if (!sel || sel.options.length === hi - lo + 1) return;
+  sel.innerHTML = '';
+  for (var v = lo; v <= hi; v++) { var o = document.createElement('option'); o.value = v; o.textContent = label(v); sel.appendChild(o); }
+}
+function renderRbSettings(d) {
+  var c = d.cfg, b = c.bounds || {};
+  rbColourSeg('rbRowCol', d, c.row_color, 'row_color');
+  rbColourSeg('rbHeadCol', d, c.head_color, 'head_color');
+  rbColourSeg('rbDueCol', d, c.due_color, 'due_color');
+  segSet('rbClock', c.clock_seconds ? '1' : '0');
+  if (b.due_min) rbFillSelect($('rbDue'), b.due_min[0], b.due_min[1], function (m) { return m ? m + ' min' : 'Off'; });
+  if (b.rows) rbFillSelect($('rbRows'), b.rows[0], b.rows[1], function (r) { return r + (r === 6 ? ' - one page' : (r > 6 ? ' - two pages' : '')); });
+  var set = function (id, v, range) {
+    var el = $(id); if (!el || focused(el)) return;
+    if (range) { el.min = range[0]; el.max = range[1]; }
+    el.value = v;
+  };
+  set('rbDue', c.due_min); set('rbRows', c.rows);
+  set('rbSwitch', c.switch_s, b.switch_s); set('rbStale', c.stale_s, b.stale_s); set('rbLevel', c.level, b.level);
+  if (!focused($('rbLevel'))) setText('rbLevelV', c.level + ' pc');
+  var rs = $('rbReset'); if (rs) rs.disabled = c.from !== 'web';
+  drawRbPreview(d);
+}
+function postRbCfg(part) {
+  api('/api/railboard', { config: part }).then(function (d) {
+    renderRb(d); note('rbMsg', 'Applied on the panel. Kept across reboots - written to flash a few seconds after the last change.');
+  }).catch(function (err) { note('rbMsg', err.message, true); if (rbLast) renderRbSettings(rbLast); });
+}
+function rbShade(hex, level) {
+  var n = parseInt(hex.slice(1), 16), k = Math.max(10, Math.min(100, level)) / 100;
+  return 'rgb(' + Math.round((n >> 16 & 255) * k) + ',' + Math.round((n >> 8 & 255) * k) + ',' + Math.round((n & 255) * k) + ')';
+}
+function drawRbPreview(d) {
+  var cv = $('rbPreview'); if (!cv) return;
+  var c = ctxOf(cv), cfg = d.cfg, lv = cfg.level, arr = d.list === 'arr';
+  var row = rbShade(rbHex(d, cfg.row_color), lv), head = rbShade(rbHex(d, cfg.head_color), lv);
+  var due = rbShade(rbHex(d, cfg.due_color), lv), red = rbShade('#ff2418', lv), dim = rbShade('#787e84', lv);
+  R(c, 0, 0, 128, 64, '#000');
+  T(c, 2, 0, arr ? 'Arrivals' : 'Departures', 7, head);
+  if (arr) T(c, 72, 2, 'Time', 5, head, 'right');
+  T(c, 88, 2, 'Plat', 5, head, 'right'); T(c, 93, 2, 'Expt', 5, head);
+  T(c, 2, 9, arr ? 'From' : 'Time', 5, head); if (!arr) T(c, 22, 9, 'Destination', 5, head);
+  T(c, 126, 9, d.named ? d.station : d.crs, 5, dim, 'right');
+  var list = ((arr ? d.arr : d.dep) || {}).rows || [], hm = function (t) { return t ? londonTime(t).slice(0, 5) : '--:--'; };
+  if (!list.length) T(c, 2, 16, 'Waiting for ' + d.crs, 5, row);
+  list.slice(0, 6).forEach(function (s, i) {
+    var y = 16 + i * 7, col = s.st === 'canc' ? row : (s.due ? due : row), name = String(s.n || '');
+    var late = s.st === 'late' || (s.st === 'arr' && s.x && s.x - s.t >= 60);
+    T(c, 93, y, late && s.x ? hm(s.x) : (RB_EXPT[s.st] || ''), 5, s.st === 'canc' ? red : col);
+    if (s.st !== 'canc') T(c, 88, y, String(s.p || ''), 5, col, 'right');
+    if (arr) { T(c, 72, y, hm(s.t), 5, col, 'right'); T(c, 2, y, name.slice(0, 11), 5, col); }
+    else { T(c, 2, y, hm(s.t), 5, col); T(c, 22, y, name.slice(0, 15), 5, col); }
+  });
+  T(c, 2, 58, 'Page 1 of ' + (list.length > 6 ? 2 : 1), 5, row);
+  var now = d.synced ? londonTime(d.now) : '--:--:--';
+  T(c, 126, 57, cfg.clock_seconds ? now : now.slice(0, 5), 7, row, 'right');
+  setText('rbPvTitle', arr ? 'arrivals' : 'departures');
+  var dueCount = list.filter(function (s) { return s.due; }).length;
+  setText('rbPvMeta', cfg.due_min ? dueCount + ' due within ' + cfg.due_min + ' min' : 'due soon off');
+}
+if ($('rbDue')) {
+  $('rbDue').addEventListener('change', function () { postRbCfg({ due_min: +this.value }); this.blur(); });
+  $('rbRows').addEventListener('change', function () { postRbCfg({ rows: +this.value }); this.blur(); });
+  $('rbSwitch').addEventListener('change', function () { postRbCfg({ switch_s: +this.value }); });
+  $('rbStale').addEventListener('change', function () { postRbCfg({ stale_s: +this.value }); });
+  $('rbLevel').addEventListener('input', function () { setText('rbLevelV', this.value + ' pc'); });
+  $('rbLevel').addEventListener('change', function () { postRbCfg({ level: +this.value }); this.blur(); });
+  seg('rbClock', function (v) { postRbCfg({ clock_seconds: v === '1' }); });
+  $('rbReset').addEventListener('click', function () {
+    var btn = this;
+    api('/api/railboard', { reset: true }).then(function (d) { renderRb(d); note('rbMsg', 'Settings handed back to ' + (d.cfg.from === 'ha' ? 'Home Assistant.' : 'the build defaults.')); flash(btn, 'Done'); })
+      .catch(function (err) { note('rbMsg', err.message, true); });
+  });
+}
 if ($('rbDiag')) $('rbDiag').addEventListener('change', function () {
   var box = this;
   api('/api/railboard', { diag: box.checked }).then(renderRb).catch(function (err) { box.checked = !box.checked; note('rbMsg', err.message, true); });

@@ -212,34 +212,67 @@ static const char PANEL_PAGES_HTML[] PROGMEM = R"PNL(<link rel="stylesheet" href
         </div>
 
         <div class="card">
-          <h2 class="card-title">Layout <span class="tag" id="rbFrom">--</span></h2>
-          <div class="grid-2">
+          <h2 class="card-title">Board settings <span class="tag" id="rbFrom">--</span></h2>
+          <div class="pn-stage">
+            <div class="crt oled-preview">
+              <div class="oled-pv-head"><span class="ttl" id="rbPvTitle">preview</span><span class="meta" id="rbPvMeta">--</span></div>
+              <div class="oled-stage"><canvas id="rbPreview" width="128" height="64"></canvas></div>
+            </div>
+            <div>
+              <div class="field">
+                <span class="field-label">Row colour</span>
+                <div class="mode-toggle pn-seg pn-colors" role="group" aria-label="Row colour" id="rbRowCol"></div>
+              </div>
+              <div class="field">
+                <span class="field-label">Heading colour</span>
+                <div class="mode-toggle pn-seg pn-colors" role="group" aria-label="Heading colour" id="rbHeadCol"></div>
+              </div>
+              <div class="field" style="margin-bottom:0">
+                <span class="field-label">Due soon colour</span>
+                <div class="mode-toggle pn-seg pn-colors" role="group" aria-label="Due soon colour" id="rbDueCol"></div>
+              </div>
+            </div>
+          </div>
+          <p class="field-hint">The preview is drawn in your browser from the rows the panel is listing, in the colours chosen here; the panel's own fonts and pixels differ.</p>
+          <div class="grid-2" style="margin-top:12px">
             <div class="field" style="margin-bottom:0">
-              <label class="field-label" for="rbRows">Services per list</label>
-              <div class="select-wrap"><select id="rbRows"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option><option value="6">6 - one page</option><option value="7">7</option><option value="8">8 - two pages</option></select></div>
+              <label class="field-label" for="rbDue">Due soon, in green</label>
+              <div class="select-wrap"><select id="rbDue"></select></div>
+              <p class="field-hint">A train within this many minutes of its expected time - or scheduled time without one - is drawn in the due soon colour until it leaves the board. Cancelled stays red.</p>
             </div>
             <div class="field" style="margin-bottom:0">
-              <label class="field-label" for="rbSwitch">Seconds per list</label>
+              <span class="field-label">Clock</span>
+              <div class="mode-toggle pn-seg" role="group" aria-label="Clock" id="rbClock">
+                <button type="button" data-v="1">14:05:14</button>
+                <button type="button" data-v="0">14:05</button>
+              </div>
+            </div>
+            <div class="field" style="margin-bottom:0">
+              <label class="field-label" for="rbSwitch">Seconds before departures and arrivals swap</label>
               <input type="number" id="rbSwitch" min="3" max="600" step="1">
             </div>
             <div class="field" style="margin-bottom:0">
-              <label class="field-label" for="rbLevel">Colour level</label>
+              <label class="field-label" for="rbRows">Services listed</label>
+              <div class="select-wrap"><select id="rbRows"></select></div>
+            </div>
+            <div class="field" style="margin-bottom:0">
+              <label class="field-label" for="rbLevel">Brightness of this page</label>
               <div class="range-row">
                 <input type="range" id="rbLevel" min="10" max="100" step="5">
                 <span class="range-val" id="rbLevelV">--</span>
               </div>
             </div>
             <div class="field" style="margin-bottom:0">
-              <label class="field-label" for="rbStale">Stale after (s)</label>
+              <label class="field-label" for="rbStale">Data updating after (s)</label>
               <input type="number" id="rbStale" min="30" max="3600" step="1">
             </div>
           </div>
           <div class="page-actions">
-            <button type="button" class="btn btn-accent" id="rbApply">Apply until reboot</button>
+            <button type="button" class="btn" id="rbReset">Use Home Assistant or build settings</button>
           </div>
-          <div class="note warn">
-            <span class="note-k">owner</span>
-            <div>Home Assistant owns these settings through its retained <code>config</code> topic. What you apply here lasts until that config arrives again - on every broker reconnect - or the panel reboots. To keep a layout, change it in the Home Assistant package.</div>
+          <div class="note">
+            <span class="note-k">kept</span>
+            <div>Every change applies at once and is kept across reboots. Once anything is set here, these settings win over Home Assistant's retained <code>config</code> topic; the button hands them back to it, or to the build's defaults when it has sent none.</div>
           </div>
           <p class="field-hint" id="rbMsg"></p>
         </div>
@@ -426,6 +459,6 @@ static const char PANEL_PAGES_HTML[] PROGMEM = R"PNL(<link rel="stylesheet" href
       </section>
       <script src="/panel.js?v=%ASSETVER%"></script>)PNL";
 
-static const char PANEL_CSS[] PROGMEM = R"CSS(.pn-navtag{color:var(--accent-d)!important;background:var(--accent-soft)!important;border-color:var(--accent-line)!important}html.pn-live .save-bar{display:none}.pn-stage{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:16px;align-items:stretch}.pn-stage .oled-preview{margin-bottom:0}@media (max-width:720px){.pn-stage{grid-template-columns:1fr}}.pn-readout .sr-row{grid-template-columns:74px 1fr}.pn-readout .sr-row dd.warn{color:#ffb454;text-shadow:none}.pn-list{display:flex;flex-direction:column}.pn-row{display:flex;align-items:center;gap:12px;padding:10px 0;border-top:1px solid var(--line-soft)}.pn-row:first-child{border-top:0;padding-top:2px}.pn-row>.check-row,.pn-row>.pn-name{flex:1;min-width:0}.pn-name{font-size:14px;color:var(--ink-soft)}.pn-name strong{color:var(--ink);font-weight:600}.pn-name .ct-hint{display:block;color:var(--dim);font-size:12.5px;margin-top:2px}.pn-here{font-family:var(--mono);font-size:10px;letter-spacing:.05em;text-transform:uppercase;color:var(--accent-d);background:var(--accent-soft);border:1px solid var(--accent-line);border-radius:999px;padding:1px 8px;white-space:nowrap}.pn-row:not(.here) .pn-here{visibility:hidden}.btn-sm{padding:6px 12px;font-size:12.5px}.pn-cards{margin-top:10px}.pn-cards:empty::before{content:"No cards right now.";font-family:var(--mono);font-size:12px;color:var(--dim)}.pn-chips{margin:0}.pn-chips .chip{cursor:pointer;font-family:var(--mono);font-size:11.5px;letter-spacing:.03em;padding:6px 12px}.pn-seg button.on{background:var(--card);color:var(--ink);box-shadow:var(--shadow-card)}.pn-seg button{font-size:12px;padding:7px 14px}.pn-board,.pn-tester{padding:12px 14px}.pn-table{position:relative;z-index:1;display:grid;gap:2px 12px;font-size:12px;line-height:1.5;color:var(--crt-fg);text-shadow:0 0 6px var(--crt-glow);overflow-x:auto}.pn-fb{grid-template-columns:max-content max-content minmax(0,1fr) max-content}.pn-yr{grid-template-columns:minmax(0,1fr) max-content max-content max-content}.pn-table>span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.pn-table .h{color:var(--crt-dim);text-shadow:none;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase}.pn-table .r{text-align:right}.pn-table .dim,.pn-table .m0{color:var(--crt-dim);text-shadow:none}.pn-table .m1{color:#ffb454}.pn-table .now{box-shadow:inset 2px 0 0 #ffb400;padding-left:6px}.pn-table .empty{grid-column:1/-1;color:var(--crt-dim);text-shadow:none}.st-sched{color:#c8c8c8}.st-board{color:#00dcdc}.st-dep{color:#6e9bff}.st-land{color:#00c83c}.st-delay{color:#ffaa00}.st-canc{color:#ff4b4b}.pn-kv{display:grid;grid-template-columns:max-content 1fr;gap:6px 18px;margin:16px 0 0;font-size:13.5px}.pn-kv dt{font-family:var(--mono);font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--dim);padding-top:2px}.pn-kv dd{margin:0;color:var(--ink-soft)}.pn-ok{color:var(--ok)}.pn-warn{color:var(--warn)}.pn-err{color:var(--err)}.pn-radio input[type="radio"]{position:absolute;opacity:0;width:0;height:0}.pn-row input:disabled+.check-box{opacity:.5}.pn-row input:disabled~.check-text{cursor:default}.pn-radio .check-box{border-radius:999px}.pn-radio .check-row input:checked+.check-box::after{border-radius:999px;clip-path:none;width:8px;height:8px}.pn-sun{font-family:var(--mono);font-size:10.5px;letter-spacing:.04em;text-transform:uppercase;border-radius:999px;padding:1px 8px;border:1px solid var(--line);color:var(--dim);background:var(--paper-2);white-space:nowrap}.pn-sun.day{color:var(--warn);border-color:color-mix(in oklab,var(--warn) 40%,var(--line));background:color-mix(in oklab,var(--warn) 10%,var(--card))}.pn-count{position:relative;z-index:1;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:6px 0 2px}.pn-count div{text-align:center}.pn-count b{display:block;font-size:28px;font-weight:600;line-height:1.15;color:var(--crt-fg);text-shadow:0 0 8px var(--crt-glow);font-variant-numeric:tabular-nums}.pn-count span{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--crt-dim)}.pn-count b.bump{animation:pn-bump 450ms ease-out}@keyframes pn-bump{0%{color:#fff;text-shadow:0 0 14px var(--crt-glow)}100%{}}@media (prefers-reduced-motion:reduce){.pn-count b.bump{animation:none}}.pn-crs{font-family:var(--mono);text-transform:uppercase;letter-spacing:.14em;max-width:9em}.pn-stn{margin:8px 0 0;font-size:15px;color:var(--ink)}.pn-stn small{display:block;font-size:12.5px;color:var(--dim);margin-top:2px}@media (max-width:560px){.pn-count b{font-size:22px}.pn-row{flex-wrap:wrap}}.pn-wcname{letter-spacing:.08em;max-width:16em}#wcResults:not(:empty){margin:4px 0 12px}#wcFind{width:100%})CSS";
+static const char PANEL_CSS[] PROGMEM = R"CSS(.pn-navtag{color:var(--accent-d)!important;background:var(--accent-soft)!important;border-color:var(--accent-line)!important}html.pn-live .save-bar{display:none}.pn-stage{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:16px;align-items:stretch}.pn-stage .oled-preview{margin-bottom:0}@media (max-width:720px){.pn-stage{grid-template-columns:1fr}}.pn-readout .sr-row{grid-template-columns:74px 1fr}.pn-readout .sr-row dd.warn{color:#ffb454;text-shadow:none}.pn-list{display:flex;flex-direction:column}.pn-row{display:flex;align-items:center;gap:12px;padding:10px 0;border-top:1px solid var(--line-soft)}.pn-row:first-child{border-top:0;padding-top:2px}.pn-row>.check-row,.pn-row>.pn-name{flex:1;min-width:0}.pn-name{font-size:14px;color:var(--ink-soft)}.pn-name strong{color:var(--ink);font-weight:600}.pn-name .ct-hint{display:block;color:var(--dim);font-size:12.5px;margin-top:2px}.pn-here{font-family:var(--mono);font-size:10px;letter-spacing:.05em;text-transform:uppercase;color:var(--accent-d);background:var(--accent-soft);border:1px solid var(--accent-line);border-radius:999px;padding:1px 8px;white-space:nowrap}.pn-row:not(.here) .pn-here{visibility:hidden}.btn-sm{padding:6px 12px;font-size:12.5px}.pn-cards{margin-top:10px}.pn-cards:empty::before{content:"No cards right now.";font-family:var(--mono);font-size:12px;color:var(--dim)}.pn-chips{margin:0}.pn-chips .chip{cursor:pointer;font-family:var(--mono);font-size:11.5px;letter-spacing:.03em;padding:6px 12px}.pn-seg button.on{background:var(--card);color:var(--ink);box-shadow:var(--shadow-card)}.pn-seg button{font-size:12px;padding:7px 14px}.pn-board,.pn-tester{padding:12px 14px}.pn-table{position:relative;z-index:1;display:grid;gap:2px 12px;font-size:12px;line-height:1.5;color:var(--crt-fg);text-shadow:0 0 6px var(--crt-glow);overflow-x:auto}.pn-fb{grid-template-columns:max-content max-content minmax(0,1fr) max-content}.pn-yr{grid-template-columns:minmax(0,1fr) max-content max-content max-content}.pn-table>span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.pn-table .h{color:var(--crt-dim);text-shadow:none;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase}.pn-table .r{text-align:right}.pn-table .dim,.pn-table .m0{color:var(--crt-dim);text-shadow:none}.pn-table .m1{color:#ffb454}.pn-table .now{box-shadow:inset 2px 0 0 #ffb400;padding-left:6px}.pn-table .empty{grid-column:1/-1;color:var(--crt-dim);text-shadow:none}.st-sched{color:#c8c8c8}.st-board{color:#00dcdc}.st-dep{color:#6e9bff}.st-land{color:#00c83c}.st-delay{color:#ffaa00}.st-canc{color:#ff4b4b}.pn-kv{display:grid;grid-template-columns:max-content 1fr;gap:6px 18px;margin:16px 0 0;font-size:13.5px}.pn-kv dt{font-family:var(--mono);font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--dim);padding-top:2px}.pn-kv dd{margin:0;color:var(--ink-soft)}.pn-ok{color:var(--ok)}.pn-warn{color:var(--warn)}.pn-err{color:var(--err)}.pn-radio input[type="radio"]{position:absolute;opacity:0;width:0;height:0}.pn-row input:disabled+.check-box{opacity:.5}.pn-row input:disabled~.check-text{cursor:default}.pn-radio .check-box{border-radius:999px}.pn-radio .check-row input:checked+.check-box::after{border-radius:999px;clip-path:none;width:8px;height:8px}.pn-sun{font-family:var(--mono);font-size:10.5px;letter-spacing:.04em;text-transform:uppercase;border-radius:999px;padding:1px 8px;border:1px solid var(--line);color:var(--dim);background:var(--paper-2);white-space:nowrap}.pn-sun.day{color:var(--warn);border-color:color-mix(in oklab,var(--warn) 40%,var(--line));background:color-mix(in oklab,var(--warn) 10%,var(--card))}.pn-count{position:relative;z-index:1;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:6px 0 2px}.pn-count div{text-align:center}.pn-count b{display:block;font-size:28px;font-weight:600;line-height:1.15;color:var(--crt-fg);text-shadow:0 0 8px var(--crt-glow);font-variant-numeric:tabular-nums}.pn-count span{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--crt-dim)}.pn-count b.bump{animation:pn-bump 450ms ease-out}@keyframes pn-bump{0%{color:#fff;text-shadow:0 0 14px var(--crt-glow)}100%{}}@media (prefers-reduced-motion:reduce){.pn-count b.bump{animation:none}}.pn-crs{font-family:var(--mono);text-transform:uppercase;letter-spacing:.14em;max-width:9em}.pn-stn{margin:8px 0 0;font-size:15px;color:var(--ink)}.pn-stn small{display:block;font-size:12.5px;color:var(--dim);margin-top:2px}@media (max-width:560px){.pn-count b{font-size:22px}.pn-row{flex-wrap:wrap}}.pn-wcname{letter-spacing:.08em;max-width:16em}#wcResults:not(:empty){margin:4px 0 12px}#wcFind{width:100%}.pn-colors{display:flex;flex-wrap:wrap;gap:4px}.pn-sw{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:6px;vertical-align:-1px;box-shadow:0 0 0 1px rgba(0,0,0,.25)}.pn-crs{font-family:var(--mono);text-transform:uppercase;letter-spacing:.14em;max-width:9em}.pn-stn{margin:8px 0 0;font-size:15px;color:var(--ink)}.pn-stn small{display:block;font-size:12.5px;color:var(--dim);margin-top:2px}@media (max-width:560px){.pn-count b{font-size:22px}.pn-row{flex-wrap:wrap}})CSS";
 
 #include "web_panel_js.h"

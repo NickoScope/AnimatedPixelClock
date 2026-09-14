@@ -4,6 +4,7 @@
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
+#include <Preferences.h>
 #include <esp_heap_caps.h>
 #include <stddef.h>
 #include <string.h>
@@ -14,6 +15,7 @@
 #include "../fonts/picopixel_fb.h"   // Picopixel with a legible U
 #include "../mqtt/mqtt_bus.h"
 #include "rb_model.h"
+#include "rb_settings.h"
 #include "uk_time.h"
 #if defined(RAILBOARD_DIRECT_ENABLED)
 #include "rtt_direct.h"
@@ -75,9 +77,10 @@ static const int16_t RB_GRACE_S    = 60;
 static const int16_t RB_REOPEN_MS  = 2000;
 
 // ── colour ──────────────────────────────────────────────────────────────────
-// Black ground with nothing lit behind the text. White for the headings, amber
-// for every row and the clock - 255,150,0 rather than the photograph's
-// 255,170,0, which on these panels leans yellow - and red for Cancelled.
+// Black ground with nothing lit behind the text. The rows, the headings and the
+// "due soon" rows take their colours from the settings (rb_settings.h palette:
+// amber rows, white headings, green due rows by default). These are fixed:
+// red for Cancelled, and the diagnostics view's own.
 static const uint8_t RB_COL_WHITE[3] = {255, 255, 255};
 static const uint8_t RB_COL_AMBER[3] = {255, 150,   0};
 static const uint8_t RB_COL_RED[3]   = {255,  36,  24};
@@ -118,13 +121,12 @@ struct RbHaStatus {
   char     rl[12];        // X-RateLimit-Remaining-Day, as sent
 };
 
-struct RbConfig {
-  uint8_t  rows;
-  uint8_t  level;
-  bool     diag;
-  uint16_t switchS;
-  uint16_t staleS;
-};
+// Settings in force. The web portal's once it has saved any - they are then
+// kept in NVS "rbcfg" and win over Home Assistant - else Home Assistant's
+// .../config over the build defaults, else the build defaults. Home Assistant's
+// config is still read and remembered while the portal's are in force, so
+// "back to Home Assistant" needs no wait for it to publish again.
+static const rbs::Settings RB_BUILD = rbs::defaults(RB_ROWS, RB_SWITCH_S, RB_LEVEL, RB_STALE_S);
 
 // Where a list came from. Higher wins while it is fresh.
 enum : uint8_t { RB_SRC_NONE = 0, RB_SRC_HA, RB_SRC_DIRECT };
@@ -134,10 +136,17 @@ enum RbView : uint8_t { RB_VIEW_AUTO = 0, RB_VIEW_DEP, RB_VIEW_ARR, RB_VIEW_DIAG
 static RbBoard    s_board[2];
 static RbBoard    s_scratch;          // parsed into first, so a bad payload never shows
 static RbHaStatus s_ha;
-static RbConfig   s_cfg = {RB_ROWS, RB_LEVEL, false, RB_SWITCH_S, RB_STALE_S};
+static rbs::Settings s_cfg   = RB_BUILD;   // in force
+static rbs::Settings s_haCfg = RB_BUILD;   // build defaults with Home Assistant's fields over them
+static rbs::Settings s_web   = RB_BUILD;   // the portal's
+static rbs::Settings s_saved = RB_BUILD;   // the portal's as NVS holds them
+static bool       s_haHave     = false;
+static bool       s_webSet     = false;
+static bool       s_savedWeb   = false;     // NVS says the portal owns the settings
+static uint32_t   s_webDirtyAt = 0;         // 0 = NVS has caught up
+static bool       s_cfgDiag    = false;     // Home Assistant's diag; not a web setting
 static uint16_t   s_refused  = 0;
 static size_t     s_jsonPeak = 0;
-static uint8_t    s_cfgFrom  = 0;     // 0 build defaults, 1 Home Assistant, 2 web portal
 static uint8_t    s_src[2]   = {RB_SRC_NONE, RB_SRC_NONE};
 static uint16_t   s_shadowed = 0;     // Home Assistant boards set aside for a fresher direct one
 #if defined(RAILBOARD_DIRECT_ENABLED)
@@ -305,13 +314,15 @@ static bool ingestConfig(const char *json, uint16_t len) {
   const bool bad = deserializeJson(doc, json, len) != DeserializationError::Ok;
   noteJson();
   if (bad || (doc["v"] | 0L) != RB_SCHEMA) return false;
-  RbConfig c = s_cfg;
-  c.rows    = (uint8_t)clampL(doc["rows"] | (long)c.rows, 1, RB_MAX_SVC);
-  c.level   = (uint8_t)clampL(doc["level"] | (long)c.level, 10, 100);
-  c.switchS = (uint16_t)clampL(doc["switch_s"] | (long)c.switchS, 3, 600);
-  c.staleS  = (uint16_t)clampL(doc["stale_s"] | (long)c.staleS, 30, 3600);
-  c.diag    = doc["diag"] | c.diag;
-  s_cfg = c;
+  rbs::Settings c = s_haCfg;
+  c.rows    = (uint8_t)clampL(doc["rows"] | (long)c.rows, rbs::kRowsMin, rbs::kRowsMax);
+  c.level   = (uint8_t)clampL(doc["level"] | (long)c.level, rbs::kLevelMin, rbs::kLevelMax);
+  c.switchS = (uint16_t)clampL(doc["switch_s"] | (long)c.switchS, rbs::kSwitchMin, rbs::kSwitchMax);
+  c.staleS  = (uint16_t)clampL(doc["stale_s"] | (long)c.staleS, rbs::kStaleMin, rbs::kStaleMax);
+  s_cfgDiag = doc["diag"] | s_cfgDiag;
+  s_haCfg   = c;
+  s_haHave  = true;
+  if (!s_webSet) s_cfg = s_haCfg;           // the portal's, once set, win
   return true;
 }
 
@@ -327,7 +338,7 @@ bool railboardIngest(const char *topic, const char *payload, uint16_t len) {
   if      (!strcmp(leaf, "departures")) ok = ingestBoard(RB_DEP, payload, len);
   else if (!strcmp(leaf, "arrivals"))   ok = ingestBoard(RB_ARR, payload, len);
   else if (!strcmp(leaf, "status"))     ok = ingestStatus(payload, len);
-  else if (!strcmp(leaf, "config"))     { ok = ingestConfig(payload, len); if (ok) s_cfgFrom = 1; }
+  else if (!strcmp(leaf, "config"))     ok = ingestConfig(payload, len);
   else return false;
   if (!ok) {
     s_refused++;
@@ -386,7 +397,107 @@ bool railboardSetStation(const char *crs) {
   return true;
 }
 
+// ── web settings in NVS ─────────────────────────────────────────────────────
+// Namespace "rbcfg": web (u8, 1 while the portal owns the settings), rows (u8),
+// swS (u16), lvl (u8), stale (u16), dueMin (u8), clkSec (u8), and rowCol,
+// headCol, dueCol (strings: palette names, so a reordered palette in a later
+// build still reads the colour chosen). Written 2.5 s after the last change, as
+// src/panel does, and only the fields that differ from what NVS holds.
+static const char *const RB_NVS       = "rbcfg";
+static const uint32_t    RB_SETTLE_MS = 2500;
+
+static void loadWebSettings() {
+  Preferences p;
+  // Read-write: a read-only open of a namespace never written logs an error on
+  // every boot (src/panel/panel.cpp, arduino-esp32 2.0.17).
+  if (!p.begin(RB_NVS, false)) return;
+  if (p.getUChar("web", 0) == 1) {
+    rbs::Settings s = RB_BUILD;
+    s.rows         = p.getUChar("rows", s.rows);
+    s.switchS      = p.getUShort("swS", s.switchS);
+    s.level        = p.getUChar("lvl", s.level);
+    s.staleS       = p.getUShort("stale", s.staleS);
+    s.dueMin       = p.getUChar("dueMin", s.dueMin);
+    s.clockSeconds = p.getUChar("clkSec", s.clockSeconds) != 0;
+    static const char *const keys[] = {"rowCol", "headCol", "dueCol"};
+    uint8_t *const dst[] = {&s.rowColour, &s.headColour, &s.dueColour};
+    for (uint8_t i = 0; i < 3; i++) {
+      char name[12];
+      // isKey() first: getString() logs an error for a key never written.
+      if (p.isKey(keys[i]) && p.getString(keys[i], name, sizeof(name))) {
+        const int c = rbs::paletteIndex(name);
+        if (c >= 0) *dst[i] = (uint8_t)c;
+      }
+    }
+    if (rbs::valid(s)) {                      // a set from another build's bounds: ignored
+      s_web = s_saved = s_cfg = s;
+      s_webSet = s_savedWeb = true;
+    }
+  }
+  p.end();
+}
+
+static void saveWebSettings() {
+  if (!s_webDirtyAt || millis() - s_webDirtyAt < RB_SETTLE_MS) return;
+  Preferences p;
+  if (!p.begin(RB_NVS, false)) { s_webDirtyAt = millis() | 1; return; }   // try again after another settle
+  s_webDirtyAt = 0;
+  if (!s_webSet) {
+    if (s_savedWeb && p.clear()) s_savedWeb = false;
+    p.end();
+    return;
+  }
+  const rbs::Settings &c = s_web;
+  rbs::Settings &w = s_saved;
+  const bool all = !s_savedWeb;               // nothing stored yet: every field
+  bool ok = true;
+  auto u8 = [&](const char *k, uint8_t v, uint8_t &was) {
+    if (!all && v == was) return;
+    if (p.putUChar(k, v)) was = v; else ok = false;
+  };
+  auto u16 = [&](const char *k, uint16_t v, uint16_t &was) {
+    if (!all && v == was) return;
+    if (p.putUShort(k, v)) was = v; else ok = false;
+  };
+  auto colour = [&](const char *k, uint8_t v, uint8_t &was) {
+    if (!all && v == was) return;
+    if (p.putString(k, rbs::kPalette[v].name)) was = v; else ok = false;
+  };
+  u8("rows", c.rows, w.rows);
+  u16("swS", c.switchS, w.switchS);
+  u8("lvl", c.level, w.level);
+  u16("stale", c.staleS, w.staleS);
+  u8("dueMin", c.dueMin, w.dueMin);
+  uint8_t sec = w.clockSeconds;
+  u8("clkSec", c.clockSeconds ? 1 : 0, sec);
+  w.clockSeconds = sec != 0;
+  colour("rowCol", c.rowColour, w.rowColour);
+  colour("headCol", c.headColour, w.headColour);
+  colour("dueCol", c.dueColour, w.dueColour);
+  // Last, and only when every field went in: a half-written set is never taken.
+  if (ok && !s_savedWeb && p.putUChar("web", 1)) s_savedWeb = true;
+  if (!ok) s_webDirtyAt = millis() | 1;
+  p.end();
+}
+
+rbs::Settings railboardSettings() { return s_cfg; }
+
+void railboardSetSettings(const rbs::Settings &s) {
+  if (!rbs::valid(s)) return;
+  s_web    = s;
+  s_cfg    = s;
+  s_webSet = true;
+  s_webDirtyAt = millis() | 1;
+}
+
+void railboardResetSettings() {
+  s_webSet = false;
+  s_cfg    = s_haHave ? s_haCfg : RB_BUILD;
+  s_webDirtyAt = millis() | 1;
+}
+
 void railboardBegin() {
+  loadWebSettings();
   // The prefix without the station, so a change of station needs no new handler.
   if (!mqttBusOnMessage(RB_TOPIC_ROOT, onMessage))
     Serial.println("[railboard] MQTT bus is full: handler REFUSED");
@@ -430,6 +541,7 @@ static bool directArmed() {
 // as at the moment it changes. Sent again on every reconnect: the broker may
 // have lost it, and a repeat of the same value changes nothing.
 void railboardLoop() {
+  saveWebSettings();
 #if defined(RAILBOARD_DIRECT_ENABLED)
   int64_t fetchedAt = 0;
   if (s_direct && rttDirectLoop(s_crs, s_direct, &fetchedAt)) applyDirect(*s_direct, fetchedAt);
@@ -452,7 +564,7 @@ static uint8_t currentView(uint32_t nowMs) {
     s_view      = RB_VIEW_AUTO;
   }
   if (s_view != RB_VIEW_AUTO) return s_view;
-  if (s_diagPinned || s_cfg.diag) return RB_VIEW_DIAG;
+  if (s_diagPinned || s_cfgDiag) return RB_VIEW_DIAG;
   const uint32_t turns = (nowMs - s_altSince) / ((uint32_t)s_cfg.switchS * 1000UL);
   return ((turns + s_autoFirst) % 2) ? RB_VIEW_ARR : RB_VIEW_DEP;
 }
@@ -476,7 +588,7 @@ void railboardKnob(int8_t delta) {
   // otherwise the knob could never leave it.
   if (s_view != RB_VIEW_DIAG) {
     s_diagPinned = false;
-    s_cfg.diag   = false;
+    s_cfgDiag    = false;
   }
 }
 
@@ -484,21 +596,23 @@ void railboardKnob(int8_t delta) {
 // that config arrives again.
 void railboardSetDiag(bool on) {
   s_diagPinned = on;
-  if (!on) s_cfg.diag = false;
+  if (!on) s_cfgDiag = false;
   s_view = RB_VIEW_AUTO;          // the portal's choice wins over a knob hold
 }
 
-bool railboardApplyConfig(const char *json, uint16_t len) {
-  if (!json || !len || !ingestConfig(json, len)) return false;
-  s_cfgFrom = 2;
-  return true;
-}
 
 // ── drawing ─────────────────────────────────────────────────────────────────
 static uint16_t col(const uint8_t c[3]) {
   const uint16_t lv = s_cfg.level;
   return display.color565((uint8_t)(c[0] * lv / 100), (uint8_t)(c[1] * lv / 100),
                           (uint8_t)(c[2] * lv / 100));
+}
+
+// A palette colour (rb_settings.h) at this page's level.
+static uint16_t pal(uint8_t i) {
+  const rbs::Colour &p = rbs::kPalette[i < rbs::kPaletteCount ? i : 0];
+  const uint8_t rgb[3] = {p.r, p.g, p.b};
+  return col(rgb);
 }
 
 // Lit width in small type, as GFX measures it.
@@ -581,19 +695,19 @@ static bool hasTime(const RbService &sv) {
 }
 
 static void drawHeadings(uint8_t which) {
-  const uint16_t white = col(RB_COL_WHITE);
-  putBig(RB_X_LEFT, RB_Y_TITLE, RB_TITLES[which], white);
-  if (which == RB_ARR) putRight(RB_X_TIME_R, RB_Y_HEAD1, RB_H_TIME, white);
-  putRight(RB_X_PLAT_R, RB_Y_HEAD1, RB_H_PLAT, white);
-  put(RB_X_EXPT, RB_Y_HEAD1, RB_H_EXPT, white);
+  const uint16_t head = pal(s_cfg.headColour);
+  putBig(RB_X_LEFT, RB_Y_TITLE, RB_TITLES[which], head);
+  if (which == RB_ARR) putRight(RB_X_TIME_R, RB_Y_HEAD1, RB_H_TIME, head);
+  putRight(RB_X_PLAT_R, RB_Y_HEAD1, RB_H_PLAT, head);
+  put(RB_X_EXPT, RB_Y_HEAD1, RB_H_EXPT, head);
 
   int16_t used;
   if (which == RB_DEP) {
-    put(RB_X_LEFT, RB_Y_HEAD2, RB_H_TIME, white);
-    put(RB_X_DEST, RB_Y_HEAD2, RB_H_DEST, white);
+    put(RB_X_LEFT, RB_Y_HEAD2, RB_H_TIME, head);
+    put(RB_X_DEST, RB_Y_HEAD2, RB_H_DEST, head);
     used = RB_X_DEST + textW(RB_H_DEST);
   } else {
-    put(RB_X_LEFT, RB_Y_HEAD2, RB_H_FROM, white);
+    put(RB_X_LEFT, RB_Y_HEAD2, RB_H_FROM, head);
     used = RB_X_LEFT + textW(RB_H_FROM);
   }
   // The station, right-aligned on the second heading line and dim, so it reads
@@ -606,10 +720,11 @@ static void drawHeadings(uint8_t which) {
   putRight(RB_X_RIGHT, RB_Y_HEAD2, fit, col(RB_COL_DIM));
 }
 
-static void drawService(uint8_t which, int16_t top, const RbService &sv) {
+// `now` is 0 without a clock, which turns "due soon" off.
+static void drawService(uint8_t which, int16_t top, const RbService &sv, time_t now) {
   char tm[8], expt[12], name[RB_STN_LEN];
   const bool canc = sv.st == RB_CANC;
-  const uint16_t amber = col(RB_COL_AMBER);
+  const uint16_t amber = pal(rbs::dueSoon(sv, (int64_t)now, s_cfg.dueMin) ? s_cfg.dueColour : s_cfg.rowColour);
 
   if (hasTime(sv)) hhmm(expt, sizeof(expt), sv.x);
   else             copyText(expt, sizeof(expt), RB_ST_WORDS[sv.st < RB_STATUS_COUNT ? sv.st : RB_NOREPORT]);
@@ -654,7 +769,7 @@ static bool isGone(const RbService &sv, time_t now, bool synced) {
 
 static void drawBoard(uint8_t which, time_t now, bool synced, uint32_t nowMs) {
   const RbBoard &b = s_board[which];
-  const uint16_t amber = col(RB_COL_AMBER);
+  const uint16_t amber = pal(s_cfg.rowColour);
   char foot[24];
 
   if (!b.have) {
@@ -684,11 +799,11 @@ static void drawBoard(uint8_t which, time_t now, bool synced, uint32_t nowMs) {
     if (!stale) put(RB_X_LEFT, RB_Y_ROW0, RB_EMPTY, amber);
   } else if (page == 0) {
     for (uint8_t r = 0; r < n && r < RB_ROWS_PAGE; r++)
-      drawService(which, RB_Y_ROW0 + r * RB_PITCH, b.s[idx[r]]);
+      drawService(which, RB_Y_ROW0 + r * RB_PITCH, b.s[idx[r]], synced ? now : 0);
   } else {
     put(RB_X_LEFT, RB_Y_ROW0, RB_CONTINUED, amber);
     for (uint8_t r = 1, k = RB_ROWS_PAGE; k < n && r < RB_ROWS_PAGE; r++, k++)
-      drawService(which, RB_Y_ROW0 + r * RB_PITCH, b.s[idx[k]]);
+      drawService(which, RB_Y_ROW0 + r * RB_PITCH, b.s[idx[k]], synced ? now : 0);
   }
 
   if (stale) snprintf(foot, sizeof(foot), "%s", RB_STALE);
@@ -698,9 +813,10 @@ static void drawBoard(uint8_t which, time_t now, bool synced, uint32_t nowMs) {
 
 static void drawClock(const uktime::Civil &c, bool synced) {
   char clk[12];
-  if (synced) snprintf(clk, sizeof(clk), "%02u:%02u:%02u", (unsigned)c.hour, (unsigned)c.minute, (unsigned)c.second);
-  else        strcpy(clk, "--:--:--");
-  putBig(RB_X_RIGHT - bigW(clk), RB_Y_CLOCK, clk, col(RB_COL_AMBER));
+  if (!synced)                snprintf(clk, sizeof(clk), "%s", s_cfg.clockSeconds ? "--:--:--" : "--:--");
+  else if (s_cfg.clockSeconds) snprintf(clk, sizeof(clk), "%02u:%02u:%02u", (unsigned)c.hour, (unsigned)c.minute, (unsigned)c.second);
+  else                        snprintf(clk, sizeof(clk), "%02u:%02u", (unsigned)c.hour, (unsigned)c.minute);
+  putBig(RB_X_RIGHT - bigW(clk), RB_Y_CLOCK, clk, pal(s_cfg.rowColour));
 }
 
 static void diagLine(uint8_t line, const char *label, const char *value, uint16_t valueCol,
@@ -854,19 +970,19 @@ void railboardStatusJson(JsonObject out) {
   out["list"]    = VIEWS[view];                  // what the page shows: dep, arr or diag
   out["knob"]    = VIEWS[s_view];                // what the knob chose; auto = alternating
   if (s_view != RB_VIEW_AUTO) out["holdS"] = RB_HOLD_S - (nowMs - s_viewAt) / 1000UL;
-  out["diag"]    = s_diagPinned || s_cfg.diag;   // pinned, by the portal or Home Assistant
-  out["diagCfg"] = s_cfg.diag;
+  out["diag"]    = s_diagPinned || s_cfgDiag;    // pinned, by the portal or Home Assistant
+  out["diagCfg"] = s_cfgDiag;
 
   JsonObject sel = out["select"].to<JsonObject>();
   sel["topic"] = RB_TOPIC_SELECT;
   sel["sent"]  = !s_selectDirty;
 
   JsonObject cfg = out["cfg"].to<JsonObject>();
-  cfg["rows"]     = s_cfg.rows;
-  cfg["level"]    = s_cfg.level;
-  cfg["switch_s"] = s_cfg.switchS;
-  cfg["stale_s"]  = s_cfg.staleS;
-  cfg["from"]     = s_cfgFrom == 1 ? "ha" : (s_cfgFrom == 2 ? "web" : "build");
+  rbs::toJson(s_cfg, cfg);
+  cfg["from"]   = s_webSet ? "web" : (s_haHave ? "ha" : "build");
+  cfg["haHave"] = s_haHave;               // Home Assistant has sent a config since boot
+  cfg["saved"]  = s_webDirtyAt == 0;      // NVS has caught up
+  rbs::boundsJson(cfg["bounds"].to<JsonObject>());
 
   // The source on screen: the best one that is still fresh.
   static const char *const SOURCES[] = {"none", "ha", "direct"};
@@ -893,6 +1009,19 @@ void railboardStatusJson(JsonObject out) {
     l["ts"]    = b.ts;
     l["rx"]    = (millis() - b.rxMs) / 1000UL;   // seconds since it reached the panel
     l["rt"]    = (const char *)b.rt;
+    // The rows as the page lists them, for the portal's preview.
+    JsonArray rows = l["rows"].to<JsonArray>();
+    for (uint8_t i = 0; i < b.count; i++) {
+      const RbService &sv = b.s[i];
+      if (isGone(sv, now, synced)) continue;
+      JsonObject o = rows.add<JsonObject>();
+      o["t"]   = sv.t;
+      o["x"]   = sv.x;
+      o["p"]   = (const char *)sv.p;
+      o["n"]   = (const char *)sv.n;
+      o["st"]  = RB_ST_KEYS[sv.st < RB_STATUS_COUNT ? sv.st : RB_NOREPORT];
+      o["due"] = synced && rbs::dueSoon(sv, (int64_t)now, s_cfg.dueMin);
+    }
   }
 
   JsonObject ha = out["ha"].to<JsonObject>();

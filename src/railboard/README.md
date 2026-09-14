@@ -334,6 +334,11 @@ is `X-RateLimit-Remaining-Day` as sent.
 | `stale_s` | 30–3600 | Data updating after this long without a fresh board |
 | `diag` | bool | show diagnostics instead of the board |
 
+Home Assistant's config is used only while the web portal has set nothing (see
+[Settings](#settings)). It is always read and remembered, so `{"reset":true}`
+returns to it without waiting for the next publish. `diag` is never a web
+setting: the portal has its own switch for it.
+
 ## Layout
 
 Modelled on the owner's photograph of a UK station screen: black ground, white
@@ -364,6 +369,12 @@ When no board has arrived at all, the first row says `Waiting for GLD`, or
 | a station name too long | [`long_name.png`](../../tools/railboard/preview/long_name.png) |
 | diagnostics | [`diagnostics.png`](../../tools/railboard/preview/diagnostics.png) |
 | before any board | [`waiting.png`](../../tools/railboard/preview/waiting.png) |
+| due soon within 5 min, arrivals: an arrived train and one 3:46 away | [`due_soon_arrivals.png`](../../tools/railboard/preview/due_soon_arrivals.png) |
+| yellow rows, cyan headings, clock without seconds | [`colours.png`](../../tools/railboard/preview/colours.png) |
+| white rows, amber headings, due soon within 10 min | [`colours_white.png`](../../tools/railboard/preview/colours_white.png) |
+
+The scenes without a setting of their own use the defaults, so `departures.png`
+shows 14:08 in green: at 14:05:14 it is 2 min 46 s away.
 
 ## Diagnostics
 
@@ -390,6 +401,110 @@ National Rail's station pages (GLD, WAT, WOK, RDG, GTW, LRD). **Status** adds:
 
 `/api/railboard` → `direct` also carries `heapBefore`, `heapMin`, `stackFree`,
 `bytes`, `services`, `jsonPeak`, `polls` and `fails`.
+
+## Settings
+
+Panel → Rail board → **Board settings**. Every control applies at once; there
+is no save button. The card has a preview drawn in the browser from the rows
+the panel is listing, in the colours chosen.
+
+| setting | key | range | default |
+|---|---|---|---|
+| seconds before departures and arrivals swap | `switch_s` | 3–600 | 10 |
+| services listed (six to a page) | `rows` | 1–8 | 8 |
+| brightness of this page | `level` | 10–100 % | 100 |
+| Data updating after | `stale_s` | 30–3600 s | 80 |
+| row colour: rows, footer and clock | `row_color` | palette | amber |
+| heading colour: title and column headings | `head_color` | palette | white |
+| due soon colour | `due_color` | palette, not `row_color` while due soon is on | green |
+| due soon | `due_min` | 0 (off) – 15 min | 3 |
+| clock with seconds | `clock_seconds` | true / false | true |
+
+Bounds and the palette are in `src/railboard/rb_settings.h`, the one place they
+are written; `render.py` reads them from there.
+
+**Palette.** Named colours, not free RGB: a handful that read against black on
+a HUB75 panel. No red, which means Cancelled.
+
+| name | RGB | |
+|---|---|---|
+| `amber` | 255,150,0 | the board's own; the photograph's 255,170,0 leans yellow on these panels |
+| `yellow` | 255,214,0 | |
+| `orange` | 255,96,0 | |
+| `white` | 255,255,255 | |
+| `green` | 48,232,64 | the due soon default: its green channel well above amber's, so the two differ in hue and brightness |
+| `cyan` | 0,214,232 | |
+
+**Due soon.** A departure or an arrival is drawn in the due soon colour from
+`due_min` minutes before its time until the board drops it. Its time is the
+expected one - actual, else forecast, else estimate - and the scheduled one only
+when there is none. So a train scheduled soon but expected late is not green,
+and one scheduled long ago but expected now is.
+
+There is no lower bound. A train at or just past its time that has not been
+reported gone may still be at the platform, so it stays green until the list
+removes it: 60 s after its time, or 120 s after an arrival's actual time. An
+arrived train is therefore green for its last two minutes on the list. A
+departure reported as departed never reaches the list, and Cancelled is never
+green: it stays red. Without a clock there is no highlight.
+
+**Who wins.** Once anything is set in the portal, the portal's settings are in
+force, all of them, and kept across reboots. Until then, Home Assistant's
+`.../config` over the build defaults, or the build defaults alone. The fields
+Home Assistant does not send - colours, due soon, the clock - are the build's.
+**Use Home Assistant or build settings** (`{"reset":true}`) clears the portal's
+and returns to Home Assistant's last config, or the build's when none has
+arrived since boot.
+
+**NVS**, namespace `rbcfg`, written 2.5 s after the last change and only the
+fields that differ from what NVS holds:
+
+| key | type | |
+|---|---|---|
+| `web` | u8 | 1 while the portal owns the settings; written last, so a half-written set is never read |
+| `rows` | u8 | |
+| `swS` | u16 | switch_s |
+| `lvl` | u8 | level |
+| `stale` | u16 | stale_s |
+| `dueMin` | u8 | due_min |
+| `clkSec` | u8 | clock_seconds |
+| `rowCol`, `headCol`, `dueCol` | string | palette names, so a palette reordered in a later build still reads the colour chosen |
+
+A reset clears the namespace. A stored set that fails the bounds of the running
+build is ignored as a whole.
+
+**API.**
+
+```
+POST /api/railboard  {"config":{"row_color":"yellow","due_min":5}}   any subset of the keys
+POST /api/railboard  {"reset":true}
+```
+
+Every key must be known and every value valid, or the answer is 400 with a
+message naming the field - `config.due_min must be 0 (off) to 15`,
+`config.row_color must be amber, yellow, orange, white, green or cyan`,
+`config.font is not a setting` - and nothing changes. Integers must be integers
+(`1.5`, `"3"` and `true` are refused), `clock_seconds` a boolean, colours exact
+lower-case names. `config` and `reset` together are refused. The portal's
+Content-Type rule applies: `application/json` or 415.
+
+`GET /api/railboard` → `cfg`:
+
+```json
+{"rows":8,"switch_s":10,"level":100,"stale_s":80,"row_color":"amber","head_color":"white",
+ "due_color":"green","due_min":3,"clock_seconds":true,"from":"web","haHave":true,"saved":true,
+ "bounds":{"rows":[1,8],"switch_s":[3,600],"level":[10,100],"stale_s":[30,3600],"due_min":[0,15],
+           "colors":[{"name":"amber","hex":"#ff9600"}, ...]}}
+```
+
+`from` is `web`, `ha` or `build`; `saved` is false for the 2.5 s before NVS has
+caught up. Each list (`dep`, `arr`) also carries `rows`: the services the page
+lists, with `t`, `x`, `p`, `n`, `st` and `due`, for the portal's preview.
+
+**Not taken, and proposed:** a calling-points line under the first service
+(the payload has none yet), dimming at night on a schedule (the panel's own
+brightness schedule already exists), the operator code as a column (no room
+at 128 px), and a free RGB picker (colours that do not read on the panel).
 
 ## London time
 
@@ -438,6 +553,14 @@ Run on this machine:
   its own `secrets.yaml`, HASS plugin only, `flight_board` imports paho.
 - The portal script passes JavaScriptCore's `checkSyntax`; the YAML files parse
   and their Jinja blocks close.
+- Settings (`wip/rail-settings`): `tools/railboard/settings_host_test.cpp`, run by
+  `check_direct.py` - every field at and past its bounds, wrong types, unknown
+  keys, the colour clash, a refused object changing nothing, GET's values fed
+  back to POST, and the due soon edges (exactly `due_min` minutes, one second
+  over, expected versus scheduled, past its time, arrived, cancelled, off, no
+  clock). The portal script parses in JavaScriptCore (`new Function`).
+  `matrix-waveshare-rgb` builds with 0 warnings and `tools/flag_matrix.py` is
+  24/24 on `08b2b7c`.
 
 ## Not verified
 
@@ -456,6 +579,9 @@ Run on this machine:
   app arguments; `python3` in the homeassistant container (option B).
 - The Jinja template the ports came from was never executed.
 - `Retry-After` as an HTTP date is read as absent (15 min).
+- **Settings on the panel**: the NVS store and load, the web card and its
+  preview in a browser, and how green 48,232,64 and yellow 255,214,0 read on the
+  panel next to amber are untested on hardware; the previews are host renders.
 
 ## Choices that are not standards
 
@@ -471,6 +597,8 @@ Design choices, taken from the owner's brief, the panel and the photograph:
 - 10 s per list, six rows to a page, `RB_HOLD_S` 60 s, `stale_s` 80 s, grace
   60 s (120 s once arrived), lookback 30 min and window 90 min, amber 255,150,0.
 - Late from one minute: the expected minute differs from the scheduled one.
+- Due soon up to 15 min, default 3; the palette's six colours and their RGB;
+  settings written to NVS 2.5 s after the last change.
 
 ## Cost
 
@@ -480,6 +608,9 @@ against each base it was rebased onto: +24 572 B on `1c82839`, +24 568 B on
 `ab4314c`; RAM +248 B every time. Most of the flash is
 HTTPClient and WiFiClientSecure's use of mbedTLS certificate verification, which
 nothing else on the board linked before, plus the transform and the two roots.
+
+Settings, against `fb60bb0`: **+11 620 B flash, +72 B RAM** (2 004 849 →
+2 016 469 and 92 940 → 93 012), most of it the portal's larger card and script.
 
 ## Merge touch points
 
@@ -499,6 +630,13 @@ nothing else on the board linked before, plus the transform and the two roots.
   `ha_package_railboard_shell.yaml`, `rtt_client.py`, `appdaemon/`.
 - Tests: `check_direct.py`, `direct_host_test.cpp`, `gen_rtt_fixture.py`,
   `samples/rtt_location_small.json`, `check_rtt_client.py`.
+- Settings: new `rb_settings.h` and `tools/railboard/settings_host_test.cpp`;
+  `railboard.cpp` (settings in force, NVS `rbcfg`, colours and due soon in the
+  draw, `cfg` and per-list `rows` in the status); `railboard.h`
+  (`railboardSettings`, `railboardSetSettings`, `railboardResetSettings`
+  replace `railboardApplyConfig`); `web_panel.cpp` (`handleRailboard` config and
+  reset); `web_panel_page.h` (the Board settings card, two CSS rules);
+  `web_panel_js.h` (settings and preview); `render.py` and `check_direct.py`.
 
 ## Status and next steps
 

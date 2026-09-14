@@ -13,8 +13,11 @@
 //   GET  /api/flightboard   airports, airport, dir, board, mqtt
 //   POST /api/flightboard   {"airport":i,"dir":"arr"|"dep"|"alt"}
 //   GET  /api/railboard     station, what is showing, lists, Home Assistant status, config, mqtt
-//   POST /api/railboard     {"crs":"GLD"} | {"diag":b} | {"config":{"rows":1..8,
-//                           "level":10..100,"switch_s":3..600,"stale_s":30..3600}}
+//   POST /api/railboard     {"crs":"GLD"} | {"diag":b} | {"reset":true}
+//                           | {"config":{"rows":1..8,"switch_s":3..600,"level":10..100,
+//                           "stale_s":30..3600,"due_min":0..15,"clock_seconds":b,
+//                           "row_color"|"head_color"|"due_color":"amber"|"yellow"|
+//                           "orange"|"white"|"green"|"cyan"}}   (src/railboard/rb_settings.h)
 //   GET  /api/worldclock    mask, cities [{id, kind builtin|custom|auto, name, lat, lon, tz}],
 //                           home, homeChosen, homeSource chosen|location|ip|zone, homeTime,
 //                           homeOffset, pulseMs, limits {custom, name, namePx, advance}, tzdb, utc
@@ -458,30 +461,25 @@ static void handleRailboard() {
       memcpy(crs, s, sizeof(crs));
     }
 
-    char cfgJson[160] = "";
-    JsonVariantConst cfg = in["config"];
-    if (!cfg.isNull()) {
+    // Settings, checked against the ones in force by rb_settings.h: an object
+    // with any subset of the keys, every key known, every value in range, or
+    // a 400 that names the field and nothing changes. Refused, never clamped.
+    rbs::Settings next = railboardSettings();
+    const bool haveCfg = !in["config"].isNull();
+    if (haveCfg) {
+      JsonVariantConst cfg = in["config"];
       if (!cfg.is<JsonObjectConst>()) REJECT(400, "config must be an object");
-      // Ranges from the .../config table in src/railboard/README.md, which
-      // railboard.cpp clamps to. Refused here rather than clamped there, so a
-      // wrong number is an error the portal can show.
-      JsonDocument out(&s_alloc);
-      out["v"] = 1;
-      static const struct { const char *key; long lo, hi; } R[] = {
-        {"rows", 1, 8}, {"level", 10, 100}, {"switch_s", 3, 600}, {"stale_s", 30, 3600}};
-      for (const auto &r : R) {
-        if (cfg[r.key].isNull()) continue;
-        long v;
-        if (!intIn(cfg[r.key], r.lo, r.hi, &v)) REJECT(400, "config value out of range");
-        out[r.key] = v;
-      }
-      if (measureJson(out) >= sizeof(cfgJson)) REJECT(400, "config too large");
-      serializeJson(out, cfgJson, sizeof(cfgJson));
+      char err[96];
+      if (rbs::apply(cfg.as<JsonObjectConst>(), next, err, sizeof(err))) REJECT(400, err);
     }
+    bool reset = false;
+    if (!optBool(in["reset"], &reset)) REJECT(400, "reset must be true or false");
+    if (reset && haveCfg) REJECT(400, "send config or reset, not both");
 
     // Kept across reboots by src/panel, which also tells the rail board.
     if (crs[0] && !panelSetRailStation(crs)) REJECT(500, "station refused");
-    if (cfgJson[0] && !railboardApplyConfig(cfgJson, (uint16_t)strlen(cfgJson))) REJECT(500, "config refused");
+    if (reset)   railboardResetSettings();       // back to Home Assistant's config, else the build's
+    if (haveCfg) railboardSetSettings(next);     // in force now, in NVS "rbcfg" 2.5 s later
     if (!diag.isNull()) railboardSetDiag(diag.as<bool>());
   }
   JsonDocument doc(&s_alloc);
