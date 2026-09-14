@@ -224,7 +224,10 @@ bool yachtRadarBegin() {
   if (s_open) return !s_noKey;
   Preferences p;
   if (p.begin("yr", true)) {          // read-only
-    s_key = p.getString("ais", "");
+    // isKey first: getString() logs an error for a missing key, and the
+    // carousel reaches this page every 75 s - on an unprovisioned board that
+    // was one error line every lap. isKey() reads without logging.
+    s_key = p.isKey("ais") ? p.getString("ais", "") : String();
     p.end();
   }
   if (s_key.isEmpty()) { s_noKey = true; return false; }
