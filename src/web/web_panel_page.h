@@ -160,7 +160,7 @@ static const char PANEL_PAGES_HTML[] PROGMEM = R"PNL(<link rel="stylesheet" href
       <section class="page" data-page="ptrains" data-need="trains">
         <div class="page-header">
           <h1 class="page-h1">Rail board</h1>
-          <p class="page-lede">Departures, then arrivals, for <span id="rbStation">the station</span> from Realtime Trains - one list on the whole panel at a time. Home Assistant polls it and holds the token; the panel tells it which station and listens.</p>
+          <p class="page-lede">Departures, then arrivals, for <span id="rbStation">the station</span> from Realtime Trains - one list on the whole panel at a time. The panel asks Realtime Trains itself when a token is stored on it, and Home Assistant's boards over MQTT are the fallback. The token is never shown here or sent anywhere but Realtime Trains; put it on the panel with <code>tools/provision_secrets.py</code>.</p>
         </div>
 
         <div class="card">
@@ -192,6 +192,10 @@ static const char PANEL_PAGES_HTML[] PROGMEM = R"PNL(<link rel="stylesheet" href
               <div class="sr-row"><dt>updated</dt><dd id="rbUpd">--</dd></div>
               <div class="sr-row"><dt>departs</dt><dd id="rbDep">--</dd></div>
               <div class="sr-row"><dt>arrivals</dt><dd id="rbArr">--</dd></div>
+              <div class="sr-row"><dt>source</dt><dd id="rbSrc">--</dd></div>
+              <div class="sr-row"><dt>direct</dt><dd id="rbDirect">--</dd></div>
+              <div class="sr-row"><dt>token</dt><dd id="rbTok">--</dd></div>
+              <div class="sr-row"><dt>quota</dt><dd id="rbQuota">--</dd></div>
               <div class="sr-row"><dt>home asst</dt><dd id="rbHa">--</dd></div>
               <div class="sr-row"><dt>realtime</dt><dd id="rbRt">--</dd></div>
               <div class="sr-row"><dt>mqtt</dt><dd id="rbMq">--</dd></div>

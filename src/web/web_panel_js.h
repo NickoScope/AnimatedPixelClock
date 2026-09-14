@@ -459,6 +459,21 @@ function renderRb(d) {
   setText('rbDep', listLine(d.dep)); setText('rbArr', listLine(d.arr));
   var ha = d.ha;
   setText('rbHa', !ha.have ? 'no status yet' : (ha.err ? ha.err + (ha.code ? ' ' + ha.code : '') + (ha.retry ? ' · retry ' + ha.retry + ' s' : '') : 'ok ' + ha.code) + (ha.left ? ' · ' + ha.left + ' left today' : ''));
+  // The panel's own fetch. Token presence, kind and expiry only - the route never carries the token.
+  var dx = d.direct || {}, SRC = { direct: 'direct from Realtime Trains', ha: 'Home Assistant', none: 'none fresh' };
+  setText('rbSrc', (SRC[d.source] || '--') + (d.haShadowed ? ' · ' + d.haShadowed + ' HA boards set aside' : ''));
+  var dEl = $('rbDirect'), KIND = { unknown: 'kind not known yet', access: 'access token', 'refresh-exchanged': 'refresh token, exchanged', refused: 'refused by Realtime Trains' };
+  if (!dx.built) {
+    setText('rbDirect', 'not in this build'); setText('rbTok', '--');
+    setText('rbQuota', ha.left ? ha.left + ' left today (Home Assistant)' : '--');
+  } else {
+    setText('rbTok', !dx.token ? 'not set - Home Assistant only' : 'set · ' + (KIND[dx.kind] || dx.kind) + (dx.validUntil ? ' · access valid until ' + londonTime(dx.validUntil) : ''));
+    setText('rbDirect', String(dx.state).toLowerCase() + (dx.http ? ' ' + dx.http : '') + (dx.fetching ? ' · fetching' : '') +
+      (dx.fetchedAgo != null ? ' · last fetch ' + ago(dx.fetchedAgo) : '') + (dx.nextIn != null && dx.token ? ' · next in ' + dx.nextIn + ' s' : ''));
+    var left = dx.left != null && dx.left >= 0 ? dx.left : (ha.left ? +ha.left : null);
+    setText('rbQuota', left == null ? 'not reported yet' : left + ' requests left today' + (dx.limit > 0 ? ' of ' + dx.limit : '') + ' · shared by the panel and Home Assistant' + (dx.interval > 30 ? ' · panel slowed to every ' + dx.interval + ' s' : ''));
+  }
+  if (dEl) dEl.classList.toggle('warn', !!dx.built && dx.token && dx.state !== 'OK' && dx.state !== 'WAITING');
   var rt = (d.dep.rt || d.arr.rt || '').replace(/^REALTIME_DATA_/, '');
   setText('rbRt', rt ? rt.toLowerCase() : '--');
   setText('rbMq', (d.mqtt.connected ? 'connected' : String(d.mqtt.status).toLowerCase()) + (d.mqtt.configured ? '' : ' · no broker stored') + ' · refused ' + d.refused);

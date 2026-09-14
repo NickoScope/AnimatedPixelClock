@@ -1,0 +1,131 @@
+# Rail board, poll B: Realtime Trains through shell_command, no AppDaemon.
+#
+# The alternative to the AppDaemon app (tools/railboard/appdaemon/). Install
+# ONE of them, never both: each publishes the same retained topics. Needs
+# ha_package_railboard.yaml (the station helper) as well.
+#
+# Every 20 s, and when the station changes, Home Assistant runs
+#   python3 /config/railboard/rtt_client.py fetch <crs>
+# which reads the refresh token from /config/secrets.yaml itself, exchanges it
+# for an access token, asks RTT, and prints one JSON object: both payloads and
+# the outcome - never a token. The automation publishes what it printed.
+#
+# Where the tokens are:
+#  - refresh token: only in secrets.yaml, read by the script. It is not in
+#    this file, the command line, the automation, or its trace.
+#  - access token: in /tmp/railboard_rtt_state.json inside the homeassistant
+#    container, 0600, gone on restart (the shell_command docs: /tmp is not
+#    persistent). Not in any entity, attribute, recorder row or trace.
+#  - the trace keeps the script's printed JSON: the boards and the outcome.
+#
+# Trade-offs against the AppDaemon app: a Python process every 20 s; the
+# access token in a file rather than only in memory; it depends on python3
+# inside the homeassistant container (true of the image, which is Python, but
+# not checked on this system - the docs list sh, curl and ssh); and
+# shell_command stops a command after 60 s. For: nothing beyond Home Assistant.
+#
+# ── Install ──────────────────────────────────────────────────────────────────
+# 1. secrets.yaml keeps the line it has:  rtt_bearer: "Bearer <refresh token>"
+# 2. Copy tools/railboard/rtt_client.py to /config/railboard/rtt_client.py
+# 3. Copy this file to /config/packages/railboard_shell.yaml
+# 4. Restart Home Assistant (a new shell_command needs it).
+# 5. Check: Developer tools > Actions > shell_command.railboard_rtt_fetch with
+#    data {"crs": "GLD"} and "return response": stdout is JSON with err "".
+#
+# ── Written against (read 2026-09-14) ────────────────────────────────────────
+#  shell_command     https://www.home-assistant.io/integrations/shell_command/
+#                    (a templated command runs without a shell, arguments split
+#                    with shlex; stdout/stderr/returncode response; stdout logged at
+#                    debug only; 60 s limit - core shell_command/__init__.py)
+#  from_json         https://www.home-assistant.io/template-functions/from_json/  (default=)
+#  mqtt.publish, time_pattern, state trigger, modes, system_log.write, delay:
+#                    as cited in ha_package_railboard.yaml
+#
+# NOT RUN: never loaded into Home Assistant. rtt_client.py itself was run on the
+# host against a fake RTT (tools/railboard/check_rtt_client.py).
+
+shell_command:
+  railboard_rtt_fetch: "python3 /config/railboard/rtt_client.py fetch {{ crs }}"
+
+automation:
+  - id: railboard_poll_shell
+    alias: "Rail board: fetch Realtime Trains (shell), publish to the panel"
+    description: >-
+      Every 20 s, and at once when the station changes: rtt_client.py fetches the
+      selected station and prints the payloads; this publishes them retained. On
+      a failure only the status is published, so the panel keeps the last good
+      board and marks it Data updating.
+    # single: a run still going drops the next trigger, so fetches never overlap.
+    mode: single
+    max_exceeded: silent
+    triggers:
+      - trigger: time_pattern
+        seconds: "/20"
+      - trigger: state
+        entity_id: input_text.railboard_crs
+    actions:
+      - variables:
+          crs: >-
+            {%- set s = states('input_text.railboard_crs') -%}
+            {{ s if (s | length == 3 and s | regex_match('^[A-Z]{3}$')) else 'GLD' }}
+          now_ts: "{{ now().timestamp() | int }}"
+
+      - alias: "Ask RTT, through the script"
+        action: shell_command.railboard_rtt_fetch
+        continue_on_error: true
+        response_variable: sh
+        data:
+          crs: "{{ crs }}"
+
+      - variables:
+          r: >-
+            {{ (sh.stdout | from_json(default=none))
+               if (sh is defined and sh is mapping and sh.returncode == 0) else none }}
+
+      - if:
+          - condition: template
+            value_template: "{{ r is mapping and r.err == '' and r.departures is mapping and r.arrivals is mapping }}"
+        then:
+          - action: mqtt.publish
+            data:
+              topic: "nickoscope_matrix/railboard/{{ crs }}/departures"
+              retain: true
+              payload: "{{ r.departures | to_json }}"
+          - action: mqtt.publish
+            data:
+              topic: "nickoscope_matrix/railboard/{{ crs }}/arrivals"
+              retain: true
+              payload: "{{ r.arrivals | to_json }}"
+
+      - alias: "Tell the panel how the attempt went"
+        action: mqtt.publish
+        data:
+          topic: "nickoscope_matrix/railboard/{{ crs }}/status"
+          retain: true
+          payload: >-
+            {{ (r.status if (r is mapping and r.status is mapping)
+                else {'v': 1, 'at': now_ts, 'err': 'BAD', 'code': 0, 'retry': 0, 'rl': ''}) | to_json }}
+
+      # Logged when a request was really made, not on every poll of a back-off.
+      - if:
+          - condition: template
+            value_template: "{{ r is not mapping or (r.err != '' and (r.requests | int(0)) > 0) }}"
+        then:
+          - action: system_log.write
+            data:
+              logger: railboard
+              level: "{{ 'error' if (r is not mapping or r.err in ['AUTH', 'BAD']) else 'warning' }}"
+              message: >-
+                {{ 'Rail board: rtt_client.py did not run or printed no JSON (return code '
+                   ~ (sh.returncode if (sh is defined and sh is mapping) else 'none') ~ ')'
+                   if r is not mapping else
+                   'Realtime Trains ' ~ crs ~ ': ' ~ r.err ~ ((' HTTP ' ~ r.code) if r.code else '')
+                   ~ ', token ' ~ r.kind ~ ((', next request in ' ~ r.backoff ~ ' s') if r.backoff else '') }}
+
+      # A refused token or a 429: the script will not ask RTT again before its
+      # back-off ends anyway; waiting here saves starting a process every 20 s.
+      - if:
+          - condition: template
+            value_template: "{{ r is mapping and r.err in ['AUTH', 'RATE'] and (r.backoff | int(0)) > 20 }}"
+        then:
+          - delay: "{{ [r.backoff | int(0), 900] | min }}"

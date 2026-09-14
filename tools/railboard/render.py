@@ -37,9 +37,10 @@ ARR = {m[1]: re.findall(r'"([^"]*)"', m[2]) for m in re.finditer(
 STR = {m[1]: m[2] for m in re.finditer(
     r'static const char \*const (RB_\w+)\s*=\s*"([^"]*)";', SRC)}
 DEF = {m[1]: m[2].strip('"') for m in re.finditer(r'#define (RB_\w+)\s+("[^"]*"|\d+)', HDR)}
-MAX_SVC = int(re.search(r"#define RB_MAX_SVC\s+(\d+)", SRC)[1])
-NAME_LEN = int(re.search(r"#define RB_NAME_LEN\s+(\d+)", SRC)[1])
-STN_LEN = int(re.search(r"#define RB_STN_LEN\s+(\d+)", SRC)[1])
+MODEL = (ROOT / "src/railboard/rb_model.h").read_text()   # the sizes moved there with the direct fetch
+MAX_SVC = int(re.search(r"#define RB_MAX_SVC\s+(\d+)", MODEL)[1])
+NAME_LEN = int(re.search(r"#define RB_NAME_LEN\s+(\d+)", MODEL)[1])
+STN_LEN = int(re.search(r"#define RB_STN_LEN\s+(\d+)", MODEL)[1])
 
 ASC, PITCH, BIG_ADV = K["RB_ASCENT"], K["RB_PITCH"], K["RB_BIG_ADV"]
 X_LEFT, X_RIGHT, GAP = K["RB_X_LEFT"], K["RB_X_RIGHT"], K["RB_GAP"]
@@ -300,10 +301,14 @@ def draw_diag(f, sc):
     rt = next((b["rt"] for b in boards if b and b["rt"]), "")
     rt = rt[14:] if rt.startswith("REALTIME_DATA_") else rt
     rl = ha["rl"] if ha else ""
-    diag_line(f, 5, "RTT", rt or "-", f.col(TEXT if rt == "OK" else AMBER), f"LEFT TODAY {rl}" if rl else "")
+    # matrix-waveshare-rgb builds RAILBOARD_DIRECT_ENABLED: line 5 is the panel's own
+    # fetch, the realtime status moves after it, and the quota goes to line 8.
+    direct = sc.get("direct", "DIRECT OK 200")
+    fine = direct.startswith("DIRECT OK") or direct == "HA ONLY"
+    diag_line(f, 5, "RTT", direct, f.col(TEXT if fine else AMBER), rt)
     diag_line(f, 6, "MQTT", "CONNECTED", f.col(TEXT), "REFUSED 0")
     diag_line(f, 7, "HEAP", "--", white, "JSON --")
-    diag_line(f, 8, "SELECT", f"{sc['crs']} SENT", f.col(TEXT), "NTP OK")
+    diag_line(f, 8, "SELECT", f"{sc['crs']} SENT", f.col(TEXT), f"LEFT {sc.get('left', rl)}" if (sc.get('left') or rl) else "NTP OK")
 
 def render(sc):
     f = Frame(sc["cfg"]["level"])
