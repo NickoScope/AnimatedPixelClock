@@ -81,8 +81,12 @@ bool flightboardDirectOwns();
 void flightboardTick(bool onScreen);
 
 #if defined(FLIGHTBOARD_DIRECT_ENABLED)
-// Tracked flight i as the pinned row prints it: the status word and HH:MM.
+// Tracked flight i as the pinned row prints it: the status word and HH:MM, the
+// departure in the origin's local time or the arrival in the destination's.
 void flightboardTrackLine(uint8_t i, char *word, size_t wordCap, char *hm, size_t hmCap);
+// Adds to aeroDirectTracksJson's dep and arr objects each end's zone (tz, and
+// zone: sent | list | utc) and schedHm / estHm / actHm in it, and tmEnd.
+void flightboardTrackTimesJson(uint8_t i, JsonObject o);
 #endif
 
 // The board as it stands: what the last payload was for (which can lag the

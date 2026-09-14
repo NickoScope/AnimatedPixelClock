@@ -40,8 +40,11 @@ def main():
 
     with tempfile.TemporaryDirectory() as tmp:
         exe = pathlib.Path(tmp) / "aero_host_test"
-        subprocess.run(["c++", "-std=c++17", "-O2", "-Wall", "-Wextra", "-Werror", "-I", str(ROOT / "src/flightboard"),
-                        "-I", libs[0], str(HERE / "aero_host_test.cpp"), str(ROOT / "src/flightboard/aero_transform.cpp"),
+        # posix_tz.cpp and its tzdata table are the world clock's, built here as
+        # the direct flight board builds them (FLIGHTBOARD_DIRECT_ENABLED).
+        subprocess.run(["c++", "-std=c++17", "-O2", "-Wall", "-Wextra", "-Werror", "-DFLIGHTBOARD_DIRECT_ENABLED",
+                        "-I", str(ROOT / "src/flightboard"), "-I", libs[0], str(HERE / "aero_host_test.cpp"),
+                        str(ROOT / "src/flightboard/aero_transform.cpp"), str(ROOT / "src/worldclock/posix_tz.cpp"),
                         "-o", str(exe)], check=True)
         if "--real" in sys.argv:
             i = sys.argv.index("--real")
@@ -50,9 +53,11 @@ def main():
             sys.exit(r.returncode)
         r = subprocess.run([str(exe), str(HERE / "samples")], capture_output=True, text=True)
 
-    boards, fold = {}, None
+    boards, fold, zone_lines = {}, None, []
     for line in r.stdout.splitlines():
-        if line.startswith("BOARD "):
+        if line.startswith("ZONE "):
+            zone_lines.append(line)
+        elif line.startswith("BOARD "):
             _, d, js = line.split(" ", 2)
             boards[d] = json.loads(js)
         elif line.startswith("FOLD "):
@@ -71,6 +76,20 @@ def main():
             print("    C++:   ", json.dumps(boards.get(d)))
             print("    Python:", json.dumps(py))
             bad = True
+    # Airport-local time against Python's zoneinfo, every hour and the second before it, 2026-2027.
+    import datetime as dt
+    from zoneinfo import ZoneInfo
+    wrong = []
+    for line in zone_lines:
+        _, name, utc, hm, off = line.split()
+        t = dt.datetime.fromtimestamp(int(utc), ZoneInfo(name))
+        if t.strftime("%H:%M") != hm or int(t.utcoffset().total_seconds()) != int(off):
+            wrong.append(f"{name} {utc}: {hm} {off}, zoneinfo {t.strftime('%H:%M')} {int(t.utcoffset().total_seconds())}")
+    print(f"  airport-local time, {len(zone_lines):,} instants in {len(set(l.split()[1] for l in zone_lines))} zones against zoneinfo: "
+          + ("identical" if zone_lines and not wrong else f"{len(wrong)} DIFFERENT"))
+    for w in wrong[:10]:
+        print("    ", w)
+    bad = bad or not zone_lines or bool(wrong)
     want = aero_ref.clean_city("".join(chr(c) for c in range(0xC0, 0x180)))
     print(f"  accent fold over U+00C0..U+017F: {'identical' if fold == want else 'DIFFERENT'}")
     if fold != want:

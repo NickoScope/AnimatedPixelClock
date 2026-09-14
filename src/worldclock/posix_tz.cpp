@@ -1,7 +1,8 @@
 #include "posix_tz.h"
 
-// Only the world clock looks zones up; other builds carry none of this.
-#if defined(WORLDCLOCK_ENABLED)
+// Only the world clock and the direct flight board (src/flightboard/fb_zone.h)
+// look zones up; other builds carry none of this.
+#if defined(WORLDCLOCK_ENABLED) || defined(FLIGHTBOARD_DIRECT_ENABLED)
 
 #include <string.h>
 
@@ -195,4 +196,4 @@ const char *tzdbPosix(const char *iana) {
 const char *tzdbVersion() { return TZDB_VERSION; }
 uint16_t    tzdbCount()   { return (uint16_t)TZDB_COUNT; }
 
-#endif  // WORLDCLOCK_ENABLED
+#endif  // WORLDCLOCK_ENABLED || FLIGHTBOARD_DIRECT_ENABLED

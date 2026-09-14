@@ -37,7 +37,8 @@ MOCK = {
     "airports": [{"id": i, "code": c, "iata": a, "name": n, "tz": z, "kind": "builtin"} for i, (c, a, n, z) in enumerate(BUILTIN)]
     + [{"id": 100, "code": "KJFK", "iata": "JFK", "name": "NEW YORK", "tz": "America/New_York", "kind": "custom"}],
     "limits": {"custom": 6, "name": 12, "namePx": 56, "track": 3, "advance": ADV},
-    "board": {"have": True, "source": "aeroapi", "apt": "KJFK", "name": "NEW YORK", "dir": "arr", "upd": "20:15", "age": 900, "now": 2,
+    "board": {"have": True, "source": "aeroapi", "times": "airport", "tz": "America/New_York", "clock": "14:32", "cue": "-6",
+              "utcOffset": -14400, "apt": "KJFK", "name": "NEW YORK", "dir": "arr", "upd": "20:15", "age": 900, "now": 2,
               "sides": {"arr": {"have": True, "n": 3, "upd": "20:15", "age": 900}, "dep": {"have": False}},
               "rows": [{"tm": "19:58", "fn": "IB3456", "ct": "BCN", "cy": "BARCELONA", "st": "land", "w": "LANDED"},
                        {"tm": "20:22", "fn": "AF7302", "ct": "CDG", "cy": "PARIS", "st": "dep", "w": "IN AIR"},
@@ -55,12 +56,15 @@ MOCK = {
     "tracked": [
         {"ident": "AFR7301", "added": NOW - 7200, "state": "enroute", "http": 200, "age": 240, "nextIn": 360, "fn": "AF7301",
          "from": "NCE", "to": "ORY", "gate": "A7", "current": True, "flights": 3, "shown": NOW + 3120, "delayMin": 7,
-         "dep": {"sched": NOW - 2400, "est": NOW - 2100, "act": NOW - 1980}, "arr": {"sched": NOW + 2700, "est": NOW + 3120},
-         "w": "IN AIR", "tm": "21:24"},
+         "dep": {"sched": NOW - 2400, "est": NOW - 2100, "act": NOW - 1980, "tz": "Europe/Paris", "zone": "sent",
+                 "schedHm": "19:52", "estHm": "19:57", "actHm": "19:59"},
+         "arr": {"sched": NOW + 2700, "est": NOW + 3120, "tz": "Europe/Paris", "zone": "sent", "schedHm": "21:17", "estHm": "21:24"},
+         "tmEnd": "arr", "w": "IN AIR", "tm": "21:24"},
         {"ident": "BA336", "added": NOW - 600, "state": "landed", "http": 200, "age": 100, "nextIn": -1, "fn": "BA336", "from": "LHR",
          "to": "NCE", "gate": "", "current": True, "flights": 2, "shown": NOW - 720, "delayMin": 3,
-         "dep": {"sched": NOW - 9000, "act": NOW - 8900}, "arr": {"sched": NOW - 900, "act": NOW - 720}, "expiresIn": 6480,
-         "w": "LANDED", "tm": "20:20"},
+         "dep": {"sched": NOW - 9000, "act": NOW - 8900, "tz": "UTC", "zone": "utc", "schedHm": "16:02", "actHm": "16:04"},
+         "arr": {"sched": NOW - 900, "act": NOW - 720, "tz": "Europe/Paris", "zone": "list", "schedHm": "20:17", "actHm": "20:20"},
+         "expiresIn": 6480, "tmEnd": "arr", "w": "LANDED", "tm": "20:20"},
         {"ident": "EZY9999", "added": NOW - 60, "state": "notfound", "http": 200, "age": 30, "nextIn": 21570, "w": "NO FLIGHT", "tm": "--:--"}],
 }
 # What the search list would hold: made-up entries in mwgg/Airports' shape.
@@ -117,6 +121,13 @@ check('the budget hint names the price', $('fbBudgetMsg').textContent.indexOf('$
 check('diagnostics warn of pages not fetched and a refused list', $('fbDirect').innerHTML.indexOf('more pages not fetched') >= 0 && $('fbDirect').innerHTML.indexOf('refused, again in') >= 0);
 check('trackers listed, expiry spelled out', $('fbTracks').children.length === 3 && $('fbTracks').children[1]._html.indexOf('removes itself in 1 h 48 min') >= 0);
 check('count tags', $('fbTrkCount').textContent === '3 of 3' && $('fbCount').textContent === '1 of 6');
+check('board times labelled as the airport\'s', rows.indexOf('local time') >= 0 && $('fbFeed').innerHTML.indexOf('local at JFK · America/New_York · UTC-4') >= 0 && $('fbFeed').innerHTML.indexOf('-6 h beside its clock') >= 0);
+check('tracked times in each end\'s zone, from the panel', $('fbTracks').children[0]._html.indexOf('left the gate 19:59 NCE time') >= 0 && $('fbTracks').children[0]._html.indexOf('arrives 21:24 ORY time (scheduled 21:17)') >= 0);
+check('an end without a zone says UTC', $('fbTracks').children[1]._html.indexOf('left the gate 16:04 UTC, no zone known') >= 0 && $('fbTracks').children[1]._html.indexOf('landed 20:20 NCE time') >= 0);
+var ha = JSON.parse(JSON.stringify(MOCK)); ha.board.source = 'mqtt'; ha.board.times = 'home-assistant'; ha.board.cue = 'HA'; delete ha.board.utcOffset;
+fb.renderFb(ha);
+check('the MQTT fallback is shown as such, with HA time', $('fbRows').innerHTML.indexOf('HA time') >= 0 && $('fbFeed').innerHTML.indexOf('fallback: Home Assistant over MQTT') >= 0 && $('fbFeed').innerHTML.indexOf('cannot be converted') >= 0);
+fb.renderFb(JSON.parse(JSON.stringify(MOCK)));
 $('fbIdent').value = 'BAW336'; fb.fbCheckIdent();
 check('a fourth tracker is refused', $('fbTrackAdd').disabled && $('fbTrkMsg').textContent.indexOf('Three flights') === 0);
 var one = JSON.parse(JSON.stringify(MOCK)); one.tracked = one.tracked.slice(0, 1); fb.renderFb(one);

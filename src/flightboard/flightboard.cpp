@@ -13,6 +13,7 @@
 #include "aero_direct.h"
 #include "fb_mqtt.h"
 #include "fb_settings.h"
+#include "fb_zone.h"
 
 // ── layout ──────────────────────────────────────────────────────────────────
 // Picopixel, not TomThumb. Both are 3x5-class faces that fit 32-ish characters
@@ -52,6 +53,14 @@ static const int16_t FB_PIN_GATE_MIN = 60;   // the gate replaces ON TIME this l
 // ends at x 49 and the route column starts at 50: one pixel read as one word
 // in the preview, so the route moves right until four are clear.
 static const int16_t FB_PIN_ROUTE_GAP = 4;
+// The header's zone cue - how far the airport's clock is from the panel's,
+// "-1", "+6", "+5:30", or "HA" while Home Assistant's boards are shown - sits
+// this far left of the clock's widest form (88:88, 18 px), so it does not move
+// each minute. It is drawn only when it clears DEPARTURES, the wider of the
+// two words, by the same gap: the page swaps words every 10 s and a cue that
+// came and went with them would read as a fault.
+static const int16_t FB_CUE_GAP   = 3;
+static const int16_t FB_CLOCK_MAX_W = 18;
 
 struct FbRow {
   char     fn[FB_FN_LEN];
@@ -103,6 +112,12 @@ static FbAirport s_custom[FB_APT_CUSTOM_MAX];
 static bool      s_customUsed[FB_APT_CUSTOM_MAX];
 
 #if defined(FLIGHTBOARD_DIRECT_ENABLED)
+// The selected airport's zone, looked up again when the selection or that
+// airport changes (clearBoards bumps s_aptGen).
+static fbz::Zone s_zone;
+static uint8_t   s_zoneId  = 0xFF;
+static uint32_t  s_zoneGen = 0;
+static uint32_t  s_aptGen  = 1;
 static uint32_t s_directGen   = 0xFFFFFFFFUL;
 static uint32_t s_rebuiltMs   = 0;
 static uint32_t s_onScreenMs  = 0;
@@ -127,6 +142,7 @@ static int16_t updAgeMin(const FbBoard &b) {
 static void clearBoards() {
   for (FbBoard &b : s_b) { b.have = false; b.count = 0; }
 #if defined(FLIGHTBOARD_DIRECT_ENABLED)
+  s_aptGen++;
   aeroDirectAirportChanged();
   s_directGen = 0xFFFFFFFFUL;
 #endif
@@ -234,7 +250,12 @@ int flightboardNameWidth(const char *name) {
   return w;
 }
 
-const char *flightboardAirportCheck(const FbAirport &a) { return fbs::checkAirport(a, flightboardNameWidth); }
+#if defined(FLIGHTBOARD_DIRECT_ENABLED)
+static bool knownZone(const char *iana) { return tzdbPosix(iana) != nullptr; }
+const char *flightboardAirportCheck(const FbAirport &a) { return fbs::checkAirport(a, flightboardNameWidth, knownZone); }
+#else
+const char *flightboardAirportCheck(const FbAirport &a) { return fbs::checkAirport(a, flightboardNameWidth, nullptr); }
+#endif
 
 bool flightboardSetCustomAirport(uint8_t slot, const FbAirport *a) {
   if (slot >= FB_APT_CUSTOM_MAX) return false;
@@ -338,16 +359,48 @@ bool flightboardSelect(uint8_t airport, FbDirMode mode) {
 }
 
 // ── direct ──────────────────────────────────────────────────────────────────
-static void localHm(int64_t utc, char *out, size_t cap) {
-  const time_t t = (time_t)utc;
-  struct tm lt;
-  if (utc <= 0 || !localtime_r(&t, &lt)) { snprintf(out, cap, "--:--"); return; }
-  snprintf(out, cap, "%02d:%02d", lt.tm_hour, lt.tm_min);
+#if defined(FLIGHTBOARD_DIRECT_ENABLED)
+static const fbz::Zone &aptZone() {
+  if (s_zoneId != s_aptId || s_zoneGen != s_aptGen) {
+    FbAirport a;
+    if (!flightboardAirportById(s_aptId, &a) || !fbz::load(a.tz, &s_zone)) s_zone.known = false;
+    s_zoneId  = s_aptId;
+    s_zoneGen = s_aptGen;
+  }
+  return s_zone;
 }
 
-#if defined(FLIGHTBOARD_DIRECT_ENABLED)
-// Both halves from the lists as they stand. Times go into the panel's own zone
-// here, as Home Assistant's as_local put them into its zone before.
+// The IANA zone of a listed airport with that ICAO or IATA code, for a
+// tracked flight's end that AeroAPI sent no usable zone for.
+static const char *listedZone(const char *code) {
+  for (uint8_t i = 0; i < FB_AIRPORT_COUNT; i++)
+    if (!strcmp(code, FB_AIRPORTS[i]) || !strcmp(code, FB_AIRPORT_IATA_CODES[i])) return FB_AIRPORT_ZONES[i];
+  for (uint8_t i = 0; i < FB_APT_CUSTOM_MAX; i++)
+    if (s_customUsed[i] && (!strcmp(code, s_custom[i].icao) || (s_custom[i].iata[0] && !strcmp(code, s_custom[i].iata))))
+      return s_custom[i].tz;
+  return nullptr;
+}
+
+// The zone for one end of a tracked flight: departures in the origin's time,
+// arrivals in the destination's.
+static fbz::Source trackZone(const aero::Track &t, bool arrival, fbz::Zone *z) {
+  return fbz::pick(arrival ? t.toTz : t.fromTz, arrival ? t.to : t.from, listedZone, z);
+}
+
+// The panel's own offset now, rounded to the minute: getLocalTime and time()
+// can straddle a second.
+static bool panelOffset(int64_t now, int32_t *off) {
+  struct tm lt;
+  if (!getLocalTime(&lt, 0)) return false;
+  const int32_t o = fbz::offsetOfLocal(lt.tm_year + 1900, (unsigned)lt.tm_mon + 1, (unsigned)lt.tm_mday, lt.tm_hour,
+                                       lt.tm_min, lt.tm_sec, now);
+  *off = (o + (o >= 0 ? 30 : -30)) / 60 * 60;
+  return true;
+}
+
+// Both halves from the lists as they stand, every time in the airport's own
+// local time. (Home Assistant's MQTT boards arrive as HH:MM in its zone and
+// cannot be converted; they are shown as they come.)
 static void rebuildDirect() {
   static aero::Board board;           // 750 B; kept off the loop task's stack
   const int64_t now = (int64_t)time(nullptr);
@@ -366,13 +419,13 @@ static void rebuildDirect() {
       copyField(r.ct, sizeof(r.ct), c.ct);
       copyField(r.cy, sizeof(r.cy), c.cy[0] ? c.cy : c.ct);   // no city: the code, as the MQTT ingest does
       r.st = (FbStatus)c.st;
-      localHm(c.t, r.tm, sizeof(r.tm));
+      fbz::hm(c.t, aptZone(), r.tm, sizeof(r.tm));
     }
     b.count  = board.count;
     b.nowIdx = board.nowIdx >= board.count && board.count ? board.count - 1 : board.nowIdx;
     const uint32_t age = past && next ? (agePast > ageNext ? agePast : ageNext) : (past ? agePast : ageNext);
     s_directAgeS[d] = age;
-    localHm(now - age, b.upd, sizeof(b.upd));
+    fbz::hm(now - age, aptZone(), b.upd, sizeof(b.upd));
     b.stamp = nowMs - age * 1000UL;
     b.have  = true;
   }
@@ -459,7 +512,33 @@ void flightboardTrackLine(uint8_t i, char *word, size_t wordCap, char *hm, size_
   char buf[16];
   uint16_t col;
   snprintf(word, wordCap, "%s", trackWord(*k, buf, sizeof(buf), &col));
-  if (k->t.state != FB_TRK_WAIT && k->t.state != FB_TRK_NOTFOUND) localHm(aero::trackShownTime(k->t), hm, hmCap);
+  if (k->t.state == FB_TRK_WAIT || k->t.state == FB_TRK_NOTFOUND) return;
+  fbz::Zone z;
+  trackZone(k->t, aero::trackShowsArrival(k->t), &z);
+  fbz::hm(aero::trackShownTime(k->t), z, hm, hmCap);
+}
+
+void flightboardTrackTimesJson(uint8_t i, JsonObject o) {
+  const AeroTracker *k = aeroTrack(i);
+  if (!k || k->t.state == FB_TRK_WAIT || k->t.state == FB_TRK_NOTFOUND) return;
+  const aero::Track &t = k->t;
+  for (bool arrival : {false, true}) {
+    JsonObject e = o[arrival ? "arr" : "dep"];
+    if (e.isNull()) continue;
+    fbz::Zone z;
+    const fbz::Source src = trackZone(t, arrival, &z);
+    e["tz"]   = src == fbz::SRC_UTC ? "UTC" : (src == fbz::SRC_SENT ? (arrival ? t.toTz : t.fromTz) : listedZone(arrival ? t.to : t.from));
+    e["zone"] = fbz::sourceName(src);                     // sent | list | utc
+    char hm[6];
+    for (const char *key : {"sched", "est", "act"}) {
+      if (e[key].isNull()) continue;
+      fbz::hm(e[key].as<long long>(), z, hm, sizeof(hm));
+      char name[8];
+      snprintf(name, sizeof(name), "%sHm", key);
+      e[name] = hm;
+    }
+  }
+  o["tmEnd"] = aero::trackShowsArrival(t) ? "arr" : "dep";   // which end the pinned time is
 }
 
 static void drawTracked(int16_t top, uint32_t nowMs) {
@@ -473,10 +552,18 @@ static void drawTracked(int16_t top, uint32_t nowMs) {
 
   const bool known = t.state != FB_TRK_WAIT && t.state != FB_TRK_NOTFOUND;
   char hm[6] = "--:--";
-  if (known) localHm(aero::trackShownTime(t), hm, sizeof(hm));
-  display.setTextColor(display.color565(235, 240, 245));
+  bool guessed = false;
+  if (known) {
+    // Departure in the origin's time, arrival in the destination's. Without a
+    // zone for that end the time is UTC, drawn dim, rather than a guess.
+    fbz::Zone z;
+    guessed = trackZone(t, aero::trackShowsArrival(t), &z) == fbz::SRC_UTC;
+    fbz::hm(aero::trackShownTime(t), z, hm, sizeof(hm));
+  }
+  display.setTextColor(guessed ? display.color565(120, 132, 138) : display.color565(235, 240, 245));
   display.setCursor(FB_X_TIME, base);
   display.print(hm);
+  display.setTextColor(display.color565(235, 240, 245));
 
   const char *fn = known && t.fn[0] ? t.fn : k->ident;
   display.setCursor(FB_X_FLIGHT, base);
@@ -524,11 +611,50 @@ static const char *statusKey(FbStatus st) {
   }
 }
 
+// The header's clock and cue as the page draws them now.
+static void headerTime(bool direct, char *hm, size_t hmCap, char *cueTxt, size_t cueCap) {
+  snprintf(hm, hmCap, "--:--");
+  if (cueCap) cueTxt[0] = '\0';
+#if defined(FLIGHTBOARD_DIRECT_ENABLED)
+  if (direct) {
+    // A station board's clock: the airport's time.
+    const int64_t now = (int64_t)time(nullptr);
+    if (now < 1700000000) return;
+    fbz::hm(now, aptZone(), hm, hmCap);
+    int32_t panel;
+    if (panelOffset(now, &panel)) fbz::cue(fbz::offset(aptZone(), now), panel, cueTxt, cueCap);
+    return;
+  }
+#endif
+  // Home Assistant's rows are in its zone, so the clock stays in the panel's.
+  struct tm lt;
+  if (getLocalTime(&lt, 0)) snprintf(hm, hmCap, "%02d:%02d", lt.tm_hour, lt.tm_min);
+#if defined(FB_MQTT_ENABLED)
+  if (!direct) snprintf(cueTxt, cueCap, "HA");
+#else
+  (void)direct;
+#endif
+}
+
 void flightboardStatusJson(JsonObject out) {
   const bool departures = shownDep();
   const FbBoard &b = s_b[departures];
   const bool direct = flightboardDirectOwns();
   out["have"] = b.have;
+  // Which clock the times are in: the airport's, or Home Assistant's as it sent them.
+  out["times"] = direct ? "airport" : "home-assistant";
+  {
+    FbAirport a;
+    if (flightboardAirportById(s_aptId, &a)) out["tz"] = (const char *)a.tz;
+    char hm[6], cueTxt[8];
+    headerTime(direct, hm, sizeof(hm), cueTxt, sizeof(cueTxt));
+    out["clock"] = hm;
+    out["cue"]   = cueTxt;
+#if defined(FLIGHTBOARD_DIRECT_ENABLED)
+    const int64_t now = (int64_t)time(nullptr);
+    if (direct && now >= 1700000000 && aptZone().known) out["utcOffset"] = fbz::offset(aptZone(), now);
+#endif
+  }
 #if defined(FB_MQTT_ENABLED)
   out["source"] = direct ? "aeroapi" : (flightboardAirportBuiltin(s_aptId) ? "mqtt" : "none");
 #else
@@ -613,21 +739,34 @@ void flightboardRender() {
   // data is older than it should be - ten minutes for Home Assistant's boards;
   // for AeroAPI's, twice the past lists' floor and five minutes more, since
   // the budget, not a fault, is what keeps them that old.
+  const bool direct = flightboardDirectOwns();
   bool stale;
 #if defined(FLIGHTBOARD_DIRECT_ENABLED)
-  if (flightboardDirectOwns())
+  if (direct)
     stale = b.have && s_directAgeS[departures] > (uint32_t)aeroDirectBudget().floorMin * 60UL * 4UL + 300UL;
   else
 #endif
     stale = flightboardAge() > 600 || updAgeMin(b) > FB_FRESH_MIN;
-  char nowHm[6] = "--:--";
-  struct tm lt;
-  if (getLocalTime(&lt, 0)) snprintf(nowHm, sizeof(nowHm), "%02d:%02d", lt.tm_hour, lt.tm_min);
+  char nowHm[6], cueTxt[8];
+  headerTime(direct, nowHm, sizeof(nowHm), cueTxt, sizeof(cueTxt));
   display.getTextBounds(nowHm, 0, 0, &bx, &by, &bw, &bh);
   display.setCursor(FB_X_RIGHT - (int16_t)bw, hbase);
   display.setTextColor(stale ? display.color565(150, 90, 0)
                              : display.color565(120, 132, 138));
   display.print(nowHm);
+  if (cueTxt[0]) {
+    display.getTextBounds(apt, 0, 0, &bx, &by, &bw, &bh);
+    int16_t clear = FB_X_TIME + (int16_t)bw + 6;
+    display.getTextBounds("DEPARTURES", 0, 0, &bx, &by, &bw, &bh);
+    clear += (int16_t)bw + FB_CUE_GAP;
+    display.getTextBounds(cueTxt, 0, 0, &bx, &by, &bw, &bh);
+    const int16_t x = FB_X_RIGHT - FB_CLOCK_MAX_W - FB_CUE_GAP - (int16_t)bw;
+    if (x >= clear) {
+      display.setCursor(x, hbase);
+      display.setTextColor(display.color565(120, 132, 138));
+      display.print(cueTxt);
+    }
+  }
 
   display.drawFastHLine(0, FB_Y_RULE, 128, display.color565(52, 60, 64));
   // While both halves are here and swapping, the rule fills in dim amber

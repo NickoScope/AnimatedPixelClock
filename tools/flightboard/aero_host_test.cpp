@@ -17,6 +17,7 @@
 
 #include "aero_transform.h"
 #include "fb_settings.h"
+#include "fb_zone.h"
 
 static int g_fail = 0;
 #define CHECK(c) do { if (!(c)) { g_fail++; std::printf("FAIL %s:%d  %s\n", __FILE__, __LINE__, #c); } } while (0)
@@ -165,6 +166,9 @@ static void tracks(const std::string &dir) {
     CHECK_EQ(aero::trackExpiresAt(t), e["expires"].as<long long>());
     CHECK_EQ(aero::trackShownTime(t), e["shown"].as<long long>());
     CHECK_EQ(aero::trackDelayMin(t), e["delay_min"].as<int>());
+    if (!e["arrival"].isNull()) CHECK_EQ(aero::trackShowsArrival(t), e["arrival"].as<bool>());
+    if (!e["from_tz"].isNull()) CHECK_STR(t.fromTz, e["from_tz"].as<const char *>());
+    if (!e["to_tz"].isNull()) CHECK_STR(t.toTz, e["to_tz"].as<const char *>());
     if (g_fail != before) std::printf("  ^ in track case %s\n", name);
   }
   JsonDocument bad;
@@ -234,6 +238,83 @@ static void units() {
 }
 
 static int width4(const char *s) { return 4 * (int)strlen(s); }
+static bool known(const char *iana) { return tzdbPosix(iana) != nullptr; }
+
+// ── airport-local time ──────────────────────────────────────────────────────
+static const char *listed(const char *code) {
+  if (!strcmp(code, "NCE") || !strcmp(code, "LFMN")) return "Europe/Paris";
+  if (!strcmp(code, "XXX")) return "Mars/Olympus_Mons";          // a listed airport with a zone the table lacks
+  return nullptr;
+}
+
+static void zones() {
+  // Reference values from Python's zoneinfo (tzdata), 2026: the EU changes at
+  // 01:00 UTC on 29 March and 25 October, the US at 07:00 UTC on 8 March and
+  // 06:00 UTC on 1 November; Phoenix and Kolkata keep one offset.
+  struct Want { const char *zone; int64_t utc; const char *hm; int32_t off; };
+  static const Want kWant[] = {
+    {"Europe/London",    1774745999, "00:59",     0}, {"Europe/Paris", 1774745999, "01:59",  3600},
+    {"Europe/London",    1774746000, "02:00",  3600}, {"Europe/Paris", 1774746000, "03:00",  7200},
+    {"Europe/London",    1792889999, "01:59",  3600}, {"Europe/Paris", 1792889999, "02:59",  7200},
+    {"Europe/London",    1792890000, "01:00",     0}, {"Europe/Paris", 1792890000, "02:00",  3600},
+    {"America/New_York", 1772953140, "01:59", -18000}, {"America/New_York", 1772953200, "03:00", -14400},
+    {"America/New_York", 1793512740, "01:59", -14400}, {"America/New_York", 1793512800, "01:00", -18000},
+    {"America/Phoenix",  1793512740, "22:59", -25200}, {"America/Phoenix",  1793512800, "23:00", -25200},
+    {"Asia/Kolkata",     1789408800, "23:30",  19800}, {"Asia/Tokyo",       1789408800, "03:00",  32400},
+  };
+  for (const Want &w : kWant) {
+    fbz::Zone z;
+    CHECK(fbz::load(w.zone, &z));
+    char hm[6];
+    fbz::hm(w.utc, z, hm, sizeof(hm));
+    if (strcmp(hm, w.hm) || fbz::offset(z, w.utc) != w.off)
+      std::printf("  ^ %s at %lld: %s %d, want %s %d\n", w.zone, (long long)w.utc, hm, fbz::offset(z, w.utc), w.hm, w.off);
+    CHECK_STR(hm, w.hm);
+    CHECK_EQ(fbz::offset(z, w.utc), w.off);
+  }
+  // The grid check_aero.py holds against zoneinfo: every hour and the second
+  // before it, 2026-01-01 to 2028-01-01, in zones with and without summer time.
+  static const char *kGrid[] = {"Europe/London", "Europe/Paris", "America/New_York", "America/Phoenix",
+                                "Asia/Kolkata", "Australia/Lord_Howe", "America/Sao_Paulo"};
+  for (const char *name : kGrid) {
+    fbz::Zone z;
+    CHECK(fbz::load(name, &z));
+    for (int64_t t = 1767225600; t < 1830297600; t += 3600)
+      for (int64_t s : {t - 1, t}) {
+        char hm[6];
+        fbz::hm(s, z, hm, sizeof(hm));
+        std::printf("ZONE %s %lld %s %d\n", name, (long long)s, hm, fbz::offset(z, s));
+      }
+  }
+  fbz::Zone none;
+  CHECK(!fbz::load("", &none) && !fbz::load(nullptr, &none) && !fbz::load("Etc/GMT+5", &none));
+  char hm[6];
+  fbz::hm(1789408800, none, hm, sizeof(hm));   CHECK_STR(hm, "18:00");        // unknown: UTC
+  fbz::hm(0, none, hm, sizeof(hm));            CHECK_STR(hm, "--:--");
+
+  char cue[8];
+  fbz::cue(3600, 7200, cue, sizeof(cue));      CHECK_STR(cue, "-1");          // London from a Paris panel, summer
+  fbz::cue(-14400, 7200, cue, sizeof(cue));    CHECK_STR(cue, "-6");          // New York
+  fbz::cue(32400, 7200, cue, sizeof(cue));     CHECK_STR(cue, "+7");          // Tokyo
+  fbz::cue(19800, 7200, cue, sizeof(cue));     CHECK_STR(cue, "+3:30");       // Kolkata
+  fbz::cue(-34200, 0, cue, sizeof(cue));       CHECK_STR(cue, "-9:30");       // Marquesas from UTC
+  fbz::cue(7200, 7200, cue, sizeof(cue));      CHECK_STR(cue, "");
+  CHECK_EQ(fbz::offsetOfLocal(2026, 9, 14, 20, 0, 0, 1789408800), 7200);
+  CHECK_EQ(fbz::offsetOfLocal(2026, 9, 14, 14, 0, 0, 1789408800), -14400);     // New York, same day
+  CHECK_EQ(fbz::offsetOfLocal(2026, 9, 15, 3, 0, 0, 1789408800), 32400);       // Tokyo, the next day
+  CHECK_EQ(fbz::offsetOfLocal(2026, 9, 13, 23, 0, 0, 1789340400), 0);         // UTC, the day before
+  CHECK_EQ(fbz::offsetOfLocal(2026, 9, 13, 22, 0, 0, 1789408800), -72000);     // a local date a day behind
+
+  fbz::Zone z;
+  CHECK_EQ(fbz::pick("Europe/London", "LHR", listed, &z), fbz::SRC_SENT);
+  CHECK_EQ(fbz::pick("", "NCE", listed, &z), fbz::SRC_LIST);
+  CHECK_EQ(fbz::offset(z, 1789408800), 7200);
+  CHECK_EQ(fbz::pick("Mars/Olympus_Mons", "LFMN", listed, &z), fbz::SRC_LIST);   // a name the table lacks falls through
+  CHECK_EQ(fbz::pick(nullptr, "LFTZ", listed, &z), fbz::SRC_UTC);
+  CHECK(!z.known);
+  CHECK_EQ(fbz::pick("", "XXX", listed, &z), fbz::SRC_UTC);                     // listed, but its zone unknown
+  CHECK_EQ(fbz::pick(nullptr, nullptr, nullptr, &z), fbz::SRC_UTC);
+}
 static int width8(const char *s) { return 8 * (int)strlen(s); }
 
 static void settings() {
@@ -289,25 +370,27 @@ static void settings() {
   // Custom airports.
   FbAirport a{};
   strcpy(a.icao, "KJFK"); strcpy(a.iata, "JFK"); strcpy(a.name, "NEW YORK"); strcpy(a.tz, "America/New_York");
-  CHECK(fbs::checkAirport(a, width4) == nullptr);
-  FbAirport x = a; strcpy(x.icao, "kjfk");     CHECK(fbs::checkAirport(x, width4) != nullptr);
-  x = a; strcpy(x.icao, "1JFK");               CHECK(fbs::checkAirport(x, width4) != nullptr);
-  x = a; strcpy(x.icao, "K00A");               CHECK(fbs::checkAirport(x, width4) == nullptr);
-  x = a; strcpy(x.iata, "");                   CHECK(fbs::checkAirport(x, width4) == nullptr);
-  x = a; strcpy(x.iata, "JF");                 CHECK(fbs::checkAirport(x, width4) != nullptr);
-  x = a; strcpy(x.name, "");                   CHECK(fbs::checkAirport(x, width4) != nullptr);
-  x = a; strcpy(x.name, "New York");           CHECK(fbs::checkAirport(x, width4) != nullptr);
-  x = a; strcpy(x.name, "NEW  YORK");          CHECK(fbs::checkAirport(x, width4) != nullptr);
-  x = a; strcpy(x.name, " NEWYORK");           CHECK(fbs::checkAirport(x, width4) != nullptr);
-  x = a; strcpy(x.name, "ST. JOHN'S");         CHECK(fbs::checkAirport(x, width4) == nullptr);
-  x = a; strcpy(x.name, "ABCDEFGHIJKL");       CHECK(fbs::checkAirport(x, width4) == nullptr);   // 48 px: fits 56
-  CHECK(fbs::checkAirport(x, width8) != nullptr);                                                  // 96 px: too wide
-  x = a; strcpy(x.tz, "");                     CHECK(fbs::checkAirport(x, width4) == nullptr);
-  x = a; strcpy(x.tz, "UTC");                  CHECK(fbs::checkAirport(x, width4) == nullptr);
-  x = a; strcpy(x.tz, "America/Argentina/Buenos_Aires"); CHECK(fbs::checkAirport(x, width4) == nullptr);
-  x = a; strcpy(x.tz, "Paris");                CHECK(fbs::checkAirport(x, width4) != nullptr);
-  x = a; strcpy(x.tz, "Europe//Paris");        CHECK(fbs::checkAirport(x, width4) != nullptr);
-  x = a; strcpy(x.tz, "Europe/Paris;rm");      CHECK(fbs::checkAirport(x, width4) != nullptr);
+  CHECK(fbs::checkAirport(a, width4, known) == nullptr);
+  FbAirport x = a; strcpy(x.icao, "kjfk");     CHECK(fbs::checkAirport(x, width4, known) != nullptr);
+  x = a; strcpy(x.icao, "1JFK");               CHECK(fbs::checkAirport(x, width4, known) != nullptr);
+  x = a; strcpy(x.icao, "K00A");               CHECK(fbs::checkAirport(x, width4, known) == nullptr);
+  x = a; strcpy(x.iata, "");                   CHECK(fbs::checkAirport(x, width4, known) == nullptr);
+  x = a; strcpy(x.iata, "JF");                 CHECK(fbs::checkAirport(x, width4, known) != nullptr);
+  x = a; strcpy(x.name, "");                   CHECK(fbs::checkAirport(x, width4, known) != nullptr);
+  x = a; strcpy(x.name, "New York");           CHECK(fbs::checkAirport(x, width4, known) != nullptr);
+  x = a; strcpy(x.name, "NEW  YORK");          CHECK(fbs::checkAirport(x, width4, known) != nullptr);
+  x = a; strcpy(x.name, " NEWYORK");           CHECK(fbs::checkAirport(x, width4, known) != nullptr);
+  x = a; strcpy(x.name, "ST. JOHN'S");         CHECK(fbs::checkAirport(x, width4, known) == nullptr);
+  x = a; strcpy(x.name, "ABCDEFGHIJKL");       CHECK(fbs::checkAirport(x, width4, known) == nullptr);   // 48 px: fits 56
+  CHECK(fbs::checkAirport(x, width8, known) != nullptr);                                                  // 96 px: too wide
+  x = a; strcpy(x.tz, "");                     CHECK(fbs::checkAirport(x, width4, known) != nullptr);   // the board needs a zone
+  x = a; strcpy(x.tz, "UTC");                  CHECK(fbs::checkAirport(x, width4, known) != nullptr);   // not in tzdb.h's areas
+  x = a; strcpy(x.tz, "Etc/GMT+5");            CHECK(fbs::checkAirport(x, width4, known) != nullptr);   // the 3 mwgg zones it lacks
+  x = a; strcpy(x.tz, "Asia/Kolkata");         CHECK(fbs::checkAirport(x, width4, known) == nullptr);
+  x = a; strcpy(x.tz, "America/Argentina/Buenos_Aires"); CHECK(fbs::checkAirport(x, width4, known) == nullptr);
+  x = a; strcpy(x.tz, "Paris");                CHECK(fbs::checkAirport(x, width4, known) != nullptr);
+  x = a; strcpy(x.tz, "Europe//Paris");        CHECK(fbs::checkAirport(x, width4, known) != nullptr);
+  x = a; strcpy(x.tz, "Europe/Paris;rm");      CHECK(fbs::checkAirport(x, width4, known) != nullptr);
 }
 
 // Answers saved from somewhere else: whichever of the four files exist, no
@@ -340,6 +423,7 @@ int main(int argc, char **argv) {
   const std::string dir = argv[1];
   if (argc >= 4 && !strcmp(argv[2], "real")) return real(dir, atoll(argv[3]));
   units();
+  zones();
   settings();
   boards(dir, 1789408800);
   tracks(dir);

@@ -5,8 +5,10 @@ The boards come from aero_ref.py, which check_aero.py holds identical to the
 C++ transform; the layout, fonts and pinned-row colours from
 src/flightboard/flightboard.cpp through tools/fb_render.py. The tracked row's
 word and colour mirror trackWord() in flightboard.cpp by hand - that function
-needs the display, so it is not compiled here. Times are shown in
-Europe/Paris, the zone the panel is set to.
+needs the display, so it is not compiled here. Board times are in the board
+airport's zone; a tracked flight's departure in its origin's and its arrival in
+its destination's, dim UTC when there is none (fb_zone.h). The panel itself is
+taken to run on Europe/Paris, for the header's cue.
 
   python3 tools/flightboard/previews.py      # PNGs into tools/flightboard/preview/
 """
@@ -24,14 +26,26 @@ import aero_ref  # noqa: E402
 import gen_aero_fixture as gen  # noqa: E402
 
 OUT = HERE / "preview"
-ZONE = ZoneInfo("Europe/Paris")
+PANEL = ZoneInfo("Europe/Paris")
 GREY, WHITE, CYAN, AMBER, BLUE, GREEN, RED, MAGENTA = (
     (120, 132, 138), (210, 210, 210), (0, 220, 220), (255, 170, 0), (70, 140, 255), (0, 200, 60), (255, 40, 40),
     (255, 60, 200))
 
 
-def hm(utc):
-    return dt.datetime.fromtimestamp(utc, ZONE).strftime("%H:%M") if utc else "--:--"
+def hm(utc, zone):
+    if not utc:
+        return "--:--"
+    return dt.datetime.fromtimestamp(utc, ZoneInfo(zone) if zone else dt.timezone.utc).strftime("%H:%M")
+
+
+def cue(zone):
+    """fb_zone.h cue(): the airport's offset less the panel's, at NOW."""
+    t = dt.datetime.fromtimestamp(gen.NOW, dt.timezone.utc)
+    d = int(t.astimezone(ZoneInfo(zone)).utcoffset().total_seconds() - t.astimezone(PANEL).utcoffset().total_seconds())
+    if not d:
+        return ""
+    h, m = divmod(abs(d) // 60, 60)
+    return ("-" if d < 0 else "+") + str(h) + (f":{m:02d}" if m else "")
 
 
 def word(state, delay, gate=None, dep_in_min=None):
@@ -48,22 +62,28 @@ def word(state, delay, gate=None, dep_in_min=None):
             "LANDED": ("LANDED", GREEN), "CANCELLED": ("CANX", RED), "DIVERTED": ("DIVERT", MAGENTA)}[state]
 
 
-def board(direction):
+def board(direction, apt="LFMN", zone="Europe/Paris", name=None):
+    """The fixture's lists as a board for `apt`, in `zone`. The flights are Nice's; only the clock moves."""
     past, nxt = ("departures", "scheduled_departures") if direction == "dep" else ("arrivals", "scheduled_arrivals")
     lists = {k: json.loads((HERE / "samples" / f"aero_{k}.json").read_text())[k] for k in (past, nxt)}
     b = aero_ref.board(lists[past], lists[nxt], direction == "dep", gen.NOW)
-    rows = [dict(r, tm=hm(r["t"])) for r in b["rows"]]
+    rows = [dict(r, tm=hm(r["t"], zone)) for r in b["rows"]]
     # flightboardIngest's clamp: a now_idx past the end points at the last row.
     now = b["now_idx"] if b["now_idx"] < len(rows) or not rows else len(rows) - 1
-    return {"apt": "LFMN", "dir": direction, "upd": hm(gen.NOW), "now_idx": now, "f": rows}
+    out = {"apt": apt, "dir": direction, "upd": hm(gen.NOW, zone), "now_idx": now, "f": rows, "cue": cue(zone)}
+    if name:
+        out["name"] = name
+    return out
 
 
 def tracked(case, **over):
     e = json.loads((HERE / "samples" / "aero_tracks.json").read_text())["cases"][case]["expect"]
     e = dict(e, **over)
     w, col = word(e["state"], e["delay_min"], e.get("gate"), e.get("dep_in_min"))
-    return {"tm": hm(e["shown"]), "fn": e.get("fn_shown", e["fn"]), "route": f'{e["frm"]}-{e["to"]}', "w": w,
-            "col": list(col)}
+    arrival = e.get("arrival", e["state"] in ("ENROUTE", "LANDED", "DIVERTED"))
+    zone = e.get("to_tz" if arrival else "from_tz", "Europe/Paris")   # the older cases are all Paris to Paris
+    return {"tm": hm(e["shown"], zone), "fn": e.get("fn_shown", e["fn"]), "route": f'{e["frm"]}-{e["to"]}', "w": w,
+            "col": list(col), "dim": not zone}
 
 
 SCENES = {
@@ -77,7 +97,16 @@ SCENES = {
     "departures_pinned_diverted": (board("dep"), tracked("diverted")),
     # The widest case: an ICAO ident and a long word leave no room for the route's origin.
     "departures_pinned_icao_ident": (board("dep"), tracked("delayed", fn_shown="AFR7301", delay_min=125)),
-    "custom_airport_header": (dict(board("arr"), apt="KJFK", name="NEW YORK"), tracked("taxi")),
+    "custom_airport_header": (board("arr", "KJFK", "America/New_York", "NEW YORK"), tracked("taxi")),
+    # Airport-local time: London's board an hour behind the panel, cue -1; a flight
+    # tracked from Nice to London shows its departure in Nice's time.
+    "london_local_time_crosszone": (board("dep", "EGLL", "Europe/London"), tracked("crosszone_sched")),
+    # New York, six hours behind; Delta from JFK is in the air, so its Nice arrival time.
+    "newyork_local_time_arrival": (board("arr", "KJFK", "America/New_York", "NEW YORK"), tracked("crosszone_enroute")),
+    # No zone for the origin: its departure in UTC, drawn dim.
+    "tracked_no_zone_utc_dim": (board("dep"), tracked("no_zone")),
+    # Home Assistant's fallback: rows as it sent them, the panel's clock, HA in the header.
+    "mqtt_fallback_ha_cue": (dict(board("arr"), cue="HA"), None),
     "no_tracker_for_comparison": (board("arr"), None),
 }
 

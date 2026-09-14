@@ -46,6 +46,7 @@ LTZ = apt("LFTZ", None, "La Mole (Saint-Tropez)", "La Mole", "Europe/Paris")
 OSL = apt("ENGM", "OSL", "Oslo/Gardermoen", "Oslo Gardermoen", "Europe/Oslo")
 VIE = apt("LOWW", "VIE", "Wien", "Vienna Int'l", "Europe/Vienna")
 AMS = apt("EHAM", "AMS", "Amsterdam", "Amsterdam Schiphol", "Europe/Amsterdam")
+NOZONE = apt("LFTZ", None, "La Mole", "La Mole", None)          # timezone is nullable in the spec
 KRK = apt("EPKK", "KRK", "Kraków", "Krakow John Paul II", "Europe/Warsaw")
 
 
@@ -184,6 +185,16 @@ def tracks():
          flights=1, next_s=6 * 3600, expires=0, shown=NOW - 23 * 3600 + 28 * 60, delay_min=0)
     case("empty", [], added, state="NOTFOUND", fn="", frm="", to="", current=False, flights=0,
          next_s=6 * 3600, expires=0, shown=0, delay_min=0)
+    # Across zones: the departure is shown in the origin's time, the arrival in the destination's.
+    case("crosszone_sched", [flight("BAW343", "BA343", NCE, LHR, so=90, eo=90, si=215, ei=215, gate="12")], added,
+         state="SCHED", fn="BA343", frm="NCE", to="LHR", current=True, flights=1, next_s=10 * 60, expires=0,
+         shown=NOW + 90 * 60, delay_min=0, arrival=False, from_tz="Europe/Paris", to_tz="Europe/London")
+    case("crosszone_enroute", [flight("DAL82", "DL82", JFK, NCE, so=-480, ao=-470, off=-460, si=90, ei=85, eon=77)],
+         added, state="ENROUTE", fn="DL82", frm="JFK", to="NCE", current=True, flights=1, next_s=20 * 60, expires=0,
+         shown=NOW + 85 * 60, delay_min=0, arrival=True, from_tz="America/New_York", to_tz="Europe/Paris")
+    case("no_zone", [flight("MYJ13", None, NOZONE, NCE, so=50, eo=50, si=80, ei=80)], added,
+         state="SCHED", fn="MYJ13", frm="LFTZ", to="NCE", current=True, flights=1, next_s=10 * 60, expires=0,
+         shown=NOW + 50 * 60, delay_min=0, arrival=False, from_tz="", to_tz="Europe/Paris")
     return out
 
 

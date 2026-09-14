@@ -100,6 +100,8 @@ struct Track {
   char     fn[FB_FN_LEN];      // ident_iata, else ident_icao, else ident
   char     from[FB_CT_LEN];    // origin IATA, else ICAO
   char     to[FB_CT_LEN];
+  char     fromTz[FB_APT_TZ_MAX + 1];   // origin.timezone as sent (IANA), "" when null or absent
+  char     toTz[FB_APT_TZ_MAX + 1];     // destination.timezone
   char     gate[6];            // gate_origin, "" when unknown
   int64_t  schedOut, estOut, actOut, actOff;
   int64_t  schedIn, estIn, actIn, actOn, estOn;
@@ -139,6 +141,8 @@ int64_t trackExpiresAt(const Track &t);
 
 // The one time the pinned row shows: the departure until the aircraft is off
 // the ground, the arrival after. Actual, else estimated, else scheduled.
+// trackShowsArrival says which, so the caller can use that end's zone.
+bool    trackShowsArrival(const Track &t);
 int64_t trackShownTime(const Track &t);
 // Minutes late for the delay word: the departure's before take-off, the
 // arrival's after. Negative when early.

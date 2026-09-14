@@ -11,7 +11,8 @@
 //                           | {"enable":{"key":"world","on":false}}
 //                           | {"carousel":{"enabled":b,"idleS":n,"slotS":n,"allStyles":b}}
 //   GET  /api/flightboard   airport (id), dir, side, airports [{id, code, iata, name, tz,
-//                           kind builtin|custom}], limits, board, direct {key, state, budget,
+//                           kind builtin|custom}], limits, board {times airport|home-assistant,
+//                           tz, clock, cue, utcOffset, ...}, direct {key, state, budget,
 //                           bounds, usage, lists, last, sample}, tracked [...], mqtt
 //   POST /api/flightboard   {"airport":id,"dir":"arr"|"dep"|"alt"} and at most one of
 //                           {"add":{"icao":"KJFK","iata":"JFK","name":"NEW YORK",
@@ -579,6 +580,7 @@ static void handleFlightboard() {
     flightboardTrackLine(i, word, sizeof(word), hm, sizeof(hm));
     tracked[i]["w"]  = word;                                 // as the pinned row prints it
     tracked[i]["tm"] = hm;
+    flightboardTrackTimesJson(i, tracked[i]);                // each end's zone and local HH:MM
   }
 #else
   doc["direct"]["built"] = false;

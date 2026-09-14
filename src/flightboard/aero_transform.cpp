@@ -293,7 +293,7 @@ void trackFilter(JsonDocument &filter) {
                         "estimated_in", "actual_in", "departure_delay", "arrival_delay", "gate_origin"})
     f[k] = true;
   for (const char *apt : {"origin", "destination"})
-    for (const char *k : {"code", "code_iata", "code_icao"}) f[apt][k] = true;
+    for (const char *k : {"code", "code_iata", "code_icao", "timezone"}) f[apt][k] = true;
 }
 
 namespace {
@@ -307,6 +307,12 @@ void fill(JsonObjectConst f, Track *t) {
   copy(t->fn, sizeof(t->fn), firstOf(strOf(f["ident_iata"]), strOf(f["ident_icao"]), strOf(f["ident"])));
   copy(t->from, sizeof(t->from), codeOf(f["origin"]));
   copy(t->to, sizeof(t->to), codeOf(f["destination"]));
+  // "Applicable timezone for the airport, in the TZ database format", nullable
+  // (spec, BaseFlight origin/destination). A name too long for the field is
+  // dropped rather than cut into a different name.
+  const char *oz = strOf(f["origin"]["timezone"]), *dz = strOf(f["destination"]["timezone"]);
+  copy(t->fromTz, sizeof(t->fromTz), strlen(oz) < sizeof(t->fromTz) ? oz : "");
+  copy(t->toTz, sizeof(t->toTz), strlen(dz) < sizeof(t->toTz) ? dz : "");
   copy(t->gate, sizeof(t->gate), strOf(f["gate_origin"]));
   t->schedOut = timeOf(f["scheduled_out"]);
   if (!t->schedOut) t->schedOut = timeOf(f["scheduled_off"]);
@@ -408,9 +414,13 @@ int64_t trackExpiresAt(const Track &t) {
   return 0;
 }
 
+bool trackShowsArrival(const Track &t) {
+  return t.actOff || t.actOn || t.actIn || t.state == FB_TRK_LANDED || t.state == FB_TRK_ENROUTE ||
+         t.state == FB_TRK_DIVERTED;
+}
+
 int64_t trackShownTime(const Track &t) {
-  if (t.actOff || t.actOn || t.actIn || t.state == FB_TRK_LANDED || t.state == FB_TRK_ENROUTE ||
-      t.state == FB_TRK_DIVERTED) {
+  if (trackShowsArrival(t)) {
     if (t.actIn) return t.actIn;
     if (t.actOn) return t.actOn;
     if (t.estIn) return t.estIn;

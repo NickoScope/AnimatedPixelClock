@@ -121,9 +121,47 @@ from the template, on purpose, marked DIFF in both:
 - **city names lose their accents** (U+00C0–U+017F to their base letter) instead
   of reaching a font that cannot draw them.
 
-Times go into the panel's own zone, as `as_local` put them into Home
-Assistant's; the airport's zone is stored with a custom airport but not used to
-convert (the board did not do that before).
+### Local time
+
+Every time on a board fetched from AeroAPI is the **airport's local time**,
+summer time included, as a station board shows it (owner, 2026-09-14). AeroAPI
+sends UTC; `fb_zone.h` converts with the world clock's own machinery - the
+IANA name looked up in `src/worldclock/tzdb.h` (tzdata 2026c) and its POSIX
+string evaluated by `posix_tz.cpp` for each instant - so there is one zone
+table, now built for `WORLDCLOCK_ENABLED || FLIGHTBOARD_DIRECT_ENABLED`. The
+built-in airports carry their zones (Europe/Paris for Cannes, Nice and Paris,
+Europe/London, Europe/Berlin, Europe/Amsterdam, as mwgg/Airports lists them).
+
+- **Rows** and the data stamp: the board airport's zone.
+- **The header clock**: the airport's time now. Beside it, dim, the **cue**: how
+  far the airport's clock is from the panel's own, `-1` for London from a panel
+  on Paris time, `-6` New York, `+5:30` a half-hour zone, nothing when they
+  agree. A signed difference, not a code like LON, because the name is already
+  in the header and the one thing a viewer in the room would misread is the
+  clock itself. It sits at a fixed x (left of the clock's widest form, 88:88)
+  and is drawn only when it clears DEPARTURES by 3 px, so it never comes and
+  goes with the 10 s swap. With a 12-character name it does not fit and is left
+  out; the portal always gives the zone.
+- **A tracked flight**: the departure in its origin's local time, the arrival in
+  its destination's, as airline apps show them. The zone is the one AeroAPI
+  sends with each end (`origin.timezone`, `destination.timezone`: "Applicable
+  timezone for the airport, in the TZ database format", **nullable** in the
+  spec). When it is null or not in the table, the zone of an airport in the
+  panel's own list with that ICAO or IATA code is used; failing that the time is
+  **UTC, drawn dim** on the panel and labelled UTC in the portal. A guess - the
+  board airport's zone, say - could be hours out with nothing to show it.
+- **A custom airport needs a zone the table knows** (400 `add.tz is not a zone
+  this panel knows`). Every airport with an IATA code in mwgg/Airports has one
+  (7 908 of 7 908); only three Etc/GMT± airstrips do not. So do all 21 zones in
+  Home Assistant's real AeroAPI data (60 values). A record stored by an earlier
+  build without a known zone fails the check at boot and is left out, as the
+  world clock does with its cities.
+
+**Home Assistant's fallback** cannot be converted: its payload carries HH:MM
+already formatted in Home Assistant's zone and no date. It is shown as it
+comes, the header clock stays in the panel's own zone to match it, the header
+shows `HA` in the cue's place, and `/api/flightboard` says `board.times:
+"home-assistant"`, which the portal labels as the fallback.
 
 ### Airports
 
@@ -175,8 +213,9 @@ at most 6 h past; else the latest, shown but not current.
 | diverted | `DIVERT` | 30 min |
 
 There is no BOARDING: no AeroAPI field says boarding has started, so the gate
-stands in for it. The time shown is the departure until take-off, the arrival
-after. The row is the first of seven on a dark blue band (0,26,70) with a
+stands in for it (confirmed by the owner). The time shown is the departure
+until take-off, in the origin's time, and the arrival after, in the
+destination's (see Local time). The row is the first of seven on a dark blue band (0,26,70) with a
 bright blue bar; the board keeps six rows below it. Previews:
 `tools/flightboard/preview/*.png` (`python3 tools/flightboard/previews.py`).
 
@@ -198,7 +237,7 @@ so it is one result set at most.
 | lists for the selected airport only | | | |
 | board lists only while the page is on screen or was within | 120 s | fixed | a knob turned past the page and back is not a new visit |
 | floor per list, per airport and direction | 15 min (past lists 30) | 5–240 min | coming flights change more than landed ones; 5 min is about the fastest a status moves |
-| calls per UTC day, board and trackers together | 30 | 0–1000 | 0 turns the fetch off; 1000 is $5 a day |
+| calls per UTC day, board and trackers together | 30 | 0–1000 | 0 turns the fetch off, with no fallback to Home Assistant (confirmed by the owner); 1000 is $5 a day |
 | of which the board may use, while flights are tracked | all but a fifth | fixed | a board can wait, a take-off cannot |
 | calls per UTC month | 900 ($4.50) | 0–20000 ($100) | inside the Personal tier's $5 with $0.50 left for Home Assistant's own calls |
 | spacing between calls | 7 s | fixed | above 60 s / 10 |
@@ -264,6 +303,15 @@ spare, and `direct.sample` the start of the last answer's array.
   cadence, expiry, shown time and delay on eleven answers; the budget's bounds
   and messages, UTC day and month roll-over, the board's share, and the custom
   airport checks.
+- Local time: `fb_zone.h` over 245 280 instants - every hour and the second
+  before it, 2026 and 2027 - in Europe/London, Europe/Paris, America/New_York,
+  America/Phoenix (no summer time), Asia/Kolkata (+5:30), Australia/Lord_Howe
+  (a half-hour change) and America/Sao_Paulo, identical to Python's zoneinfo;
+  the EU changes of 29 March and 25 October 2026 and the US ones of 8 March and
+  1 November to the second; the cue's text; the panel offset from broken-down
+  time across midnight; the tracked end's zone - sent, from the list, a name the
+  table lacks falling through, UTC - and each end's zone parsed from a
+  `/flights/{ident}` answer, across zones and with a null zone.
 - The C++ transform over Home Assistant's own AeroAPI data (LHR arrivals and
   scheduled departures held by `sensor.aeroapi_*_board` at 20:32 on 2026-09-14,
   run locally, not stored): 15 records each parsed, none skipped, C++ = Python.
@@ -280,7 +328,10 @@ spare, and `direct.sample` the start of the last answer's array.
   `tools/flag_matrix.py`: **28/28** as intended, including `flight direct, no
   MQTT` and `flight direct + MQTT` building and `flight direct, no board` and
   `flight direct, no knob` refused.
-- `tools/flightboard/previews.py`: ten host renders with a pinned flight in
+- `tools/flightboard/previews.py`: host renders, now with London (cue -1, a
+  Nice departure in Nice time), New York (cue -6, an arrival in Nice time), a
+  tracked end with no zone (dim UTC) and the HA fallback (HA in the header).
+  Earlier: ten host renders with a pinned flight in
   `tools/flightboard/preview/`. The widest case (an ICAO ident and DELAY 125)
   showed the route one pixel from the ident; the route now keeps 4 px clear.
 
@@ -309,6 +360,12 @@ by the rail board.
 - An ident flying more than 15 times in the 71 h window: only the first page is
   read.
 - That SSL.com will ever issue under its 2022 root.
+- The cue on the panel: it is the airport's offset less the panel's, read from
+  the panel's own clock (getLocalTime), which was not run here; the host renders
+  assume a panel on Europe/Paris. How dim UTC reads on the blue band on the
+  panel itself.
+- Whether AeroAPI ever sends a zone name older than tzdata 2026c's, or an alias
+  outside its ten areas: none of the 60 seen did.
 - The key's length: 16–255 characters is accepted.
 - Airport data quality in mwgg/Airports, and whether its zone names are all
   current IANA names.

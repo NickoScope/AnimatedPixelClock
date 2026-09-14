@@ -16,11 +16,13 @@
     "EDDF",
     "EHAM"
   ],
-  "digest": "0d5b7ae42975fecc",
+  "digest": "b5a05bd5cc87e472",
   "font": "PicopixelFB",
   "geom": {
     "FB_ASCENT": 4,
+    "FB_CLOCK_MAX_W": 18,
     "FB_CODE_GAP": 2,
+    "FB_CUE_GAP": 3,
     "FB_FRESH_MIN": 30,
     "FB_GAP": 2,
     "FB_PIN_BAR_B": 255,

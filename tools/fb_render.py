@@ -10,7 +10,8 @@ judge the layout before hardware exists.
 
 The payload is the MQTT board, plus two optional keys the direct build adds:
 "name", the header name for an airport outside the built-in list, and
-"track", the pinned tracked-flight row: {"tm","fn","route","w","col":[r,g,b]}.
+"track", the pinned tracked-flight row: {"tm","fn","route","w","col":[r,g,b],"dim":bool},
+and "cue", the header's zone cue ("-1", "+6", "HA") drawn as flightboard.cpp does.
 """
 import json, sys, pathlib
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
@@ -61,6 +62,11 @@ def main():
     text(px, X_TIME, Y_HEADER, apt, (255,255,255))
     text(px, X_TIME + tw(apt) + 6, Y_HEADER, "DEPARTURES" if dep else "ARRIVALS", SIG)
     text(px, X_RIGHT - tw(b["upd"]), Y_HEADER, b["upd"], DIM)
+    cue = b.get("cue", "")
+    if cue:                                               # flightboard.cpp flightboardRender(), the cue
+        x = X_RIGHT - _g["FB_CLOCK_MAX_W"] - _g["FB_CUE_GAP"] - tw(cue)
+        if x >= X_TIME + tw(apt) + 6 + tw("DEPARTURES") + _g["FB_CUE_GAP"]:
+            text(px, x, Y_HEADER, cue, DIM)
     for x in range(W): px[x, Y_RULE] = RULE
 
     first = 0
@@ -70,7 +76,7 @@ def main():
         for yy in range(y, y + ROW_H - 1):
             for x in range(W): px[x, yy] = PIN_BG
             px[0, yy] = PIN_BAR
-        text(px, X_TIME, y, tr["tm"], (235, 240, 245))
+        text(px, X_TIME, y, tr["tm"], DIM if tr.get("dim") else (235, 240, 245))
         text(px, X_FLIGHT, y, tr["fn"], (235, 240, 245))
         x_route = max(X_DEST, X_FLIGHT + tw(tr["fn"]) + _g["FB_PIN_ROUTE_GAP"])
         x_word = X_RIGHT - tw(tr["w"])

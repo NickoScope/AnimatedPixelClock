@@ -523,7 +523,21 @@ function fbDur(s) {
   var h = Math.floor(s / 3600), m = Math.round((s % 3600) / 60);
   return h + ' h' + (m ? ' ' + m + ' min' : '');
 }
-function fbTime(t) { if (!t) return '--:--'; var d = new Date(t * 1000); return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2); }
+// Seconds east of UTC as "UTC+1", "UTC-4", "UTC+5:30".
+function fbUtc(off) {
+  if (off == null) return '';
+  var a = Math.abs(off), h = Math.floor(a / 3600), m = Math.round((a % 3600) / 60);
+  return 'UTC' + (off < 0 ? '-' : '+') + h + (m ? ':' + ('0' + m).slice(-2) : '');
+}
+// One end's local time from the panel, with the airport it is local to.
+function fbEnd(e, code, verb, done) {
+  if (!e) return '';
+  var hm = e.actHm || e.estHm || e.schedHm;
+  if (!hm) return '';
+  var where = e.zone === 'utc' ? 'UTC, no zone known' : code + ' time';
+  return (e.actHm ? done : verb) + ' ' + hm + ' ' + where +
+    (!e.actHm && e.estHm && e.schedHm && e.estHm !== e.schedHm ? ' (scheduled ' + e.schedHm + ')' : '');
+}
 function fbFold(s) { return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase(); }
 function fbPost(body, done, msgId) {
   return api('/api/flightboard', body).then(function (d) { fbSigCustom = fbSigTracks = ''; renderFb(d); note(msgId, done); return d; })
@@ -548,7 +562,8 @@ function renderFb(d) {
   setText('fbTag', d.showing ? 'on screen' : 'not on screen');
 
   var b = d.board || {}, rows = $('fbRows'), trk = d.tracked || [], direct = fbDirect(d);
-  var html = '<span class="h">time</span><span class="h">flight</span><span class="h">to / from</span><span class="h r">status</span>';
+  var local = b.times === 'airport';
+  var html = '<span class="h">' + (local ? 'local time' : 'HA time') + '</span><span class="h">flight</span><span class="h">to / from</span><span class="h r">status</span>';
   // The pinned rows, on the panel's own dark blue band.
   var PIN = ' style="background:#001a46;color:#ebf0f5;text-shadow:none"';
   trk.forEach(function (t) {
@@ -572,7 +587,11 @@ function renderFb(d) {
   if (rows) rows.innerHTML = html;
 
   var feed = $('fbFeed'), kv = [], sides = b.sides || {};
-  kv.push(['source', b.source === 'aeroapi' ? 'FlightAware AeroAPI, fetched by the panel' : b.source === 'mqtt' ? 'Home Assistant over MQTT' : 'none: only the six built-in airports come from Home Assistant', b.source === 'none' ? 'pn-warn' : '']);
+  kv.push(['source', b.source === 'aeroapi' ? 'FlightAware AeroAPI, fetched by the panel' : b.source === 'mqtt' ? 'fallback: Home Assistant over MQTT (no AeroAPI key on the panel)' : 'none: only the six built-in airports come from Home Assistant', b.source === 'aeroapi' ? '' : 'pn-warn']);
+  var sel0 = (d.airports || []).filter(function (a) { return a.id === d.airport; })[0] || {};
+  kv.push(['times', local ? 'local at ' + (sel0.iata || sel0.code || 'the airport') + ' · ' + (b.tz || '?') + (b.utcOffset != null ? ' · ' + fbUtc(b.utcOffset) : '') +
+    (b.cue ? ' · the panel shows ' + b.cue + ' h beside its clock' : '') + '; tracked flights depart in their origin\'s time and arrive in their destination\'s'
+    : "Home Assistant's own zone, as it sends them preformatted; they cannot be converted. The panel's clock and the HA mark in its header say so.", local ? '' : 'pn-warn']);
   ['arr', 'dep'].forEach(function (k) {
     var s = sides[k] || {}, wanted = d.dir === 'alt' || d.dir === k;
     kv.push([k === 'arr' ? 'arrivals' : 'departures', s.have ? s.n + ' flights, data from ' + s.upd : (wanted ? 'waiting' : 'not shown'), s.have || !wanted ? '' : 'pn-warn']);
@@ -620,10 +639,9 @@ function renderFbTracks(d) {
   trk.forEach(function (t) {
     var what = [], when = [];
     if (t.from) what.push(t.from + ' to ' + t.to);
-    var dep = t.dep || {}, arr = t.arr || {};
-    if (dep.act || dep.est || dep.sched) what.push((dep.act ? 'left the gate ' : 'departs ') + fbTime(dep.act || dep.est || dep.sched) +
-      (!dep.act && dep.est && dep.sched && dep.est !== dep.sched ? ' (scheduled ' + fbTime(dep.sched) + ')' : ''));
-    if (arr.act || arr.est || arr.sched) what.push((arr.act ? 'landed ' : 'arrives ') + fbTime(arr.act || arr.est || arr.sched));
+    var dep = fbEnd(t.dep, t.from, 'departs', 'left the gate'), arr = fbEnd(t.arr, t.to, 'arrives', 'landed');
+    if (dep) what.push(dep);
+    if (arr) what.push(arr);
     if (t.gate) what.push('gate ' + t.gate);
     if (t.age != null) when.push('asked ' + fbDur(t.age) + ' ago');
     when.push(t.nextIn < 0 ? 'no more calls' : t.nextIn === 0 ? 'due' : 'next in ' + fbDur(t.nextIn));

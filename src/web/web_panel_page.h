@@ -121,7 +121,7 @@ static const char PANEL_PAGES_HTML[] PROGMEM = R"PNL(<link rel="stylesheet" href
       <section class="page" data-page="pflights" data-need="flights">
         <div class="page-header">
           <h1 class="page-h1">Flight board</h1>
-          <p class="page-lede">Arrivals and departures for any airport, with up to three flights you follow pinned to the top row. With a FlightAware AeroAPI key the panel fetches them itself, within the budget below; without one, the six built-in airports come from Home Assistant over MQTT. The knob and this page choose the same airport, and it is still there after a reboot.</p>
+          <p class="page-lede">Arrivals and departures for any airport, in that airport's local time, with up to three flights you follow pinned to the top row. With a FlightAware AeroAPI key the panel fetches them itself, within the budget below; without one, the six built-in airports come from Home Assistant over MQTT. The knob and this page choose the same airport, and it is still there after a reboot.</p>
         </div>
 
         <div class="card">
@@ -166,7 +166,7 @@ static const char PANEL_PAGES_HTML[] PROGMEM = R"PNL(<link rel="stylesheet" href
             <button type="button" class="btn btn-accent" id="fbTrackAdd">Track</button>
           </div>
           <div class="pn-list" id="fbTracks"></div>
-          <p class="field-hint">A tracked flight takes the board's first row on arrivals and departures alike, taking turns when there are several. It is asked for more often as departure nears - every 6 h a day ahead, every 10 min in the last hour and while it taxies - and removes itself 2 h after landing, or 6 h after a cancelled departure. Times on this page are this browser's; the panel shows its own.</p>
+          <p class="field-hint">A tracked flight takes the board's first row on arrivals and departures alike, taking turns when there are several. It is asked for more often as departure nears - every 6 h a day ahead, every 10 min in the last hour and while it taxies - and removes itself 2 h after landing, or 6 h after a cancelled departure. Departure times are in the origin airport's local time and arrival times in the destination's, here and on the panel; a time with no zone to go by is given in UTC, and drawn dim on the panel.</p>
         </div>
 
         <div class="card" id="fbAddCard" hidden>

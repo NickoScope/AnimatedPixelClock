@@ -165,11 +165,8 @@ inline bool validIata(const char *s) {
   return strlen(s) == 3 && upper(s[0]) && upper(s[1]) && upper(s[2]);
 }
 
-// An IANA zone name as the tz database writes them ("Europe/Paris",
-// "America/Argentina/Buenos_Aires", "UTC"), or "". Only the shape is checked:
-// the board does not convert times with it (its times stay in the panel's own
-// zone, as Home Assistant's as_local put them), so a name this panel's zone
-// table lacks is still worth keeping.
+// The shape of an IANA zone name ("Europe/Paris", "America/Argentina/Buenos_Aires",
+// "UTC"), or "". checkAirport also requires the zone table to know it.
 inline bool validTz(const char *s) {
   if (!s) return false;
   const size_t n = strlen(s);
@@ -186,8 +183,11 @@ inline bool validTz(const char *s) {
 }
 
 // Why a custom airport cannot be kept, or nullptr. `width` gives a name's
-// width in pixels as the page draws it.
-inline const char *checkAirport(const FbAirport &a, int (*width)(const char *)) {
+// width in pixels as the page draws it; `knownTz` whether the panel's zone
+// table has a name. The zone is required: the board shows times in it. Every
+// airport with an IATA code in mwgg/Airports, the portal's search, has a zone
+// tzdata 2026c knows (7 908 of 7 908, checked 2026-09-14).
+inline const char *checkAirport(const FbAirport &a, int (*width)(const char *), bool (*knownTz)(const char *)) {
   if (!validIcao(a.icao)) return "add.icao must be 4 capitals or digits, starting with a letter";
   if (!validIata(a.iata)) return "add.iata must be 3 capitals, or empty";
   const size_t n = strlen(a.name);
@@ -200,7 +200,8 @@ inline const char *checkAirport(const FbAirport &a, int (*width)(const char *)) 
       return "add.name must not start or end with a space, or have two in a row";
   }
   if (width && width(a.name) > FB_APT_NAME_PX) return "add.name is too wide for the panel's header";
-  if (!validTz(a.tz)) return "add.tz must be an IANA zone name such as Europe/Paris";
+  if (!a.tz[0] || !validTz(a.tz)) return "add.tz must be an IANA zone name such as Europe/Paris";
+  if (knownTz && !knownTz(a.tz)) return "add.tz is not a zone this panel knows";
   return nullptr;
 }
 
