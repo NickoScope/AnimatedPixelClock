@@ -1,4 +1,5 @@
-// The Panel group's script, served from /panel.js. Included by web_panel_page.h.
+// The Panel group's script, served from /panel.js as the gzip copy in
+// web_assets.h (tools/web_assets_gen.py). Included by web_panel_page.h.
 //
 // Loaded before portal.js on purpose: it removes the pages this build does not
 // carry (data-need) before portal.js collects the navigation. Everything else

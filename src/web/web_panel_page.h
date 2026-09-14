@@ -8,6 +8,9 @@
 //   PANEL_CSS         served from /panel.css (cached like portal.css)
 //   PANEL_JS          served from /panel.js (web_panel_js.h)
 //
+// PANEL_CSS and PANEL_JS are not compiled: tools/web_assets_gen.py gzips them
+// into web_assets.h, and that copy is what the routes send.
+//
 // Both HTML blobs go through the same %TOKEN% resolver as PAGE_HTML, so a
 // percent sign followed by capitals must not appear in their text.
 //

@@ -19,6 +19,7 @@
 #include "../viz/visualizer.h"
 #include "../weather/weather.h"
 #include "web_pages.h"
+#include "web_assets.h"   // portal.css/js, favicon and panel.css/js as gzip
 #include "web_panel.h"
 #if defined(CONTROL_ENCODER_ENABLED)
 #include "web_panel_page.h"   // the Panel group's markup, style and script
@@ -1289,41 +1290,43 @@ void handleRoot() {
   streamTemplate(PAGE_HTML, sizeof(PAGE_HTML) - 1);
 }
 
-// Stream a static PROGMEM asset (CSS/JS) in chunks. These contain no %TOKEN%s,
-// so they are emitted verbatim and cached hard by the browser (fetched once).
-static void streamStatic(const char* data, size_t len, const char* contentType) {
+// Send a static asset: a gzip blob from web_assets.h (tools/web_assets_gen.py),
+// cached hard by the browser (fetched once). Every browser takes gzip, and no
+// uncompressed copy is kept: the 4MB boards have no room for two.
+static void streamStatic(const uint8_t* gz, size_t len, const char* contentType) {
   netMarkHttp();
   server.sendHeader("Cache-Control", "public, max-age=31536000, immutable");
+  server.sendHeader("Content-Encoding", "gzip");
   server.setContentLength(len);
   server.send(200, contentType, "");
   // PROGMEM is memory-mapped on ESP32, so it can feed send() directly.
   WiFiClient client = server.client();
   int sock = client.fd();
   if (sock < 0 ||
-      !writeAllGuarded(sock, data, len, millis() + STREAM_TOTAL_LIMIT_MS)) {
+      !writeAllGuarded(sock, (const char*)gz, len, millis() + STREAM_TOTAL_LIMIT_MS)) {
     client.stop(); // stalled client - drop it, keep the clock alive
   }
 }
 
 void handlePortalCss() {
-  streamStatic(PORTAL_CSS, sizeof(PORTAL_CSS) - 1, "text/css");
+  streamStatic(WEB_PORTAL_CSS_GZ, sizeof(WEB_PORTAL_CSS_GZ), "text/css");
 }
 
 void handlePortalJs() {
-  streamStatic(PORTAL_JS, sizeof(PORTAL_JS) - 1, "application/javascript");
+  streamStatic(WEB_PORTAL_JS_GZ, sizeof(WEB_PORTAL_JS_GZ), "application/javascript");
 }
 
 void handleFavicon() {
-  streamStatic(FAVICON_SVG, sizeof(FAVICON_SVG) - 1, "image/svg+xml");
+  streamStatic(WEB_FAVICON_GZ, sizeof(WEB_FAVICON_GZ), "image/svg+xml");
 }
 
 #if defined(CONTROL_ENCODER_ENABLED)
 static void handlePanelCss() {
-  streamStatic(PANEL_CSS, sizeof(PANEL_CSS) - 1, "text/css");
+  streamStatic(WEB_PANEL_CSS_GZ, sizeof(WEB_PANEL_CSS_GZ), "text/css");
 }
 
 static void handlePanelJs() {
-  streamStatic(PANEL_JS, sizeof(PANEL_JS) - 1, "application/javascript");
+  streamStatic(WEB_PANEL_JS_GZ, sizeof(WEB_PANEL_JS_GZ), "application/javascript");
 }
 #endif
 

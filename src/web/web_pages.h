@@ -3,9 +3,12 @@
 //
 // Four PROGMEM blobs:
 //   PAGE_HTML  - markup + %TOKEN% placeholders, streamed/substituted by handleRoot().
-//   PORTAL_CSS - styles, served verbatim from /portal.css (no tokens, long cache).
-//   PORTAL_JS  - interactions, served verbatim from /portal.js (no tokens, long cache).
+//   PORTAL_CSS - styles, served from /portal.css (no tokens, long cache).
+//   PORTAL_JS  - interactions, served from /portal.js (no tokens, long cache).
 //   FAVICON_SVG - brand mark, served from /favicon.svg and /favicon.ico.
+//
+// PORTAL_CSS, PORTAL_JS and FAVICON_SVG are not compiled: tools/web_assets_gen.py
+// gzips them into web_assets.h, and that copy is what the routes send.
 //
 // Keeping CSS/JS on their own cacheable routes leaves PAGE_HTML small so peak
 // heap during the token-substituted render stays low on the ESP32-C3.
