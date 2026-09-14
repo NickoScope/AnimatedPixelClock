@@ -24,16 +24,7 @@
 #include <stdint.h>
 #include <ArduinoJson.h>
 
-#define FB_MAX_ROWS 15   // the HA side sends at most 15
-#define FB_FN_LEN   9
-#define FB_TM_LEN   6
-#define FB_CT_LEN   5
-#define FB_CY_LEN   15   // city name, or ct when HA sends no name
-#define FB_CITY_MAX 10   // characters shown in the destination column
-
-enum FbStatus : uint8_t {
-  FB_SCHED = 0, FB_BOARD, FB_DEP, FB_LAND, FB_DELAY, FB_CANC, FB_UNKNOWN
-};
+#include "fb_model.h"   // sizes, FbStatus, FbAirport, the tracked-flight states
 
 // Feed the page a payload. Returns false and leaves the previous board intact
 // if the JSON is malformed - a bad message must not blank a working display.
