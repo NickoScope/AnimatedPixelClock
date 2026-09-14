@@ -82,7 +82,9 @@ static bool         s_conn     = false;
 static bool         s_subbed   = false;
 static bool         s_noKey    = false;
 static uint8_t      s_scroll   = 0;      // first table row shown
-static bool         s_bySize   = false;   // false = by range
+// By length, longest first: the owner's order for the list (2026-09-14). The
+// knob and the portal can still switch to range.
+static bool         s_bySize   = true;    // false = by range
 static String       s_key;
 static WebSocketsClient s_ws;
 
@@ -91,6 +93,38 @@ static YrVessel *find(uint32_t mmsi) {
   for (uint8_t i = 0; i < s_count; i++)
     if (s_v[i].mmsi == mmsi) return &s_v[i];
   return NULL;
+}
+
+// Static data - length and type - comes about every six minutes per vessel
+// (see onMessage), and often for a hull that has no slot yet: before its first
+// position in the box, or while the table is full. Dropping it then leaves the
+// row without a length for another six minutes, which is what the owner saw.
+// The last sizes seen are kept here and handed over when the vessel is plotted.
+struct YrStatic { uint32_t mmsi; uint16_t length_m; uint8_t ship_type; };
+static const uint8_t YR_STATIC_CACHE = 32;
+static YrStatic s_static[YR_STATIC_CACHE];
+static uint8_t  s_staticNext = 0;
+
+static void rememberStatic(uint32_t mmsi, uint16_t len, uint8_t type) {
+  if (!len && !type) return;
+  for (YrStatic &s : s_static)
+    if (s.mmsi == mmsi) {
+      if (len)  s.length_m  = len;
+      if (type) s.ship_type = type;
+      return;
+    }
+  s_static[s_staticNext] = {mmsi, len, type};          // oldest entry goes
+  s_staticNext = (uint8_t)((s_staticNext + 1) % YR_STATIC_CACHE);
+}
+
+static void recallStatic(YrVessel *v) {
+  if (v->length_m && v->ship_type) return;
+  for (const YrStatic &s : s_static)
+    if (s.mmsi == v->mmsi) {
+      if (!v->length_m)  v->length_m  = s.length_m;
+      if (!v->ship_type) v->ship_type = s.ship_type;
+      return;
+    }
 }
 
 static float distDac(const YrVessel &v) {
@@ -175,11 +209,15 @@ static void onMessage(const char *payload, size_t len) {
   const uint32_t mmsi = meta["MMSI"] | 0U;
   if (!mmsi) return;
 
-  // Length and type, from whichever message carries them.
-  auto applyStatic = [](YrVessel *v, JsonObjectConst dim, uint8_t shipType) {
+  // Length and type, from whichever message carries them: kept for later, and
+  // applied now if the vessel is already on the plot.
+  auto takeStatic = [mmsi](JsonObjectConst dim, uint8_t shipType) {
     const uint16_t l = (uint16_t)((dim["A"] | 0) + (dim["B"] | 0));
-    if (l) v->length_m = l;
-    if (shipType) v->ship_type = shipType;
+    rememberStatic(mmsi, l, shipType);
+    if (YrVessel *v = find(mmsi)) {
+      if (l)        v->length_m  = l;
+      if (shipType) v->ship_type = shipType;
+    }
   };
 
   JsonObjectConst msg = doc["Message"];
@@ -192,6 +230,7 @@ static void onMessage(const char *payload, size_t len) {
     if (pos["Latitude"].isNull() || pos["Longitude"].isNull()) return;
     s_positions++;
     YrVessel *v = slotFor(mmsi);
+    recallStatic(v);
     v->lat = pos["Latitude"].as<float>();
     v->lon = pos["Longitude"].as<float>();
     v->sog = pos["Sog"] | 0.0f;
@@ -204,22 +243,19 @@ static void onMessage(const char *payload, size_t len) {
         v->name[i] = '\0';
     }
     if (!strcmp(type, "ExtendedClassBPositionReport"))    // carries its own size
-      applyStatic(v, pos["Dimension"], pos["Type"] | 0);
+      takeStatic(pos["Dimension"], pos["Type"] | 0);
     v->last_seen = millis();
     s_lastPos = v->last_seen;
   } else if (!strcmp(type, "ShipStaticData")) {
     JsonObjectConst sd = msg["ShipStaticData"];
-    YrVessel *v = find(mmsi);
-    if (!v) return;
-    applyStatic(v, sd["Dimension"], sd["Type"] | 0);
+    takeStatic(sd["Dimension"], sd["Type"] | 0);
   } else if (!strcmp(type, "StaticDataReport")) {
     // Class B static data comes in two parts; part B (PartNumber true) holds the
     // dimensions and type, part A only the name that MetaData already gives.
     JsonObjectConst sr = msg["StaticDataReport"];
-    YrVessel *v = find(mmsi);
-    if (!v || !(sr["PartNumber"] | false)) return;
+    if (!(sr["PartNumber"] | false)) return;
     JsonObjectConst rb = sr["ReportB"];
-    applyStatic(v, rb["Dimension"], rb["ShipType"] | 0);
+    takeStatic(rb["Dimension"], rb["ShipType"] | 0);
   }
 }
 
@@ -662,6 +698,7 @@ void yachtRadarStatusJson(JsonObject out) {
     o["sog"] = v.sog;
     if (v.length_m) o["len"] = v.length_m;
     o["m"]   = (uint8_t)motionOf(v);          // 0 anchored, 1 manoeuvring, 2 under way
+    if (v.length_m) o["len"] = v.length_m;    // metres, once static data has come
   }
 }
 
