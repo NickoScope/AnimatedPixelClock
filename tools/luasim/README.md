@@ -48,6 +48,30 @@ end
 `px.t()` being a phase and not a clock is one of the three rules the flagship
 project calls *cannot be otherwise* — mixing the two is the classic bug.
 
+Two optional globals matter only on the panel, and luasim ignores both:
+
+| Global | Default | |
+|---|---|---|
+| `PERIOD` | `60` | seconds `px.t()` spans. The panel takes the phase from the wall clock, so at 60 it is the second hand and a clock's change lands on the minute. `room_radar.lua` sets it to its 24 s story |
+| `FPS` | `20` | the effect's frame cap, 1–30 |
+
+## On the panel
+
+Every script here except `demo.lua` and `world_clock.lua` (a native page
+already) is compiled into the firmware as a page of its own — see
+[`src/lua/README.md`](../../src/lua/README.md).
+
+```bash
+python3 gen_effects.py          # after editing a script: regenerate the embedded copy
+python3 fx_parity.py            # the firmware's runtime against luasim, pixel for pixel
+```
+
+`gen_effects.py --check` runs in the pre-commit hook. `fx_parity.py` builds
+`fxhost` — the firmware's own `src/lua/lua_fx.cpp`, `lua_px.cpp` and
+`nslua_sandbox.cpp` against a stand-in display — renders every script through
+both at several clocks, and prints each script's exact instruction counts, heap
+peak and host draw time.
+
 ## The API
 
 | Call | |
@@ -81,7 +105,8 @@ Deliberately. These are hardware properties, and answering them is the point of
 the bring-up bench rather than of this tool:
 
 - the PSRAM allocator, and whether a Lua heap competes with the HUB75 DMA
-- the instruction-budget hook and the wall-clock deadline
+- the instruction-budget hook and the wall-clock deadline (`fxhost` does run
+  them, with the panel's budgets, under `fx_parity.py`)
 - the dedicated task's C stack, which is what stops a hostile nested script
   from overflowing the parser's stack at compile time
 

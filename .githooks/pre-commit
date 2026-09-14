@@ -38,3 +38,14 @@ if git diff --cached --name-only | grep -qE '^(tools/luasim/gen_world\.py|tools/
     exit 1
   }
 fi
+
+# The Lua effects are embedded in the firmware from the scripts luasim runs.
+# Checked offline, like the world map: the generator needs only the scripts.
+if git diff --cached --name-only | grep -qE '^(tools/luasim/gen_effects\.py|tools/luasim/scripts/.*\.lua|src/lua/lua_effects_scripts\.h)$'; then
+  python3 tools/luasim/gen_effects.py --check || {
+    echo
+    echo "pre-commit: the embedded Lua effects have drifted from tools/luasim/scripts/."
+    echo "            run  python3 tools/luasim/gen_effects.py  and stage the header."
+    exit 1
+  }
+fi

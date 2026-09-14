@@ -22,6 +22,7 @@ local deg, rad = math.deg, math.rad
 local fmt, byte, char = string.format, string.byte, string.char
 
 local STORY  = 24.0            -- seconds the scripted scene lasts; px.t() spans it
+PERIOD = STORY                 -- a global: the panel's px.t() spans PERIOD seconds (default 60)
 local CX, CY = 63.5, 63.0      -- the sensor
 local PPM    = 10              -- pixels per metre
 local RANGE, HALF = 6.0, 60    -- metres, and degrees either side
