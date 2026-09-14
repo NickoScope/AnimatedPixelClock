@@ -3,6 +3,7 @@
 #if defined(CONTROL_ENCODER_ENABLED)
 
 #include <Arduino.h>
+#include <esp_timer.h>
 
 // ---------------------------------------------------------------- pins
 // From the vendor schematic (reference-drawings/controller in the knowledge
@@ -40,72 +41,137 @@
   #error "CONTROL_ENCODER_ENABLED: no pin map for this board"
 #endif
 
-// The decoder and the switch are the NickoScope32 S3 bridge's, ported as they
-// are (flagship main.cpp, initEnc/readEnc/readSw and the v33.0.5 dispatch):
-// years on the owner's own KY-040 knobs, where a hand-written transition-table
-// decoder on this board did not work on the first try. Kept 1:1 on purpose.
+// The decoder is the NickoScope32 S3 bridge's (flagship main.cpp readEnc and
+// the v33.0.5 rest-position dispatch): the Forbes table over a 4-bit history,
+// and a step only when A and B are back at a detent. Three things changed after
+// it ran on this board and missed clicks - which the owner says the flagship
+// suffered from too:
 //
-//   - Forbes table over a 4-bit history of B and A: +-1 per transition.
-//   - REST-POSITION GATE: a detent is dispatched only when A and B are back at
-//     rest (both HIGH through the pull-ups, 0b11). That folds the "click down"
-//     and "click up" halves of one detent into one step, whatever the part.
-//   - 80 ms after a dispatch the pins are not decoded at all, and the history
-//     is re-synced from the pins, so bounce cannot build a phantom step.
-//   - The switch: three low samples start a press; released under 500 ms it is
-//     a click, held past 1000 ms it is a long press (fired once, while held).
-static const uint32_t kEncDebounceMs    = 80;
-static const uint32_t kSwShortMaxMs     = 500;
-static const uint32_t kSwLongMs         = 1000;
-
-#ifndef CTRL_AB_ACTIVE_HIGH
-#define CTRL_AB_ACTIVE_HIGH 0      // common to GND, internal pull-ups: the flagship's wiring
-#endif
+//   - It is sampled every millisecond by an esp_timer, not once per loop().
+//     loop() renders, talks MQTT and serves the web page, and one pass can take
+//     tens of milliseconds; a quadrature state shorter than that was never seen,
+//     and the step it belonged to was lost.
+//   - A detent is not always at A=B=1. Knobs with a detent every half cycle also
+//     rest at A=B=0, and a gate that accepts only 11 drops every other click. A
+//     knob seen resting at 00 switches the gate to both states, once, for good.
+//   - The flagship's 80 ms lock-out after a step, needed at loop speed, drops
+//     every step of a turn faster than about 12 clicks a second. At 1 kHz the
+//     table and the rest gate reject bounce by themselves, so it is
+//     CTRL_ENC_LOCKOUT_MS, 10 ms by default.
+//
+// The switch is sampled by the same timer: pressed after CTRL_SW_DEBOUNCE_MS of
+// steady LOW, a click if released within 500 ms, a long press once held for a
+// second - the flagship's thresholds.
 
 // CTRL_REVERSE 1 if clockwise walks backwards - instead of swapping A and B.
 #ifndef CTRL_REVERSE
 #define CTRL_REVERSE 0
 #endif
+#ifndef CTRL_ENC_LOCKOUT_MS
+#define CTRL_ENC_LOCKOUT_MS 10
+#endif
+#ifndef CTRL_SW_DEBOUNCE_MS
+#define CTRL_SW_DEBOUNCE_MS 20
+#endif
+// -1 find out from the knob (default), 0 detents at 11 only, 1 at 11 and 00.
+#ifndef CTRL_ENC_HALF_DETENT
+#define CTRL_ENC_HALF_DETENT -1
+#endif
+
+static const uint64_t kSampleUs     = 1000;
+static const uint32_t kSwShortMaxMs = 500;
+static const uint32_t kSwLongMs     = 1000;
+static const uint32_t kRestSeenMs   = 250;   // 00 held this long is a detent, not a passing state
 
 static const int kEncTab[16] = {0,-1,0,0, 1,0,0,0, 0,0,0,1, 0,0,-1,0};
 
+// Single producer (the sampling task) and single consumer (loop()): the head is
+// written only by the producer, the tail only by the consumer.
+static CtrlEvent        s_q[16];
+static volatile uint8_t s_qHead = 0;
+static volatile uint8_t s_qTail = 0;
+
+static bool     s_timerOk = false;
 static int      s_encDir = 0;
 static int      s_lastEnc = 0;
-static uint32_t s_lastDispatchMs = 0;
+static uint32_t s_lastStepMs = 0;
+static int8_t   s_halfDetent = CTRL_ENC_HALF_DETENT;
+static int      s_prevAB = -1;
+static uint32_t s_abSinceMs = 0;
 
-static int      s_swHist = 0;
-static uint32_t s_swPressStart = 0;
-static bool     s_swLongDone = false;
+static bool     s_swRaw = false;         // last sample, true = pressed
+static uint32_t s_swRawSinceMs = 0;
+static volatile bool s_swDown = false;   // debounced
+static uint32_t s_swDownAtMs = 0;
+static bool     s_swLongSent = false;
 
-// A tiny ring: a fast twist can outrun one frame, and dropping detents makes a
-// knob feel broken in a way users never forgive.
-static CtrlEvent s_q[16];
-static uint8_t   s_qHead = 0, s_qTail = 0;
-
-// CTRL_DEBUG: pin levels, transitions and every event on serial - for telling
-// wiring from firmware when a knob does nothing. Build with
-// PLATFORMIO_BUILD_FLAGS=-DCTRL_DEBUG; never in a release.
+// CTRL_DEBUG: pin levels, the detent mode, transition and step counts, and every
+// event, on serial. Build with PLATFORMIO_BUILD_FLAGS=-DCTRL_DEBUG; never in a
+// release.
 #if defined(CTRL_DEBUG)
-static uint32_t s_dbgIdleAt = 0;
-static int      s_dbgPrevAB = -1;
+static volatile uint32_t s_dbgTransitions = 0;
+static volatile uint32_t s_dbgSteps = 0;
+static uint32_t s_dbgAt = 0;
 #endif
+
+// Logical contact levels: 1 = open, as with the flagship's pull-ups, whichever
+// way this board is wired.
+static inline int pinA() { return CTRL_AB_ACTIVE_HIGH ? !digitalRead(CTRL_PIN_A) : digitalRead(CTRL_PIN_A); }
+static inline int pinB() { return CTRL_AB_ACTIVE_HIGH ? !digitalRead(CTRL_PIN_B) : digitalRead(CTRL_PIN_B); }
+static inline int encAB() { return (pinB() << 1) | pinA(); }   // B bit 1, A bit 0
 
 static void push(CtrlEvent e) {
-#if defined(CTRL_DEBUG)
-  Serial.printf("[ctrl] event %s\n", e == CTRL_CW ? "CW" : e == CTRL_CCW ? "CCW" : e == CTRL_PRESS ? "PRESS" : "LONG");
-#endif
   const uint8_t n = (uint8_t)((s_qHead + 1) % 16);
   if (n == s_qTail) return;         // full: drop the newest, keep the order
   s_q[s_qHead] = e;
   s_qHead = n;
 }
 
-// Logical contact levels: 1 = open, as with the flagship's pull-ups, whichever
-// way this board is wired.
-static inline int pinA() { return CTRL_AB_ACTIVE_HIGH ? !digitalRead(CTRL_PIN_A) : digitalRead(CTRL_PIN_A); }
-static inline int pinB() { return CTRL_AB_ACTIVE_HIGH ? !digitalRead(CTRL_PIN_B) : digitalRead(CTRL_PIN_B); }
+static void sampleTick(void *) {
+  const uint32_t now = millis();
 
-static inline int encAB() {        // B is bit 1, A is bit 0 - as in the flagship
-  return (pinB() << 1) | pinA();
+  // ---- rotation
+  const int ab = encAB();
+  if (ab != s_prevAB) {
+    s_prevAB = ab;
+    s_abSinceMs = now;
+#if defined(CTRL_DEBUG)
+    s_dbgTransitions = s_dbgTransitions + 1;
+#endif
+  }
+  if (s_halfDetent < 0 && ab == 0b00 && (now - s_abSinceMs) >= kRestSeenMs) s_halfDetent = 1;
+
+  if ((now - s_lastStepMs) < CTRL_ENC_LOCKOUT_MS) {
+    s_encDir = 0;
+    s_lastEnc = ab * 5;             // old = new
+  } else {
+    s_lastEnc = (s_lastEnc >> 2) | (ab << 2);
+    s_encDir += kEncTab[s_lastEnc & 0x0F];
+  }
+  const bool atDetent = (ab == 0b11) || (s_halfDetent == 1 && ab == 0b00);
+  if (s_encDir != 0 && atDetent) {
+    s_lastStepMs = now;
+    const bool forward = (s_encDir > 0) != (CTRL_REVERSE != 0);
+    s_encDir = 0;
+    s_lastEnc = ab * 5;
+    push(forward ? CTRL_CW : CTRL_CCW);
+#if defined(CTRL_DEBUG)
+    s_dbgSteps = s_dbgSteps + 1;
+#endif
+  }
+
+  // ---- switch
+  const bool raw = (digitalRead(CTRL_PIN_SW) == LOW);
+  if (raw != s_swRaw) { s_swRaw = raw; s_swRawSinceMs = now; }
+  if (raw != s_swDown && (now - s_swRawSinceMs) >= CTRL_SW_DEBOUNCE_MS) {
+    s_swDown = raw;
+    if (raw) { s_swDownAtMs = now; s_swLongSent = false; }
+    else if (!s_swLongSent && (now - s_swDownAtMs) < kSwShortMaxMs) push(CTRL_PRESS);
+  }
+  if (s_swDown && !s_swLongSent && (now - s_swDownAtMs) >= kSwLongMs) {
+    s_swLongSent = true;
+    push(CTRL_LONG);
+  }
 }
 
 void controlBegin() {
@@ -117,74 +183,52 @@ void controlBegin() {
   pinMode(CTRL_PIN_B,  INPUT_PULLUP);
 #endif
   pinMode(CTRL_PIN_SW, INPUT_PULLUP);      // BOOT: pressed pulls GPIO0 to GND
-  s_lastEnc = encAB() * 5;         // old = new
+  s_prevAB = encAB();
+  s_abSinceMs = millis();
+  s_lastEnc = s_prevAB * 5;
   s_encDir = 0;
   s_qHead = s_qTail = 0;
+
+  esp_timer_create_args_t args = {};
+  args.callback = sampleTick;
+  args.arg = nullptr;
+  args.dispatch_method = ESP_TIMER_TASK;
+  args.name = "ctrl";
+  esp_timer_handle_t timer = nullptr;
+  s_timerOk = esp_timer_create(&args, &timer) == ESP_OK &&
+              esp_timer_start_periodic(timer, kSampleUs) == ESP_OK;
 #if defined(CTRL_DEBUG)
-  Serial.printf("[ctrl] begin: A(IO%d)=%d B(IO%d)=%d SW(IO%d)=%d\n",
+  Serial.printf("[ctrl] begin: A(IO%d)=%d B(IO%d)=%d SW(IO%d)=%d, sampling %s, lockout %d ms\n",
                 CTRL_PIN_A, digitalRead(CTRL_PIN_A), CTRL_PIN_B, digitalRead(CTRL_PIN_B),
-                CTRL_PIN_SW, digitalRead(CTRL_PIN_SW));
+                CTRL_PIN_SW, digitalRead(CTRL_PIN_SW), s_timerOk ? "1 kHz timer" : "loop (timer failed)",
+                CTRL_ENC_LOCKOUT_MS);
 #endif
 }
 
 void controlLoop() {
-  const uint32_t now = millis();
-
+  if (!s_timerOk) sampleTick(nullptr);    // no timer: sample at loop speed, as before
 #if defined(CTRL_DEBUG)
-  const int ab = encAB();
-  if (ab != s_dbgPrevAB) {
-    Serial.printf("[ctrl] AB %d%d\n", (ab >> 1) & 1, ab & 1);
-    s_dbgPrevAB = ab;
-  }
-  if (now - s_dbgIdleAt > 5000) {
-    s_dbgIdleAt = now;
-    Serial.printf("[ctrl] levels A=%d B=%d SW=%d\n", digitalRead(CTRL_PIN_A),
-                  digitalRead(CTRL_PIN_B), digitalRead(CTRL_PIN_SW));
+  if (millis() - s_dbgAt > 5000) {
+    s_dbgAt = millis();
+    Serial.printf("[ctrl] levels A=%d B=%d SW=%d | detents %s | transitions %u steps %u\n",
+                  digitalRead(CTRL_PIN_A), digitalRead(CTRL_PIN_B), digitalRead(CTRL_PIN_SW),
+                  s_halfDetent == 1 ? "11+00" : s_halfDetent == 0 ? "11" : "11 (watching for 00)",
+                  (unsigned)s_dbgTransitions, (unsigned)s_dbgSteps);
   }
 #endif
-
-  // ---- rotation: debounce gate, decode, rest-position dispatch
-  if ((now - s_lastDispatchMs) < kEncDebounceMs) {
-    s_encDir = 0;
-    s_lastEnc = encAB() * 5;
-  } else {
-    s_lastEnc = (s_lastEnc >> 2) | (pinB() << 3) | (pinA() << 2);
-    s_encDir += kEncTab[s_lastEnc & 0x0F];
-  }
-  if (s_encDir != 0 && encAB() == 0b11) {
-    s_lastDispatchMs = now;
-    const bool forward = (s_encDir > 0) != (CTRL_REVERSE != 0);
-    s_encDir = 0;
-    s_lastEnc = 0b11 * 5;
-    push(forward ? CTRL_CW : CTRL_CCW);
-  }
-
-  // ---- switch: the flagship's readSw, minus its AP-mode gesture
-  if (digitalRead(CTRL_PIN_SW) == LOW) {
-    s_swHist++;
-    if (s_swHist == 3 && s_swPressStart == 0) s_swPressStart = now;
-    if (s_swPressStart && (now - s_swPressStart) > kSwLongMs && !s_swLongDone) {
-      s_swLongDone = true;
-      push(CTRL_LONG);
-    }
-  } else {
-    if (s_swHist > 0 && s_swPressStart && !s_swLongDone) {
-      if ((now - s_swPressStart) < kSwShortMaxMs) push(CTRL_PRESS);
-    }
-    s_swHist = 0;
-    s_swPressStart = 0;
-    s_swLongDone = false;
-  }
 }
 
 CtrlEvent controlTake() {
   if (s_qTail == s_qHead) return CTRL_NONE;
   const CtrlEvent e = s_q[s_qTail];
   s_qTail = (uint8_t)((s_qTail + 1) % 16);
+#if defined(CTRL_DEBUG)
+  Serial.printf("[ctrl] event %s\n", e == CTRL_CW ? "CW" : e == CTRL_CCW ? "CCW" : e == CTRL_PRESS ? "PRESS" : "LONG");
+#endif
   return e;
 }
 
-bool     controlHeld()   { return s_swPressStart != 0; }
-uint32_t controlHeldMs() { return s_swPressStart ? (millis() - s_swPressStart) : 0; }
+bool     controlHeld()   { return s_swDown; }
+uint32_t controlHeldMs() { return s_swDown ? (millis() - s_swDownAtMs) : 0; }
 
 #endif  // CONTROL_ENCODER_ENABLED

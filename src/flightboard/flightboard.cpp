@@ -187,12 +187,20 @@ void flightboardRender() {
   display.setTextColor(display.color565(255, 180, 0));
   display.print(strcmp(s_dir, "dep") == 0 ? "DEPARTURES" : "ARRIVALS");
 
+  // Top right is the time now, as a station board shows it. It used to be the
+  // payload's "upd" - when Home Assistant last fetched - which stands still
+  // between fetches and on the panel read as a clock that had stopped (owner,
+  // on the bench, 2026-09-14). Freshness stays in the colour: amber once the
+  // data is more than ten minutes old.
   bool stale = flightboardAge() > 600;
-  display.getTextBounds(s_upd, 0, 0, &bx, &by, &bw, &bh);
+  char nowHm[6] = "--:--";
+  struct tm lt;
+  if (getLocalTime(&lt, 0)) snprintf(nowHm, sizeof(nowHm), "%02d:%02d", lt.tm_hour, lt.tm_min);
+  display.getTextBounds(nowHm, 0, 0, &bx, &by, &bw, &bh);
   display.setCursor(FB_X_RIGHT - (int16_t)bw, hbase);
   display.setTextColor(stale ? display.color565(150, 90, 0)
                              : display.color565(120, 132, 138));
-  display.print(s_upd);
+  display.print(nowHm);
 
   display.drawFastHLine(0, FB_Y_RULE, 128, display.color565(52, 60, 64));
 
