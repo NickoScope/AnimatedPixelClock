@@ -52,12 +52,15 @@
 
 namespace {
 
-// 16 KB: the effects are compiled in, not uploaded, so the parser never sees a
-// hostile nesting depth; on the host the scripts took under 3 KB of stack
-// above the harness (fx_parity.py), and the task logs its high-water mark.
-// The bench ran nslua on 32 KB; scripts arriving at run time would need that
-// back, and the internal heap would have to be measured for it.
-const uint32_t    kStackBytes = 16 * 1024;
+// 12 KB: the effects are compiled in, not uploaded, so the parser never sees a
+// hostile nesting depth. On the panel (2026-09-14) the six effects left at
+// least 11 612 B of the previous 16 KB free across every 30 s report - at most
+// 4.8 KB used, football and snooker included - so 12 KB keeps over 7 KB spare
+// and gives 4 KB back to the internal heap, which is this board's scarce one.
+// The task logs its high-water mark; a new effect that eats into the margin
+// shows there. The bench ran nslua on 32 KB; scripts arriving at run time would
+// need that back, and the internal heap would have to be measured for it.
+const uint32_t    kStackBytes = 12 * 1024;
 const BaseType_t  kCore       = 0;      // Wi-Fi's core; loop() and the DMA refresh stay on 1
 const UBaseType_t kPriority   = 1;      // as the bench's task and loopTask
 const uint32_t    kIdleMs     = 1500;   // no render for this long: nobody is looking, stop drawing
