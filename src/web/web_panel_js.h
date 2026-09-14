@@ -60,7 +60,7 @@ var HINTS = { clock: 'Always on - where the panel falls back to', world: 'Daylig
 var pageIdx = {}, lastPanel = null;
 
 // ---------------------------------------------------------------- polling
-var POLL = { pnow: [pollNow, 2000], pflights: [pollFb, 5000], ptrains: [pollRb, 5000], pworld: [pollWc, 30000], pyachts: [pollYr, 3000], plua: [pollLua, 3000], pknob: [pollKnob, 250] };
+var POLL = { pnow: [pollNow, 2000], pflights: [pollFb, 5000], ptrains: [pollRb, 5000], pworld: [pollWc, 30000], pyachts: [pollYr, 3000], plua: [pollEffects, 3000], pknob: [pollKnob, 250] };
 var active = null, timer = null;
 function activePage() { var s = document.querySelector('section.page.active'); return s && POLL[s.dataset.page] ? s.dataset.page : null; }
 function tick() {
@@ -684,6 +684,42 @@ seg('yrSort', function (v) { api('/api/yachtradar', { bySize: v === '1' }).then(
 // ---------------------------------------------------------------- lua effects
 var luaSig = '';
 function pollLua() { return api('/api/lua').then(renderLua); }
+function pollEffects() { return Promise.all([pollLua(), pollClips()]); }
+
+// Clips: the uploaded .pca animations (/api/anim/*, the clock firmware's own
+// routes - they answer without a "success" field, so plain fetch, not api()).
+var clipSig = '';
+function pollClips() { return fetch('/api/anim/list').then(function (r) { return r.json(); }).then(renderClips); }
+function renderClips(d) {
+  var host = $('clipList');
+  if (!host || !d) return;
+  var anims = d.anims || [];
+  setText('clipTag', d.playing ? 'playing' : anims.length + (anims.length === 1 ? ' clip' : ' clips'));
+  var sig = JSON.stringify([anims, d.playing, d.current]);
+  if (sig === clipSig) return;
+  clipSig = sig;
+  host.innerHTML = anims.length ? '' : '<p class="field-hint">No clips are stored on the panel.</p>';
+  anims.forEach(function (a) {
+    var row = document.createElement('div');
+    row.className = 'pn-row' + (d.playing && a.name === d.current ? ' here' : '');
+    row.innerHTML = '<div class="pn-name"><strong>' + esc(a.name) + '</strong><span class="ct-hint">' + a.frames + ' frames · ' +
+      Math.round(a.bytes / 1024) + ' KB</span></div><span class="pn-here">on screen</span><button type="button" class="btn btn-sm">Play</button>';
+    var btn = row.querySelector('button');
+    btn.addEventListener('click', function () {
+      // A clip shows on the clock page, and choosing a page releases any forced
+      // mode - so the page comes first and the clip second.
+      api('/api/panel', { show: { page: 0 } })
+        .then(function () { return fetch('/api/anim/play?name=' + encodeURIComponent(a.name)); })
+        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); clipSig = ''; return pollClips(); })
+        .catch(function (err) { flash(btn, err.message, true); });
+    });
+    host.appendChild(row);
+  });
+}
+if ($('clipStop')) $('clipStop').addEventListener('click', function () {
+  var btn = this;
+  fetch('/api/mode/auto').then(function () { clipSig = ''; return pollClips(); }).catch(function (err) { flash(btn, err.message, true); });
+});
 function renderLua(d) {
   setText('luaTag', d.current >= 0 ? 'playing' : (d.effects.length + ' effects'));
   var sig = JSON.stringify(d), host = $('luaList');

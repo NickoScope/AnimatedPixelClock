@@ -23,7 +23,7 @@ static const char PANEL_NAV_HTML[] PROGMEM = R"PNL(<div class="nav-group" data-n
         <button type="button" class="nav-item" data-nav="ptrains" data-need="trains">Rail board</button>
         <button type="button" class="nav-item" data-nav="pworld" data-need="world">World clock</button>
         <button type="button" class="nav-item" data-nav="pyachts" data-need="yachts">Yacht radar</button>
-        <button type="button" class="nav-item" data-nav="plua" data-need="lua">Lua effects<span class="nv-tag">Lua</span></button>
+        <button type="button" class="nav-item" data-nav="plua" data-need="lua">Effects &amp; clips<span class="nv-tag">Lua</span></button>
         <button type="button" class="nav-item" data-nav="pknob">Knob</button>
       </div>)PNL";
 
@@ -340,12 +340,18 @@ static const char PANEL_PAGES_HTML[] PROGMEM = R"PNL(<link rel="stylesheet" href
       <!-- LUA EFFECTS -->
       <section class="page" data-page="plua" data-need="lua">
         <div class="page-header">
-          <h1 class="page-h1">Lua effects</h1>
-          <p class="page-lede">Effects written in Lua and run by the panel's own interpreter.</p>
+          <h1 class="page-h1">Effects &amp; clips</h1>
+          <p class="page-lede">Effects written in Lua and run by the panel's own interpreter, and clips stored on the panel.</p>
         </div>
         <div class="card">
           <h2 class="card-title">Effects <span class="tag" id="luaTag">--</span></h2>
           <div class="pn-list" id="luaList"><p class="field-hint">Loading...</p></div>
+        </div>
+        <div class="card">
+          <h2 class="card-title">Clips <span class="tag" id="clipTag">--</span></h2>
+          <p class="field-hint">Pre-rendered animations kept on the panel, the oscilloscope music clips among them. A clip plays in place of the clock; turning the knob or choosing any page ends it.</p>
+          <div class="pn-list" id="clipList"><p class="field-hint">Loading...</p></div>
+          <div class="page-actions"><button type="button" class="btn btn-sm" id="clipStop">Stop clip</button></div>
         </div>
       </section>
 
