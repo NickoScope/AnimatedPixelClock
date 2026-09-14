@@ -96,6 +96,7 @@ int getOptimalRefreshRate();
 #include "cards/cards.h"
 #include "control/carousel.h"
 #include "worldclock/worldclock.h"
+#include "lua/nslua_bench.h"
 
 #if defined(CAROUSEL_ENABLED) && defined(CONTROL_ENCODER_ENABLED)
 // How long each page holds the screen when the panel is cycling on its own.
@@ -367,6 +368,9 @@ void setup() {
     Serial.printf("[nslua] self-test %s%s%s\n",
                   ok ? "PASSED" : "FAILED", ok ? "" : ": ", ok ? "" : err);
     nslua_bindings_dump();
+#if defined(NSLUA_BENCH)
+    nsluaBenchBegin();           // phase 6b bench build only
+#endif
   } else {
     Serial.println("[nslua] runtime unavailable (no PSRAM?)");
   }
@@ -408,6 +412,9 @@ void setup() {
 void loop() {
   // Feed watchdog
   esp_task_wdt_reset();
+#if defined(NSLUA_BENCH)
+  nsluaBenchLoop();
+#endif
 
 #if defined(CONTROL_ENCODER_ENABLED)
   // One knob, several pages. Rotation and a short press mean whatever the page
@@ -588,6 +595,9 @@ void loop() {
       // Fell behind (stall or refresh-rate change) - resync to now.
       nextDisplayUpdate = millis() + frameInterval;
     }
+#if defined(NSLUA_BENCH)
+    nsluaBenchFrameBegin();
+#endif
 
     // Visualizer wins over everything while forced AND fed; when the packet
     // stream dies for 10s it falls through (and auto-resumes when it's back).
@@ -712,6 +722,9 @@ void loop() {
 #endif
 
     display.display();
+#if defined(NSLUA_BENCH)
+    nsluaBenchFrameEnd();
+#endif
 
     // Right after the flip = maximum headroom before the next render tick;
     // the custom animation reads its next frame from flash here so the I/O
