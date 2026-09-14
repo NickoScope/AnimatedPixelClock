@@ -24,22 +24,28 @@ static const uint32_t FB_GRACE_MS = 1500;
 static char     s_subbed[96] = "";      // topic currently subscribed, "" = none
 static uint32_t s_dirtyAt    = 0;
 static uint32_t s_graceUntil = 0;
+static bool     s_wasUp      = false;
 
+// Both directions on one subscription: the page swaps between them, and a
+// wildcard keeps the flight board to a single slot of the bus's six.
 static void topicFor(char *out, size_t n) {
-  snprintf(out, n, "%s/%s/%s", FB_TOPIC_STATE,
-           flightboardAirport(), flightboardDirection());
+  snprintf(out, n, "%s/%s/+", FB_TOPIC_STATE, flightboardAirport());
 }
 
 static void onMessage(const char *topic, const uint8_t *payload, uint16_t len) {
-  (void)topic;                       // only one flight board subscription exists
+  (void)topic;              // the payload names its airport and direction
   flightboardIngest((const char *)payload, len);
-  s_graceUntil = 0;                  // data arrived; no request needed
 }
 
 static void resubscribe() {
   char want[96];
   topicFor(want, sizeof(want));
-  if (!strcmp(want, s_subbed)) return;
+  if (!strcmp(want, s_subbed)) {
+    // Same airport, a different choice of direction: whatever is retained is
+    // already here, so only look for what is still missing.
+    s_graceUntil = millis();
+    return;
+  }
   if (s_subbed[0]) mqttBusUnsubscribe(s_subbed);
   if (mqttBusSubscribe(want)) {
     strncpy(s_subbed, want, sizeof(s_subbed) - 1);
@@ -61,14 +67,24 @@ void fbMqttLoop() {
     s_dirtyAt = 0;
     resubscribe();
   }
-  // Nothing retained turned up for this selection, so Home Assistant has never
-  // fetched it. Ask once; the answer arrives on the topic already subscribed.
-  if (s_graceUntil && (int32_t)(now - s_graceUntil) >= 0 && mqttBusConnected()) {
+  // The retained boards arrive only once the broker session is up. Counting the
+  // grace from before that would ask - and pay - for boards already retained.
+  const bool up = mqttBusConnected();
+  if (up && !s_wasUp && s_subbed[0]) s_graceUntil = now + FB_GRACE_MS;
+  s_wasUp = up;
+  // Nothing retained turned up for a half this page shows, or what did is a
+  // fetch from hours ago. Ask once for each; the answers arrive on the
+  // subscription already in place.
+  if (s_graceUntil && (int32_t)(now - s_graceUntil) >= 0 && up) {
     s_graceUntil = 0;
-    char body[64];
-    snprintf(body, sizeof(body), "{\"apt\":\"%s\",\"dir\":\"%s\"}",
-             flightboardAirport(), flightboardDirection());
-    mqttBusPublish(FB_TOPIC_REQ, body);
+    for (uint8_t i = 0; i < 2; i++) {
+      const bool dep = (i == 1);
+      if (!flightboardWants(dep) || flightboardHasFreshBoard(dep)) continue;
+      char body[64];
+      snprintf(body, sizeof(body), "{\"apt\":\"%s\",\"dir\":\"%s\"}",
+               flightboardAirport(), dep ? "dep" : "arr");
+      mqttBusPublish(FB_TOPIC_REQ, body);
+    }
   }
 }
 

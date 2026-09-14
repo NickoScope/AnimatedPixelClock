@@ -21,7 +21,7 @@ struct PanelState {
   PanelCarousel car;
   PanelKnob     knob;
   uint8_t       fbAirport;
-  bool          fbDep;
+  uint8_t       fbDir;
   uint8_t       wcHome;
 };
 
@@ -94,10 +94,10 @@ void panelBegin() {
   s_cur.knob  = panelKnobDefaults();
 #if defined(FLIGHTBOARD_ENABLED)
   s_cur.fbAirport = flightboardAirportIndex();
-  s_cur.fbDep     = flightboardDeparturesSelected();
+  s_cur.fbDir     = flightboardDirMode();
 #else
   s_cur.fbAirport = 0;
-  s_cur.fbDep     = false;
+  s_cur.fbDir     = 2;
 #endif
   s_cur.wcHome = 0;
 
@@ -127,7 +127,10 @@ void panelBegin() {
 #if defined(FLIGHTBOARD_ENABLED)
     const uint8_t apt = p.getUChar("fbApt", d.fbAirport);
     if (apt < flightboardAirportCount()) s_cur.fbAirport = apt;
-    s_cur.fbDep = p.getUChar("fbDep", d.fbDep) != 0;
+    // fbDir replaces the old arrivals-or-departures key, so a choice saved
+    // before the board could swap does not pin it to one half.
+    const uint8_t dir = p.getUChar("fbDir", d.fbDir);
+    if (dir <= FB_DIR_ALT) s_cur.fbDir = dir;
 #endif
 #if defined(WORLDCLOCK_ENABLED)
     const uint8_t home = p.getUChar("wcHome", d.wcHome);
@@ -142,7 +145,7 @@ void panelBegin() {
   applyKnob();
   applyCarousel();
 #if defined(FLIGHTBOARD_ENABLED)
-  flightboardSelect(s_cur.fbAirport, s_cur.fbDep);
+  flightboardSelect(s_cur.fbAirport, (FbDirMode)s_cur.fbDir);
 #endif
 #if defined(WORLDCLOCK_ENABLED)
   worldClockSetHome(s_cur.wcHome);
@@ -167,7 +170,7 @@ void panelTick() {
   if (c.knob.debounceMs != w.knob.debounceMs && p.putUShort("knDeb", c.knob.debounceMs)) w.knob.debounceMs = c.knob.debounceMs;
   if (c.knob.detent != w.knob.detent && p.putChar("knDet", c.knob.detent)) w.knob.detent = c.knob.detent;
   if (c.fbAirport != w.fbAirport && p.putUChar("fbApt", c.fbAirport)) w.fbAirport = c.fbAirport;
-  if (c.fbDep != w.fbDep && p.putUChar("fbDep", c.fbDep)) w.fbDep = c.fbDep;
+  if (c.fbDir != w.fbDir && p.putUChar("fbDir", c.fbDir)) w.fbDir = c.fbDir;
   if (c.wcHome != w.wcHome && p.putUChar("wcHome", c.wcHome)) w.wcHome = c.wcHome;
   p.end();
 }
@@ -213,18 +216,18 @@ bool panelSetKnob(const PanelKnob &k) {
   return true;
 }
 
-bool panelSetFlightboard(uint8_t airport, bool departures) {
+bool panelSetFlightboard(uint8_t airport, uint8_t dirMode) {
 #if defined(FLIGHTBOARD_ENABLED)
-  if (airport >= flightboardAirportCount()) return false;
-  if (airport == flightboardAirportIndex() && departures == flightboardDeparturesSelected()) return true;
-  flightboardSelect(airport, departures);
+  if (airport >= flightboardAirportCount() || dirMode > FB_DIR_ALT) return false;
+  if (airport == flightboardAirportIndex() && dirMode == flightboardDirMode()) return true;
+  flightboardSelect(airport, (FbDirMode)dirMode);
 #if defined(FB_MQTT_ENABLED)
   fbMqttSelectionChanged();   // resubscribes once the selection settles
 #endif
   panelNoteFlightboard();
   return true;
 #else
-  (void)airport; (void)departures;
+  (void)airport; (void)dirMode;
   return false;
 #endif
 }
@@ -232,8 +235,8 @@ bool panelSetFlightboard(uint8_t airport, bool departures) {
 void panelNoteFlightboard() {
 #if defined(FLIGHTBOARD_ENABLED)
   s_cur.fbAirport = flightboardAirportIndex();
-  s_cur.fbDep     = flightboardDeparturesSelected();
-  if (s_cur.fbAirport != s_saved.fbAirport || s_cur.fbDep != s_saved.fbDep) markDirty();
+  s_cur.fbDir     = flightboardDirMode();
+  if (s_cur.fbAirport != s_saved.fbAirport || s_cur.fbDir != s_saved.fbDir) markDirty();
 #endif
 }
 

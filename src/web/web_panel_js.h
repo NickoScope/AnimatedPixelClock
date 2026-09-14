@@ -355,7 +355,7 @@ function renderFb(d) {
   setText('fbTag', d.showing ? 'on screen' : 'not on screen');
   var b = d.board || {}, rows = $('fbRows'), html = '';
   if (b.have) {
-    setText('fbHead', cap(b.name) + ' ' + (b.dir === 'dep' ? 'departures' : 'arrivals'));
+    setText('fbHead', cap(b.name) + ' ' + (b.dir === 'dep' ? 'departures' : 'arrivals') + (d.dir === 'alt' ? ' · swaps every ' + d.altS + ' s' : ''));
     setText('fbAge', 'received ' + ago(b.age));
     html = '<span class="h">time</span><span class="h">flight</span><span class="h">to / from</span><span class="h r">status</span>';
     (b.rows || []).forEach(function (r, i) {
@@ -370,8 +370,11 @@ function renderFb(d) {
   }
   if (rows) rows.innerHTML = html;
   var feed = $('fbFeed'), kv = [];
-  if (b.have && (b.apt !== d.airports[d.airport].code || b.dir !== d.dir)) kv.push(['showing', b.apt + ' ' + b.dir + ' - the selection has not arrived yet', 'pn-warn']);
-  if (b.have) kv.push(['fetched by HA', b.upd]);
+  var sides = b.sides || {};
+  ['arr', 'dep'].forEach(function (k) {
+    var s = sides[k] || {}, wanted = d.dir === 'alt' || d.dir === k;
+    kv.push([k === 'arr' ? 'arrivals' : 'departures', s.have ? s.n + ' flights, fetched by HA ' + s.upd : (wanted ? 'waiting for Home Assistant' : 'not shown'), s.have || !wanted ? '' : 'pn-warn']);
+  });
   if (d.mqtt) {
     kv.push(['broker', d.mqtt.configured ? 'configured' : 'not configured', d.mqtt.configured ? '' : 'pn-warn']);
     kv.push(['mqtt', d.mqtt.connected ? 'connected' : 'not connected', d.mqtt.connected ? 'pn-ok' : 'pn-warn']);

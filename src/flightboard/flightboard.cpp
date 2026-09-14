@@ -43,14 +43,27 @@ struct FbRow {
   FbStatus st;
 };
 
-static FbRow    s_rows[FB_MAX_ROWS];
-static uint8_t  s_count    = 0;
-static uint8_t  s_nowIdx   = 0;
-static char     s_apt[8]   = "LFMN";
-static char     s_dir[4]   = "arr";
-static char     s_upd[FB_TM_LEN] = "--:--";
-static uint32_t s_stamp    = 0;
-static bool     s_haveData = false;
+// Both directions are kept, so the page can swap between them every
+// FB_ALT_SECONDS without a round trip (owner, 2026-09-14: arrivals and
+// departures, changing every 10 s).
+struct FbBoard {
+  FbRow    rows[FB_MAX_ROWS];
+  uint8_t  count;
+  uint8_t  nowIdx;
+  char     upd[FB_TM_LEN];
+  uint32_t stamp;
+  bool     have;
+};
+static FbBoard s_b[2];            // [0] arrivals, [1] departures
+
+static const uint32_t FB_ALT_MS = FB_ALT_SECONDS * 1000UL;
+// A half fetched longer ago than this is worth asking for again. Retained
+// boards arrive within milliseconds of subscribing however old they are: on the
+// panel, 2026-09-14 18:30, departures came back stamped 09:34.
+static const int16_t  FB_FRESH_MIN = 30;
+static uint8_t  s_mode       = FB_DIR_ALT;
+static uint32_t s_altT0      = 0;   // start of the current swap cycle
+static uint32_t s_lastDrawMs = 0;
 
 // Whitelist enforced on the HA side; kept in the same canonical order so the
 // index means the same thing on both ends.
@@ -61,7 +74,29 @@ static const char *const FB_AIRPORT_NAMES[] = {"CANNES","NICE","PARIS CDG",
                                                "LONDON","FRANKFURT","AMSTERDAM"};
 static const uint8_t FB_AIRPORT_COUNT = sizeof(FB_AIRPORTS)/sizeof(FB_AIRPORTS[0]);
 static uint8_t s_aptIdx = 1;   // LFMN
-static bool    s_dirDep = false;
+
+// Minutes since Home Assistant fetched this half, from its "upd" stamp and the
+// local clock; -1 when either is unknown.
+static int16_t updAgeMin(const FbBoard &b) {
+  struct tm lt;
+  if (!b.have || !getLocalTime(&lt, 0)) return -1;
+  int h, m;
+  if (sscanf(b.upd, "%d:%d", &h, &m) != 2 || h < 0 || h > 23 || m < 0 || m > 59) return -1;
+  return (int16_t)(((lt.tm_hour * 60 + lt.tm_min) - (h * 60 + m) + 1440) % 1440);
+}
+
+static void clearBoards() {
+  for (FbBoard &b : s_b) { b.have = false; b.count = 0; }
+}
+
+// Which half is on screen. A cycle starts on arrivals whenever the page comes
+// back into view; with only one half received, that half stays up.
+static bool shownDep() {
+  if (s_mode != FB_DIR_ALT) return s_mode == FB_DIR_DEP;
+  bool dep = (((millis() - s_altT0) / FB_ALT_MS) & 1) != 0;
+  if (!s_b[dep].have && s_b[!dep].have) dep = !dep;
+  return dep;
+}
 
 // The same state means different things depending on which way you are looking.
 // For arrivals, "dep" means the aircraft has taken off and is on its way here.
@@ -106,15 +141,6 @@ static uint16_t statusColor(FbStatus st) {
   }
 }
 
-// ICAO code to the name people actually use. Falls back to the code for
-// anything unexpected, so a widened whitelist degrades instead of breaking.
-static const char *airportName(const char *icao) {
-  for (uint8_t i = 0; i < FB_AIRPORT_COUNT; i++) {
-    if (!strcmp(icao, FB_AIRPORTS[i])) return FB_AIRPORT_NAMES[i];
-  }
-  return icao;
-}
-
 static void copyField(char *dst, size_t cap, const char *src) {
   if (!src) { dst[0] = '\0'; return; }
   strncpy(dst, src, cap - 1);
@@ -127,55 +153,68 @@ bool flightboardIngest(const char *json, uint16_t len) {
 
   JsonArrayConst arr = doc["f"].as<JsonArrayConst>();
   if (arr.isNull()) return false;
+  // A retained board for the airport just left can still be on its way when
+  // the selection moves on; it must not land under the new name.
+  const char *apt = doc["apt"] | "";
+  if (apt[0] && strcmp(apt, FB_AIRPORTS[s_aptIdx])) return false;
+  const char *dir = doc["dir"] | "";
+  if (strcmp(dir, "arr") && strcmp(dir, "dep")) return false;
+  FbBoard &b = s_b[strcmp(dir, "dep") == 0];
 
   uint8_t n = 0;
   for (JsonObjectConst f : arr) {
     if (n >= FB_MAX_ROWS) break;
-    copyField(s_rows[n].fn, FB_FN_LEN, f["fn"] | "");
-    copyField(s_rows[n].tm, FB_TM_LEN, f["tm"] | "--:--");
-    copyField(s_rows[n].ct, FB_CT_LEN, f["ct"] | "");
+    copyField(b.rows[n].fn, FB_FN_LEN, f["fn"] | "");
+    copyField(b.rows[n].tm, FB_TM_LEN, f["tm"] | "--:--");
+    copyField(b.rows[n].ct, FB_CT_LEN, f["ct"] | "");
     // Prefer the city name; fall back to the code when HA does not send one.
-    copyField(s_rows[n].cy, FB_CY_LEN, f["cy"] | (const char *)(f["ct"] | ""));
-    s_rows[n].st = parseStatus(f["st"] | "");
+    copyField(b.rows[n].cy, FB_CY_LEN, f["cy"] | (const char *)(f["ct"] | ""));
+    b.rows[n].st = parseStatus(f["st"] | "");
     n++;
   }
-  s_count  = n;
-  s_nowIdx = doc["now_idx"] | 0;
-  if (s_nowIdx >= s_count && s_count) s_nowIdx = s_count - 1;
-  copyField(s_apt, sizeof(s_apt), doc["apt"] | "----");
-  copyField(s_dir, sizeof(s_dir), doc["dir"] | "arr");
-  copyField(s_upd, FB_TM_LEN,     doc["upd"] | "--:--");
-  s_stamp    = millis();
-  s_haveData = true;
+  b.count  = n;
+  b.nowIdx = doc["now_idx"] | 0;
+  if (b.nowIdx >= b.count && b.count) b.nowIdx = b.count - 1;
+  copyField(b.upd, FB_TM_LEN, doc["upd"] | "--:--");
+  b.stamp = millis();
+  b.have  = true;
   return true;
 }
 
-bool flightboardHasData() { return s_haveData; }
+bool flightboardHasData() { return s_b[0].have || s_b[1].have; }
 
 uint32_t flightboardAge() {
-  return s_haveData ? (millis() - s_stamp) / 1000UL : 0;
+  const FbBoard &b = s_b[shownDep()];
+  return b.have ? (millis() - b.stamp) / 1000UL : 0;
 }
 
-const char *flightboardAirport()   { return FB_AIRPORTS[s_aptIdx]; }
-const char *flightboardDirection() { return s_dirDep ? "dep" : "arr"; }
+const char *flightboardAirport() { return FB_AIRPORTS[s_aptIdx]; }
 
 void flightboardStepAirport(int8_t delta) {
   int16_t i = (int16_t)s_aptIdx + delta;
   while (i < 0) i += FB_AIRPORT_COUNT;
-  s_aptIdx = (uint8_t)(i % FB_AIRPORT_COUNT);
+  const uint8_t next = (uint8_t)(i % FB_AIRPORT_COUNT);
+  if (next != s_aptIdx) { s_aptIdx = next; clearBoards(); }
 }
 
-void flightboardToggleDirection() { s_dirDep = !s_dirDep; }
-
-uint8_t     flightboardAirportCount()       { return FB_AIRPORT_COUNT; }
-uint8_t     flightboardAirportIndex()       { return s_aptIdx; }
-bool        flightboardDeparturesSelected() { return s_dirDep; }
+uint8_t     flightboardAirportCount()      { return FB_AIRPORT_COUNT; }
+uint8_t     flightboardAirportIndex()      { return s_aptIdx; }
+FbDirMode   flightboardDirMode()           { return (FbDirMode)s_mode; }
+const char *flightboardModeKey()           { return s_mode == FB_DIR_ARR ? "arr" : s_mode == FB_DIR_DEP ? "dep" : "alt"; }
+bool        flightboardShowingDepartures() { return shownDep(); }
+bool        flightboardWants(bool dep)     { return s_mode == FB_DIR_ALT || (s_mode == FB_DIR_DEP) == dep; }
+// Without a clock the age is unknown; a board is then taken as it comes rather
+// than paid for again.
+bool flightboardHasFreshBoard(bool dep) {
+  const int16_t age = updAgeMin(s_b[dep]);
+  return s_b[dep].have && age <= FB_FRESH_MIN;
+}
 const char *flightboardAirportCode(uint8_t i)  { return i < FB_AIRPORT_COUNT ? FB_AIRPORTS[i] : ""; }
 const char *flightboardAirportLabel(uint8_t i) { return i < FB_AIRPORT_COUNT ? FB_AIRPORT_NAMES[i] : ""; }
 
-void flightboardSelect(uint8_t airport, bool departures) {
-  if (airport < FB_AIRPORT_COUNT) s_aptIdx = airport;
-  s_dirDep = departures;
+void flightboardSelect(uint8_t airport, FbDirMode mode) {
+  if (airport < FB_AIRPORT_COUNT && airport != s_aptIdx) { s_aptIdx = airport; clearBoards(); }
+  if (mode <= FB_DIR_ALT) s_mode = mode;
 }
 
 // The wire word for a status, the inverse of parseStatus().
@@ -192,18 +231,28 @@ static const char *statusKey(FbStatus st) {
 }
 
 void flightboardStatusJson(JsonObject out) {
-  out["have"] = s_haveData;
-  if (!s_haveData) return;
-  const bool departures = (strcmp(s_dir, "dep") == 0);
-  out["apt"]  = (const char *)s_apt;
-  out["name"] = airportName(s_apt);
-  out["dir"]  = (const char *)s_dir;
-  out["upd"]  = (const char *)s_upd;
+  const bool departures = shownDep();
+  const FbBoard &b = s_b[departures];
+  out["have"] = b.have;
+  JsonObject sides = out["sides"].to<JsonObject>();
+  for (uint8_t i = 0; i < 2; i++) {
+    JsonObject s = sides[i ? "dep" : "arr"].to<JsonObject>();
+    s["have"] = s_b[i].have;
+    if (!s_b[i].have) continue;
+    s["n"]   = s_b[i].count;
+    s["upd"] = (const char *)s_b[i].upd;
+    s["age"] = (millis() - s_b[i].stamp) / 1000UL;
+  }
+  if (!b.have) return;
+  out["apt"]  = FB_AIRPORTS[s_aptIdx];
+  out["name"] = FB_AIRPORT_NAMES[s_aptIdx];
+  out["dir"]  = departures ? "dep" : "arr";
+  out["upd"]  = (const char *)b.upd;
   out["age"]  = flightboardAge();
-  out["now"]  = s_nowIdx;
+  out["now"]  = b.nowIdx;
   JsonArray rows = out["rows"].to<JsonArray>();
-  for (uint8_t i = 0; i < s_count; i++) {
-    const FbRow &r = s_rows[i];
+  for (uint8_t i = 0; i < b.count; i++) {
+    const FbRow &r = b.rows[i];
     JsonObject o = rows.add<JsonObject>();
     o["tm"] = (const char *)r.tm;
     o["fn"] = (const char *)r.fn;
@@ -215,6 +264,13 @@ void flightboardStatusJson(JsonObject out) {
 }
 
 void flightboardRender() {
+  // Back in view after a while elsewhere: start the cycle on arrivals.
+  const uint32_t nowMs = millis();
+  if (nowMs - s_lastDrawMs > 1500) s_altT0 = nowMs;
+  s_lastDrawMs = nowMs;
+  const bool departures = shownDep();
+  const FbBoard &b = s_b[departures];
+
   display.setFont(&PicopixelFB);
   display.setTextSize(1);
   display.setTextWrap(false);
@@ -223,7 +279,7 @@ void flightboardRender() {
   const int16_t hbase = FB_Y_HEADER + FB_ASCENT;
   int16_t bx, by; uint16_t bw, bh;
 
-  const char *apt = airportName(s_apt);
+  const char *apt = FB_AIRPORT_NAMES[s_aptIdx];
   display.setCursor(FB_X_TIME, hbase);
   display.setTextColor(display.color565(255, 255, 255));
   display.print(apt);
@@ -232,14 +288,14 @@ void flightboardRender() {
   display.getTextBounds(apt, 0, 0, &bx, &by, &bw, &bh);
   display.setCursor(FB_X_TIME + (int16_t)bw + 6, hbase);
   display.setTextColor(display.color565(255, 180, 0));
-  display.print(strcmp(s_dir, "dep") == 0 ? "DEPARTURES" : "ARRIVALS");
+  display.print(departures ? "DEPARTURES" : "ARRIVALS");
 
   // Top right is the time now, as a station board shows it. It used to be the
   // payload's "upd" - when Home Assistant last fetched - which stands still
   // between fetches and on the panel read as a clock that had stopped (owner,
   // on the bench, 2026-09-14). Freshness stays in the colour: amber once the
   // data is more than ten minutes old.
-  bool stale = flightboardAge() > 600;
+  bool stale = flightboardAge() > 600 || updAgeMin(b) > FB_FRESH_MIN;
   char nowHm[6] = "--:--";
   struct tm lt;
   if (getLocalTime(&lt, 0)) snprintf(nowHm, sizeof(nowHm), "%02d:%02d", lt.tm_hour, lt.tm_min);
@@ -250,8 +306,14 @@ void flightboardRender() {
   display.print(nowHm);
 
   display.drawFastHLine(0, FB_Y_RULE, 128, display.color565(52, 60, 64));
+  // While both halves are here and swapping, the rule fills in dim amber
+  // towards the next swap, so a change never comes as a surprise.
+  if (s_mode == FB_DIR_ALT && s_b[0].have && s_b[1].have) {
+    const int16_t w = (int16_t)(((nowMs - s_altT0) % FB_ALT_MS) * 128UL / FB_ALT_MS);
+    if (w > 0) display.drawFastHLine(0, FB_Y_RULE, w, display.color565(110, 78, 0));
+  }
 
-  if (!s_haveData || s_count == 0) {
+  if (!b.have || b.count == 0) {
     display.setCursor(40, 34);
     display.setTextColor(display.color565(120, 120, 120));
 #if defined(FB_MQTT_ENABLED)
@@ -266,21 +328,19 @@ void flightboardRender() {
   }
 
   // ── window ────────────────────────────────────────────────────────────────
-  const bool departures = (strcmp(s_dir, "dep") == 0);
-
-  int16_t start = (int16_t)s_nowIdx - 1;
-  if (start + FB_VISIBLE > s_count) start = s_count - FB_VISIBLE;
+  int16_t start = (int16_t)b.nowIdx - 1;
+  if (start + FB_VISIBLE > b.count) start = b.count - FB_VISIBLE;
   if (start < 0) start = 0;
 
   for (uint8_t i = 0; i < FB_VISIBLE; i++) {
     uint8_t idx = start + i;
-    if (idx >= s_count) break;
-    const FbRow &r = s_rows[idx];
+    if (idx >= b.count) break;
+    const FbRow &r = b.rows[idx];
     int16_t top = FB_Y_ROW0 + i * FB_ROW_H;
     int16_t base = top + FB_ASCENT;
     uint16_t col = statusColor(r.st);
 
-    if (idx == s_nowIdx) {
+    if (idx == b.nowIdx) {
       display.fillRect(0, top, 1, FB_ROW_H - 1, display.color565(255, 180, 0));
     }
 

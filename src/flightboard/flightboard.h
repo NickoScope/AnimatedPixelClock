@@ -48,20 +48,27 @@ uint32_t flightboardAge();
 // Draw the whole page. Assumes the caller has cleared the display.
 void flightboardRender();
 
-// Selector, driven by the encoder later. Returns the value to request.
+// Arrivals, departures, or both taking turns on screen.
+enum FbDirMode : uint8_t { FB_DIR_ARR = 0, FB_DIR_DEP = 1, FB_DIR_ALT = 2 };
+#define FB_ALT_SECONDS 10
+
+// The selected airport (ICAO), stepped by the knob. Moving it drops both
+// boards, so the old airport's rows never show under the new name.
 const char *flightboardAirport();
-const char *flightboardDirection();
 void flightboardStepAirport(int8_t delta);
-void flightboardToggleDirection();
 
 // The selection by index, for the web portal and for restoring it at boot. The
 // caller tells the transport (fbMqttSelectionChanged) - this only records it.
 uint8_t     flightboardAirportCount();
 uint8_t     flightboardAirportIndex();
-bool        flightboardDeparturesSelected();
+FbDirMode   flightboardDirMode();
+const char *flightboardModeKey();                 // "arr", "dep" or "alt"
+bool        flightboardShowingDepartures();       // the half on screen now
+bool        flightboardWants(bool departures);    // the mode shows this half
+bool        flightboardHasFreshBoard(bool departures); // arrived, fetched within 30 min
 const char *flightboardAirportCode(uint8_t i);    // ICAO, "" out of range
 const char *flightboardAirportLabel(uint8_t i);   // the name the page shows
-void        flightboardSelect(uint8_t airport, bool departures);
+void        flightboardSelect(uint8_t airport, FbDirMode mode);
 
 // The board as it stands: what the last payload was for (which can lag the
 // selection by one fetch), its age, and its rows.

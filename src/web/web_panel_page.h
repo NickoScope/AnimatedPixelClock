@@ -134,6 +134,7 @@ static const char PANEL_PAGES_HTML[] PROGMEM = R"PNL(<link rel="stylesheet" href
             <div class="field" style="margin-bottom:0">
               <span class="field-label">Direction</span>
               <div class="mode-toggle pn-seg" role="group" aria-label="Direction" id="fbDir">
+                <button type="button" data-v="alt">Both, every 10 s</button>
                 <button type="button" data-v="arr">Arrivals</button>
                 <button type="button" data-v="dep">Departures</button>
               </div>
@@ -142,7 +143,7 @@ static const char PANEL_PAGES_HTML[] PROGMEM = R"PNL(<link rel="stylesheet" href
           <div class="page-actions">
             <button type="button" class="btn" data-show="flights"><span class="gl"></span> Show on panel</button>
           </div>
-          <p class="field-hint" id="fbMsg">Applies at once. The panel resubscribes when the choice has settled, and asks Home Assistant for the board only if none is retained.</p>
+          <p class="field-hint" id="fbMsg">Applies at once. The panel takes both directions from one subscription and asks Home Assistant only for a half that nothing retained covers.</p>
         </div>
 
         <div class="card">

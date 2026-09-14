@@ -11,7 +11,7 @@
 //                           | {"enable":{"key":"world","on":false}}
 //                           | {"carousel":{"enabled":b,"idleS":n,"slotS":n,"allStyles":b}}
 //   GET  /api/flightboard   airports, airport, dir, board, mqtt
-//   POST /api/flightboard   {"airport":i,"dir":"arr"|"dep"}
+//   POST /api/flightboard   {"airport":i,"dir":"arr"|"dep"|"alt"}
 //   GET  /api/railboard     station, lists, Home Assistant status, config, mqtt
 //   POST /api/railboard     {"diag":b} | {"config":{"panels":1..2,"rows":1..3,
 //                           "font":"small"|"large","level":10..100,"switch_s":3..600,
@@ -390,22 +390,24 @@ static void handleFlightboard() {
     JsonDocument in(&s_alloc);
     if (!readBody(in)) return;
     long apt = flightboardAirportIndex();
-    bool dep = flightboardDeparturesSelected();
+    uint8_t mode = flightboardDirMode();
     if (!in["airport"].isNull() && !intIn(in["airport"], 0, (long)flightboardAirportCount() - 1, &apt))
       REJECT(400, "airport out of range");
     JsonVariantConst d = in["dir"];
     if (!d.isNull()) {
       const char *s = d.as<const char *>();
-      if (!s || (strcmp(s, "arr") && strcmp(s, "dep"))) REJECT(400, "dir must be arr or dep");
-      dep = !strcmp(s, "dep");
+      if (!s || (strcmp(s, "arr") && strcmp(s, "dep") && strcmp(s, "alt"))) REJECT(400, "dir must be arr, dep or alt");
+      mode = !strcmp(s, "arr") ? FB_DIR_ARR : !strcmp(s, "dep") ? FB_DIR_DEP : FB_DIR_ALT;
     }
-    panelSetFlightboard((uint8_t)apt, dep);
+    panelSetFlightboard((uint8_t)apt, mode);
   }
   JsonDocument doc(&s_alloc);
   doc["success"] = true;
   pageInfo(doc, PANEL_KEY_FLIGHTS);
   doc["airport"] = flightboardAirportIndex();
-  doc["dir"]     = flightboardDirection();
+  doc["dir"]     = flightboardModeKey();
+  doc["side"]    = flightboardShowingDepartures() ? "dep" : "arr";
+  doc["altS"]    = FB_ALT_SECONDS;
   JsonArray airports = doc["airports"].to<JsonArray>();
   for (uint8_t i = 0; i < flightboardAirportCount(); i++) {
     JsonObject a = airports.add<JsonObject>();

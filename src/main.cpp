@@ -564,26 +564,16 @@ static void ctrlBrowse(int8_t d) {
 }
 
 #if defined(FLIGHTBOARD_ENABLED)
-// Inside the flight board the knob walks airport and direction together:
-// this direction, the other one, the next airport. The half is counted here,
-// so the order holds whichever direction the board showed when you came in.
-static bool fbSecondHalf = false;
+// Inside the flight board the knob walks the airports. Arrivals and departures
+// take turns on their own every FB_ALT_SECONDS, so the knob no longer has to.
 static char fbToast[32];
 static void fbKnob(int8_t d) {
-  if (d > 0) {
-    flightboardToggleDirection();
-    if (fbSecondHalf) flightboardStepAirport(+1);
-    fbSecondHalf = !fbSecondHalf;
-  } else {
-    flightboardToggleDirection();
-    if (!fbSecondHalf) flightboardStepAirport(-1);
-    fbSecondHalf = !fbSecondHalf;
-  }
+  flightboardStepAirport(d > 0 ? +1 : -1);
 #if defined(FB_MQTT_ENABLED)
   fbMqttSelectionChanged();   // resubscribes once the knob settles
 #endif
   panelNoteFlightboard();     // and it is still this airport after a reboot
-  snprintf(fbToast, sizeof(fbToast), "%s %s", flightboardAirport(), flightboardDirection());
+  snprintf(fbToast, sizeof(fbToast), "%s", flightboardAirportLabel(flightboardAirportIndex()));
   ctrlToast(fbToast);
 }
 #endif
@@ -666,9 +656,6 @@ void loop() {
     if (e == CTRL_PRESS) {
       if (ctrlPageHasControls(ctrlPage)) {
         ctrlEntered = !ctrlEntered;
-#if defined(FLIGHTBOARD_ENABLED)
-        if (ctrlEntered && ctrlPage == PAGE_FLIGHTBOARD) fbSecondHalf = false;
-#endif
         ctrlToast(ctrlEntered ? ctrlEnterHint(ctrlPage) : "TURN: PAGES");
       }
       continue;                // a page without controls has nothing to select

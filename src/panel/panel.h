@@ -16,7 +16,7 @@
 //   carSlot  u16  seconds per page, 0 = each page its own time
 //   carAll   u8   on the clock page, walk every style first
 //   fbApt    u8   flight board airport, index into the fixed list
-//   fbDep    u8   1 = departures
+//   fbDir    u8   0 arrivals, 1 departures, 2 both in turn (default)
 //   wcHome   u8   world clock home city, index into the city list
 //   knRev    u8   knob direction reversed
 //   knLock   u16  ms after a step during which the decoder ignores the knob
@@ -80,7 +80,7 @@ const PanelKnob &panelKnob();
 PanelKnob panelKnobDefaults();
 bool     panelSetKnob(const PanelKnob &k);
 
-bool     panelSetFlightboard(uint8_t airport, bool departures);
+bool     panelSetFlightboard(uint8_t airport, uint8_t dirMode);   // FbDirMode
 void     panelNoteFlightboard();   // the knob moved the selection: keep it, later
 
 bool     panelSetWorldHome(uint8_t city);

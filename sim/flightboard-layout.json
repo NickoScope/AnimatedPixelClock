@@ -16,17 +16,12 @@
     "EDDF",
     "EHAM"
   ],
-  "digest": "5e1009327ceec064",
-  "firmware": {
-    "branch": "board/waveshare-esp32-s3-rgb-matrix",
-    "commit": "f9f3a9cf42df4b371b6a57184ea92583386cea0d",
-    "dirty": false,
-    "repo": "https://github.com/NickoScope/AnimatedPixelClock.git"
-  },
+  "digest": "7e3d8368206152cd",
   "font": "PicopixelFB",
   "geom": {
     "FB_ASCENT": 4,
     "FB_CODE_GAP": 2,
+    "FB_FRESH_MIN": 30,
     "FB_GAP": 2,
     "FB_ROW_H": 7,
     "FB_VISIBLE": 7,
