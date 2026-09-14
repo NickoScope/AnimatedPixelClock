@@ -35,12 +35,14 @@ COMBOS = [
     ("yacht radar + encoder",  "-DYACHTRADAR_ENABLED -DCONTROL_ENCODER_ENABLED", True),
     ("lua only",               "-DNSLUA_ENABLED", True),
     ("world clock + encoder",  "-DWORLDCLOCK_ENABLED -DCONTROL_ENCODER_ENABLED", True),
+    ("rail board + bus + knob", "-DRAILBOARD_ENABLED -DMQTT_BUS_ENABLED -DCONTROL_ENCODER_ENABLED", True),
     ("everything",             "-DFLIGHTBOARD_ENABLED -DYACHTRADAR_ENABLED "
                                "-DCONTROL_ENCODER_ENABLED -DMQTT_BUS_ENABLED "
                                "-DFB_MQTT_ENABLED -DCARDS_ENABLED -DCAROUSEL_ENABLED "
-                               "-DNSLUA_ENABLED -DWORLDCLOCK_ENABLED", True),
+                               "-DNSLUA_ENABLED -DWORLDCLOCK_ENABLED -DRAILBOARD_ENABLED", True),
     ("cards without the bus",  "-DCARDS_ENABLED", False),
     ("world clock, no encoder", "-DWORLDCLOCK_ENABLED", False),
+    ("rail board without bus", "-DRAILBOARD_ENABLED -DCONTROL_ENCODER_ENABLED", False),
     ("flight MQTT without bus","-DFLIGHTBOARD_ENABLED -DFB_MQTT_ENABLED", False),
     ("carousel without knob",  "-DCAROUSEL_ENABLED", False),
     ("all styles, no carousel", "-DCONTROL_ENCODER_ENABLED -DCAROUSEL_ALL_STYLES", False),
