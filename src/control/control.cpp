@@ -17,8 +17,9 @@
 //   IO45 selects VDD_SPI voltage - but this module has in-package flash and
 //        PSRAM with VDD_SPI fixed at 1.8 V by the VDD_SPI_FORCE eFuse, and the
 //        datasheet is explicit that the strap then no longer affects it.
-//        UNVERIFIED on hardware: read the eFuse with esptool before trusting it.
-//   IO46 gates ROM message printing at boot. Cosmetic; it does not stop a boot.
+//        Read off the board on 2026-09-14: VDD_SPI_FORCE = True.
+//   IO46 gates ROM message printing at boot, and with GPIO0 picks the boot
+//        mode; normal boot ignores it. A knob only ever pulls it to ground.
 //
 // The switch has nowhere to go on the header, so it shares GPIO0 with the BOOT
 // button - which means a wire to the button pad, not a header pin. The cost is
@@ -35,9 +36,24 @@
 static const uint32_t CTRL_LONG_MS     = 700;
 static const uint32_t CTRL_DEBOUNCE_MS = 25;
 
-// Quadrature decoding by transition table. A full detent on an EC11 is four
+// Two things that differ between EC11 parts and wirings, settable without a
+// soldering iron:
+//   CTRL_STEPS_PER_DETENT  state changes per click. 4 is the common EC11 (one
+//                          full quadrature cycle per detent); a part with a
+//                          detent every half cycle wants 2. Too high and a
+//                          click does nothing, too low and one click is two.
+//   CTRL_REVERSE           1 if clockwise walks backwards - instead of swapping
+//                          the A and B wires.
+#ifndef CTRL_STEPS_PER_DETENT
+#define CTRL_STEPS_PER_DETENT 4
+#endif
+#ifndef CTRL_REVERSE
+#define CTRL_REVERSE 0
+#endif
+
+// Quadrature decoding by transition table. A detent on the common EC11 is four
 // state changes; the table scores each transition +1, -1 or 0, and only a
-// complete +4 or -4 counts. Illegal transitions - which is what contact bounce
+// complete +CTRL_STEPS_PER_DETENT or -CTRL_STEPS_PER_DETENT counts. Illegal transitions - which is what contact bounce
 // looks like - score 0 and cancel themselves out, so no RC filtering is needed.
 static const int8_t kQuadrature[16] = {
    0, -1,  1,  0,
@@ -79,8 +95,10 @@ void controlLoop() {
   if (ab != s_prevAB) {
     s_accum += kQuadrature[(s_prevAB << 2) | ab];
     s_prevAB = ab;
-    if (s_accum >= 4)      { push(CTRL_CW);  s_accum = 0; }
-    else if (s_accum <= -4){ push(CTRL_CCW); s_accum = 0; }
+    const CtrlEvent fwd = CTRL_REVERSE ? CTRL_CCW : CTRL_CW;
+    const CtrlEvent back = CTRL_REVERSE ? CTRL_CW : CTRL_CCW;
+    if (s_accum >= CTRL_STEPS_PER_DETENT)       { push(fwd);  s_accum = 0; }
+    else if (s_accum <= -CTRL_STEPS_PER_DETENT) { push(back); s_accum = 0; }
   }
 
   const uint32_t now = millis();
