@@ -6,7 +6,13 @@
 -- so the terminator draws itself and creeps across the map through the day.
 --
 -- The time sits in the empty South Pacific, bottom left, which on this
--- projection is the one big patch of open water with nothing to cover.
+-- projection is the one big patch of open water with nothing to cover. It is
+-- home's time, in home's own zone, and home's name sits beside it in the
+-- Southern Ocean. When home changes the name pulses with home's dot, then
+-- holds still.
+--
+-- The prototype of the native page in src/worldclock; fx_parity.py renders
+-- that page on the host and holds it to this script pixel for pixel.
 
 local W, H = px.size()
 local floor, sin, cos, asin, rad, deg, abs, max, min, pi =
@@ -49,19 +55,31 @@ local MASK = {
   "...................#............................................",
 }
 local MASK_TOP, MASK_BOTTOM = 78.0, -58.0
--- Cities worth a dot. The first is home and it breathes.
+-- Cities worth a dot, each with its zone as a POSIX TZ string.
 local CITIES = {
-  {name = "CANNES", lat = 43.55, lon = 7.02},
-  {name = "MOSCOW", lat = 55.75, lon = 37.62},
-  {name = "NEW YORK", lat = 40.71, lon = -74.0},
-  {name = "LONDON", lat = 51.51, lon = -0.13},
-  {name = "DUBAI", lat = 25.2, lon = 55.27},
-  {name = "ALMATY", lat = 43.24, lon = 76.89},
+  {name = "CANNES", lat = 43.55, lon = 7.02, tz = "CET-1CEST,M3.5.0,M10.5.0/3"},
+  {name = "MOSCOW", lat = 55.75, lon = 37.62, tz = "MSK-3"},
+  {name = "NEW YORK", lat = 40.71, lon = -74.0, tz = "EST5EDT,M3.2.0,M11.1.0"},
+  {name = "LONDON", lat = 51.51, lon = -0.13, tz = "GMT0BST,M3.5.0/1,M10.5.0"},
+  {name = "DUBAI", lat = 25.2, lon = 55.27, tz = "<+04>-4"},
+  {name = "ALMATY", lat = 43.24, lon = 76.89, tz = "<+05>-5"},
 }
 -- END WORLD MASK
 
 local COLS, ROWS = 64, 32
 
+-- What the panel learns at run time and a prototype has to assume: which city
+-- is home, and how many seconds into the run it became home (nil: long ago, so
+-- the name holds still). fx_parity.py rewrites this line to try other homes.
+local HOME, CHANGED_AT = 1, 0
+
+-- A change of home is announced: the name breathes with home's dot for PULSE_S
+-- seconds and eases to steady over the last FADE_S of them. The reasons are
+-- in src/worldclock/worldclock.cpp, next to the same numbers.
+local PULSE_S, FADE_S = 10, 2
+-- The name's left edge and the top of its 7 px line: bottom-aligned with the
+-- digits, clear of Tierra del Fuego, in 72 px of open Southern Ocean.
+local NAME_X, NAME_Y = 43, 54
 
 local function cell_of(lat, lon)
   local c = floor((lon + 180) / 360 * COLS)
@@ -69,14 +87,105 @@ local function cell_of(lat, lon)
   return c, r
 end
 
+-- ---------------------------------------------------------------- the date
+-- Days since 1970-01-01 and back, Howard Hinnant's public-domain algorithms.
+-- Integer arithmetic throughout: the runtime is LUA_32BITS, and a float32
+-- cannot hold today's UTC seconds.
+local function days_from_civil(y, m, d)
+  if m <= 2 then y = y - 1 end
+  local era = y // 400
+  local yoe = y - era * 400
+  local doy = (153 * (m > 2 and m - 3 or m + 9) + 2) // 5 + d - 1
+  local doe = yoe * 365 + yoe // 4 - yoe // 100 + doy
+  return era * 146097 + doe - 719468
+end
+
+local function year_of_days(z)
+  z = z + 719468
+  local era = z // 146097
+  local doe = z - era * 146097
+  local yoe = (doe - doe // 1460 + doe // 36524 - doe // 146096) // 365
+  local doy = doe - (365 * yoe + yoe // 4 - yoe // 100)
+  local mp = (5 * doy + 2) // 153
+  return yoe + era * 400 + (mp >= 10 and 1 or 0)
+end
+
+-- ---------------------------------------------------------------- the zone
+-- A POSIX TZ string, read as src/worldclock/posix_tz.cpp reads it:
+-- std offset [dst [offset] ,start[/time],end[/time]]. Strings come from the
+-- generated table, so this one trusts its input; the firmware's does not.
+-- Offsets are kept in seconds EAST of UTC.
+local function zone(s)
+  local z, i = {}, 1
+  local function name()
+    i = s:match("^<[%w+-]+>()", i) or s:match("^%a+()", i)
+  end
+  local function hms()
+    local sign, h, m, sec, j = s:match("^([+-]?)(%d+):?(%d?%d?):?(%d?%d?)()", i)
+    i = j
+    local v = tonumber(h) * 3600 + (tonumber(m) or 0) * 60 + (tonumber(sec) or 0)
+    return sign == "-" and -v or v
+  end
+  local function rule()
+    local r = {secs = 7200}                -- 02:00 when the rule gives no time
+    local mo, wk, wd, j = s:match("^M(%d+)%.(%d+)%.(%d+)()", i)
+    if mo then
+      r.kind, r.m, r.w, r.d, i = "M", tonumber(mo), tonumber(wk), tonumber(wd), j
+    else
+      local jl, n, j2 = s:match("^(J?)(%d+)()", i)
+      r.kind, r.day, i = (jl == "J" and "J" or "D"), tonumber(n), j2
+    end
+    if s:sub(i, i) == "/" then i = i + 1; r.secs = hms() end
+    return r
+  end
+  name(); z.std = -hms()
+  if i <= #s then
+    name(); z.dst = z.std + 3600
+    if s:sub(i, i) ~= "," then z.dst = -hms() end
+    i = i + 1; z.start = rule()
+    i = i + 1; z.finish = rule()
+  end
+  return z
+end
+
+local MONTH_DAYS = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31}
+local function leap(y) return (y % 4 == 0 and y % 100 ~= 0) or y % 400 == 0 end
+
+-- The UTC second a rule fires in year y; its time is local, in the offset
+-- in force until then.
+local function change_at(r, y, off_before)
+  local day
+  if r.kind == "M" then
+    local first = days_from_civil(y, r.m, 1)
+    local dom = 1 + (r.d - (first + 4) % 7) % 7 + (r.w - 1) * 7   -- 1970-01-01 was a Thursday
+    local last = MONTH_DAYS[r.m] + ((r.m == 2 and leap(y)) and 1 or 0)
+    while dom > last do dom = dom - 7 end                           -- week 5 is the last one
+    day = first + dom - 1
+  elseif r.kind == "J" then
+    day = days_from_civil(y, 1, 1) + r.day - 1 + ((leap(y) and r.day >= 60) and 1 or 0)
+  else
+    day = days_from_civil(y, 1, 1) + r.day
+  end
+  return day * 86400 + r.secs - off_before
+end
+
+local function offset(z, utc)
+  if not z.dst then return z.std end
+  local y = year_of_days((utc + z.std) // 86400)
+  local s, e = change_at(z.start, y, z.std), change_at(z.finish, y, z.dst)
+  local dst
+  if s < e then dst = utc >= s and utc < e
+  else dst = not (utc >= e and utc < s) end           -- a southern summer spans the new year
+  return dst and z.dst or z.std
+end
+
 -- ---------------------------------------------------------------- the sun
 -- Declination by the usual cosine approximation, and the subsolar longitude
 -- straight from UTC. Neither is ephemeris-grade - the equation of time can
 -- move the line by up to four degrees - but a dot here is 5.6 degrees wide,
 -- so the error is smaller than one dot.
-local function sun(n)
-  local decl = rad(-23.44) * cos(2 * pi * ((n.yday or 255) + 10) / 365)
-  local utcmin = (n.hour * 60 + n.min - (n.utc or 0) * 60) % 1440
+local function sun(yday, utcmin)
+  local decl = rad(-23.44) * cos(2 * pi * (yday + 10) / 365)
   local sublon = rad(-15 * (utcmin / 60 - 12))
   return decl, sublon
 end
@@ -116,10 +225,20 @@ end
 -- ---------------------------------------------------------------- draw
 local DAY   = {225, 228, 232}
 local NIGHT = { 52,  56,  64}
+local ORANGE = {255, 140, 40}
+
+for _, city in ipairs(CITIES) do city.zone = zone(city.tz) end
 
 function draw()
   local n = px.now()
-  local decl, sublon = sun(n)
+  -- UTC seconds from the wall clock the host hands over. The offset is made an
+  -- integer first: it arrives as 5.5 for India, and one float in the sum would
+  -- round the whole of it to float32.
+  local off = floor(n.utc * 60 + 0.5) * 60
+  local utc = (days_from_civil(n.year or 2026, 1, 1) + (n.yday or 255)) * 86400
+              + n.hour * 3600 + n.min * 60 + n.sec - off
+  local udays = utc // 86400
+  local decl, sublon = sun(udays - days_from_civil(year_of_days(udays), 1, 1), (utc // 60) % 1440)
   local sd, cd = sin(decl), cos(decl)
 
   px.clear(0, 0, 0)
@@ -145,13 +264,29 @@ function draw()
   end
 
   -- Cities are 2x2: the dot and its gap, which reads as a bigger dot on the
-  -- same grid rather than as something drawn on top of it.
+  -- same grid rather than as something drawn on top of it. Home breathes.
+  local t60 = px.t() * 60
+  local breath = 0.65 + 0.35 * abs(sin(pi * (n.sec + t60)))
   for i, city in ipairs(CITIES) do
     local c, r = cell_of(city.lat, city.lon)
-    local a = 1.0
-    if i == 1 then a = 0.65 + 0.35 * abs(sin(pi * (n.sec + px.t() * 60))) end  -- home breathes
-    px.rect(c * 2, r * 2, 2, 2, floor(255 * a), floor(140 * a), floor(40 * a), true)
+    if c >= 0 and c < COLS and r >= 0 and r < ROWS then
+      local a = i == HOME and breath or 1.0
+      px.rect(c * 2, r * 2, 2, 2, floor(ORANGE[1] * a), floor(ORANGE[2] * a), floor(ORANGE[3] * a), true)
+    end
   end
 
-  big(1, 50, string.format("%02d:%02d", n.hour, n.min), 255, 255, 255)
+  -- Home's name, breathing with its dot while the change is new.
+  local home = CITIES[HOME]
+  local a = 1.0
+  if CHANGED_AT then
+    local since = t60 - CHANGED_AT
+    if since >= 0 and since < PULSE_S then
+      a = 1.0 - (1.0 - breath) * min(1.0, (PULSE_S - since) / FADE_S)
+    end
+  end
+  px.text(NAME_X, NAME_Y, home.name, floor(ORANGE[1] * a), floor(ORANGE[2] * a), floor(ORANGE[3] * a))
+
+  -- And its time.
+  local here = utc + offset(home.zone, utc)
+  big(1, 50, string.format("%02d:%02d", (here // 3600) % 24, (here // 60) % 60), 255, 255, 255)
 end

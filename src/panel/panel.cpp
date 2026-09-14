@@ -11,12 +11,60 @@
 #include "../flightboard/fb_mqtt.h"
 #include "../flightboard/flightboard.h"
 #include "../railboard/railboard.h"
+#include "../worldclock/wc_home.h"
 #include "../worldclock/worldclock.h"
 
 // Same reasoning as the clock style's deferred save: a slider dragged across its
 // range or a knob spun through six airports is one write, not dozens.
 static const uint32_t SETTLE_MS = 2500;
 static const char *const NS = "panel";
+static const uint8_t WC_HOME_UNSET = 255;
+
+#if defined(WORLDCLOCK_ENABLED)
+// One custom city as NVS keeps it: fixed size and versioned, so a record from
+// another layout is recognised by its length or its first byte and skipped.
+// Six of these are 804 bytes of blob. Six is the cap because the map is 64x32
+// dots and Europe alone already holds three of the built-in cities within a
+// few dots of each other: twelve orange dots is about what the map carries
+// before they stop reading as places, and the portal's list stays one screen.
+static const uint8_t WC_RECORD_V = 1;
+struct __attribute__((packed)) WcRecord {
+  uint8_t v;
+  char    name[WC_NAME_MAX + 1];
+  float   lat, lon;
+  char    posix[WC_POSIX_MAX + 1];
+  char    iana[WC_IANA_MAX + 1];
+};
+
+static void toRecord(const WcCity &c, WcRecord *r) {
+  memset(r, 0, sizeof(*r));
+  r->v = WC_RECORD_V;
+  memcpy(r->name, c.name, sizeof(r->name));
+  r->lat = c.lat;
+  r->lon = c.lon;
+  memcpy(r->posix, c.posix, sizeof(r->posix));
+  memcpy(r->iana, c.iana, sizeof(r->iana));
+}
+
+static void fromRecord(const WcRecord &r, WcCity *c) {
+  memset(c, 0, sizeof(*c));
+  memcpy(c->name, r.name, sizeof(c->name) - 1);      // the last byte stays 0 whatever was stored
+  c->lat = r.lat;
+  c->lon = r.lon;
+  memcpy(c->posix, r.posix, sizeof(c->posix) - 1);
+  memcpy(c->iana, r.iana, sizeof(c->iana) - 1);
+}
+
+static bool sameCity(const WcCity &a, const WcCity &b) {
+  return !strcmp(a.name, b.name) && a.lat == b.lat && a.lon == b.lon && !strcmp(a.posix, b.posix) &&
+         !strcmp(a.iana, b.iana);
+}
+
+static void slotKey(uint8_t slot, char key[6]) { snprintf(key, 6, "wcC%u", (unsigned)slot); }
+
+static WcCity s_wcSaved[WC_CUSTOM_MAX];     // what NVS holds, slot by slot
+static bool   s_wcSavedUsed[WC_CUSTOM_MAX];
+#endif
 
 struct PanelState {
   uint16_t      pages;
@@ -102,7 +150,7 @@ void panelBegin() {
   s_cur.fbAirport = 0;
   s_cur.fbDir     = 2;
 #endif
-  s_cur.wcHome = 0;
+  s_cur.wcHome = WC_HOME_UNSET;     // never chosen: home follows the panel's location
 #if defined(RAILBOARD_ENABLED)
   memcpy(s_cur.rbStn, RB_CRS, sizeof(s_cur.rbStn));
 #else
@@ -113,6 +161,7 @@ void panelBegin() {
   // yet fails with a logged error on every boot until the first save. Opening
   // read-write creates the namespace once; the numeric getters below only log
   // at verbose level for a missing key (Preferences.cpp, arduino-esp32 2.0.17).
+  uint8_t storedHome = WC_HOME_UNSET;   // what NVS holds, even when it is no city any more
   Preferences p;
   if (p.begin(NS, false)) {
     PanelState d = s_cur;
@@ -141,8 +190,30 @@ void panelBegin() {
     if (dir <= FB_DIR_ALT) s_cur.fbDir = dir;
 #endif
 #if defined(WORLDCLOCK_ENABLED)
-    const uint8_t home = p.getUChar("wcHome", d.wcHome);
-    if (home < worldClockCityCount()) s_cur.wcHome = home;
+    // Custom cities before home: a stored home may be one of them. isKey()
+    // first, since getBytes() logs at error level for a key never written
+    // (Preferences.cpp, arduino-esp32 2.0.17). Each record is checked again
+    // on the way in; one that fails is left out, not repaired.
+    for (uint8_t i = 0; i < WC_CUSTOM_MAX; i++) {
+      char key[6];
+      slotKey(i, key);
+      WcRecord r;
+      if (!p.isKey(key) || p.getBytesLength(key) != sizeof(r) || p.getBytes(key, &r, sizeof(r)) != sizeof(r) ||
+          r.v != WC_RECORD_V)
+        continue;
+      WcCity c;
+      fromRecord(r, &c);
+      if (worldClockSetCustom(i, &c)) {
+        s_wcSaved[i] = c;
+        s_wcSavedUsed[i] = true;
+      }
+    }
+    // Absent means never chosen, which is no longer the same thing as city 0.
+    if (p.isKey("wcHome")) {
+      WcCity c;
+      storedHome = p.getUChar("wcHome", WC_HOME_UNSET);
+      if (worldClockCity(storedHome, &c)) s_cur.wcHome = storedHome;
+    }
 #endif
 #if defined(RAILBOARD_ENABLED)
     // isKey() first: unlike the numeric getters, getString() logs at error level
@@ -159,6 +230,11 @@ void panelBegin() {
   // What was read is what NVS holds; a field never stored holds its default,
   // and writing the default back would change nothing.
   s_saved = s_cur;
+  // A stored home that is no city any more (its slot failed its check) is
+  // removed at the first save, so a city later added to that slot is not
+  // mistaken for the owner's choice.
+  s_saved.wcHome = storedHome;
+  if (s_saved.wcHome != s_cur.wcHome) markDirty();
 
   applyKnob();
   applyCarousel();
@@ -166,7 +242,8 @@ void panelBegin() {
   flightboardSelect(s_cur.fbAirport, (FbDirMode)s_cur.fbDir);
 #endif
 #if defined(WORLDCLOCK_ENABLED)
-  worldClockSetHome(s_cur.wcHome);
+  if (s_cur.wcHome != WC_HOME_UNSET) worldClockSetHome(s_cur.wcHome, true);
+  wcHomeBegin();                        // nobody chose: the location, or the zone
 #endif
 #if defined(RAILBOARD_ENABLED)
   railboardSetStation(s_cur.rbStn);   // before railboardBegin() subscribes
@@ -174,6 +251,9 @@ void panelBegin() {
 }
 
 void panelTick() {
+#if defined(WORLDCLOCK_ENABLED)
+  wcHomeTick();
+#endif
   if (!s_dirtyAt || (millis() - s_dirtyAt) < SETTLE_MS) return;
   Preferences p;
   if (!p.begin(NS, false)) { markDirty(); return; }   // try again after another settle
@@ -192,7 +272,32 @@ void panelTick() {
   if (c.knob.detent != w.knob.detent && p.putChar("knDet", c.knob.detent)) w.knob.detent = c.knob.detent;
   if (c.fbAirport != w.fbAirport && p.putUChar("fbApt", c.fbAirport)) w.fbAirport = c.fbAirport;
   if (c.fbDir != w.fbDir && p.putUChar("fbDir", c.fbDir)) w.fbDir = c.fbDir;
-  if (c.wcHome != w.wcHome && p.putUChar("wcHome", c.wcHome)) w.wcHome = c.wcHome;
+  if (c.wcHome != w.wcHome) {
+    // remove() only when NVS holds the key: it logs at error level otherwise.
+    const bool ok = c.wcHome == WC_HOME_UNSET ? p.remove("wcHome") : p.putUChar("wcHome", c.wcHome) != 0;
+    if (ok) w.wcHome = c.wcHome;
+  }
+#if defined(WORLDCLOCK_ENABLED)
+  for (uint8_t i = 0; i < WC_CUSTOM_MAX; i++) {
+    WcCity now;
+    const bool used = worldClockCity((uint8_t)(WC_ID_CUSTOM + i), &now);
+    if (used == s_wcSavedUsed[i] && (!used || sameCity(now, s_wcSaved[i]))) continue;
+    char key[6];
+    slotKey(i, key);
+    bool ok;
+    if (used) {
+      WcRecord r;
+      toRecord(now, &r);
+      ok = p.putBytes(key, &r, sizeof(r)) == sizeof(r);
+    } else {
+      ok = p.remove(key);
+    }
+    if (ok) {
+      s_wcSavedUsed[i] = used;
+      if (used) s_wcSaved[i] = now;
+    }
+  }
+#endif
   if (strcmp(c.rbStn, w.rbStn) && p.putString("rbStn", c.rbStn)) memcpy(w.rbStn, c.rbStn, sizeof(w.rbStn));
   p.end();
 }
@@ -262,19 +367,71 @@ void panelNoteFlightboard() {
 #endif
 }
 
-bool panelSetWorldHome(uint8_t city) {
 #if defined(WORLDCLOCK_ENABLED)
-  if (city >= worldClockCityCount()) return false;
-  if (city == s_cur.wcHome) return true;
-  s_cur.wcHome = city;
-  worldClockSetHome(city);
-  markDirty();
-  return true;
-#else
-  (void)city;
+static bool nameTaken(const char *name) {
+  WcCity c;
+  for (uint8_t i = 0; i < worldClockDefaultCount(); i++)
+    if (worldClockCity(i, &c) && !strcmp(c.name, name)) return true;
+  for (uint8_t i = 0; i < WC_CUSTOM_MAX; i++)
+    if (worldClockCity((uint8_t)(WC_ID_CUSTOM + i), &c) && !strcmp(c.name, name)) return true;
   return false;
-#endif
 }
+
+const char *panelAddWorldCity(const WcCity &c, uint8_t *id) {
+  if (const char *why = worldClockCheck(c)) return why;
+  // Two dots under one name would leave the portal's list with two rows nobody
+  // can tell apart.
+  if (nameTaken(c.name)) return "a city with that name is already on the map";
+  for (uint8_t i = 0; i < WC_CUSTOM_MAX; i++) {
+    if (worldClockSlotUsed(i)) continue;
+    worldClockSetCustom(i, &c);
+    *id = (uint8_t)(WC_ID_CUSTOM + i);
+    markDirty();
+    wcHomeRethink();                    // an unchosen home may now have a nearer city
+    return nullptr;
+  }
+  return "all six custom cities are in use: delete one first";
+}
+
+const char *panelSetWorldHome(uint8_t id) {
+  WcCity c;
+  if (!worldClockCity(id, &c)) return "no city with that id";
+  if (id == WC_ID_AUTO) {
+    // Made at the location and never stored: choosing it keeps it, or the
+    // choice would point at nothing after a reboot.
+    if (const char *why = panelAddWorldCity(c, &id)) return why;
+  }
+  worldClockSetHome(id, true);
+  if (s_cur.wcHome != id) {
+    s_cur.wcHome = id;
+    markDirty();
+  }
+  wcHomeRethink();
+  return nullptr;
+}
+
+const char *panelRemoveWorldCity(uint8_t id) {
+  if (id < WC_ID_CUSTOM || id >= WC_ID_CUSTOM + WC_CUSTOM_MAX || !worldClockSlotUsed((uint8_t)(id - WC_ID_CUSTOM)))
+    return "only a custom city can be deleted";
+  if (s_cur.wcHome == id) {             // the choice goes with the city
+    s_cur.wcHome = WC_HOME_UNSET;
+    worldClockSetHome(id, false);
+  }
+  worldClockSetCustom((uint8_t)(id - WC_ID_CUSTOM), nullptr);
+  markDirty();
+  wcHomeRethink();
+  return nullptr;
+}
+
+void panelForgetWorldHome() {
+  worldClockSetHome(worldClockHome(), false);   // shown until the location decides, a moment later
+  if (s_cur.wcHome != WC_HOME_UNSET) {
+    s_cur.wcHome = WC_HOME_UNSET;
+    markDirty();
+  }
+  wcHomeRethink();
+}
+#endif
 
 uint8_t panelWorldHome() { return s_cur.wcHome; }
 

@@ -6,7 +6,7 @@
 // the clock luasim uses, so the two outputs can be compared byte for byte
 // (fx_parity.py does). Same command line as luasim:
 //
-//   fxhost script.lua frames out.raw [--start HH:MM] [--yday N] [--utc H] [--sweep]
+//   fxhost script.lua frames out.raw [--start HH:MM] [--yday N] [--utc H] [--year Y] [--sweep]
 //          [--exact] [--incremental] [--panel-limits]
 //
 //   --exact         count instructions one by one (slow; for the numbers only)
@@ -47,7 +47,7 @@ double nowMsF() {
 
 struct Job {
   std::string script, out;
-  int frames = 0, startMin = 12 * 60 + 34, yday = 255, utcH = 2;
+  int frames = 0, startMin = 12 * 60 + 34, yday = 255, utcH = 2, year = 2026;
   bool sweep = false, exact = false, gen = true, panel = false;
   int rc = 0;
 };
@@ -66,7 +66,7 @@ void *run(void *arg) {
   if (name.size() > 4 && name.compare(name.size() - 4, 4, ".lua") == 0) name.resize(name.size() - 4);
 
   static uint8_t canvasBytes[LUA_PX_BYTES];   // zeroed, like luasim's static fb
-  LuaPxCanvas canvas = {canvasBytes, {0.0, j.startMin / 60 % 24, j.startMin % 60, 56, j.yday, j.utcH * 60}};
+  LuaPxCanvas canvas = {canvasBytes, {0.0, j.startMin / 60 % 24, j.startMin % 60, 56, j.yday, j.utcH * 60, j.year}};
   const LuaFxLimits generous = {400000000u, 400000000u, 600000u, 600000u, 256u * 1024u * 1024u};
   LuaFx fx;
   if (j.exact) fx.setHookStep(1);
@@ -128,7 +128,7 @@ void *run(void *arg) {
 int main(int argc, char **argv) {
   if (argc < 4) {
     fprintf(stderr, "usage: fxhost script.lua frames out.raw [--start HH:MM] [--yday N] "
-                    "[--utc H] [--sweep] [--exact] [--incremental] [--panel-limits]\n");
+                    "[--utc H] [--year Y] [--sweep] [--exact] [--incremental] [--panel-limits]\n");
     return 2;
   }
   Job j;
@@ -140,6 +140,7 @@ int main(int argc, char **argv) {
       int hh = 0, mm = 0; sscanf(argv[++a], "%d:%d", &hh, &mm); j.startMin = hh * 60 + mm;
     } else if (!strcmp(argv[a], "--yday") && a + 1 < argc) j.yday = atoi(argv[++a]);
     else if (!strcmp(argv[a], "--utc") && a + 1 < argc)    j.utcH = atoi(argv[++a]);
+    else if (!strcmp(argv[a], "--year") && a + 1 < argc)   j.year = atoi(argv[++a]);
     else if (!strcmp(argv[a], "--sweep"))                  j.sweep = true;
     else if (!strcmp(argv[a], "--exact"))                  j.exact = true;
     else if (!strcmp(argv[a], "--incremental"))            j.gen = false;

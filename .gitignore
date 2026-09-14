@@ -28,6 +28,7 @@ tools/luasim/luasim
 tools/luasim/font_picopixel.inc
 tools/luasim/*.raw
 tools/luasim/fxhost
+tools/luasim/wchost
 tools/luasim/.fxbuild/
 # previews ARE committed - they are the only record of what an effect looks like
 

@@ -27,6 +27,7 @@ struct LuaPxClock {
   int     hour, min, sec;
   int     yday;        // 0-based day of the year
   int     utcMinutes;  // local time minus UTC; px.now().utc is in hours
+  int     year;        // the year yday counts in, e.g. 2026
 };
 
 struct LuaPxCanvas {

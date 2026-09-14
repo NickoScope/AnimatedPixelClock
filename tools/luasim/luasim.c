@@ -31,6 +31,7 @@ static double g_phase = 0.0;
 static int    g_hour = 12, g_min = 34, g_sec = 56;
 static int    g_yday = 255;      /* 0-based day of year; 255 = 13 September */
 static int    g_utc  = 2;        /* local time minus UTC, hours; CEST */
+static int    g_year = 2026;     /* the year yday counts in */
 
 static void put(int x, int y, int r, int g, int b) {
   if (x < 0 || x >= W || y < 0 || y >= H) return;
@@ -54,6 +55,9 @@ static int l_now(lua_State *L) {
      the wall clock: the day/night line moves with both. */
   lua_pushinteger(L, g_yday); lua_setfield(L, -2, "yday");
   lua_pushinteger(L, g_utc);  lua_setfield(L, -2, "utc");
+  /* A zone's summer time falls on weekdays, so a script that shows another
+     zone's time needs the year as well. */
+  lua_pushinteger(L, g_year); lua_setfield(L, -2, "year");
   return 1;
 }
 
@@ -225,7 +229,7 @@ static const luaL_Reg px_lib[] = {
 int main(int argc, char **argv) {
   if (argc < 4) {
     fprintf(stderr, "usage: luasim script.lua frames out.raw "
-                    "[--start HH:MM] [--yday N] [--utc H] [--sweep]\n");
+                    "[--start HH:MM] [--yday N] [--utc H] [--year Y] [--sweep]\n");
     return 2;
   }
   const int frames = atoi(argv[2]);
@@ -235,6 +239,7 @@ int main(int argc, char **argv) {
       int hh = 0, mm = 0; sscanf(argv[++a], "%d:%d", &hh, &mm); start_min = hh * 60 + mm;
     } else if (!strcmp(argv[a], "--yday") && a + 1 < argc) g_yday = atoi(argv[++a]);
     else if (!strcmp(argv[a], "--utc") && a + 1 < argc)   g_utc  = atoi(argv[++a]);
+    else if (!strcmp(argv[a], "--year") && a + 1 < argc)  g_year = atoi(argv[++a]);
     else if (!strcmp(argv[a], "--sweep"))                 sweep  = 1;   /* a whole day over the frames */
   }
   g_hour = start_min / 60 % 24; g_min = start_min % 60;

@@ -111,6 +111,7 @@ void fillClock(LuaPxClock &c, double period) {
   c.min  = lt.tm_min;
   c.sec  = lt.tm_sec;
   c.yday = lt.tm_yday;
+  c.year = lt.tm_year + 1900;
   int days = lt.tm_yday - ut.tm_yday;
   if (lt.tm_year != ut.tm_year) days = lt.tm_year > ut.tm_year ? 1 : -1;
   c.utcMinutes = days * 1440 + (lt.tm_hour - ut.tm_hour) * 60 + (lt.tm_min - ut.tm_min);

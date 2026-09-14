@@ -17,7 +17,9 @@
 //   carAll   u8   on the clock page, walk every style first
 //   fbApt    u8   flight board airport, index into the fixed list
 //   fbDir    u8   0 arrivals, 1 departures, 2 both in turn (default)
-//   wcHome   u8   world clock home city, index into the city list
+//   wcHome   u8   world clock home, a city id (worldclock.h: 0.. built in, 100.. custom).
+//                 Absent = never chosen, and home follows the panel's location (wc_home.h)
+//   wcC0-5   blob world clock custom city in slot 0-5, a WcRecord (panel.cpp); absent = empty
 //   rbStn    str  rail board station, exactly three capitals A-Z (default RB_CRS)
 //   knRev    u8   knob direction reversed
 //   knLock   u16  ms after a step during which the decoder ignores the knob
@@ -84,8 +86,17 @@ bool     panelSetKnob(const PanelKnob &k);
 bool     panelSetFlightboard(uint8_t airport, uint8_t dirMode);   // FbDirMode
 void     panelNoteFlightboard();   // the knob moved the selection: keep it, later
 
-bool     panelSetWorldHome(uint8_t city);
-uint8_t  panelWorldHome();
+#if defined(WORLDCLOCK_ENABLED)
+#include "../worldclock/worldclock.h"
+// The world clock's home and custom cities. Each returns nullptr when done, or
+// why not in words the portal can show; the caller has already checked the
+// input with worldClockCheck, so what is left is a full list or a name taken.
+const char *panelSetWorldHome(uint8_t id);    // chosen; the city made at the location is kept first
+const char *panelAddWorldCity(const WcCity &c, uint8_t *id);
+const char *panelRemoveWorldCity(uint8_t id); // custom ids only; a removed home is forgotten
+void        panelForgetWorldHome();           // home follows the panel's location again
+#endif
+uint8_t  panelWorldHome();                    // the chosen city's id, 255 when none is
 
 // The rail board's station: validated, handed to the rail board (which
 // resubscribes and tells Home Assistant), and kept. False: not three capitals

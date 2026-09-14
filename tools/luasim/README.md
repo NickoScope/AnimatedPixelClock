@@ -14,7 +14,7 @@ python3 render.py out.raw out.gif 6    # or out.png for a single frame
 Optional flags set the simulated clock:
 
 ```bash
-./luasim scripts/world_clock.lua 1   out.raw --start 23:07 --yday 255 --utc 2
+./luasim scripts/world_clock.lua 1   out.raw --start 23:07 --yday 255 --utc 2 --year 2026
 ./luasim scripts/world_clock.lua 240 out.raw --sweep    # one whole day across the frames
 ```
 
@@ -24,7 +24,7 @@ Optional flags set the simulated clock:
 |---|---|---|
 | ![](preview/snake_clock.png) | **snake_clock.lua** | HH:MM in the world clock's bold face, 48 px tall on pure black, where each digit is a snake. On the minute the four crawl off the bottom and four more crawl in from the top and lay themselves out as the next time. A pulse runs head to tail the whole time; nothing lights the background — [full minute](preview/snake_clock.gif) |
 | ![](preview/tetris_clock.png) | **tetris_clock.lua** | The same bold 48 px clock in tetrominoes, on pure black. The rows clear from the bottom like completed lines, everything above drops, and the next minute falls in. Two glints sweep the stack between changes, inside the blocks only — [full minute](preview/tetris_clock.gif) |
-| ![](preview/world_clock.png) | **world_clock.lua** | A dotted world map on the panel's 64x32 grid: land in daylight is lit, night is dim, and civil twilight blends between them, so the terminator draws itself and creeps across the day. Big time in the empty South Pacific, cities as orange dots, home breathing. Mask and cities from Natural Earth via `gen_world.py`, which also writes the firmware's copy — ported to C in [`src/worldclock`](../../src/worldclock/README.md) and matching this script pixel for pixel — [a full day](preview/world_clock.gif) |
+| ![](preview/world_clock.png) | **world_clock.lua** | A dotted world map on the panel's 64x32 grid: land in daylight is lit, night is dim, and civil twilight blends between them, so the terminator draws itself and creeps across the day. Big time in the empty South Pacific in home's own zone, home's name beside it (breathing with home's dot for 10 s after a change, then still), cities as orange dots. Mask and cities from Natural Earth via `gen_world.py`, which also writes the firmware's copy; zones from `gen_tz.py`. Ported to C in [`src/worldclock`](../../src/worldclock/README.md), which `fx_parity.py` renders on the host (`wchost`) and holds to this script pixel for pixel; `wc_preview.py` draws that page's previews — [a full day](preview/world_clock.gif) |
 | ![](preview/room_radar.png) | **room_radar.lua** | Who is in the room, as a 24 GHz HLK-LD2450 radar sees it: its own 6 m, ±60° fan drawn up from the bottom edge at 10 px to the metre. Up to three people with trails sampled at the radar's 10 Hz, a burst of light where someone walks in, a slow ring around someone sitting still, and a room that dims once it is empty. The people are scripted; `fake_targets()` returns what the radar would, and it is the one function to replace — [24 s](preview/room_radar.gif), at 2×, 10 fps and 32 colours: the sweep repaints most of the fan every frame, and at 3× the GIF was 5 MB |
 | ![](preview/minecraft.png) | **minecraft.lua** | A blocky world with a full day/night cycle in one minute, in saturated colour for an LED panel: a black night, stone that darkens with depth, ore, torches that light the blocks around them. Steve patrols the hills with a step cycle and jumps, a creeper hisses and blows up once a minute, a pig wanders by day and a zombie by night, and a fish jumps from the lake — [full minute](preview/minecraft.gif) |
 | ![](preview/snooker_clock.png) | **snooker_clock.lua** | A snooker table that plays whole frames by itself, with the time top right on a game-style HUD plate and the score, break and fouls top left. Table, spots and the rack follow the WPBSA Official Rules (Section 1 Rules 1-2, Section 3 Rule 2); balls are drawn 1.93x real, the most the pack allows between Pink and Black, as pre-lit sprites with a highlight and a shadow. Break-off, pots with draw, stun and follow for position, safeties, misses, fouls with Rule 11 penalties, colours re-spotted, the final sequence and re-racks. Seeded from the clock the page opened at — [the break, a red with follow and the blue](preview/snooker_clock.gif), at full frame rate; 1:1 stills [break](preview/snooker_clock_1x_break.png) and [play](preview/snooker_clock_1x_play.png) |
@@ -71,7 +71,10 @@ python3 fx_parity.py            # the firmware's runtime against luasim, pixel f
 `fxhost` — the firmware's own `src/lua/lua_fx.cpp`, `lua_px.cpp` and
 `nslua_sandbox.cpp` against a stand-in display — renders every script through
 both at several clocks, and prints each script's exact instruction counts, heap
-peak and host draw time.
+peak and host draw time. It also builds `wchost`, the native world clock page
+against the same kind of stand-in, holds it to `world_clock.lua` for four homes
+under the same clocks, and checks the page's POSIX TZ evaluator against Python's
+zoneinfo for every zone in `src/worldclock/tzdb.h`.
 
 ## The API
 
@@ -79,7 +82,7 @@ peak and host draw time.
 |---|---|
 | `px.size()` | → `128, 64` |
 | `px.t()` | animation phase `[0,1)` |
-| `px.now()` | `{hour, min, sec, yday, utc}` — `yday` is 0-based, `utc` is local minus UTC in hours; anything that needs the sun needs both |
+| `px.now()` | `{hour, min, sec, yday, utc, year}` — `yday` is 0-based, `utc` is local minus UTC in hours; anything that needs the sun needs both, and another zone's summer time needs `year` too |
 | `px.clear(r,g,b)` | |
 | `px.pixel(x,y,r,g,b)` | |
 | `px.line(x0,y0,x1,y1,r,g,b)` | |

@@ -229,7 +229,7 @@ function drawNow(d) {
   var cv = $('pnCanvas'); if (!cv) return;
   var c = ctxOf(cv), fg = css('--crt-fg', '#84f3ad'), dim = css('--crt-dim', '#4d8a67'), n = d.now, i, y;
   if (n.key === 'world') {
-    if (wcMap) drawWorld(c, wcMap, n.time);
+    if (wcMap) drawWorld(c, wcMap);
     else { T(c, 64, 26, 'WORLD CLOCK', 8, dim, 'center'); if (!wcLoading) loadWorld().catch(function () {}); }
   } else if (n.key === 'flights') {
     T(c, 2, 1, 'FLIGHTS', 5, '#fff'); T(c, 126, 1, n.time, 5, dim, 'right'); R(c, 0, 8, 128, 1, dim);
@@ -268,7 +268,7 @@ function drawNow(d) {
 // The panel's own sun: declination by the cosine approximation, the subsolar
 // longitude from UTC hours and minutes, civil twilight blended over 6 degrees -
 // worldclock.cpp recompute(), line for line.
-var RAD = Math.PI / 180, wcMap = null, wcLoading = false, wcTime = '--:--', wcSig = '';
+var RAD = Math.PI / 180, wcMap = null, wcLoading = false, wcSig = '', wcPulseEnd = 0, wcPick = null, wcSeq = 0, wcTimer = null;
 function sunOf(utc) {
   if (!utc) return null;
   var t = new Date(utc * 1000);
@@ -281,7 +281,20 @@ function elev(s, latDeg, lonDeg) {
   return Math.asin(Math.sin(la) * s.sd + Math.cos(la) * s.cd * Math.cos(lonDeg * RAD - s.sub)) / RAD;
 }
 function utcNow(m) { return m.utc ? m.utc + (Date.now() - m.at) / 1000 : 0; }
-function drawWorld(c, m, hm) {
+// Home's HH:MM from the offset the panel reported, carried forward from that
+// answer; a summer time change between two polls shows one poll late.
+function wcHomeTime(m) {
+  if (!m || !m.utc || m.homeOffset == null) return '--:--';
+  var t = new Date((Math.floor(utcNow(m)) + m.homeOffset) * 1000);
+  return ('0' + t.getUTCHours()).slice(-2) + ':' + ('0' + t.getUTCMinutes()).slice(-2);
+}
+function wcHome(m) {
+  for (var i = 0; i < m.cities.length; i++) if (m.cities[i].id === m.home) return m.cities[i];
+  return null;
+}
+function wcCell(m, lat, lon) { return [Math.floor((lon + 180) / 360 * m.cols), Math.floor((m.top - lat) / (m.top - m.bottom) * m.rows)]; }
+function orange(f) { return 'rgb(' + Math.round(255 * f) + ',' + Math.round(140 * f) + ',' + Math.round(40 * f) + ')'; }
+function drawWorld(c, m) {
   var s = sunOf(utcNow(m)), dLat = (m.top - m.bottom) / m.rows;
   for (var r = 0; r < m.rows; r++) {
     var h = m.mask[r], hi = parseInt(h.slice(0, 8), 16), lo = parseInt(h.slice(8), 16), lat = m.top - (r + 0.5) * dLat;
@@ -292,50 +305,195 @@ function drawWorld(c, m, hm) {
       R(c, col * 2, r * 2, 1, 1, 'rgb(' + Math.round(52 + 173 * k) + ',' + Math.round(56 + 172 * k) + ',' + Math.round(64 + 168 * k) + ')');
     }
   }
-  var a = 0.65 + 0.35 * Math.abs(Math.sin(Math.PI * Date.now() / 1000));
-  m.cities.forEach(function (ct, i) {
-    var cc = Math.floor((ct.lon + 180) / 360 * m.cols), rr = Math.floor((m.top - ct.lat) / (m.top - m.bottom) * m.rows);
-    if (cc < 0 || cc >= m.cols || rr < 0 || rr >= m.rows) return;
-    var f = i === m.home ? a : 1;
-    R(c, cc * 2, rr * 2, 2, 2, 'rgb(' + Math.round(255 * f) + ',' + Math.round(140 * f) + ',' + Math.round(40 * f) + ')');
+  // Home breathes, and its name with it while a change is new: worldclock.cpp's
+  // pulse, 10 s with the last 2 s easing out.
+  var now = Date.now(), a = 0.65 + 0.35 * Math.abs(Math.sin(Math.PI * now / 1000)), home = wcHome(m);
+  m.cities.forEach(function (ct) {
+    var p = wcCell(m, ct.lat, ct.lon);
+    if (p[0] < 0 || p[0] >= m.cols || p[1] < 0 || p[1] >= m.rows) return;
+    R(c, p[0] * 2, p[1] * 2, 2, 2, orange(ct.id === m.home ? a : 1));
   });
-  T(c, 1, 50, hm || '--:--', 11, '#fff');
+  if (wcPick && Math.floor(now / 400) % 2) {   // where the city picked from the search will go
+    var q = wcCell(m, wcPick.lat, wcPick.lon);
+    R(c, q[0] * 2 - 1, q[1] * 2 - 1, 4, 4, '#fff');
+  }
+  var left = wcPulseEnd - now;
+  if (home) T(c, 43, 55, home.name, 6, orange(left > 0 ? 1 - (1 - a) * Math.min(1, left / 2000) : 1));
+  T(c, 1, 50, wcHomeTime(m), 11, '#fff');
+}
+// Every answer from /api/worldclock goes through here. A home that changed
+// since the last one pulses in the previews, as it does on the panel.
+function wcTake(d) {
+  var before = wcMap && wcHome(wcMap), after = wcHome(d);
+  d.at = Date.now(); wcMap = d; pageIdx.world = d.page;
+  if (d.pulseMs) wcPulseEnd = Math.max(wcPulseEnd, d.at + d.pulseMs);
+  if (before && after && (before.id !== after.id || before.name !== after.name)) wcPulseEnd = d.at + 10000;
+  return d;
 }
 function loadWorld() {
   wcLoading = true;
-  return api('/api/worldclock').then(function (d) {
-    d.at = Date.now(); wcMap = d; wcLoading = false; pageIdx.world = d.page; return d;
-  }, function (e) { wcLoading = false; throw e; });
+  return api('/api/worldclock').then(function (d) { wcLoading = false; return wcTake(d); },
+    function (e) { wcLoading = false; throw e; });
 }
 function pollWc() {
-  return Promise.all([loadWorld(), api('/api/panel')]).then(function (r) { learn(r[1]); wcTime = r[1].now.time; renderWc(); });
+  return Promise.all([loadWorld(), api('/api/panel')]).then(function (r) { learn(r[1]); renderWc(); });
 }
-function drawWc() { var cv = $('wcCanvas'); if (cv && wcMap) drawWorld(ctxOf(cv), wcMap, wcTime); }
+function drawWc() { var cv = $('wcCanvas'); if (cv && wcMap) drawWorld(ctxOf(cv), wcMap); }
+var WC_FROM = {
+  chosen: 'chosen here, and kept across reboots.',
+  location: 'the city at the weather location in Settings, as none has been chosen. A city made there is called Home.',
+  ip: "found from the panel's internet address, as none has been chosen and no weather location is set.",
+  zone: "matched to the panel's time zone for now, until its location is known."
+};
+function wcPost(body, done) {
+  return api('/api/worldclock', body).then(function (d) { wcTake(d); wcSig = ''; renderWc(); note('wcMsg', done); })
+    .catch(function (err) { note('wcMsg', err.message, true); wcSig = ''; renderWc(); });
+}
 function renderWc() {
   var m = wcMap; if (!m) return;
   drawWc();
-  setText('wcMeta', m.utc ? wcTime + ' panel time' : 'no time yet - all night');
+  var home = wcHome(m), custom = m.cities.filter(function (ct) { return ct.kind === 'custom'; }).length;
+  setText('wcMeta', m.utc ? wcHomeTime(m) + ' in ' + (home ? cap(home.name) : 'home') : 'no time yet - all night');
+  setText('wcFrom', home ? cap(home.name) + ': ' + (WC_FROM[m.homeSource] || '') : '--');
+  setText('wcCount', custom + ' of ' + m.limits.custom);
+  var follow = $('wcFollow'); if (follow) follow.hidden = !m.homeChosen;
+  wcCheckName();
   var s = sunOf(utcNow(m));
-  var sig = JSON.stringify([m.home, m.cities.map(function (ct) { return s ? Math.round(elev(s, ct.lat, ct.lon)) : 0; })]);
+  var sig = JSON.stringify([m.home, m.homeChosen, m.cities, m.cities.map(function (ct) { return s ? Math.round(elev(s, ct.lat, ct.lon)) : 0; })]);
   if (sig === wcSig) return;
   wcSig = sig;
   var host = $('wcCities'); if (!host) return;
   host.innerHTML = '';
-  m.cities.forEach(function (ct, i) {
+  m.cities.forEach(function (ct) {
     var el = s ? elev(s, ct.lat, ct.lon) : null;
     var sun = el == null ? '' : (el > 0 ? 'day' : (el > -6 ? 'twilight' : 'night'));
+    var kind = ct.kind === 'custom' ? 'added' : (ct.kind === 'auto' ? 'made at the panel; kept once chosen' : 'built in');
     var row = document.createElement('div');
     row.className = 'pn-row';
-    row.innerHTML = '<label class="check-row standalone"><input type="radio" name="wcHome" value="' + i + '"' + (i === m.home ? ' checked' : '') +
+    row.innerHTML = '<label class="check-row standalone"><input type="radio" name="wcHome"' + (ct.id === m.home ? ' checked' : '') +
       '><span class="check-box" aria-hidden="true"></span><span class="check-text"><strong>' + esc(cap(ct.name)) + '</strong><span class="ct-hint">' +
       Math.abs(ct.lat).toFixed(2) + (ct.lat >= 0 ? ' N, ' : ' S, ') + Math.abs(ct.lon).toFixed(2) + (ct.lon >= 0 ? ' E' : ' W') +
-      (i === m.home ? ' · home' : '') + '</span></span></label>' + (sun ? '<span class="pn-sun' + (sun === 'day' ? ' day' : '') + '">' + sun + '</span>' : '');
+      (ct.tz ? ' · ' + esc(ct.tz) : '') + ' · ' + kind + (ct.id === m.home ? ' · home' : '') + '</span></span></label>' +
+      (sun ? '<span class="pn-sun' + (sun === 'day' ? ' day' : '') + '">' + sun + '</span>' : '') +
+      (ct.kind === 'custom' ? '<button type="button" class="btn btn-sm btn-danger">Delete</button>' : '');
     row.querySelector('input').addEventListener('change', function () {
-      api('/api/worldclock', { home: i }).then(function (d) { d.at = Date.now(); wcMap = d; wcSig = ''; renderWc(); note('wcMsg', cap(ct.name) + ' is home. Kept across reboots.'); })
-        .catch(function (err) { note('wcMsg', err.message, true); wcSig = ''; renderWc(); });
+      wcPost({ home: ct.id }, cap(ct.name) + ' is home: on the panel now, and kept across reboots.');
+    });
+    var del = row.querySelector('button');
+    if (del) del.addEventListener('click', function () {
+      if (confirm('Delete ' + cap(ct.name) + ' from the map?')) wcPost({ remove: ct.id }, cap(ct.name) + ' deleted.');
     });
     host.appendChild(row);
   });
+}
+
+// ---- adding a city. This browser asks Open-Meteo's geocoder itself: its
+// answers carry access-control-allow-origin: * and a plain GET needs no
+// preflight, so no proxy is needed, and the panel is spared a TLS handshake -
+// its largest allocation - for every pause in typing. The panel sees only the
+// city that is added, and checks all of it again.
+var WC_FIND_HINT = 'Type two letters or more, in any language. This browser asks Open-Meteo; the panel hears only the city you add.';
+// Letters that do not come apart under NFD, as worldClockFitName spells them.
+var WC_TWO = { 'Æ': 'AE', 'æ': 'AE', 'Þ': 'TH', 'þ': 'TH', 'ß': 'SS', 'Ĳ': 'IJ', 'ĳ': 'IJ',
+  'Œ': 'OE', 'œ': 'OE', 'Ø': 'O', 'ø': 'O', 'Ð': 'D', 'ð': 'D', 'Đ': 'D', 'đ': 'D',
+  'Ł': 'L', 'ł': 'L', 'Ŀ': 'L', 'ŀ': 'L', 'Ħ': 'H', 'ħ': 'H', 'ı': 'I', 'Ŧ': 'T',
+  'ŧ': 'T', 'ĸ': 'K', 'ſ': 'S', 'Ŋ': 'N', 'ŋ': 'N' };
+function wcAdv(ch) { var a = wcMap.limits.advance, i = ch.charCodeAt(0) - 32; return a[i >= 0 && i < a.length ? i : 0]; }
+function wcWidth(s) { var w = 0; for (var i = 0; i < s.length; i++) w += wcAdv(s.charAt(i)); return w; }
+// The name field's first guess, by worldClockFitName's rules: capitals without
+// accents, cut after a word or before a hyphen when it is too wide.
+function wcFit(s) {
+  var lim = wcMap.limits, w = 0, cut = 0, whole = 0;
+  var t = String(s || '').replace(/[ÆæÞþßĲĳŒœØøÐðĐđŁłĿŀĦħıŦŧĸſŊŋ]/g,
+    function (ch) { return WC_TWO[ch]; }).normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase()
+    .replace(/[^A-Z0-9.' -]+/g, ' ').replace(/ +/g, ' ').trim();
+  for (var i = 0; i < t.length && i < lim.name; i++) {
+    w += wcAdv(t.charAt(i));
+    if (w > lim.namePx) break;
+    cut = i + 1;
+    if (i + 1 === t.length || t.charAt(i + 1) === ' ' || t.charAt(i + 1) === '-') whole = i + 1;
+  }
+  if (cut < t.length && whole) cut = whole;
+  return t.slice(0, cut).replace(/[ -]+$/, '');
+}
+// The panel's own checks, run first here so the buttons can say no in advance.
+function wcCheckName() {
+  var n = $('wcName'); if (!n || !wcMap || !wcPick) return;
+  var lim = wcMap.limits, v = n.value, w = wcWidth(v), why = '';
+  var full = wcMap.cities.filter(function (ct) { return ct.kind === 'custom'; }).length >= lim.custom;
+  if (!v) why = 'Give it a name.';
+  else if (/[^A-Z0-9.' -]/.test(v)) why = "Capitals A-Z, digits, space and . - ' only: the panel's font has nothing else.";
+  else if (/^ | $|  /.test(v)) why = 'No space at either end, and no two in a row.';
+  else if (w > lim.namePx) why = 'Too wide for the panel: ' + w + ' of ' + lim.namePx + ' px.';
+  else if (wcMap.cities.some(function (ct) { return ct.kind !== 'auto' && ct.name === v; })) why = 'A city with that name is already on the map.';
+  else if (full) why = 'All ' + lim.custom + ' of your cities are in use: delete one first.';
+  note('wcNameMsg', why || (wcPick.label + ' · ' + wcPick.tz + ' · ' + w + ' of ' + lim.namePx + ' px'), !!why);
+  each([$('wcAdd'), $('wcAddHome')], function (b) { if (b) b.disabled = !!why; });
+}
+function wcFind(q) {
+  var seq = ++wcSeq, list = $('wcResults');
+  if (!list) return;
+  if (q.length < 2) { list.innerHTML = ''; note('wcFindMsg', WC_FIND_HINT); return; }
+  if (!wcMap) { note('wcFindMsg', 'Waiting for the panel first...'); return; }
+  note('wcFindMsg', 'Searching...');
+  fetch('https://geocoding-api.open-meteo.com/v1/search?count=8&language=en&format=json&name=' + encodeURIComponent(q))
+    .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+    .then(function (d) {
+      if (seq !== wcSeq) return;                // a newer search has already gone out
+      var found = (d.results || []).filter(function (g) { return g.timezone && typeof g.latitude === 'number' && typeof g.longitude === 'number'; });
+      list.innerHTML = '';
+      note('wcFindMsg', found.length ? 'Pick one to add it.' : 'Nothing found. Try the English spelling, or a bigger place nearby.');
+      found.forEach(function (g) {
+        var off = g.latitude < wcMap.bottom || g.latitude > wcMap.top;
+        var row = document.createElement('div');
+        row.className = 'pn-row';
+        row.innerHTML = '<div class="pn-name"><strong>' + esc(g.name) + '</strong><span class="ct-hint">' +
+          esc([g.admin1, g.country].filter(Boolean).join(', ')) + ' · ' + esc(g.timezone) + (off ? ' · off the map' : '') +
+          '</span></div><button type="button" class="btn btn-sm"' + (off ? ' disabled' : '') + '>Pick</button>';
+        row.querySelector('button').addEventListener('click', function () { wcChoose(g); });
+        list.appendChild(row);
+      });
+    })
+    .catch(function (err) {
+      if (seq === wcSeq) note('wcFindMsg', 'Search failed (' + err.message + '). It runs in this browser, so this browser needs the internet.', true);
+    });
+}
+function wcChoose(g) {
+  wcPick = { lat: g.latitude, lon: g.longitude, tz: g.timezone, label: g.name + (g.country ? ', ' + g.country : '') };
+  var form = $('wcAddForm'), n = $('wcName');
+  if (form) form.hidden = false;
+  if (n) { n.value = wcFit(g.name); n.focus(); }
+  wcCheckName();
+}
+function wcAdd(home) {
+  var n = $('wcName'); if (!wcPick || !n) return;
+  var name = n.value;
+  api('/api/worldclock', { add: { name: name, lat: wcPick.lat, lon: wcPick.lon, tz: wcPick.tz, home: home } })
+    .then(function (d) {
+      wcTake(d); wcPick = null; wcSig = '';
+      var form = $('wcAddForm'), q = $('wcFind'), list = $('wcResults');
+      if (form) form.hidden = true;
+      if (q) q.value = '';
+      if (list) list.innerHTML = '';
+      note('wcFindMsg', cap(name) + (home ? ' added and made home: it is on the panel now.' : ' added.'));
+      renderWc();
+    })
+    .catch(function (err) { note('wcNameMsg', err.message, true); });
+}
+if ($('wcFind')) {
+  $('wcFind').addEventListener('input', function () {
+    var q = this.value.trim();
+    clearTimeout(wcTimer);
+    wcTimer = setTimeout(function () { wcFind(q); }, 350);   // one request per pause in typing, not one per key
+  });
+  $('wcName').addEventListener('input', function () {
+    var at = this.selectionStart, up = this.value.toUpperCase();
+    if (up !== this.value) { this.value = up; this.setSelectionRange(at, at); }
+    wcCheckName();
+  });
+  $('wcAdd').addEventListener('click', function () { wcAdd(false); });
+  $('wcAddHome').addEventListener('click', function () { wcAdd(true); });
+  $('wcFollow').addEventListener('click', function () { wcPost({ auto: true }, "Home follows the panel's location again."); });
 }
 setInterval(function () {   // the home dot breathes, in both previews
   if (document.hidden || !wcMap) return;
