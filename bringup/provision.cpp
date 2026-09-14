@@ -1,23 +1,23 @@
 // One-shot provisioning: put the secrets this board needs into NVS.
 //
 // Nothing secret is committed. Values arrive as build flags from
-// provision_secrets.ini (gitignored; template provision_secrets.example.ini),
-// are written once, and the board is then flashed with the real firmware.
-// Reading them back is not offered - NVS is where they live now.
+// provision_secrets.ini (gitignored; template provision_secrets.example.ini,
+// filled by tools/provision_secrets.py), are written once, and the board is
+// then flashed with the real firmware. Reading them back is not offered - NVS
+// is where they live now - and nothing here prints a value, only a length.
 //
-//   cp provision_secrets.example.ini provision_secrets.ini   # then edit it
+//   python3 tools/provision_secrets.py check
 //   pio run -e provision -t upload
 //   pio run -e provision -t clean                           # drop the cache
 //
-// An earlier version of this comment passed the values with
-// --project-option, which this PlatformIO (6.1) does not have.
-//
 // Namespaces, matching the modules that read them:
-//   "fb" host/port/user/pass   flight board broker   (src/flightboard/fb_mqtt.cpp)
+//   "fb" host/port/user/pass   flight board broker   (src/mqtt/mqtt_bus.cpp)
 //   "yr" ais                   aisstream.io key      (src/yachtradar/yachtradar.cpp)
+//   "rb" token/kind            Realtime Trains       (src/railboard/rtt_direct.cpp)
 
 #include <Arduino.h>
 #include <Preferences.h>
+#include <string.h>
 
 static void report(const char *what, bool ok) {
   Serial.printf("  %-22s %s\n", what, ok ? "written" : "skipped (not supplied)");
@@ -62,6 +62,32 @@ void setup() {
   report("yr/ais", true);
 #else
   report("yr/ais", false);
+#endif
+  p.end();
+
+  // Realtime Trains, for the rail board's direct fetch. The token as issued,
+  // without "Bearer ". kind is "refresh" or "access"; left out, the firmware
+  // tries the token as an access token and exchanges it on a 401.
+  p.begin("rb", false);
+#ifdef PROV_RTT_CLEAR
+  p.remove("token");
+  p.remove("kind");
+  Serial.printf("  %-22s cleared\n", "rb/token + rb/kind");
+  any = true;
+#endif
+#ifdef PROV_RTT_TOKEN
+  if (p.putString("token", PROV_RTT_TOKEN)) {
+    Serial.printf("  %-22s written, %u chars\n", "rb/token", (unsigned)strlen(PROV_RTT_TOKEN));
+    any = true;
+  } else {
+    Serial.printf("  %-22s FAILED to write\n", "rb/token");
+  }
+#else
+  report("rb/token", false);
+#endif
+#ifdef PROV_RTT_KIND
+  p.putString("kind", PROV_RTT_KIND); any = true;
+  Serial.printf("  %-22s %s\n", "rb/kind", PROV_RTT_KIND);
 #endif
   p.end();
 

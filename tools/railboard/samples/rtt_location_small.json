@@ -1,0 +1,948 @@
+{
+ "systemStatus": {
+  "realtimeNetworkRail": "OK",
+  "rttCore": "OK"
+ },
+ "query": {
+  "location": {
+   "namespace": "gb-nr",
+   "description": "Guildford",
+   "shortCodes": [
+    "GLD"
+   ],
+   "longCodes": []
+  },
+  "timeFrom": "2026-09-14T13:35:07+01:00",
+  "timeTo": "2026-09-14T15:05:07+01:00"
+ },
+ "services": [
+  {
+   "temporalData": {
+    "displayAs": "CALL",
+    "scheduledCallType": "ADVERTISED_OPEN",
+    "departure": {
+     "scheduleAdvertised": "2026-09-14T14:08:00+01:00",
+     "realtimeForecast": "2026-09-14T14:08:00+01:00",
+     "realtimeActual": null
+    }
+   },
+   "locationMetadata": {
+    "platform": {
+     "actual": "5"
+    }
+   },
+   "origin": [
+    {
+     "location": {
+      "namespace": "gb-nr",
+      "description": "Somewhere",
+      "shortCodes": [
+       "XXX"
+      ],
+      "longCodes": []
+     }
+    }
+   ],
+   "destination": [
+    {
+     "location": {
+      "namespace": "gb-nr",
+      "description": "London Waterloo",
+      "shortCodes": [
+       "XXX"
+      ],
+      "longCodes": []
+     }
+    }
+   ],
+   "scheduleMetadata": {
+    "operator": {
+     "code": "SW",
+     "name": "Operator"
+    },
+    "modeType": "TRAIN",
+    "inPassengerService": true
+   }
+  },
+  {
+   "temporalData": {
+    "displayAs": "CALL",
+    "scheduledCallType": "ADVERTISED_OPEN",
+    "departure": {
+     "scheduleAdvertised": "2026-09-14T14:12:00+01:00",
+     "realtimeForecast": "2026-09-14T14:19:00+01:00",
+     "realtimeActual": null
+    }
+   },
+   "locationMetadata": {
+    "platform": {
+     "planned": 3
+    }
+   },
+   "origin": [
+    {
+     "location": {
+      "namespace": "gb-nr",
+      "description": "Somewhere",
+      "shortCodes": [
+       "XXX"
+      ],
+      "longCodes": []
+     }
+    }
+   ],
+   "destination": [
+    {
+     "location": {
+      "namespace": "gb-nr",
+      "description": "Portsmouth Harbour",
+      "shortCodes": [
+       "XXX"
+      ],
+      "longCodes": []
+     }
+    }
+   ],
+   "scheduleMetadata": {
+    "operator": {
+     "code": "SW",
+     "name": "Operator"
+    },
+    "modeType": "TRAIN",
+    "inPassengerService": true
+   }
+  },
+  {
+   "temporalData": {
+    "displayAs": "CANCELLED",
+    "scheduledCallType": "ADVERTISED_OPEN",
+    "departure": {
+     "scheduleAdvertised": "2026-09-14T14:17:00+01:00",
+     "realtimeForecast": null,
+     "realtimeActual": null,
+     "isCancelled": true
+    }
+   },
+   "locationMetadata": {
+    "platform": {
+     "actual": "8"
+    }
+   },
+   "origin": [
+    {
+     "location": {
+      "namespace": "gb-nr",
+      "description": "Somewhere",
+      "shortCodes": [
+       "XXX"
+      ],
+      "longCodes": []
+     }
+    }
+   ],
+   "destination": [
+    {
+     "location": {
+      "namespace": "gb-nr",
+      "description": "Reading",
+      "shortCodes": [
+       "XXX"
+      ],
+      "longCodes": []
+     }
+    }
+   ],
+   "scheduleMetadata": {
+    "operator": {
+     "code": "GW",
+     "name": "Operator"
+    },
+    "modeType": "TRAIN",
+    "inPassengerService": true
+   }
+  },
+  {
+   "temporalData": {
+    "displayAs": "PASS",
+    "scheduledCallType": "ADVERTISED_OPEN",
+    "departure": {
+     "scheduleAdvertised": "2026-09-14T14:10:00+01:00",
+     "realtimeForecast": "2026-09-14T14:10:00+01:00",
+     "realtimeActual": null
+    }
+   },
+   "locationMetadata": {
+    "platform": {}
+   },
+   "origin": [
+    {
+     "location": {
+      "namespace": "gb-nr",
+      "description": "Somewhere",
+      "shortCodes": [
+       "XXX"
+      ],
+      "longCodes": []
+     }
+    }
+   ],
+   "destination": [
+    {
+     "location": {
+      "namespace": "gb-nr",
+      "description": "Passing Through",
+      "shortCodes": [
+       "XXX"
+      ],
+      "longCodes": []
+     }
+    }
+   ],
+   "scheduleMetadata": {
+    "operator": {
+     "code": "SW",
+     "name": "Operator"
+    },
+    "modeType": "TRAIN",
+    "inPassengerService": true
+   }
+  },
+  {
+   "temporalData": {
+    "displayAs": null,
+    "scheduledCallType": "ADVERTISED_OPEN",
+    "departure": {
+     "scheduleAdvertised": "2026-09-14T14:11:00+01:00",
+     "realtimeForecast": "2026-09-14T14:11:00+01:00",
+     "realtimeActual": null
+    }
+   },
+   "locationMetadata": {
+    "platform": {}
+   },
+   "origin": [
+    {
+     "location": {
+      "namespace": "gb-nr",
+      "description": "Somewhere",
+      "shortCodes": [
+       "XXX"
+      ],
+      "longCodes": []
+     }
+    }
+   ],
+   "destination": [
+    {
+     "location": {
+      "namespace": "gb-nr",
+      "description": "Null Display",
+      "shortCodes": [
+       "XXX"
+      ],
+      "longCodes": []
+     }
+    }
+   ],
+   "scheduleMetadata": {
+    "operator": {
+     "code": "SW",
+     "name": "Operator"
+    },
+    "modeType": "TRAIN",
+    "inPassengerService": true
+   }
+  },
+  {
+   "temporalData": {
+    "displayAs": "CALL",
+    "scheduledCallType": "ADVERTISED_OPEN",
+    "departure": {
+     "scheduleAdvertised": "2026-09-14T14:30:00+01:00",
+     "realtimeForecast": null,
+     "realtimeActual": null
+    }
+   },
+   "locationMetadata": {
+    "platform": {}
+   },
+   "origin": [
+    {
+     "location": {
+      "namespace": "gb-nr",
+      "description": "Somewhere",
+      "shortCodes": [
+       "XXX"
+      ],
+      "longCodes": []
+     }
+    }
+   ],
+   "destination": [
+    {
+     "location": {
+      "namespace": "gb-nr",
+      "description": "Farnham",
+      "shortCodes": [
+       "XXX"
+      ],
+      "longCodes": []
+     }
+    }
+   ],
+   "scheduleMetadata": {
+    "operator": {
+     "code": "SW",
+     "name": "Operator"
+    },
+    "modeType": "REPLACEMENT_BUS",
+    "inPassengerService": true
+   }
+  },
+  {
+   "temporalData": {
+    "displayAs": "CALL",
+    "scheduledCallType": "ADVERTISED_OPEN",
+    "departure": {
+     "scheduleAdvertised": "2026-09-14T14:00:00+01:00",
+     "realtimeForecast": "2026-09-14T14:01:00+01:00",
+     "realtimeActual": "2026-09-14T14:01:00+01:00"
+    },
+    "arrival": {
+     "scheduleAdvertised": "2026-09-14T13:59:00+01:00",
+     "realtimeForecast": "2026-09-14T14:04:00+01:00",
+     "realtimeActual": "2026-09-14T14:04:00+01:00"
+    }
+   },
+   "locationMetadata": {
+    "platform": {
+     "actual": "6"
+    }
+   },
+   "origin": [
+    {
+     "location": {
+      "namespace": "gb-nr",
+      "description": "Redhill",
+      "shortCodes": [
+       "XXX"
+      ],
+      "longCodes": []
+     }
+    }
+   ],
+   "destination": [
+    {
+     "location": {
+      "namespace": "gb-nr",
+      "description": "Reading",
+      "shortCodes": [
+       "XXX"
+      ],
+      "longCodes": []
+     }
+    }
+   ],
+   "scheduleMetadata": {
+    "operator": {
+     "code": "GW",
+     "name": "Operator"
+    },
+    "modeType": "TRAIN",
+    "inPassengerService": true
+   }
+  },
+  {
+   "temporalData": {
+    "displayAs": "TERMINATES",
+    "scheduledCallType": "ADVERTISED_OPEN",
+    "departure": {
+     "scheduleAdvertised": "2026-09-14T14:20:00+01:00",
+     "realtimeForecast": null,
+     "realtimeActual": null
+    },
+    "arrival": {
+     "scheduleAdvertised": "2026-09-14T14:14:00+01:00",
+     "realtimeForecast": "2026-09-14T14:14:00+01:00",
+     "realtimeActual": null
+    }
+   },
+   "locationMetadata": {
+    "platform": {
+     "actual": "1"
+    }
+   },
+   "origin": [
+    {
+     "location": {
+      "namespace": "gb-nr",
+      "description": "Haslemere",
+      "shortCodes": [
+       "XXX"
+      ],
+      "longCodes": []
+     }
+    }
+   ],
+   "destination": [
+    {
+     "location": {
+      "namespace": "gb-nr",
+      "description": "Ascot",
+      "shortCodes": [
+       "XXX"
+      ],
+      "longCodes": []
+     }
+    }
+   ],
+   "scheduleMetadata": {
+    "operator": {
+     "code": "SW",
+     "name": "Operator"
+    },
+    "modeType": "TRAIN",
+    "inPassengerService": true
+   }
+  },
+  {
+   "temporalData": {
+    "displayAs": "STARTS",
+    "scheduledCallType": "ADVERTISED_OPEN",
+    "departure": {
+     "scheduleAdvertised": "2026-09-14T14:25:00+01:00",
+     "realtimeForecast": "2026-09-14T14:25:00+01:00",
+     "realtimeActual": null
+    },
+    "arrival": {
+     "scheduleAdvertised": "2026-09-14T14:21:00+01:00",
+     "realtimeForecast": null,
+     "realtimeActual": null
+    }
+   },
+   "locationMetadata": {
+    "platform": {
+     "planned": "4"
+    }
+   },
+   "origin": [
+    {
+     "location": {
+      "namespace": "gb-nr",
+      "description": "Woking",
+      "shortCodes": [
+       "XXX"
+      ],
+      "longCodes": []
+     }
+    }
+   ],
+   "destination": [
+    {
+     "location": {
+      "namespace": "gb-nr",
+      "description": "Aldershot",
+      "shortCodes": [
+       "XXX"
+      ],
+      "longCodes": []
+     }
+    }
+   ],
+   "scheduleMetadata": {
+    "operator": {
+     "code": "SW",
+     "name": "Operator"
+    },
+    "modeType": "TRAIN",
+    "inPassengerService": true
+   }
+  },
+  {
+   "temporalData": {
+    "displayAs": "CALL",
+    "scheduledCallType": "ADVERTISED_SET_DOWN",
+    "departure": {
+     "scheduleAdvertised": "2026-09-14T14:35:00+01:00",
+     "realtimeForecast": null,
+     "realtimeActual": null
+    },
+    "arrival": {
+     "scheduleAdvertised": "2026-09-14T14:33:00+01:00",
+     "realtimeForecast": null,
+     "realtimeActual": null
+    }
+   },
+   "locationMetadata": {
+    "platform": {
+     "actual": "7"
+    }
+   },
+   "origin": [
+    {
+     "location": {
+      "namespace": "gb-nr",
+      "description": "Gatwick Airport",
+      "shortCodes": [
+       "XXX"
+      ],
+      "longCodes": []
+     }
+    }
+   ],
+   "destination": [
+    {
+     "location": {
+      "namespace": "gb-nr",
+      "description": "Reading",
+      "shortCodes": [
+       "XXX"
+      ],
+      "longCodes": []
+     }
+    }
+   ],
+   "scheduleMetadata": {
+    "operator": {
+     "code": "GW",
+     "name": "Operator"
+    },
+    "modeType": "TRAIN",
+    "inPassengerService": true
+   }
+  },
+  {
+   "temporalData": {
+    "displayAs": "CALL",
+    "scheduledCallType": "ADVERTISED_OPEN",
+    "departure": {
+     "scheduleAdvertised": "2026-09-14T14:13:00+01:00",
+     "realtimeForecast": "2026-09-14T14:13:00+01:00",
+     "realtimeActual": null
+    }
+   },
+   "locationMetadata": {
+    "platform": {}
+   },
+   "origin": [
+    {
+     "location": {
+      "namespace": "gb-nr",
+      "description": "Somewhere",
+      "shortCodes": [
+       "XXX"
+      ],
+      "longCodes": []
+     }
+    }
+   ],
+   "destination": [
+    {
+     "location": {
+      "namespace": "gb-nr",
+      "description": "Empty Stock",
+      "shortCodes": [
+       "XXX"
+      ],
+      "longCodes": []
+     }
+    }
+   ],
+   "scheduleMetadata": {
+    "operator": {
+     "code": "SW",
+     "name": "Operator"
+    },
+    "modeType": "TRAIN",
+    "inPassengerService": false
+   }
+  },
+  {
+   "temporalData": {
+    "displayAs": "CALL",
+    "scheduledCallType": "ADVERTISED_OPEN",
+    "departure": {
+     "scheduleAdvertised": "2026-09-14T14:40:00+01:00",
+     "realtimeForecast": "2026-09-14T14:40:00+01:00",
+     "realtimeActual": null
+    }
+   },
+   "locationMetadata": {
+    "platform": {
+     "actual": "10A",
+     "planned": "10"
+    }
+   },
+   "origin": [
+    {
+     "location": {
+      "namespace": "gb-nr",
+      "description": "Somewhere",
+      "shortCodes": [
+       "XXX"
+      ],
+      "longCodes": []
+     }
+    }
+   ],
+   "destination": [
+    {
+     "location": {
+      "namespace": "gb-nr",
+      "description": "London Waterloo",
+      "shortCodes": [
+       "XXX"
+      ],
+      "longCodes": []
+     }
+    },
+    {
+     "location": {
+      "namespace": "gb-nr",
+      "description": "Portsmouth Harbour",
+      "shortCodes": [
+       "XXX"
+      ],
+      "longCodes": []
+     }
+    }
+   ],
+   "scheduleMetadata": {
+    "operator": {
+     "code": "SW",
+     "name": "Operator"
+    },
+    "modeType": "TRAIN",
+    "inPassengerService": true
+   }
+  },
+  {
+   "temporalData": {
+    "displayAs": "CALL",
+    "scheduledCallType": "ADVERTISED_OPEN",
+    "departure": {
+     "scheduleAdvertised": "2026-09-14T13:45:00Z",
+     "realtimeForecast": "2026-09-14T13:45:30.000Z",
+     "realtimeActual": null
+    }
+   },
+   "locationMetadata": {
+    "platform": {}
+   },
+   "origin": [
+    {
+     "location": {
+      "namespace": "gb-nr",
+      "description": "Somewhere",
+      "shortCodes": [
+       "XXX"
+      ],
+      "longCodes": []
+     }
+    }
+   ],
+   "destination": [
+    {
+     "location": {
+      "namespace": "gb-nr",
+      "description": "Haslemere",
+      "shortCodes": [
+       "XXX"
+      ],
+      "longCodes": []
+     }
+    }
+   ],
+   "scheduleMetadata": {
+    "operator": {
+     "code": "SW",
+     "name": "Operator"
+    },
+    "modeType": "TRAIN",
+    "inPassengerService": true
+   }
+  },
+  {
+   "temporalData": {
+    "displayAs": "CALL",
+    "scheduledCallType": "ADVERTISED_OPEN",
+    "departure": {
+     "scheduleAdvertised": "2026-09-14T14:50:00",
+     "realtimeForecast": "2026-09-14T14:50:00",
+     "realtimeActual": null
+    }
+   },
+   "locationMetadata": {
+    "platform": {}
+   },
+   "origin": [
+    {
+     "location": {
+      "namespace": "gb-nr",
+      "description": "Somewhere",
+      "shortCodes": [
+       "XXX"
+      ],
+      "longCodes": []
+     }
+    }
+   ],
+   "destination": [
+    {
+     "location": {
+      "namespace": "gb-nr",
+      "description": "No Zone",
+      "shortCodes": [
+       "XXX"
+      ],
+      "longCodes": []
+     }
+    }
+   ],
+   "scheduleMetadata": {
+    "operator": {
+     "code": "SW",
+     "name": "Operator"
+    },
+    "modeType": "TRAIN",
+    "inPassengerService": true
+   }
+  },
+  {
+   "temporalData": {
+    "displayAs": "CALL",
+    "scheduledCallType": "ADVERTISED_OPEN",
+    "departure": {
+     "scheduleAdvertised": "2026-09-14T14:02:00+01:00",
+     "realtimeForecast": "2026-09-14T14:02:00+01:00",
+     "realtimeActual": null
+    }
+   },
+   "locationMetadata": {
+    "platform": {}
+   },
+   "origin": [
+    {
+     "location": {
+      "namespace": "gb-nr",
+      "description": "Somewhere",
+      "shortCodes": [
+       "XXX"
+      ],
+      "longCodes": []
+     }
+    }
+   ],
+   "destination": [
+    {
+     "location": {
+      "namespace": "gb-nr",
+      "description": "Gone Already",
+      "shortCodes": [
+       "XXX"
+      ],
+      "longCodes": []
+     }
+    }
+   ],
+   "scheduleMetadata": {
+    "operator": {
+     "code": "SW",
+     "name": "Operator"
+    },
+    "modeType": "TRAIN",
+    "inPassengerService": true
+   }
+  },
+  {
+   "temporalData": {
+    "displayAs": "CALL",
+    "scheduledCallType": "ADVERTISED_OPEN",
+    "departure": {
+     "scheduleAdvertised": "2026-09-14T14:04:30+01:00",
+     "realtimeForecast": "2026-09-14T14:04:30+01:00",
+     "realtimeActual": null
+    }
+   },
+   "locationMetadata": {
+    "platform": {
+     "actual": "2"
+    }
+   },
+   "origin": [
+    {
+     "location": {
+      "namespace": "gb-nr",
+      "description": "Somewhere",
+      "shortCodes": [
+       "XXX"
+      ],
+      "longCodes": []
+     }
+    }
+   ],
+   "destination": [
+    {
+     "location": {
+      "namespace": "gb-nr",
+      "description": "Woking",
+      "shortCodes": [
+       "XXX"
+      ],
+      "longCodes": []
+     }
+    }
+   ],
+   "scheduleMetadata": {
+    "operator": {
+     "code": "SW",
+     "name": "Operator"
+    },
+    "modeType": "TRAIN",
+    "inPassengerService": true
+   }
+  },
+  {
+   "temporalData": {
+    "displayAs": "CALL",
+    "scheduledCallType": "ADVERTISED_OPEN",
+    "departure": {
+     "scheduleAdvertised": "2026-09-14T14:55:00+01:00",
+     "realtimeForecast": null,
+     "realtimeActual": null
+    }
+   },
+   "locationMetadata": {
+    "platform": {
+     "planned": 0
+    }
+   },
+   "origin": [
+    {
+     "location": {
+      "namespace": "gb-nr",
+      "description": "Somewhere",
+      "shortCodes": [
+       "XXX"
+      ],
+      "longCodes": []
+     }
+    }
+   ],
+   "destination": [
+    {
+     "location": {
+      "namespace": "gb-nr",
+      "description": "Beyond The Eighth",
+      "shortCodes": [
+       "XXX"
+      ],
+      "longCodes": []
+     }
+    }
+   ],
+   "scheduleMetadata": {
+    "operator": {
+     "code": "SW",
+     "name": "Operator"
+    },
+    "modeType": "TRAIN",
+    "inPassengerService": true
+   }
+  },
+  {
+   "temporalData": {
+    "displayAs": "CALL",
+    "scheduledCallType": "ADVERTISED_OPEN",
+    "arrival": {
+     "scheduleAdvertised": "2026-09-14T14:40:00+01:00",
+     "realtimeForecast": "2026-09-14T14:41:00+01:00",
+     "realtimeActual": null
+    }
+   },
+   "locationMetadata": {
+    "platform": {
+     "planned": 0
+    }
+   },
+   "origin": [
+    {
+     "location": {
+      "namespace": "gb-nr",
+      "description": "Abcdefghijklmnopqrstuvwxyz",
+      "shortCodes": [
+       "XXX"
+      ],
+      "longCodes": []
+     }
+    }
+   ],
+   "destination": [
+    {
+     "location": {
+      "namespace": "gb-nr",
+      "description": "Elsewhere",
+      "shortCodes": [
+       "XXX"
+      ],
+      "longCodes": []
+     }
+    }
+   ],
+   "scheduleMetadata": {
+    "operator": {
+     "code": "SW",
+     "name": "Operator"
+    },
+    "modeType": "TRAIN",
+    "inPassengerService": true
+   }
+  },
+  {
+   "temporalData": {
+    "displayAs": "CALL",
+    "scheduledCallType": "OPERATIONAL_ONLY",
+    "departure": {
+     "scheduleAdvertised": "2026-09-14T14:15:00+01:00",
+     "realtimeForecast": "2026-09-14T14:15:00+01:00",
+     "realtimeActual": null
+    }
+   },
+   "locationMetadata": {
+    "platform": {}
+   },
+   "origin": [
+    {
+     "location": {
+      "namespace": "gb-nr",
+      "description": "Somewhere",
+      "shortCodes": [
+       "XXX"
+      ],
+      "longCodes": []
+     }
+    }
+   ],
+   "destination": [
+    {
+     "location": {
+      "namespace": "gb-nr",
+      "description": "Crew Change",
+      "shortCodes": [
+       "XXX"
+      ],
+      "longCodes": []
+     }
+    }
+   ],
+   "scheduleMetadata": {
+    "operator": {
+     "code": "SW",
+     "name": "Operator"
+    },
+    "modeType": "TRAIN",
+    "inPassengerService": true
+   }
+  }
+ ]
+}

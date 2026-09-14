@@ -13,7 +13,11 @@
 #include "../display/display.h"
 #include "../fonts/picopixel_fb.h"   // Picopixel with a legible U
 #include "../mqtt/mqtt_bus.h"
+#include "rb_model.h"
 #include "uk_time.h"
+#if defined(RAILBOARD_DIRECT_ENABLED)
+#include "rtt_direct.h"
+#endif
 
 #define RB_TOPIC_ROOT   MQTT_BASE "/railboard/"
 #define RB_TOPIC_SELECT RB_TOPIC_ROOT "select"
@@ -81,8 +85,7 @@ static const uint8_t RB_COL_DIM[3]   = {120, 126, 132};
 static const uint8_t RB_COL_TEXT[3]  = {230, 226, 214};   // diagnostics values
 
 // ── words ───────────────────────────────────────────────────────────────────
-// Status is Home Assistant's closed vocabulary, in this order on both ends.
-enum RbStatus : uint8_t { RB_OK = 0, RB_LATE, RB_CANC, RB_NOREPORT, RB_ARRIVED, RB_STATUS_COUNT };
+// Status words on the wire, in RbStatus order (rb_model.h).
 static const char *const RB_ST_KEYS[]  = {"ok", "late", "canc", "nr", "arr"};
 // Expt shows the expected time for a late train, and the actual time for one
 // that arrived late. A service with no realtime report says nothing rather
@@ -100,34 +103,11 @@ static const char *const RB_OF         = "of";
 static const char *const RB_STALE      = "Data updating";
 static const char *const RB_EMPTY      = "No services";
 static const char *const RB_WAITING    = "Waiting for";
+static const char *const RB_REFUSED    = "RTT token refused";
 static const char *const RB_DIAG_DIR[] = {"DEP", "ARR"};
 
 // ── data ────────────────────────────────────────────────────────────────────
-#define RB_MAX_SVC  8     // the package sends at most 8 a list
-#define RB_PLAT_LEN 4     // "10A"
-#define RB_OP_LEN   4     // "SW", "BUS"
-#define RB_NAME_LEN 25    // the package cuts names to 24 on a word boundary
-#define RB_STN_LEN  32    // RTT's description, e.g. London Road (Guildford)
-
-struct RbService {
-  uint32_t t;             // scheduled (advertised), UTC epoch seconds
-  uint32_t x;             // expected, or actual once reported; 0 = none
-  uint8_t  st;            // RbStatus
-  uint8_t  d;             // minutes late, as Home Assistant counted them
-  char     p[RB_PLAT_LEN];
-  char     o[RB_OP_LEN];
-  char     n[RB_NAME_LEN];
-};
-
-struct RbBoard {
-  RbService s[RB_MAX_SVC];
-  uint8_t   count;
-  bool      have;
-  uint32_t  ts;           // when Home Assistant fetched it, UTC epoch seconds
-  uint32_t  rxMs;         // millis() when it reached the panel
-  char      stn[RB_STN_LEN];
-  char      rt[24];       // RTT systemStatus.realtimeNetworkRail
-};
+// RbService, RbBoard and their sizes: rb_model.h, shared with the direct fetch.
 
 struct RbHaStatus {
   bool     have;
@@ -146,7 +126,8 @@ struct RbConfig {
   uint16_t staleS;
 };
 
-enum : uint8_t { RB_DEP = 0, RB_ARR = 1 };
+// Where a list came from. Higher wins while it is fresh.
+enum : uint8_t { RB_SRC_NONE = 0, RB_SRC_HA, RB_SRC_DIRECT };
 // What the knob chose. AUTO is the alternation.
 enum RbView : uint8_t { RB_VIEW_AUTO = 0, RB_VIEW_DEP, RB_VIEW_ARR, RB_VIEW_DIAG };
 
@@ -157,6 +138,11 @@ static RbConfig   s_cfg = {RB_ROWS, RB_LEVEL, false, RB_SWITCH_S, RB_STALE_S};
 static uint16_t   s_refused  = 0;
 static size_t     s_jsonPeak = 0;
 static uint8_t    s_cfgFrom  = 0;     // 0 build defaults, 1 Home Assistant, 2 web portal
+static uint8_t    s_src[2]   = {RB_SRC_NONE, RB_SRC_NONE};
+static uint16_t   s_shadowed = 0;     // Home Assistant boards set aside for a fresher direct one
+#if defined(RAILBOARD_DIRECT_ENABLED)
+static rtt::Lists *s_direct  = nullptr;   // PSRAM: where the fetch hands its lists over
+#endif
 
 static char       s_crs[4]       = RB_CRS;
 static char       s_sub[48]      = "";      // the subscription in force, "" = none
@@ -244,6 +230,8 @@ static void noteJson() {
   if (s_alloc.peak() > s_jsonPeak) s_jsonPeak = s_alloc.peak();
 }
 
+static bool isStale(const RbBoard &b, time_t now, bool synced);
+
 static bool ingestBoard(uint8_t which, const char *json, uint16_t len) {
   JsonDocument doc(&s_alloc);
   const DeserializationError err = deserializeJson(doc, json, len);
@@ -279,9 +267,19 @@ static bool ingestBoard(uint8_t which, const char *json, uint16_t len) {
   b.have = true;
   copyText(b.stn, sizeof(b.stn), doc["stn"] | "");
   copyUpper(b.rt, sizeof(b.rt), doc["rt"] | "");
+  // A board the panel fetched itself, while still fresh, wins: Home Assistant's
+  // is the fallback. This one was well formed, so it counts as accepted.
+  if (s_src[which] == RB_SRC_DIRECT) {
+    const time_t now = time(nullptr);
+    if (!isStale(s_board[which], now, now > 1700000000)) {
+      s_shadowed++;
+      return true;
+    }
+  }
   // Parse and render both run on the loop task, so there is no torn read; the
   // scratch copy is what keeps the last good board when a payload is refused.
   s_board[which] = b;
+  s_src[which]   = RB_SRC_HA;
   return true;
 }
 
@@ -377,10 +375,14 @@ bool railboardSetStation(const char *crs) {
   // a moment of subscribing; otherwise the page says it is waiting.
   memset(s_board, 0, sizeof(s_board));
   memset(&s_ha, 0, sizeof(s_ha));
+  memset(s_src, 0, sizeof(s_src));
   s_selectDirty = true;
   s_altSince    = millis();
   s_autoFirst   = RB_DEP;
   if (s_begun) subscribeStation();
+#if defined(RAILBOARD_DIRECT_ENABLED)
+  rttDirectStationChanged();
+#endif
   return true;
 }
 
@@ -391,12 +393,47 @@ void railboardBegin() {
   s_begun = true;
   subscribeStation();
   s_altSince = millis();
+#if defined(RAILBOARD_DIRECT_ENABLED)
+  s_direct = static_cast<rtt::Lists *>(heap_caps_calloc(1, sizeof(rtt::Lists), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  rttDirectBegin();
+#endif
+}
+
+#if defined(RAILBOARD_DIRECT_ENABLED)
+// One answer fills both lists at once, as Home Assistant's two payloads do.
+static void applyDirect(const rtt::Lists &l, int64_t fetchedAt) {
+  const uint32_t nowMs = millis();
+  for (uint8_t side = RB_DEP; side <= RB_ARR; side++) {
+    RbBoard &b = s_board[side];
+    b      = l.board[side];
+    b.ts   = (uint32_t)fetchedAt;
+    b.rxMs = nowMs;
+    b.have = true;
+    memcpy(b.stn, l.stn, sizeof(b.stn));
+    memcpy(b.rt, l.rt, sizeof(b.rt));
+    s_src[side] = RB_SRC_DIRECT;
+  }
+}
+#endif
+
+// Something may bring data without Home Assistant: then "waiting" is the truth
+// even while the broker is away.
+static bool directArmed() {
+#if defined(RAILBOARD_DIRECT_ENABLED)
+  return rttDirectHasToken();
+#else
+  return false;
+#endif
 }
 
 // Retained, so Home Assistant learns the station after its own restart as well
 // as at the moment it changes. Sent again on every reconnect: the broker may
 // have lost it, and a repeat of the same value changes nothing.
 void railboardLoop() {
+#if defined(RAILBOARD_DIRECT_ENABLED)
+  int64_t fetchedAt = 0;
+  if (s_direct && rttDirectLoop(s_crs, s_direct, &fetchedAt)) applyDirect(*s_direct, fetchedAt);
+#endif
   const bool up = mqttBusConnected();
   if (up && !s_wasConnected) s_selectDirty = true;
   s_wasConnected = up;
@@ -622,7 +659,11 @@ static void drawBoard(uint8_t which, time_t now, bool synced, uint32_t nowMs) {
 
   if (!b.have) {
     char why[32];
-    if (mqttBusConnected()) snprintf(why, sizeof(why), "%s %s", RB_WAITING, s_crs);
+#if defined(RAILBOARD_DIRECT_ENABLED)
+    if (rttDirectAuthRefused()) snprintf(why, sizeof(why), "%s", RB_REFUSED);
+    else
+#endif
+    if (mqttBusConnected() || directArmed()) snprintf(why, sizeof(why), "%s %s", RB_WAITING, s_crs);
     else                    snprintf(why, sizeof(why), "%s", mqttBusStatus());   // NO WIFI, CONNECTING, ...
     put(RB_X_LEFT, RB_Y_ROW0, why, amber);
     put(RB_X_LEFT, RB_Y_FOOT, RB_STALE, amber);
@@ -732,9 +773,17 @@ static void drawDiag(time_t now, bool synced) {
 
   const char *rt = s_board[RB_DEP].rt[0] ? s_board[RB_DEP].rt : s_board[RB_ARR].rt;
   if (!strncmp(rt, "REALTIME_DATA_", 14)) rt += 14;   // LIMITED, NONE
+#if defined(RAILBOARD_DIRECT_ENABLED)
+  // The panel's own fetch and its last answer; RTT's realtime status after it.
+  char quota[16];
+  rttDirectLine(v, sizeof(v), quota, sizeof(quota));
+  const bool directFine = !strncmp(v, "DIRECT OK", 9) || !strcmp(v, "HA ONLY");
+  diagLine(5, "RTT", v, col(directFine ? RB_COL_TEXT : (rttDirectAuthRefused() ? RB_COL_RED : RB_COL_AMBER)), rt);
+#else
   if (s_ha.rl[0]) snprintf(r, sizeof(r), "LEFT TODAY %s", s_ha.rl);
   else            r[0] = '\0';
   diagLine(5, "RTT", rt[0] ? rt : "-", col(strcmp(rt, "OK") ? RB_COL_AMBER : RB_COL_TEXT), r);
+#endif
 
   snprintf(r, sizeof(r), "REFUSED %u", (unsigned)s_refused);
   diagLine(6, "MQTT", mqttBusConnected() ? "CONNECTED" : mqttBusStatus(),
@@ -747,7 +796,17 @@ static void drawDiag(time_t now, bool synced) {
 
   // The selection Home Assistant follows, and whether it has gone out.
   snprintf(v, sizeof(v), "%s %s", s_crs, s_selectDirty ? "NOT SENT" : "SENT");
+#if defined(RAILBOARD_DIRECT_ENABLED)
+  // The day's remaining requests, which both fetchers spend: the panel's own
+  // count when it has one, Home Assistant's otherwise.
+  if (!synced)         snprintf(r, sizeof(r), "NO NTP");
+  else if (quota[0])   snprintf(r, sizeof(r), "%s", quota);
+  else if (s_ha.rl[0]) snprintf(r, sizeof(r), "LEFT %s", s_ha.rl);
+  else                 snprintf(r, sizeof(r), "NTP OK");
+  diagLine(8, "SELECT", v, col(s_selectDirty ? RB_COL_AMBER : RB_COL_TEXT), r);
+#else
   diagLine(8, "SELECT", v, col(s_selectDirty ? RB_COL_AMBER : RB_COL_TEXT), synced ? "NTP OK" : "NO NTP");
+#endif
 }
 
 void railboardRender() {
@@ -809,12 +868,26 @@ void railboardStatusJson(JsonObject out) {
   cfg["stale_s"]  = s_cfg.staleS;
   cfg["from"]     = s_cfgFrom == 1 ? "ha" : (s_cfgFrom == 2 ? "web" : "build");
 
+  // The source on screen: the best one that is still fresh.
+  static const char *const SOURCES[] = {"none", "ha", "direct"};
+  uint8_t best = RB_SRC_NONE;
+  for (uint8_t d = 0; d < 2; d++)
+    if (s_board[d].have && !isStale(s_board[d], now, synced) && s_src[d] > best) best = s_src[d];
+  out["source"]     = SOURCES[best];
+  out["haShadowed"] = s_shadowed;
+#if defined(RAILBOARD_DIRECT_ENABLED)
+  rttDirectStatusJson(out["direct"].to<JsonObject>());
+#else
+  out["direct"]["built"] = false;
+#endif
+
   static const char *const keys[] = {"dep", "arr"};
   for (uint8_t d = 0; d < 2; d++) {
     const RbBoard &b = s_board[d];
     JsonObject l = out[keys[d]].to<JsonObject>();
     l["have"]  = b.have;
     l["stale"] = isStale(b, now, synced);
+    l["src"]   = SOURCES[s_src[d]];
     if (!b.have) continue;
     l["count"] = b.count;
     l["ts"]    = b.ts;

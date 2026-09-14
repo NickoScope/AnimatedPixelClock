@@ -17,11 +17,22 @@
 //   MQTT_BASE/railboard/<crs>/status        retained, Home Assistant's last attempt
 //   MQTT_BASE/railboard/<crs>/config        retained, optional run-time settings
 //
+// With RAILBOARD_DIRECT_ENABLED the panel also asks Realtime Trains itself
+// (rtt_direct.h); a fresh board of its own wins over Home Assistant's.
+//
 // Schema, layout, knob and what was verified: src/railboard/README.md.
 // The Home Assistant side: tools/railboard/ha_package_railboard.yaml.
 
 #include <stdint.h>
 #include <ArduinoJson.h>
+
+// Outside the RAILBOARD_ENABLED block, so it fires when that flag is missing.
+#if defined(RAILBOARD_DIRECT_ENABLED) && !defined(RAILBOARD_ENABLED)
+#error "RAILBOARD_DIRECT_ENABLED needs RAILBOARD_ENABLED: it fills the rail board's lists"
+#endif
+#if defined(RAILBOARD_DIRECT_ENABLED) && !defined(BOARD_HAS_PSRAM)
+#error "RAILBOARD_DIRECT_ENABLED needs BOARD_HAS_PSRAM: the TLS session, the body and the JSON live there"
+#endif
 
 #if defined(RAILBOARD_ENABLED)
 
