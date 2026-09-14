@@ -12,7 +12,7 @@ matrix_media:
   class: MatrixMedia
   # The panel's six hex digits: portal > Panel > Media > Diagnostics > topics,
   # or the boot log line "[media] topics nickoscope_matrix/<device>/media/...".
-  device: "000000"
+  device: "d20ec8"         # this panel: /api/media "dev", 2026-09-14
   # At most 8. The panel can follow and command these and nothing else.
   players:
     - media_player.nickoscope32_audio_s3
