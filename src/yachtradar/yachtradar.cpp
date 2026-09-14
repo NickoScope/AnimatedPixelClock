@@ -62,6 +62,7 @@ struct YrVessel {
   char     name[YR_NAME_LEN];
   uint32_t last_seen;
   uint32_t first_seen;
+  uint32_t last_ping;          // millis() when the sweep last crossed it, 0 = never
 };
 
 static YrVessel     s_v[YR_MAX_VESSELS];
@@ -174,15 +175,27 @@ static void onMessage(const char *payload, size_t len) {
   const uint32_t mmsi = meta["MMSI"] | 0U;
   if (!mmsi) return;
 
-  if (!strcmp(type, "PositionReport")) {
-    JsonObjectConst pr = doc["Message"]["PositionReport"];
-    if (pr["Latitude"].isNull() || pr["Longitude"].isNull()) return;
+  // Length and type, from whichever message carries them.
+  auto applyStatic = [](YrVessel *v, JsonObjectConst dim, uint8_t shipType) {
+    const uint16_t l = (uint16_t)((dim["A"] | 0) + (dim["B"] | 0));
+    if (l) v->length_m = l;
+    if (shipType) v->ship_type = shipType;
+  };
+
+  JsonObjectConst msg = doc["Message"];
+  JsonObjectConst pos;
+  if      (!strcmp(type, "PositionReport"))               pos = msg["PositionReport"];
+  else if (!strcmp(type, "StandardClassBPositionReport")) pos = msg["StandardClassBPositionReport"];
+  else if (!strcmp(type, "ExtendedClassBPositionReport")) pos = msg["ExtendedClassBPositionReport"];
+
+  if (!pos.isNull()) {
+    if (pos["Latitude"].isNull() || pos["Longitude"].isNull()) return;
     s_positions++;
     YrVessel *v = slotFor(mmsi);
-    v->lat = pr["Latitude"].as<float>();
-    v->lon = pr["Longitude"].as<float>();
-    v->sog = pr["Sog"] | 0.0f;
-    const char *nm = meta["ShipName"] | "";
+    v->lat = pos["Latitude"].as<float>();
+    v->lon = pos["Longitude"].as<float>();
+    v->sog = pos["Sog"] | 0.0f;
+    const char *nm = meta["ShipName"] | (const char *)(pos["Name"] | "");
     if (nm[0]) {
       strncpy(v->name, nm, sizeof(v->name) - 1);
       v->name[sizeof(v->name) - 1] = '\0';
@@ -190,17 +203,23 @@ static void onMessage(const char *payload, size_t len) {
       for (int i = (int)strlen(v->name) - 1; i >= 0 && v->name[i] == ' '; i--)
         v->name[i] = '\0';
     }
+    if (!strcmp(type, "ExtendedClassBPositionReport"))    // carries its own size
+      applyStatic(v, pos["Dimension"], pos["Type"] | 0);
     v->last_seen = millis();
     s_lastPos = v->last_seen;
   } else if (!strcmp(type, "ShipStaticData")) {
-    JsonObjectConst sd = doc["Message"]["ShipStaticData"];
+    JsonObjectConst sd = msg["ShipStaticData"];
     YrVessel *v = find(mmsi);
     if (!v) return;
-    JsonObjectConst dim = sd["Dimension"];
-    const uint16_t l = (uint16_t)((dim["A"] | 0) + (dim["B"] | 0));
-    if (l) v->length_m = l;
-    const uint8_t t = sd["Type"] | 0;
-    if (t) v->ship_type = t;
+    applyStatic(v, sd["Dimension"], sd["Type"] | 0);
+  } else if (!strcmp(type, "StaticDataReport")) {
+    // Class B static data comes in two parts; part B (PartNumber true) holds the
+    // dimensions and type, part A only the name that MetaData already gives.
+    JsonObjectConst sr = msg["StaticDataReport"];
+    YrVessel *v = find(mmsi);
+    if (!v || !(sr["PartNumber"] | false)) return;
+    JsonObjectConst rb = sr["ReportB"];
+    applyStatic(v, rb["Dimension"], rb["ShipType"] | 0);
   }
 }
 
@@ -214,7 +233,14 @@ static void subscribe() {
   m += String(YR_CENTRE_LON - YR_BBOX_LON_HALF, 4); m += F("],[");
   m += String(YR_CENTRE_LAT + YR_BBOX_LAT_HALF, 4); m += ',';
   m += String(YR_CENTRE_LON + YR_BBOX_LON_HALF, 4); m += F("]]],");
-  m += F("\"FilterMessageTypes\":[\"PositionReport\",\"ShipStaticData\"]}");
+  // Class B too. Most yachts carry Class B transponders, which report position
+  // in StandardClassBPositionReport / ExtendedClassBPositionReport and size in
+  // StaticDataReport part B - names and fields from aisstream's own models,
+  // github.com/aisstream/ais-message-models (golang/aisStream/docs). Class A
+  // alone, as the flagship subscribes, misses most of the bay.
+  m += F("\"FilterMessageTypes\":[\"PositionReport\",\"ShipStaticData\","
+         "\"StandardClassBPositionReport\",\"ExtendedClassBPositionReport\","
+         "\"StaticDataReport\"]}");
   s_ws.sendTXT(m);
   s_subbed = true;
 }
@@ -352,26 +378,127 @@ static void sortRows(uint8_t *idx, uint8_t n) {
   }
 }
 
+// ---- sweep and list motion
+// The beam turns once per YR_SWEEP_MS, fx34's rate on the flagship (6 s since
+// v45.3.12), with a fading afterglow behind it.
+static const uint32_t YR_SWEEP_MS     = 6000;
+static const int8_t   YR_TRAIL_LINES  = 10;
+static const float    YR_TRAIL_STEP   = 4.0f * (float)DEG_TO_RAD;
+static const float    YR_TWO_PI       = 6.2831853f;
+// A vessel the beam crosses flashes on the chart and in the list: up in 150 ms,
+// held to 1100 ms, gone by 1500 ms - fx34's badge timing.
+static const uint32_t YR_PING_UP_MS   = 150;
+static const uint32_t YR_PING_HOLD_MS = 1100;
+static const uint32_t YR_PING_MS      = 1500;
+// A list longer than the screen walks by itself, in a loop: the top row holds
+// for YR_ROW_HOLD_MS, then everything slides up one row. At the page's 10 Hz,
+// 700 ms is one pixel a frame. A turn of the knob moves it by hand and the walk
+// resumes after YR_KNOB_PAUSE_MS.
+static const uint32_t YR_ROW_HOLD_MS   = 1500;
+static const uint32_t YR_ROW_SLIDE_MS  = 700;
+static const uint32_t YR_KNOB_PAUSE_MS = 3000;
+
+static uint32_t s_scrollAnchor = 0;    // the walk counts from here
+static uint8_t  s_firstShown   = 0;    // row at the top in the last frame
+static float    s_prevSweep    = 0.0f;
+static uint32_t s_lastRender   = 0;
+
 void yachtRadarScroll(int8_t delta) {
-  const int16_t maxTop = (int16_t)s_count - YR_TABLE_ROWS;
-  if (maxTop <= 0) { s_scroll = 0; return; }
-  int16_t v = (int16_t)s_scroll + delta;
-  if (v < 0) v = 0;
-  if (v > maxTop) v = maxTop;
+  if (s_count <= YR_TABLE_ROWS) { s_scroll = 0; return; }
+  int16_t v = ((int16_t)s_firstShown + delta) % (int16_t)s_count;
+  if (v < 0) v += s_count;
   s_scroll = (uint8_t)v;
+  s_scrollAnchor = millis() + YR_KNOB_PAUSE_MS;
 }
-void yachtRadarToggleSort() { s_bySize = !s_bySize; s_scroll = 0; }
+void yachtRadarToggleSort() { s_bySize = !s_bySize; s_scroll = 0; s_scrollAnchor = millis(); }
 bool yachtRadarSortsBySize() { return s_bySize; }
+
+static float pingLevel(const YrVessel &v, uint32_t now) {
+  if (!v.last_ping) return 0.0f;
+  const uint32_t t = now - v.last_ping;
+  if (t >= YR_PING_MS)     return 0.0f;
+  if (t < YR_PING_UP_MS)   return (float)t / YR_PING_UP_MS;
+  if (t < YR_PING_HOLD_MS) return 1.0f;
+  return 1.0f - (float)(t - YR_PING_HOLD_MS) / (float)(YR_PING_MS - YR_PING_HOLD_MS);
+}
+
+// Did the beam pass bearing a, clockwise from `from` to `to`?
+static bool swept(float from, float to, float a) {
+  if (to >= from) return a > from && a <= to;
+  return a > from || a <= to;                 // wrapped past north
+}
+
+static void drawSweep(float theta) {
+  // Oldest first, so the bright leading edge wins where the lines overlap.
+  for (int8_t k = YR_TRAIL_LINES - 1; k >= 0; k--) {
+    const float a = theta - k * YR_TRAIL_STEP;
+    const uint8_t alpha = k == 0 ? 200 : (uint8_t)(100 * (YR_TRAIL_LINES - k) / YR_TRAIL_LINES);
+    const float sx = sinf(a), cy = cosf(a);
+    for (int16_t r = 2; r <= YR_R_PX; r++)
+      blendOverMap((int16_t)lroundf(YR_CX + r * sx), (int16_t)lroundf(YR_CY - r * cy),
+                   120, 255, 170, alpha);
+  }
+}
+
+static uint8_t towardWhite(uint8_t c, float f) { return (uint8_t)(c + (255 - c) * f); }
+
+static void drawRow(const YrVessel &v, int16_t top, uint32_t now, uint16_t dim) {
+  int16_t bx, by; uint16_t bw, bh;
+  const int16_t base = top + 4;
+  uint8_t r, g, b; colourFor(v, &r, &g, &b);
+  const float f = pingLevel(v, now);
+  if (f > 0.0f) {
+    // The swept vessel's row lights up with its dot: a tinted bar under it and
+    // the text pushed towards white, fading together.
+    display.fillRect(YR_X_TABLE - 2, top, YR_X_RIGHT - YR_X_TABLE + 4, YR_ROW_H - 1,
+                     display.color565((uint8_t)(r * f * 0.35f), (uint8_t)(g * f * 0.35f),
+                                      (uint8_t)(b * f * 0.35f)));
+    r = towardWhite(r, f); g = towardWhite(g, f); b = towardWhite(b, f);
+  }
+  const uint16_t c = display.color565(r, g, b);
+
+  // Length is the one number worth the width - it is what separates a tender
+  // from a superyacht - so it is drawn first and the name takes what is left.
+  // Until the vessel's static data arrives (minutes, for some) a dim "--"
+  // holds its place.
+  char len[6];
+  if (v.length_m) snprintf(len, sizeof(len), "%uM", (unsigned)v.length_m);
+  else            strncpy(len, "--", sizeof(len));
+  display.getTextBounds(len, 0, 0, &bx, &by, &bw, &bh);
+  const uint16_t lenW = bw;
+  display.setTextColor(v.length_m ? c : dim);
+  display.setCursor(YR_X_RIGHT - (int16_t)bw, base);
+  display.print(len);
+
+  char nm[YR_NAME_LEN];
+  if (v.name[0]) { strncpy(nm, v.name, sizeof(nm) - 1); nm[sizeof(nm) - 1] = '\0'; }
+  else snprintf(nm, sizeof(nm), "%06lu", (unsigned long)(v.mmsi % 1000000UL));
+  const int16_t room = (YR_X_RIGHT - (int16_t)lenW - YR_GAP) - YR_X_TABLE;
+  for (;;) {
+    if (nm[0] == '\0') break;
+    display.getTextBounds(nm, 0, 0, &bx, &by, &bw, &bh);
+    if ((int16_t)bw <= room) break;
+    // Same rule as the flight board's city column, and for the same reason:
+    // a shaved word reads as a typo. Drop trailing words; if the first one
+    // still will not fit, show nothing rather than half of it.
+    char *sp = strrchr(nm, ' ');
+    if (sp == NULL) { nm[0] = '\0'; break; }
+    *sp = '\0';
+  }
+  display.setTextColor(c);
+  display.setCursor(YR_X_TABLE, base);
+  display.print(nm);
+}
 
 void yachtRadarRender() {
   display.fillScreen(0);
   display.setFont(&PicopixelFB);
   display.setTextWrap(false);
   display.setTextSize(1);   // sticky: animated clocks leave it at 3
-  int16_t bx, by; uint16_t bw, bh;
 
   const uint16_t white = display.color565(255, 255, 255);
   const uint16_t dim   = display.color565(110, 122, 128);
+  const uint32_t now   = millis();
 
   // --- left: the chart ---
   // Blitted, not drawn: sea shaded by measured depth, land by measured
@@ -382,6 +509,11 @@ void yachtRadarRender() {
   for (int16_t y = 0; y < YR_MAP_H; y++)
     for (int16_t x = 0; x < YR_MAP_W; x++)
       display.drawPixel(x, y, kYrBasemap[y * YR_MAP_W + x]);
+
+  const float theta = YR_TWO_PI * (float)(now % YR_SWEEP_MS) / (float)YR_SWEEP_MS;
+  if (now - s_lastRender > 500) s_prevSweep = theta;   // back on the page: no burst of stale pings
+  s_lastRender = now;
+  drawSweep(theta);
 
   display.setTextColor(display.color565(200, 230, 255));
   display.setCursor(YR_CX - 1, 0 + 4);      display.print('N');
@@ -395,10 +527,16 @@ void yachtRadarRender() {
   sortRows(idx, s_count);
 
   for (uint8_t i = 0; i < s_count; i++) {
-    const YrVessel &v = s_v[idx[i]];
+    YrVessel &v = s_v[idx[i]];
     float fx, fy; project(v, &fx, &fy);
     const int16_t ix = (int16_t)lroundf(fx), iy = (int16_t)lroundf(fy);
     if (ix < 0 || ix >= YR_MAP_W || iy < 0 || iy >= YR_MAP_H) continue;
+
+    float bearing = atan2f(fx - YR_CX, YR_CY - fy);   // 0 = north, clockwise
+    if (bearing < 0) bearing += YR_TWO_PI;
+    if (swept(s_prevSweep, theta, bearing)) v.last_ping = now ? now : 1;
+    const float f = pingLevel(v, now);
+
     uint8_t r, g, b; colourFor(v, &r, &g, &b);
 
     // A dark ring first: over a coloured chart a bright dot alone reads as part
@@ -407,8 +545,21 @@ void yachtRadarRender() {
       for (int8_t dy = -1; dy <= 1; dy++)
         if (dx || dy) blendOverMap(ix + dx, iy + dy, 0, 0, 0, 90);
 
+    if (f > 0.0f) {
+      // Swept: the hull flares - a ring in its own colour and a cross beyond it,
+      // both fading with the flash.
+      const uint8_t ring = (uint8_t)(230.0f * f);
+      for (int8_t dx = -1; dx <= 1; dx++)
+        for (int8_t dy = -1; dy <= 1; dy++)
+          if (dx || dy) blendOverMap(ix + dx, iy + dy, r, g, b, ring);
+      blendOverMap(ix - 2, iy, r, g, b, ring / 2);
+      blendOverMap(ix + 2, iy, r, g, b, ring / 2);
+      blendOverMap(ix, iy - 2, r, g, b, ring / 2);
+      blendOverMap(ix, iy + 2, r, g, b, ring / 2);
+    }
+
     softDot(fx, fy, r, g, b, 0.5f);                  // sub-pixel halo
-    blendOverMap(ix, iy, r, g, b, 255);              // core, full brightness
+    blendOverMap(ix, iy, towardWhite(r, f), towardWhite(g, f), towardWhite(b, f), 255);
     if (v.length_m >= 60) {                          // mega: size at a glance
       blendOverMap(ix - 1, iy, r, g, b, 190);
       blendOverMap(ix + 1, iy, r, g, b, 190);
@@ -416,8 +567,31 @@ void yachtRadarRender() {
       blendOverMap(ix, iy + 1, r, g, b, 190);
     }
   }
+  s_prevSweep = theta;
 
   // --- right: the table ---
+  // Rows first, then the header over whatever slid up under it.
+  const bool walking = s_count > YR_TABLE_ROWS;
+  uint8_t first = 0;
+  int16_t slide = 0;
+  if (walking) {
+    const uint32_t cycle = YR_ROW_HOLD_MS + YR_ROW_SLIDE_MS;
+    const uint32_t t = (int32_t)(now - s_scrollAnchor) > 0 ? now - s_scrollAnchor : 0;
+    first = (uint8_t)((s_scroll + t / cycle) % s_count);
+    const uint32_t in = t % cycle;
+    if (in > YR_ROW_HOLD_MS) slide = (int16_t)((in - YR_ROW_HOLD_MS) * YR_ROW_H / YR_ROW_SLIDE_MS);
+  } else {
+    s_scroll = 0;
+  }
+  s_firstShown = first;
+  const uint8_t rows = walking ? (uint8_t)(YR_TABLE_ROWS + 2) : s_count;
+  for (uint8_t i = 0; i < rows; i++) {
+    const int16_t top = YR_Y_ROW0 + i * YR_ROW_H - slide;
+    if (top >= 64) break;
+    drawRow(s_v[idx[(first + i) % s_count]], top, now, dim);
+  }
+
+  display.fillRect(YR_X_TABLE - 2, 0, 128 - (YR_X_TABLE - 2), YR_Y_ROW0 - 1, 0);
   display.setTextColor(white);
   display.setCursor(YR_X_TABLE, YR_Y_TITLE + 4);
   display.print(F("BAY OF CANNES"));
@@ -434,48 +608,6 @@ void yachtRadarRender() {
   display.print(sub);
   display.drawFastHLine(YR_X_TABLE - 1, YR_Y_RULE, YR_X_RIGHT - YR_X_TABLE + 1,
                         display.color565(40, 48, 54));
-
-  if (s_scroll && s_scroll + YR_TABLE_ROWS > s_count)          // list shrank under us
-    s_scroll = (uint8_t)(s_count > YR_TABLE_ROWS ? s_count - YR_TABLE_ROWS : 0);
-  const uint8_t rows = (uint8_t)(s_count - s_scroll < YR_TABLE_ROWS
-                                 ? s_count - s_scroll : YR_TABLE_ROWS);
-  for (uint8_t i = 0; i < rows; i++) {
-    const YrVessel &v = s_v[idx[s_scroll + i]];
-    const int16_t base = YR_Y_ROW0 + i * YR_ROW_H + 4;
-    const uint16_t c = colourFor(v, NULL, NULL, NULL);
-    display.setTextColor(c);
-
-    // Length is the one number worth the width - it is what separates a
-    // tender from a superyacht - so it is drawn first and the name takes
-    // whatever is left, trimmed the way the flight board trims a city.
-    char len[6] = "";
-    uint16_t lenW = 0;
-    if (v.length_m) {
-      snprintf(len, sizeof(len), "%uM", (unsigned)v.length_m);
-      display.getTextBounds(len, 0, 0, &bx, &by, &bw, &bh);
-      lenW = bw;
-      display.setCursor(YR_X_RIGHT - (int16_t)bw, base);
-      display.print(len);
-    }
-
-    char nm[YR_NAME_LEN];
-    if (v.name[0]) { strncpy(nm, v.name, sizeof(nm) - 1); nm[sizeof(nm) - 1] = '\0'; }
-    else snprintf(nm, sizeof(nm), "%06lu", (unsigned long)(v.mmsi % 1000000UL));
-    const int16_t room = (YR_X_RIGHT - (int16_t)lenW - YR_GAP) - YR_X_TABLE;
-    for (;;) {
-      if (nm[0] == '\0') break;
-      display.getTextBounds(nm, 0, 0, &bx, &by, &bw, &bh);
-      if ((int16_t)bw <= room) break;
-      // Same rule as the flight board's city column, and for the same reason:
-      // a shaved word reads as a typo. Drop trailing words; if the first one
-      // still will not fit, show nothing rather than half of it.
-      char *sp = strrchr(nm, ' ');
-      if (sp == NULL) { nm[0] = '\0'; break; }
-      *sp = '\0';
-    }
-    display.setCursor(YR_X_TABLE, base);
-    display.print(nm);
-  }
 
   display.setFont(NULL);   // other pages draw with the built-in font
 }
