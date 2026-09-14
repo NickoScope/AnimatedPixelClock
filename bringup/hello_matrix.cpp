@@ -27,12 +27,14 @@
 // ---- Panel geometry ----
 #define PANEL_W 64    // single module width
 #define PANEL_H 64    // single module height
-#define PANELS  2     // chain length: 2 = full 128x64 (set to 1 to isolate)
+#define PANELS  1     // chain length: 1 for phase 2 (isolate), 2 = full 128x64 for phase 3
 
 // ---- Driver init ----
-// Waveshare 64x64 units commonly use FM6126A, which needs an init sequence.
-// KNOWN UNKNOWN until verified against the panel's IC markings: if the screen
-// stays blank with this ON, set it to 0 (and vice-versa).
+// Our P2 panels' column drivers are marked FM6124HJ (read off the boards on
+// 2026-09-14). Library 3.0.14 sends FM6124 and FM6126A through the same
+// fm6124init(), so ON runs the init this chip needs; 0 (GENERIC) runs none and
+// is the comparison for test A. The init is written once, at begin(): power the
+// panel before the controller boots, or reset the controller afterwards.
 #define USE_FM6126A 1
 
 // Clock phase. Default-true drops the RIGHTMOST column on some panels (esp.
