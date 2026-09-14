@@ -28,9 +28,16 @@ if git diff --cached --name-only | grep -qE '^(src/flightboard/|tools/fb_)'; the
 fi
 
 # The world clock's map and cities live in two generated copies, one for the
-# Lua prototype and one for the firmware. Checked offline: regenerating needs
-# the Natural Earth download.
-if git diff --cached --name-only | grep -qE '^(tools/luasim/gen_world\.py|tools/luasim/scripts/world_clock\.lua|src/worldclock/worldmap\.h)$'; then
+# Lua prototype and one for the firmware, and the cities' zones come from the
+# zone table. Checked offline: regenerating needs the Natural Earth download
+# and this machine's tz database.
+if git diff --cached --name-only | grep -qE '^(tools/luasim/gen_(world|tz)\.py|tools/luasim/scripts/world_clock\.lua|src/worldclock/(worldmap|tzdb)\.h)$'; then
+  python3 tools/luasim/gen_tz.py --check || {
+    echo
+    echo "pre-commit: src/worldclock/tzdb.h does not read back as gen_tz.py writes it."
+    echo "            run  python3 tools/luasim/gen_tz.py  and stage the header."
+    exit 1
+  }
   python3 tools/luasim/gen_world.py --check || {
     echo
     echo "pre-commit: world clock map or cities have drifted."

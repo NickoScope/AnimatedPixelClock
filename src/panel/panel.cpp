@@ -142,7 +142,7 @@ void panelBegin() {
 #endif
 #if defined(WORLDCLOCK_ENABLED)
     const uint8_t home = p.getUChar("wcHome", d.wcHome);
-    if (home < worldClockCityCount()) s_cur.wcHome = home;
+    if (home < worldClockDefaultCount()) s_cur.wcHome = home;
 #endif
 #if defined(RAILBOARD_ENABLED)
     // isKey() first: unlike the numeric getters, getString() logs at error level
@@ -166,7 +166,7 @@ void panelBegin() {
   flightboardSelect(s_cur.fbAirport, (FbDirMode)s_cur.fbDir);
 #endif
 #if defined(WORLDCLOCK_ENABLED)
-  worldClockSetHome(s_cur.wcHome);
+  worldClockSetHome(s_cur.wcHome, true);
 #endif
 #if defined(RAILBOARD_ENABLED)
   railboardSetStation(s_cur.rbStn);   // before railboardBegin() subscribes
@@ -264,10 +264,10 @@ void panelNoteFlightboard() {
 
 bool panelSetWorldHome(uint8_t city) {
 #if defined(WORLDCLOCK_ENABLED)
-  if (city >= worldClockCityCount()) return false;
+  if (city >= worldClockDefaultCount()) return false;
   if (city == s_cur.wcHome) return true;
   s_cur.wcHome = city;
-  worldClockSetHome(city);
+  worldClockSetHome(city, true);
   markDirty();
   return true;
 #else

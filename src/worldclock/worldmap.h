@@ -47,15 +47,15 @@ static const uint64_t kWorldMask[WORLD_ROWS] = {
   0x0000000000080000ULL,
 };
 
-struct WorldCity { const char *name; float lat, lon; };
+struct WorldCity { const char *name; float lat, lon; const char *iana, *posix; };
 
-// The first city is home, and it breathes.
+// Built in; which one is home is decided at run time (worldclock.cpp).
 static const WorldCity kWorldCities[] = {
-  {"CANNES", 43.55f, 7.02f},
-  {"MOSCOW", 55.75f, 37.62f},
-  {"NEW YORK", 40.71f, -74.0f},
-  {"LONDON", 51.51f, -0.13f},
-  {"DUBAI", 25.2f, 55.27f},
-  {"ALMATY", 43.24f, 76.89f},
+  {"CANNES", 43.55f, 7.02f, "Europe/Paris", "CET-1CEST,M3.5.0,M10.5.0/3"},
+  {"MOSCOW", 55.75f, 37.62f, "Europe/Moscow", "MSK-3"},
+  {"NEW YORK", 40.71f, -74.0f, "America/New_York", "EST5EDT,M3.2.0,M11.1.0"},
+  {"LONDON", 51.51f, -0.13f, "Europe/London", "GMT0BST,M3.5.0/1,M10.5.0"},
+  {"DUBAI", 25.2f, 55.27f, "Asia/Dubai", "<+04>-4"},
+  {"ALMATY", 43.24f, 76.89f, "Asia/Almaty", "<+05>-5"},
 };
 #define WORLD_CITY_COUNT (sizeof(kWorldCities) / sizeof(kWorldCities[0]))

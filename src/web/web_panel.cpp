@@ -491,7 +491,7 @@ static void handleWorldclock() {
     JsonDocument in(&s_alloc);
     if (!readBody(in)) return;
     long home;
-    if (!intIn(in["home"], 0, (long)worldClockCityCount() - 1, &home)) REJECT(400, "home out of range");
+    if (!intIn(in["home"], 0, (long)worldClockDefaultCount() - 1, &home)) REJECT(400, "home out of range");
     panelSetWorldHome((uint8_t)home);
   }
   JsonDocument doc(&s_alloc);

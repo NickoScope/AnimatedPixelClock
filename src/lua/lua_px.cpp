@@ -67,6 +67,7 @@ static int l_now(lua_State *L) {
   if (c.utcMinutes % 60 == 0) lua_pushinteger(L, c.utcMinutes / 60);
   else                        lua_pushnumber(L, (lua_Number)(c.utcMinutes / 60.0));
   lua_setfield(L, -2, "utc");
+  lua_pushinteger(L, c.year); lua_setfield(L, -2, "year");
   return 1;
 }
 
