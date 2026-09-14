@@ -48,6 +48,15 @@ int main() {
   reset(); for (int d = 0; d < 10; d++) { turn(idx, 2, -1, 15, false); idx = (idx + 2) % 4; run(400); } expect("10 slow clicks anticlockwise", cw, ccw, 0, 10);
   reset(); for (int d = 0; d < 20; d++) { turn(idx, 2, +1, 4, false); idx = (idx + 2) % 4; run(12); } expect("20 fast clicks clockwise (20 ms per click)", cw, ccw, 20, 0);
 
+  std::printf("glitches (nobody at the knob)\n");
+  setLogical(0b11); run(300); idx = 0;
+  reset(); for (int k = 0; k < 300; k++) { setLogical(0b10); run(1); setLogical(0b11); run(20); } expect("300 one-millisecond spikes on A", cw, ccw, 0, 0);
+  reset(); for (int k = 0; k < 100; k++) { for (int s = 1; s <= 4; s++) { setLogical(FWD[s % 4]); run(1); } run(30); } expect("100 one-millisecond fake clicks, a valid sequence", cw, ccw, 0, 0);
+  reset(); for (int k = 0; k < 200; k++) { setLogical(0b10); run(1); setLogical(0b00); run(1); setLogical(0b11); run(50); } expect("200 coupled pulses 11-10-00-11, 1 ms a state", cw, ccw, 0, 0);
+  reset(); for (int k = 0; k < 200; k++) { setLogical(0b00); run(1); setLogical(0b11); run(9); } expect("200 pulses on both lines at once", cw, ccw, 0, 0);
+  reset(); { unsigned x = 12345; for (int k = 0; k < 3000; k++) { x = x * 1103515245u + 12345u; setLogical(((x >> 16) & 7) == 0 ? (int)((x >> 20) & 3) : 0b11); run(1); } setLogical(0b11); run(300); } expect("3 s of sparse random one-millisecond hits", cw, ccw, 0, 0);
+  reset(); for (int d = 0; d < 20; d++) { turn(0, 4, +1, 3, false); run(8); } expect("still counts 20 fast clicks at 3 ms a state", cw, ccw, 20, 0);
+
   std::printf("switch\n");
   reset(); for (int k = 0; k < 3; k++) { g_pin[0] = 0; run(150); g_pin[0] = 1; run(300); } std::printf("  3 clicks of 150 ms: PRESS %d LONG %d (want 3/0) %s\n", press, lng, (press == 3 && lng == 0) ? "ok" : "FAIL"); fails += !(press == 3 && lng == 0);
   reset(); g_pin[0] = 0; run(1500); g_pin[0] = 1; run(300); std::printf("  one 1.5 s hold: PRESS %d LONG %d (want 0/1) %s\n", press, lng, (press == 0 && lng == 1) ? "ok" : "FAIL"); fails += !(press == 0 && lng == 1);

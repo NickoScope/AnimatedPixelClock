@@ -74,6 +74,29 @@ static const uint32_t kRestSeenMs   = 250;   // 00 held this long is a detent, n
 
 static const int kEncTab[16] = {0,-1,0,0, 1,0,0,0, 0,0,0,1, 0,0,-1,0};
 
+// Glitch filter. On the bench, with nobody at the knob, a 15 s burst produced
+// 18 clockwise steps from 54 A/B changes - three changes a step where a real
+// click of this knob makes two, and the lines sit next to a HUB75 panel
+// switching amps. The A/B pair now counts as a new state only once
+// CTRL_ENC_STABLE_MS consecutive 1 kHz samples agree on it. The pair, not each
+// pin: a coupled pulse that walks both lines through a valid sequence in a
+// millisecond a state would pass a per-pin filter, because each pin in a
+// quadrature sequence holds for two states. A real contact state lasts several
+// milliseconds even on a fast turn.
+#ifndef CTRL_ENC_STABLE_MS
+#define CTRL_ENC_STABLE_MS 2
+#endif
+static int     s_abShown = 0b11;
+static int     s_abCand  = 0b11;
+static uint8_t s_abRun   = 0;
+static inline int filteredAB(int raw) {
+  if (raw == s_abShown) { s_abCand = raw; s_abRun = 0; return s_abShown; }
+  if (raw != s_abCand)  { s_abCand = raw; s_abRun = 1; }
+  else if (s_abRun < 255) s_abRun++;
+  if (s_abRun >= CTRL_ENC_STABLE_MS) { s_abShown = raw; s_abRun = 0; }
+  return s_abShown;
+}
+
 // Single producer (the sampling task) and single consumer (loop()): the head is
 // written only by the producer, the tail only by the consumer.
 static CtrlEvent        s_q[16];
@@ -119,6 +142,13 @@ static volatile uint32_t s_lastEventMs = 0;
 static volatile uint32_t s_dbgTransitions = 0;
 static volatile uint32_t s_dbgSteps = 0;
 static uint32_t s_dbgAt = 0;
+// Every raw A/B change before the filter, with its time, so the width of a
+// phantom pulse is measured rather than guessed.
+static uint32_t          s_rawMs[64];
+static uint8_t           s_rawAb[64];
+static volatile uint8_t  s_rawHead = 0;
+static uint8_t           s_rawTail = 0;
+static int               s_rawPrev = -1;
 #endif
 
 // Logical contact levels: 1 = open, as with the flagship's pull-ups, whichever
@@ -154,7 +184,15 @@ static void sampleTick(void *) {
   const uint16_t debounceMs = s_cfgDebounceMs;
 
   // ---- rotation
-  const int ab = encAB();
+  const int rawAB = encAB();
+#if defined(CTRL_DEBUG)
+  if (rawAB != s_rawPrev) {
+    s_rawPrev = rawAB;
+    const uint8_t n = (uint8_t)((s_rawHead + 1) % 64);
+    if (n != s_rawTail) { s_rawMs[s_rawHead] = now; s_rawAb[s_rawHead] = (uint8_t)rawAB; s_rawHead = n; }
+  }
+#endif
+  const int ab = filteredAB(rawAB);
   if (ab != s_prevAB) {
     s_prevAB = ab;
     s_abSinceMs = now;
@@ -207,6 +245,8 @@ void controlBegin() {
 #endif
   pinMode(CTRL_PIN_SW, INPUT_PULLUP);      // BOOT: pressed pulls GPIO0 to GND
   s_prevAB = encAB();
+  s_abShown = s_abCand = s_prevAB;
+  s_abRun = 0;
   s_abSinceMs = millis();
   s_lastEnc = s_prevAB * 5;
   s_encDir = 0;
@@ -231,6 +271,11 @@ void controlBegin() {
 void controlLoop() {
   if (!s_timerOk) sampleTick(nullptr);    // no timer: sample at loop speed, as before
 #if defined(CTRL_DEBUG)
+  while (s_rawTail != s_rawHead) {
+    Serial.printf("[ctrl] raw %u ms ab=%d%d\n", (unsigned)s_rawMs[s_rawTail],
+                  (s_rawAb[s_rawTail] >> 1) & 1, s_rawAb[s_rawTail] & 1);
+    s_rawTail = (uint8_t)((s_rawTail + 1) % 64);
+  }
   if (millis() - s_dbgAt > 5000) {
     s_dbgAt = millis();
     Serial.printf("[ctrl] levels A=%d B=%d SW=%d | detents %s | transitions %u steps %u\n",
