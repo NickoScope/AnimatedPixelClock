@@ -57,6 +57,10 @@ bool animValidName(const char* name) {
 }
 
 bool animValidatePca(File& f, PcaHeader* hdr) {
+  return animValidatePcaMax(f, hdr, PCA_MAX_FRAMES);
+}
+
+bool animValidatePcaMax(File& f, PcaHeader* hdr, uint32_t maxFrames) {
   if (!f) return false;
   uint8_t h[PCA_HEADER_BYTES];
   if (!f.seek(0) || f.read(h, sizeof(h)) != sizeof(h)) return false;
@@ -65,11 +69,11 @@ bool animValidatePca(File& f, PcaHeader* hdr) {
   uint16_t frames = (uint16_t)h[4] | ((uint16_t)h[5] << 8);
   uint16_t defMs = (uint16_t)h[6] | ((uint16_t)h[7] << 8);
   uint8_t palette = h[8];
-  if (frames < 1 || frames > PCA_MAX_FRAMES) return false;
+  if (frames < 1 || frames > maxFrames) return false;
   if (palette < 2 || palette > PCA_MAX_PALETTE) return false;
   if (defMs < 20 || defMs > 5000) return false;
 
-  // 32-bit safe: max is 12 + 32 + 720 + 360*4096 < 1.5MiB.
+  // 32-bit safe: max is 12 + 32 + 131070 + 65535*4096 < 257MiB.
   uint32_t expected = PCA_HEADER_BYTES + (uint32_t)palette * 2 +
                       (uint32_t)frames * 2 + (uint32_t)frames * PCA_FRAME_BYTES;
   if ((uint32_t)f.size() != expected) return false;

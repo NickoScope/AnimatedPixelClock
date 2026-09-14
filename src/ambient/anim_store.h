@@ -51,6 +51,10 @@ bool animValidName(const char* name);
 // length. Leaves the file position unspecified. hdr may be nullptr.
 bool animValidatePca(File& f, PcaHeader* hdr);
 
+// The same rule with another frame limit: the card's gallery takes whole
+// tracks (clips/clip_sd.h). The count is a u16, so 65535 is the format's own.
+bool animValidatePcaMax(File& f, PcaHeader* hdr, uint32_t maxFrames);
+
 // Full path "/anim/<name>.pca" for a validated basename.
 String animPath(const char* name);
 

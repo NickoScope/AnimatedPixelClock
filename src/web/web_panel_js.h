@@ -773,40 +773,371 @@ var luaSig = '';
 function pollLua() { return api('/api/lua').then(renderLua); }
 function pollEffects() { return Promise.all([pollLua(), pollClips()]); }
 
-// Clips: the uploaded .pca animations (/api/anim/*, the clock firmware's own
-// routes - they answer without a "success" field, so plain fetch, not api()).
-var clipSig = '';
-function pollClips() { return fetch('/api/anim/list').then(function (r) { return r.json(); }).then(renderClips); }
-function renderClips(d) {
+// Clips: the uploaded .pca animations in the panel's flash (/api/anim/*, the
+// clock firmware's own routes - they answer without a "success" field, so plain
+// fetch, not api()) and, with a card in the TF slot, the gallery on the card
+// (/api/clips, which does).
+var clipSig = '', thumbs = {}, thumbQ = Promise.resolve();
+function kb(b) { return Math.round(b / 1024) + ' KB'; }
+function gb(k) { return (k / 1048576).toFixed(1) + ' GB'; }
+function mmss(t) { return Math.floor(t / 60) + ':' + ('0' + (t % 60).toFixed(1)).slice(-4); }
+function pollClips() {
+  return Promise.all([fetch('/api/anim/list').then(function (r) { return r.json(); }),
+    F.sdclips ? api('/api/clips').catch(function () { return null; }) : null]).then(function (r) { renderClips(r[0], r[1]); });
+}
+function renderClips(d, g) {
   var host = $('clipList');
   if (!host || !d) return;
-  var anims = d.anims || [];
-  setText('clipTag', d.playing ? 'playing' : anims.length + (anims.length === 1 ? ' clip' : ' clips'));
-  var sig = JSON.stringify([anims, d.playing, d.current]);
+  var sd = !!(g && g.card.mounted), anims = d.anims || [], clips = sd ? g.clips : [], cur = d.playing ? d.current : '';
+  // Where a new clip goes: the card when there is one. cap is the most frames a
+  // clip there may hold, fit what the free space takes now.
+  cm.list = sd ? { sd: 1, cap: g.maxFrames, fit: Math.floor((g.maxBytes - 44) / 4098), max: g.maxBytes, clips: clips }
+    : { cap: 360, fit: d.usable ? d.maxFrames : 0, max: d.maxUploadBytes, clips: anims };
+  cmSize();
+  setText('clipTag', d.playing ? 'playing' : (anims.length + clips.length) + ' clips');
+  if (g) {
+    setText('clipCard', sd ? 'Card ' + g.card.type + ': ' + gb(g.card.freeKB) + ' free of ' + gb(g.card.totalKB) + '. New clips go to the card.' : g.reason);
+    $('clipMount').style.display = sd ? 'none' : '';
+  }
+  var sig = JSON.stringify([anims, clips, cur]);
   if (sig === clipSig) return;
   clipSig = sig;
-  host.innerHTML = anims.length ? '' : '<p class="field-hint">No clips are stored on the panel.</p>';
-  anims.forEach(function (a) {
-    var row = document.createElement('div');
-    row.className = 'pn-row' + (d.playing && a.name === d.current ? ' here' : '');
-    row.innerHTML = '<div class="pn-name"><strong>' + esc(a.name) + '</strong><span class="ct-hint">' + a.frames + ' frames · ' +
-      Math.round(a.bytes / 1024) + ' KB</span></div><span class="pn-here">on screen</span><button type="button" class="btn btn-sm">Play</button>';
-    var btn = row.querySelector('button');
-    btn.addEventListener('click', function () {
-      // A clip shows on the clock page, and choosing a page releases any forced
-      // mode - so the page comes first and the clip second.
-      api('/api/panel', { show: { page: 0 } })
-        .then(function () { return fetch('/api/anim/play?name=' + encodeURIComponent(a.name)); })
-        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); clipSig = ''; return pollClips(); })
-        .catch(function (err) { flash(btn, err.message, true); });
-    });
-    host.appendChild(row);
+  host.innerHTML = anims.length + clips.length ? '' : '<p class="field-hint">No clips are stored on the panel.</p>';
+  clips.forEach(function (a) { clipRow(host, a, 1, cur === 'sd:' + a.name); });
+  anims.forEach(function (a) { clipRow(host, a, 0, cur === a.name); });
+}
+function clipRow(host, a, sd, here) {
+  var row = document.createElement('div');
+  row.className = 'pn-row' + (here ? ' here' : '');
+  row.innerHTML = (sd ? '<canvas class="pn-thumb" width="128" height="64"></canvas>' : '') + '<div class="pn-name"><strong>' + esc(a.name) +
+    '</strong><span class="ct-hint">' + (sd ? mmss(a.frames * a.ms / 1000) + ' · card · ' : 'flash · ') + a.frames + ' frames · ' + kb(a.bytes) +
+    '</span></div><span class="pn-here">on screen</span><button type="button" class="btn btn-sm">Play</button><button type="button" class="btn btn-sm btn-danger">Delete</button>';
+  var b = row.querySelectorAll('button');
+  b[0].addEventListener('click', function () { playClip(a.name, sd, b[0]); });
+  b[1].addEventListener('click', function () {
+    if (!confirm('Delete the clip "' + a.name + '" from the ' + (sd ? 'card' : 'panel') + '?')) return;
+    (sd ? api('/api/clips', { 'delete': a.name }) : fetch('/api/anim/delete?name=' + encodeURIComponent(a.name)))
+      .then(function () { clipSig = ''; return pollClips(); }).catch(function (err) { flash(b[1], err.message, true); });
   });
+  if (sd) thumb(row.querySelector('canvas'), a);
+  host.appendChild(row);
+}
+function playClip(name, sd, btn) {
+  // A clip shows on the clock page, and choosing a page releases any forced
+  // mode - so the page comes first and the clip second.
+  api('/api/panel', { show: { page: 0 } })
+    .then(function () { return sd ? api('/api/clips', { play: name }) : fetch('/api/anim/play?name=' + encodeURIComponent(name)).then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); }); })
+    .then(function () { clipSig = ''; return pollClips(); })
+    .catch(function (err) { flash(btn, err.message, true); });
+}
+function thumb(cv, a) {   // frame 0 from the card, fetched once, one request at a time
+  var k = a.name + '/' + a.bytes, c = cv.getContext('2d');
+  if (thumbs[k]) { c.putImageData(thumbs[k], 0, 0); return; }
+  thumbQ = thumbQ.then(function () {
+    return fetch('/api/clips/frame?i=0&name=' + encodeURIComponent(a.name)).then(function (r) { if (!r.ok) throw new Error(); return r.arrayBuffer(); });
+  }).then(function (ab) {
+    var b = new Uint8Array(ab), d = new DataView(ab), P = b[8], im = c.createImageData(128, 64), p = im.data, i, v;
+    for (i = 0; i < 8192; i++) {
+      v = d.getUint16(12 + 2 * Math.min(P - 1, b[12 + 2 * P + (i >> 1)] >> (i & 1 ? 0 : 4) & 15), true);
+      p[4 * i] = (v >> 11) * 255 / 31; p[4 * i + 1] = (v >> 5 & 63) * 255 / 63; p[4 * i + 2] = (v & 31) * 255 / 31; p[4 * i + 3] = 255;
+    }
+    c.putImageData(thumbs[k] = im, 0, 0);
+  }).catch(function () {});
 }
 if ($('clipStop')) $('clipStop').addEventListener('click', function () {
   var btn = this;
   fetch('/api/mode/auto').then(function () { clipSig = ''; return pollClips(); }).catch(function (err) { flash(btn, err.message, true); });
 });
+if ($('clipMount')) $('clipMount').addEventListener('click', function () {
+  var btn = this;
+  api('/api/clips', { mount: true }).then(function () { clipSig = ''; return pollClips(); }).catch(function (err) { flash(btn, err.message, true); });
+});
+
+// ---------------------------------------------------------------- make a clip
+// Sound drawn the way a scope draws it, made into a clip in this browser: the
+// renderer of tools/oscmusic/scope_render.py and the PCA1 writer of gif2pca.
+// The sound stays on the phone; only the clip is sent. This block, down to
+// "The card", is run against the Python by tools/oscmusic/test_clip_maker.py.
+function scopePal(col) {   // [rgb, rgb565] of 16 levels: green (the script's), amber, blue, white
+  var rgb = [], c16 = [];
+  for (var i = 0; i < 16; i++) {
+    var v = i / 15, m = Math.floor(255 * Math.pow(v, 0.8)),
+      a = Math.floor(v > 0.75 ? 255 * (v - 0.75) / 0.25 * 0.85 : 20 * v),
+      b = Math.floor(v > 0.8 ? 255 * (v - 0.8) / 0.2 * 0.7 : 40 * v),
+      c = [[a, m, b], [m, 0.7 * m + 0.3 * b, 0.3 * a], [0.5 * a, 0.55 * m + 0.35 * a, m], [m, m, m]][col].map(function (x) { return Math.min(255, x | 0); });
+    rgb.push(c);
+    c16.push((c[0] >> 3) << 11 | (c[1] >> 2) << 5 | c[2] >> 3);
+  }
+  return [rgb, c16];
+}
+// The face: every sample pair lands on a pixel, so where the beam dwells it
+// glows. o: rate, fps, gain (times 1/10), decay (per 40 ms), zoom. At 25 fps and
+// zoom 1 this is the script's arithmetic, float32 where the script is float32.
+function scope(o) {
+  var z = o.zoom, fw = Math.min(128, 2 * Math.round(32 * z)), ox = fw / 2 - 32, x0 = 64 - fw / 2, N = fw * 64,
+    glow = new Float32Array(N), cnt = new Float32Array(N), v = new Float32Array(N), h = new Float32Array(N),
+    dec = Math.fround(Math.pow(o.decay, 25 / o.fps)), k = Math.fround(48000 / o.rate * z), g = Math.fround(o.gain / 10),
+    spf = Math.floor(o.rate / o.fps);
+  return { spf: spf, frame: function (s, at, idx) {   // s: X,Y pairs; the frame starts at pair `at`; idx gets 128x64 levels
+    var i, x, y, p;
+    for (i = at; i < at + spf; i++) {
+      x = (s[2 * i] * z + 1) * 32 + ox; y = (1 - s[2 * i + 1] * z) * 32;
+      if (x >= 0 && y >= 0 && x <= fw && y <= 64) cnt[Math.min(y | 0, 63) * fw + Math.min(x | 0, fw - 1)]++;
+    }
+    for (i = 0; i < N; i++) { glow[i] = glow[i] * dec + cnt[i] / 4 * k; cnt[i] = 0; v[i] = 1 - Math.exp(-glow[i] * g); }
+    for (p = 0; p < N; p++) { x = p % fw; h[p] = (x ? v[p - 1] : 0) / 4 + v[p] / 2 + (x < fw - 1 ? v[p + 1] : 0) / 4; }   // bloom [1,2,1]/4, rows...
+    idx.fill(0);
+    for (p = 0; p < N; p++) {   // ...then columns, zero past the edges
+      y = p / fw | 0;
+      idx[y * 128 + x0 + p % fw] = Math.round(Math.min(1, v[p] + 0.3 * ((y ? h[p - fw] : 0) / 4 + h[p] / 2 + (y < 63 ? h[p + fw] : 0) / 4)) * 15);
+    }
+  } };
+}
+// True when left and right never part by half a panel pixel: L = X, R = Y then
+// draws only the diagonal X = Y. At zoom 1 a difference d between the channels
+// puts a point 32 d / sqrt 2 = 22.6 d pixels off that line.
+function flat(s) {
+  for (var i = 0, m = 0; i < s.length; i += 2) m = Math.max(m, Math.abs(s[i] - s[i + 1]));
+  return m < 0.5 / 22.6;
+}
+// PCA1: "PCA1", frames, ms, colours, flags (1 loop), 2 reserved; palette RGB565;
+// a delay per frame; then 4 bpp frames, high nibble the left pixel.
+function pcaHead(n, ms, pal) {
+  var b = new Uint8Array(44 + 2 * n), d = new DataView(b.buffer), i;
+  b.set([80, 67, 65, 49]); d.setUint16(4, n, true); d.setUint16(6, ms, true); b[8] = 16; b[9] = 1;
+  for (i = 0; i < 16; i++) d.setUint16(12 + 2 * i, pal[i], true);
+  for (i = 0; i < n; i++) d.setUint16(44 + 2 * i, ms, true);
+  return b;
+}
+function pcaPut(b, at, idx) { for (var i = 0; i < 8192; i += 2) b[at++] = idx[i] << 4 | idx[i + 1]; }
+function blobBuf(b) { return b.arrayBuffer ? b.arrayBuffer() : new Response(b).arrayBuffer(); }
+var PCM = { 16: function (d, o) { return d.getInt16(o, true) / 32768; },
+  24: function (d, o) { return (d.getInt8(o + 2) * 65536 + d.getUint16(o, true)) / 8388608; },
+  32: function (d, o) { return d.getInt32(o, true) / 2147483648; },
+  f32: function (d, o) { return d.getFloat32(o, true); }, f64: function (d, o) { return d.getFloat64(o, true); } };
+// A WAV is read where it lies: its header, then only the span a frame needs.
+// Resolves null for anything but PCM or float; the browser decodes those.
+function wavOpen(f) {
+  var h = {}, pos = 12;
+  function tag(ab, o) { return String.fromCharCode.apply(null, new Uint8Array(ab, o, 4)); }
+  function chunk() {
+    return blobBuf(f.slice(pos, pos + 48)).then(function (ab) {
+      if (ab.byteLength < 8) return null;
+      var d = new DataView(ab), id = tag(ab, 0), len = d.getUint32(4, true), t;
+      if (id === 'fmt ' && ab.byteLength >= 24) {
+        t = d.getUint16(8, true);
+        if (t === 0xFFFE && ab.byteLength >= 34) t = d.getUint16(32, true);   // WAVE_FORMAT_EXTENSIBLE: the sub-format's code
+        h = { ch: d.getUint16(10, true), rate: d.getUint32(12, true), ba: d.getUint16(20, true), get: PCM[(t === 3 ? 'f' : t === 1 ? '' : '?') + d.getUint16(22, true)] };
+      }
+      if (id === 'data') {
+        if (!h.get || !h.ch || !h.rate || !h.ba) return null;
+        var off = pos + 8, ba = h.ba, s = ba / h.ch, ch = h.ch, g = h.get;
+        return { wav: 1, ch: ch, rate: h.rate, n: Math.floor(Math.min(len || f.size, f.size - off) / ba), read: function (at, cnt) {
+          return blobBuf(f.slice(off + at * ba, off + (at + cnt) * ba)).then(function (ab) {
+            var d = new DataView(ab), m = Math.floor(ab.byteLength / ba), out = new Float32Array(2 * cnt), i, o;
+            for (i = 0, o = 0; i < m; i++, o += ba) { out[2 * i] = g(d, o); out[2 * i + 1] = ch > 1 ? g(d, o + s) : out[2 * i]; }
+            return out;
+          });
+        } };
+      }
+      pos += 8 + len + (len & 1);
+      return chunk();
+    });
+  }
+  return blobBuf(f.slice(0, 12)).then(function (ab) { return ab.byteLength === 12 && tag(ab, 0) === 'RIFF' && tag(ab, 8) === 'WAVE' ? chunk() : null; });
+}
+// Anything else - MP3, FLAC, the sound track of a video, a recording - goes
+// through the browser's decoder: the whole file in memory, out at 48 kHz.
+function decOpen(f) {
+  return blobBuf(f).then(function (ab) {
+    var C = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+    return new Promise(function (ok, bad) { new C(2, 1, 48000).decodeAudioData(ab, ok, bad); });
+  }).then(function (b) {
+    var L = b.getChannelData(0), R = b.numberOfChannels > 1 ? b.getChannelData(1) : L;
+    return { ch: b.numberOfChannels, rate: b.sampleRate, n: b.length, read: function (at, cnt) {
+      var out = new Float32Array(2 * cnt);
+      for (var i = 0; i < cnt && at + i < b.length; i++) { out[2 * i] = L[at + i]; out[2 * i + 1] = R[at + i]; }
+      return Promise.resolve(out);
+    } };
+  });
+}
+
+// The card.
+var cm = { src: null, list: null, busy: 0, stop: 0, job: null, anim: 0, auto: '', rec: null, xhr: null }, cmT = 0;
+function cmNum(id) { return +$(id).value || 0; }
+function cmPlan() {   // the settings as a job, fitted to the sound and to the room where the clip goes
+  var s = cm.src, L = cm.list, o = { rate: s.rate, fps: cmNum('cmFps'), gain: Math.pow(2, cmNum('cmGain')),
+    decay: cmNum('cmDecay'), zoom: cmNum('cmZoom'), col: cmNum('cmCol') }, spf = Math.floor(s.rate / o.fps);
+  o.at = Math.min(Math.floor(Math.max(0, cmNum('cmStart')) * s.rate), s.n);
+  o.ask = Math.round(cmNum('cmDur') * o.fps);
+  o.want = Math.max(0, Math.min(o.ask, L ? L.cap : 360, Math.floor((s.n - o.at) / spf)));
+  o.n = L ? Math.max(0, Math.min(o.want, L.fit)) : o.want;
+  return o;
+}
+function cmSize() {
+  var el = $('cmSize'), room = $('cmRoom'), L = cm.list;
+  if (!cm.src || !el) return;
+  var o = cmPlan(), where = L && L.sd ? 'the card' : "the panel's flash", short = L && o.n < o.want, sig,
+    t = !o.want ? 'Nothing to draw: the start is at the end.' : o.want + ' frames, ' + mmss(o.want / o.fps) + ', ' + kb(44 + o.want * 4098) + ' on ' + where + '.';
+  if (L && o.want && o.want < o.ask && o.want === L.cap) t += ' Cut to ' + mmss(L.cap / o.fps) + ', the most a clip on ' + where + ' may hold.';
+  if (short) t += (o.n ? ' Room for ' + mmss(o.n / o.fps) + ' only: delete a clip below to free ' : ' No room: delete a clip below to free ') + kb(44 + o.want * 4098 - Math.max(0, L.max)) + '.';
+  el.textContent = t;
+  el.classList.toggle('pn-warn', !!short);
+  if (!cm.busy) $('cmGo').disabled = !o.n;
+  sig = short ? L.sd + JSON.stringify(L.clips) : '';
+  if (room.dataset.sig === sig) return;
+  room.dataset.sig = sig;
+  room.innerHTML = '';
+  if (short) L.clips.forEach(function (a) { clipRow(room, a, L.sd, false); });
+}
+function cmDraw(idx, rgb) {
+  var c = $('cmCanvas').getContext('2d'), im = c.createImageData(128, 64), p = im.data, i, q;
+  for (i = 0; i < 8192; i++) { q = rgb[idx[i]]; p[4 * i] = q[0]; p[4 * i + 1] = q[1]; p[4 * i + 2] = q[2]; p[4 * i + 3] = 255; }
+  c.putImageData(im, 0, 0);
+}
+function cmRender(o, n, each) {   // n frames from o.at, after a run-in of up to 8 so the afterglow is lit
+  var sc = scope(o), spf = sc.spf, pre = Math.min(8, Math.floor(o.at / spf)), pos = o.at - pre * spf, f = 0,
+    idx = new Uint8Array(8192), job = cm.job = {};
+  function block() {   // a second of sound per read, then the event loop gets a turn
+    var k = Math.min(25, pre + n - f);
+    return cm.src.read(pos + f * spf, k * spf).then(function (s) {
+      if (cm.job !== job) throw new Error('Cancelled.');
+      for (var i = 0; i < k; i++, f++) { sc.frame(s, i * spf, idx); if (f >= pre) each(idx, f - pre); }
+      return f < pre + n && new Promise(function (r) { setTimeout(r, 0); }).then(block);
+    });
+  }
+  return block();
+}
+function cmPreview() {
+  clearTimeout(cmT);
+  cmT = setTimeout(function () {
+    if (!cm.src || cm.busy) return;
+    var o = cmPlan(), rgb = scopePal(o.col)[0];
+    clearInterval(cm.anim);
+    setText('cmGainV', '×' + o.gain.toFixed(2)); setText('cmDecayV', o.decay.toFixed(2)); setText('cmZoomV', '×' + o.zoom.toFixed(2));
+    setText('cmPvT', 'at ' + mmss(o.at / o.rate));
+    cmSize();
+    if (o.want) cmRender(o, 1, function (idx) { cmDraw(idx, rgb); }).catch(function () {});
+  }, 150);
+}
+function cmOpen(f) {
+  cm.src = null; clearInterval(cm.anim); $('cmBody').hidden = true; setText('cmFlat', '');
+  note('cmInfo', 'Opening ' + f.name + '...');
+  wavOpen(f).catch(function () { return null; }).then(function (w) {
+    if (w) return w;
+    if (f.size > 5e7 && !confirm(f.name + ' is ' + Math.round(f.size / 1048576) + ' MB and not a WAV this page reads piece by piece, so the browser must hold all of it and its decoded sound in memory. A phone may give up. Go on?'))
+      throw new Error('Not opened. Saved as a WAV, the same sound is read a piece at a time.');
+    note('cmInfo', 'Decoding ' + f.name + '...');
+    return decOpen(f);
+  }).then(function (s) {
+    var len = s.n / s.rate, nm = $('cmName'), base = f.name.replace(/\.[^.]*$/, '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 24) || 'clip';
+    if (!s.n) throw new Error('No sound in ' + f.name + '.');
+    cm.src = s;
+    $('cmAt').max = $('cmStart').max = len.toFixed(1);
+    if (!nm.value || nm.value === cm.auto) nm.value = cm.auto = base;
+    note('cmInfo', f.name + ': ' + mmss(len) + ', ' + s.rate / 1000 + ' kHz, ' + (s.ch > 2 ? s.ch + ' channels, the first two drawn' : s.ch > 1 ? 'stereo' : 'mono') + (s.wav ? ', read in place.' : ', decoded.'));
+    // Allowed, but said plainly: a second from the middle shows whether the channels ever part.
+    if (s.ch < 2) setText('cmFlat', 'Mono: the same sound on X and Y draws only a diagonal line.');
+    else s.read(Math.floor(s.n / 2), Math.min(s.rate, s.n - Math.floor(s.n / 2))).then(function (b) {
+      setText('cmFlat', flat(b) ? 'Left and right are all but the same here, so this draws only a diagonal line.' : '');
+    });
+    setText('cmPvM', s.rate / 1000 + ' kHz');
+    $('cmBody').hidden = false;
+    cmPreview();
+  }).catch(function (err) { note('cmInfo', (err && err.message) || 'The browser cannot decode the sound of this file.', true); });
+}
+function cmRec(disp, btn) {   // secure pages only: a recording, then the same path as a file
+  if (cm.rec) { cm.rec.stop(); return; }
+  var md = navigator.mediaDevices;
+  (disp ? md.getDisplayMedia({ video: true, audio: true }) : md.getUserMedia({ audio: { channelCount: 2, echoCancellation: false, noiseSuppression: false, autoGainControl: false } })).then(function (st) {
+    var bits = [], rec = cm.rec = new MediaRecorder(st);
+    rec.ondataavailable = function (e) { bits.push(e.data); };
+    rec.onstop = function () {
+      st.getTracks().forEach(function (t) { t.stop(); });
+      cm.rec = null; btn.textContent = btn.dataset.t;
+      var b = new Blob(bits, { type: rec.mimeType }); b.name = 'recording';
+      cmOpen(b);
+    };
+    btn.dataset.t = btn.textContent; btn.textContent = 'Stop recording';
+    rec.start();
+  }).catch(function (err) { note('cmInfo', 'No recording: ' + err.message, true); });
+}
+function cmBusy(on) {
+  cm.busy = on; cm.stop = 0;
+  $('cmProg').classList.toggle('show', !!on);
+  $('cmGo').textContent = on ? 'Cancel' : 'Make the clip';
+  $('cmGo').disabled = false;
+  $('cmPlay').disabled = $('cmFile').disabled = !!on;
+  if (!on) cmSize();
+}
+function cmProg(fr, t) { $('cmBar').style.width = (100 * fr).toFixed(1) + '%'; setText('cmPct', t); }
+if ($('cmFile')) {
+  $('cmFile').addEventListener('change', function () { if (this.files[0]) cmOpen(this.files[0]); });
+  // getUserMedia and getDisplayMedia exist in secure contexts only; the portal is plain http.
+  if (window.isSecureContext && navigator.mediaDevices && window.MediaRecorder) {
+    $('cmCap').style.display = '';
+    seg('cmCap', function (v, b) { cmRec(v === '1', b); });
+  } else setText('cmCapH', 'Recording the microphone or another tab needs a secure (https) page, and the panel serves plain http: record on the phone, then pick the file.');
+  ['cmDur', 'cmFps', 'cmCol', 'cmGain', 'cmDecay', 'cmZoom'].forEach(function (id) { $(id).addEventListener('input', cmPreview); $(id).addEventListener('change', cmPreview); });
+  $('cmAt').addEventListener('input', function () { $('cmStart').value = this.value; cmPreview(); });
+  $('cmStart').addEventListener('input', function () { $('cmAt').value = this.value; cmPreview(); });
+  $('cmAll').addEventListener('click', function () { if (!cm.src) return; $('cmAt').value = $('cmStart').value = 0; $('cmDur').value = (cm.src.n / cm.src.rate).toFixed(1); cmPreview(); });
+  $('cmPlay').addEventListener('click', function () {
+    if (!cm.src || cm.busy) return;
+    var o = cmPlan(), rgb = scopePal(o.col)[0], fr = [], spf = Math.floor(o.rate / o.fps);
+    clearInterval(cm.anim);
+    cmRender(o, Math.min(o.want, 4 * o.fps), function (idx) { fr.push(idx.slice()); }).then(function () {
+      var i = 0;
+      cm.anim = setInterval(function () {
+        if (i === fr.length) { clearInterval(cm.anim); return; }
+        setText('cmPvT', 'at ' + mmss((o.at + i * spf) / o.rate));
+        cmDraw(fr[i++], rgb);
+      }, 1000 / o.fps);
+    }).catch(function () {});
+  });
+  $('cmGo').addEventListener('click', function () {
+    if (cm.busy) { cm.stop = 1; cm.job = null; if (cm.xhr) cm.xhr.abort(); return; }
+    var name = $('cmName').value.trim(), o, parts, blk;
+    if (!cm.src) return;
+    if (!/^[A-Za-z0-9_-]{1,24}$/.test(name)) { note('cmMsg', 'Name the clip with 1 to 24 of A-Z a-z 0-9 _ - and no spaces.', true); return; }
+    clearInterval(cm.anim); note('cmMsg', ''); $('cmShow').style.display = 'none';
+    cmBusy(1); cmProg(0, 'Asking the panel for room');
+    pollClips().then(function () {   // fresh room first: another phone may have filled it
+      var L = cm.list;
+      o = cmPlan();
+      if (cm.stop) throw new Error('Cancelled.');
+      if (!o.n) throw new Error(L.fit < 1 ? 'No room for the clip: delete one first.' : 'Nothing to draw here.');
+      if (L.clips.some(function (a) { return a.name === name; }) && !confirm('Replace the clip "' + name + '" on ' + (L.sd ? 'the card' : 'the panel') + '?')) throw new Error('Nothing sent; the clip already there is kept.');
+      parts = [pcaHead(o.n, 1000 / o.fps, scopePal(o.col)[1])];
+      return cmRender(o, o.n, function (idx, f) {
+        if (cm.stop) throw new Error('Cancelled.');
+        if (!(f % 25)) parts.push(blk = new Uint8Array(Math.min(25, o.n - f) * 4096));
+        pcaPut(blk, f % 25 * 4096, idx);
+        if (f % 5 === 4 || f === o.n - 1) cmProg((f + 1) / o.n, 'Drawing frame ' + (f + 1) + ' of ' + o.n);
+      });
+    }).then(function () {
+      var sd = cm.list.sd, body = new FormData(), t0 = Date.now();
+      body.append('anim', new Blob(parts, { type: 'application/octet-stream' }), name + '.pca');
+      parts = blk = null;
+      return new Promise(function (ok, bad) {
+        var x = cm.xhr = new XMLHttpRequest();
+        x.open('POST', (sd ? '/api/clips/upload?bytes=' + (44 + o.n * 4098) + '&name=' : '/api/anim/upload?name=') + encodeURIComponent(name));
+        x.upload.onprogress = function (e) { if (e.lengthComputable) cmProg(e.loaded / e.total, 'Sending ' + kb(e.loaded) + ' of ' + kb(e.total) + ', ' + kb(e.loaded / Math.max(1, (Date.now() - t0) / 1000)) + '/s'); };
+        x.onload = function () { var d = {}; try { d = JSON.parse(x.responseText); } catch (e) {} if (d.success) ok(sd); else bad(new Error('The panel refused the clip: ' + (d.error || 'HTTP ' + x.status))); };
+        x.onerror = function () { bad(new Error('The upload broke off. Is the panel still on the network?')); };
+        x.onabort = function () { bad(new Error('Cancelled.')); };
+        x.send(body);
+      });
+    }).then(function (sd) {
+      var b = $('cmShow');
+      note('cmMsg', 'Stored on ' + (sd ? 'the card' : 'the panel') + ' as ' + name + ', ' + mmss(o.n / o.fps) + '.');
+      b.textContent = 'Play ' + name; b.style.display = '';
+      b.onclick = function () { playClip(name, sd, b); };
+      clipSig = '';
+      pollClips().catch(function () {});
+    }).catch(function (err) { note('cmMsg', err.message, true); }).then(function () { cm.xhr = null; cmBusy(0); });
+  });
+}
 function renderLua(d) {
   setText('luaTag', d.current >= 0 ? 'playing' : (d.effects.length + ' effects'));
   var sig = JSON.stringify(d), host = $('luaList');

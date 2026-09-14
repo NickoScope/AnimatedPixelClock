@@ -8,8 +8,10 @@ to a fixed 16-level green palette (the panel's PCA1 clips are 4 bpp).
 
   scope_render.py sheet WAV OUT.png [--every S]          one frame every S seconds
   scope_render.py clip  WAV OUT.gif --start S --dur D     a clip for gif2pca
+  scope_render.py pca   WAV OUT.pca --start S --dur D     the clip as PCA1 itself, as the
+                                                          portal's clip maker writes it
 """
-import argparse, wave, sys
+import argparse, struct, wave, sys
 import numpy as np
 from PIL import Image
 
@@ -79,9 +81,23 @@ def to_image(frame, pal):
     im.putpalette(flat)
     return im
 
+def write_pca(path, frames):
+    # PCA1 as gif2pca lays it out, with the fixed palette kept as it is (no
+    # re-quantising through a GIF): 16 RGB565 colours, 40 ms a frame, 4 bpp with
+    # the high nibble the left pixel. Byte for byte the portal's clip maker.
+    if not 1 <= len(frames) <= 65535:
+        sys.exit(f"{len(frames)} frames: PCA1 counts 1 to 65535")
+    ms = 1000 // FPS
+    with open(path, "wb") as f:
+        f.write(b"PCA1" + struct.pack("<HHBBH", len(frames), ms, 16, 1, 0))
+        f.write(struct.pack("<16H", *[((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3) for r, g, b in palette16()]))
+        f.write(struct.pack("<%dH" % len(frames), *[ms] * len(frames)))
+        for fr in frames:
+            f.write((fr[:, 0::2] << 4 | fr[:, 1::2]).astype(np.uint8).tobytes())
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("mode", choices=["sheet", "clip"])
+    ap.add_argument("mode", choices=["sheet", "clip", "pca"])
     ap.add_argument("wav"); ap.add_argument("out")
     ap.add_argument("--every", type=float, default=15.0)
     ap.add_argument("--start", type=float, default=0.0)
@@ -110,10 +126,15 @@ def main():
             d.text((cx + 2, cy + 2), f"{int(t)//60}:{int(t)%60:02d}", fill=(220, 220, 220))
         sheet.save(a.out)
         print(f"sheet: {len(tiles)} tiles, track {total:.0f} s, rate {rate}")
+    elif a.mode == "pca":
+        rate, span, total = read_span(a.wav, a.start, a.dur)
+        frames, _ = render(rate, span, int(a.dur * FPS), 48000.0 / rate)
+        write_pca(a.out, frames)
+        print(f"pca: {len(frames)} frames at {FPS} fps from {a.start:.1f} s, rate {rate}, {44 + len(frames) * 4098} bytes")
     else:
         rate, span, total = read_span(a.wav, a.start, a.dur)
         frames, pal = render(rate, span, int(a.dur * FPS), 48000.0 / rate)
-        ims = [to_image(f, pal) for f in frames]
+        ims =[to_image(f, pal) for f in frames]
         ims[0].save(a.out, save_all=True, append_images=ims[1:], duration=1000 // FPS, loop=0, optimize=False)
         big = [im.convert("RGB").resize((W * 4, H * 4), Image.NEAREST) for im in ims[::2]]
         big[0].save(a.out.replace(".gif", "_x4.gif"), save_all=True, append_images=big[1:], duration=2000 // FPS, loop=0)
