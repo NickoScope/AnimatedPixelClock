@@ -31,6 +31,9 @@
 #if defined(CLIMATE_ENABLED)
 #include "climate/climate.h"
 #endif
+#if defined(BOARD_WAVESHARE_RGB_MATRIX)
+#include "board/board_i2c.h"
+#endif
 
 // ========== External Objects ==========
 extern WiFiUDP udp;              // Defined in network.cpp
@@ -379,6 +382,9 @@ void setup() {
   Serial.begin(115200);
   delay(1000);
   healthBegin();   // confirms an OTA image only once it has run, and reports the last crash: src/health
+#if defined(BOARD_WAVESHARE_RGB_MATRIX)
+  boardI2cBegin();  // the board's shared I2C bus, once, before any module on it: src/board/board_i2c.h
+#endif
 
   // Load settings from flash
   loadSettings();

@@ -11,16 +11,8 @@
 
 #if defined(CLIMATE_ENABLED)
 
-#if !defined(CLIMATE_I2C_SDA) || !defined(CLIMATE_I2C_SCL)
-#if defined(BOARD_WAVESHARE_RGB_MATRIX)
-// Waveshare's BSP, example/idf_v5.5.2/components/bsp/esp32_s3_matrix/include/bsp/config.h:
-// BSP_I2C_SDA GPIO_NUM_47, BSP_I2C_SCL GPIO_NUM_48. On the schematic IO47/IO48 run at
-// 1.8 V and reach the 3.3 V sensor bus through the level shifter M2 (NDC7002N).
-#define CLIMATE_I2C_SDA 47
-#define CLIMATE_I2C_SCL 48
-#else
-#error "CLIMATE_ENABLED needs the board's I2C pins: define CLIMATE_I2C_SDA and CLIMATE_I2C_SCL"
-#endif
+#if !defined(BOARD_WAVESHARE_RGB_MATRIX)
+#error "CLIMATE_ENABLED needs BOARD_WAVESHARE_RGB_MATRIX: the SHTC3 is on the board's I2C bus (src/board/board_i2c.h)"
 #endif
 
 struct ClimateReading {

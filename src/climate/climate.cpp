@@ -20,6 +20,7 @@
 #include <climits>
 #include <cmath>
 
+#include "../board/board_i2c.h"
 #include "../config/config.h"
 #include "climate_model.h"
 #include "shtc3.h"
@@ -31,18 +32,6 @@
 #endif
 
 namespace {
-
-// ── the bus ─────────────────────────────────────────────────────────────────
-// Standard mode. The sensor takes 0-1000 kHz (datasheet Table 6); Waveshare's
-// own examples disagree (the ESP-IDF middleware adds this sensor at 40 kHz, the
-// Arduino sensor test runs the bus at 400 kHz) and neither says why. 100 kHz is
-// the conservative choice through the board's MOSFET level shifter with 4.7 k
-// pull-ups on both sides. A choice, not a measurement.
-const uint32_t kI2cHz = 100000;
-// No transaction asks for clock stretching, so a healthy bus answers in well
-// under a millisecond; this bounds a stuck one. Wire's default is 50 ms
-// (arduino-esp32 2.0.17, Wire.cpp).
-const uint16_t kI2cTimeoutMs = 20;
 
 // ── the cycle ───────────────────────────────────────────────────────────────
 const uint32_t kWakeWaitUs     = 1000;    // after a wake-up or soft reset: tPU and tSR are 240 us at most (Table 5)
@@ -57,7 +46,7 @@ const uint32_t kRetryMs        = 2000;    // the first failed cycles are retried
 enum class Step : uint8_t { Off, Due, Awake, Measuring };
 
 Step     s_step    = Step::Off;
-bool     s_wire    = false;   // Wire.begin() succeeded
+bool     s_wire    = false;   // the board's bus is running (board_i2c.h)
 bool     s_found   = false;   // the ID register matched since the last soft reset
 bool     s_ever    = false;   // found at least once since it was switched on
 bool     s_foreign = false;   // something at 0x70 answered with another ID
@@ -282,12 +271,9 @@ const climate::Reading &corrected() {
 }  // namespace
 
 void climateBegin() {
-  s_wire = Wire.begin(CLIMATE_I2C_SDA, CLIMATE_I2C_SCL, kI2cHz);
-  if (s_wire) {
-    Wire.setTimeOut(kI2cTimeoutMs);
-  } else {
-    Serial.println("[climate] Wire.begin failed: no sensor readings");
-  }
+  boardI2cBegin();   // main.cpp has begun the bus before any module; this costs nothing then
+  s_wire = boardI2cReady();
+  if (!s_wire) Serial.println("[climate] the board's I2C bus is not running: no sensor readings");
 }
 
 void climateLoop() {
