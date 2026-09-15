@@ -3,13 +3,15 @@
 Previews of the visualizer driven by the board's microphones, rendered on the
 host before anything changes on the panel. The DSP here is the reference that
 `src/audio/audio_dsp.cpp` is tested against; the effects are the six that ship
-(ported line by line from `src/viz/`) and eight proposed "wow" versions the owner
-chooses from. The design and the source of every number: `docs/22` in the KB.
+(ported line by line from `src/viz/`) and the eight the owner picked on 2026-09-15,
+built as styles 7-14 in `src/viz/wow/` and held to `effects_wow.py` pixel for pixel. The design and the source of every number: `docs/22` in the KB.
 
 ```bash
 python3 tools/audiofx/gen_wavs.py        # wav/: six synthetic WAVs, each with a .json of its true beats
 python3 tools/audiofx/render.py          # out/: a GIF and an MP4 per effect, two contact sheets
 make -C tools/audiofx/host check         # the firmware's C++ DSP against dsp.py on the same WAVs
+make -C tools/audiofx/host wow           # styles 7-14 in C++ against effects_wow.py, every pixel of 300 frames
+python3 tools/audiofx/host/compare_wow.py --pc-gifs   # and out/pc_*.gif: the eight fed from PC packets
 ```
 
 `wav/` and `out/` are generated and not committed. Needs numpy and Pillow;
@@ -23,9 +25,9 @@ ffmpeg for the MP4s (`--no-mp4` skips them).
 | `dsp.py` | the DSP chain: bands, gate, AGC, levels, peaks, beats, waveform, the `FFT1` packet |
 | `gfx.py` | a 128x64 RGB565 canvas drawing like Adafruit GFX and the HUB75 library, and the LED-look upscale |
 | `effects_current.py` | the six shipping styles, from `src/viz/visualizer.cpp`, `starfield.cpp`, `oscilloscope.cpp` |
-| `effects_wow.py` | the eight proposals |
+| `effects_wow.py` | styles 7-14, written to be repeated exactly in C++: xorshift32, explicit interpolation, byte buffers, Python's round and % spelled out |
 | `render.py` | WAV → DSP → effects → GIF (6x, 20 fps), MP4 (60 fps with sound), contact sheets |
-| `host/` | `test_dsp.cpp` runs `src/audio/audio_dsp.cpp` over a WAV; `compare.py` holds it to `dsp.py` |
+| `host/` | `test_dsp.cpp` runs `src/audio/audio_dsp.cpp` over a WAV and `compare.py` holds it to `dsp.py`; `test_wow.cpp` renders `src/viz/wow` from the C++ DSP's frames and `compare_wow.py` holds it to `effects_wow.py`, built with `real` as double (must be identical) and as float (as the panel; reported) |
 
 ## The test signals
 
@@ -57,7 +59,7 @@ silence, 4.62 s groove returns.
 | `starfield_overdrive` | the stars fly faster | a hyperspace boost, from its own packet flux | slow drift |
 | `oscilloscope` | slow wide swings | a bigger swing | a flat line; the sweep fills the screen |
 
-### Proposed
+### Styles 7-14, the owner's picks
 
 | Effect | Bass | Beat | Silence |
 |---|---|---|---|

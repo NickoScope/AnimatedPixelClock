@@ -27,6 +27,9 @@
 #include "../config/config.h"
 #include "../viz/visualizer.h"
 #include "es7210.h"
+#if defined(VIZ_WOW_ENABLED)
+#include "../viz/wow/wow.h"
+#endif
 
 namespace {
 
@@ -66,6 +69,28 @@ size_t s_internalBefore = 0;
 volatile bool s_i2sReady = false, s_codecUp = false;
 volatile unsigned long s_codecRetryMs = 0;
 uint8_t s_gainApplied = 255;   // loop task only
+#if defined(VIZ_WOW_ENABLED)
+// Every DSP frame for visualizer styles 7-14: the task writes, audioPoll() drains, both inside s_mux.
+constexpr int kWowRing = 16;
+wow::VizFrame *s_wowRing = nullptr;   // PSRAM
+int s_wowHead = 0, s_wowCount = 0;
+volatile uint32_t s_wowLost = 0;
+
+void toVizFrame(const audiodsp::Frame &a, wow::VizFrame &v) {
+  memcpy(v.bands, a.bands, sizeof(v.bands));
+  memcpy(v.wave, a.wave, sizeof(v.wave));
+  memcpy(v.level, a.level, sizeof(v.level));
+  memcpy(v.peak, a.peak, sizeof(v.peak));
+  v.bass = a.bass;
+  v.mid = a.mid;
+  v.treble = a.treble;
+  v.strength = a.strength;
+  v.beat = a.beat;
+  v.clipping = a.clipping;
+  v.steps = 1;
+  v.reserved = 0;
+}
+#endif
 
 // loop() only.
 unsigned long s_lastPcMs = 0;
@@ -244,6 +269,17 @@ void captureTask(void *) {
       portENTER_CRITICAL(&s_mux);
       s_shared = *work;
       s_haveFrame = true;
+#if defined(VIZ_WOW_ENABLED)
+      if (s_wowRing && settings.vizStyle >= wow::kFirstStyle) {
+        if (s_wowCount == kWowRing) {   // audioPoll() fell behind: the oldest goes
+          s_wowHead = (s_wowHead + 1) % kWowRing;
+          s_wowCount--;
+          s_wowLost++;
+        }
+        toVizFrame(*work, s_wowRing[(s_wowHead + s_wowCount) % kWowRing]);
+        s_wowCount++;
+      }
+#endif
       portEXIT_CRITICAL(&s_mux);
     }
   }
@@ -262,6 +298,9 @@ void audioApplySettings() {
 void audioBegin() {
   if (s_task) return;
   audioApplySettings();
+#if defined(VIZ_WOW_ENABLED)
+  if (!s_wowRing) s_wowRing = static_cast<wow::VizFrame *>(psram(kWowRing * sizeof(wow::VizFrame)));
+#endif
   s_internalBefore = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
   if (xTaskCreatePinnedToCore(captureTask, "audio", kStackBytes, nullptr, kPriority, &s_task, kCore) != pdPASS) {
     s_task = nullptr;
@@ -274,6 +313,7 @@ void audioBegin() {
 void audioPoll(bool vizShown) {
   if (s_i2sReady && !s_codecUp && (int32_t)(millis() - s_codecRetryMs) >= 0) codecBringUp();
   if (vizShown && micFeedsViz()) s_lastActiveMs = millis();
+  const bool feed = s_state == MIC_OK && micFeedsViz();
   uint8_t packet[audiodsp::kPacketLen];
   bool have;
   uint32_t packets;
@@ -282,9 +322,30 @@ void audioPoll(bool vizShown) {
   packets = s_shared.packets;
   if (have && packets != s_seenPackets) memcpy(packet, s_shared.packet, sizeof(packet));
   portEXIT_CRITICAL(&s_mux);
-  if (!have || packets == s_seenPackets) return;
-  s_seenPackets = packets;
-  if (s_state == MIC_OK && micFeedsViz()) vizIngest(packet, sizeof(packet));
+  if (have && packets != s_seenPackets) {
+    s_seenPackets = packets;
+#if defined(VIZ_WOW_ENABLED)
+    if (feed) vizIngestMic(packet, sizeof(packet));   // styles 7-14 take the DSP's own frames, below
+#else
+    if (feed) vizIngest(packet, sizeof(packet));
+#endif
+  }
+#if defined(VIZ_WOW_ENABLED)
+  while (s_wowRing) {
+    wow::VizFrame f;   // 436 B on the loop task's stack
+    bool got = false;
+    portENTER_CRITICAL(&s_mux);
+    if (s_wowCount > 0) {
+      f = s_wowRing[s_wowHead];
+      s_wowHead = (s_wowHead + 1) % kWowRing;
+      s_wowCount--;
+      got = true;
+    }
+    portEXIT_CRITICAL(&s_mux);
+    if (!got) break;
+    if (feed) vizWowFeed(f);
+  }
+#endif
 }
 
 bool audioAcceptPcPacket() {
@@ -343,6 +404,9 @@ void audioInfoJson(JsonObject out) {
   out["audioDspUsMax"] = (uint32_t)s_dspUsMax;
   out["audioStackFreeBytes"] = s_task ? (uint32_t)uxTaskGetStackHighWaterMark(s_task) : 0;
   out["audioInternalBytes"] = (uint32_t)s_internalCost;
+#if defined(VIZ_WOW_ENABLED)
+  out["audioWowLost"] = (uint32_t)s_wowLost;   // DSP frames styles 7-14 never saw
+#endif
 }
 
 #endif  // AUDIO_MIC_ENABLED

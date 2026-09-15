@@ -49,9 +49,11 @@ COMBOS = [
                                "-DFB_MQTT_ENABLED -DCARDS_ENABLED -DCAROUSEL_ENABLED "
                                "-DNSLUA_ENABLED -DWORLDCLOCK_ENABLED -DRAILBOARD_ENABLED -DRAILBOARD_DIRECT_ENABLED "
                                "-DLUA_EFFECTS_ENABLED -DCLIPS_SD_ENABLED -DMEDIAPLAYER_ENABLED -DMARKET_ENABLED "
-                               "-DAUDIO_MIC_ENABLED", True),
+                               "-DAUDIO_MIC_ENABLED -DVIZ_WOW_ENABLED", True),
     ("mic on",                 "-DAUDIO_MIC_ENABLED", True),
     ("mic only, no PC stream", "-DAUDIO_MIC_ENABLED -DAUDIO_MIC_ONLY", True),
+    ("viz wow styles",         "-DVIZ_WOW_ENABLED", True),
+    ("viz wow + mic",          "-DVIZ_WOW_ENABLED -DAUDIO_MIC_ENABLED", True),
     ("card clips + knob",      "-DCONTROL_ENCODER_ENABLED -DCLIPS_SD_ENABLED", True),
     ("media + bus + knob",     "-DMEDIAPLAYER_ENABLED -DMQTT_BUS_ENABLED -DCONTROL_ENCODER_ENABLED", True),
     ("media + carousel + cards", "-DMEDIAPLAYER_ENABLED -DMQTT_BUS_ENABLED -DCONTROL_ENCODER_ENABLED "

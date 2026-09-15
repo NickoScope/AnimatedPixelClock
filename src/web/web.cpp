@@ -955,6 +955,10 @@ void handlePortalValues() {
   form["micGainDb"] = settings.micGainDb;
   form["micGateDb"] = settings.micGateDb;
   form["micAgc"] = settings.micAgc;
+  form["vizBeatFx"] = settings.vizBeatFx;
+#if defined(VIZ_WOW_ENABLED)
+  doc["vizWow"] = true;         // the page lists styles 7-14 and their beat setting
+#endif
 #if defined(AUDIO_MIC_ENABLED)
   doc["audioMic"] = true;       // the page shows its Sound source card
 #endif
@@ -1359,6 +1363,10 @@ void handleSave() {
    settings.micAgc = server.hasArg("micAgc");
    audioApplySettings();
  }
+#endif
+
+#if defined(VIZ_WOW_ENABLED)
+ if (server.hasArg("vizBeatFx")) settings.vizBeatFx = (uint8_t)constrain(server.arg("vizBeatFx").toInt(), 0, 100);
 #endif
 
  // Save Mario bounce settings
@@ -1872,6 +1880,7 @@ void handleExportConfig() {
  json += "\"micGainDb\":" + String(settings.micGainDb) + ",";
  json += "\"micGateDb\":" + String(settings.micGateDb) + ",";
  json += "\"micAgc\":" + String(settings.micAgc ? "true" : "false") + ",";
+ json += "\"vizBeatFx\":" + String(settings.vizBeatFx) + ",";
 
  // Metric labels
  json += "\"metricLabels\":[";
@@ -2114,6 +2123,7 @@ void handleImportConfig() {
  if (!doc["micGainDb"].isNull()) settings.micGainDb = (uint8_t)constrain(doc["micGainDb"].as<int>(), 0, AUDIO_MIC_GAIN_MAX);
  if (!doc["micGateDb"].isNull()) settings.micGateDb = (int8_t)constrain(doc["micGateDb"].as<int>(), AUDIO_MIC_GATE_MIN, AUDIO_MIC_GATE_MAX);
  if (!doc["micAgc"].isNull()) settings.micAgc = doc["micAgc"].as<bool>();
+ if (!doc["vizBeatFx"].isNull()) settings.vizBeatFx = (uint8_t)constrain(doc["vizBeatFx"].as<int>(), 0, 100);
  clampAudioSettings();
 #if defined(AUDIO_MIC_ENABLED)
  audioApplySettings();

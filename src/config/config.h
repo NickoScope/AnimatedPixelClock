@@ -42,11 +42,16 @@ static inline uint8_t normalizeAmbientStyle(int s) {
 #define AUDIO_MIC_GATE_MAX -30
 #define AUDIO_MIC_GATE_DEFAULT -60   // dBFS; a starting value to tune on the panel (KB docs/22)
 
-// Visualizer slots in use: 0,1,2,3,5,6. Slot 4 held a dropped effect; map it
-// and any out-of-range value to 0 (Classic EQ) so a device that still has it
-// saved lands on a real style.
+// Visualizer slots in use: 0,1,2,3,5,6, and 7-14 (src/viz/wow) in VIZ_WOW_ENABLED
+// builds. Slot 4 held a dropped effect; map it and any out-of-range value to 0
+// (Classic EQ) so a device that still has it saved lands on a real style.
+#if defined(VIZ_WOW_ENABLED)
+#define VIZ_STYLE_MAX 14
+#else
+#define VIZ_STYLE_MAX 6
+#endif
 static inline uint8_t normalizeVizStyle(int s) {
-  return (s == 4 || s < 0 || s > 6) ? 0 : (uint8_t)s;
+  return (s == 4 || s < 0 || s > VIZ_STYLE_MAX) ? 0 : (uint8_t)s;
 }
 
 // ========== Metric Structures ==========
@@ -144,7 +149,7 @@ struct Settings {
 
   // Audio spectrum visualizer (forced mode fed by the companion)
   bool vizShowClock;            // Small HH:MM overlay over the bars
-  uint8_t vizStyle;             // 0=Classic EQ, 1=Neon Mirror, 2=Phosphor Waterfall, 3=Purple LED Stage, 5=Starfield Overdrive, 6=Oscilloscope
+  uint8_t vizStyle;             // 0=Classic EQ, 1=Neon Mirror, 2=Phosphor Waterfall, 3=Purple LED Stage, 5=Starfield Overdrive, 6=Oscilloscope, 7-14 src/viz/wow/wow.h
   bool scopeGrid;               // Oscilloscope: draw the graticule
   bool scopeFill;               // Oscilloscope: fill to the centre line
   bool scopeFlat;               // Oscilloscope: one trace color, no deflection gradient
@@ -155,6 +160,7 @@ struct Settings {
   uint8_t micGainDb;            // ES7210 PGA gain, 0-37 dB
   int8_t micGateDb;             // noise gate on the frame's RMS level, dBFS
   bool micAgc;                  // automatic gain on the band scaling
+  uint8_t vizBeatFx;            // visualizer styles 7-14: beat reactivity, percent (0-100)
 
   // Format options
   bool useRpmKFormat;       // Show RPM as K (e.g., 1.2K instead of 1200)

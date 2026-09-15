@@ -89,6 +89,7 @@ void clampAudioSettings() {
   if (settings.micGainDb > AUDIO_MIC_GAIN_MAX) settings.micGainDb = AUDIO_MIC_GAIN_DEFAULT;
   if (settings.micGateDb < AUDIO_MIC_GATE_MIN || settings.micGateDb > AUDIO_MIC_GATE_MAX)
     settings.micGateDb = AUDIO_MIC_GATE_DEFAULT;
+  if (settings.vizBeatFx > 100) settings.vizBeatFx = 100;
 }
 
 void clampScopeSettings() {
@@ -180,6 +181,7 @@ void loadSettings() {
     settings.micGainDb = AUDIO_MIC_GAIN_DEFAULT;
     settings.micGateDb = AUDIO_MIC_GATE_DEFAULT;
     settings.micAgc = true;
+    settings.vizBeatFx = 100;
     settings.tronBikeStyle = 0;
     settings.marioBounceHeight = 35; // Default: 3.5 (35 = 3.5 in tenths)
     settings.marioBounceSpeed = 6;   // Default: 0.6 (6 = 0.6 in tenths)
@@ -435,6 +437,7 @@ void loadSettings() {
   settings.micGainDb = preferences.getUChar("micGainDb", AUDIO_MIC_GAIN_DEFAULT);
   settings.micGateDb = preferences.getChar("micGateDb", AUDIO_MIC_GATE_DEFAULT);
   settings.micAgc = preferences.getBool("micAgc", true);
+  settings.vizBeatFx = preferences.getUChar("vizBeatFx", 100);
   clampAudioSettings();
   settings.marioBounceHeight =
       preferences.getUChar("marioBnceH", 35); // Default: 3.5
@@ -791,6 +794,7 @@ void saveSettings() {
   preferences.putUChar("micGainDb", settings.micGainDb);
   preferences.putChar("micGateDb", settings.micGateDb);
   preferences.putBool("micAgc", settings.micAgc);
+  preferences.putUChar("vizBeatFx", settings.vizBeatFx);
   preferences.putUChar("marioBnceH", settings.marioBounceHeight);
   preferences.putUChar("marioBnceS", settings.marioBounceSpeed);
   preferences.putBool("marioSmooth", settings.marioSmoothAnimation);

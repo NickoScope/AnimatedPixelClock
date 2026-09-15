@@ -532,6 +532,10 @@ void setup() {
   audioBegin();
   MEMTRACE("audio");
 #endif
+#if defined(VIZ_WOW_ENABLED)
+  vizWowBegin();   // visualizer styles 7-14: their buffers, in PSRAM
+  MEMTRACE("viz wow");
+#endif
 
   // Configure hardware watchdog timer
   esp_task_wdt_init(15, true);
