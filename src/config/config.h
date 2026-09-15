@@ -35,6 +35,13 @@ static inline uint8_t normalizeAmbientStyle(int s) {
 #define SCOPE_GAIN_MAX 200
 #define SCOPE_GAIN_DEFAULT 100
 
+// Onboard microphones (AUDIO_MIC_ENABLED builds, stored in every build): src/audio/audio_mic.h
+#define AUDIO_MIC_GAIN_MAX 37        // the ES7210 PGA tops out at 37.5 dB (es7210_reg.h)
+#define AUDIO_MIC_GAIN_DEFAULT 30    // Waveshare's 08_Matrix_Audio example sets 30 dB
+#define AUDIO_MIC_GATE_MIN -90
+#define AUDIO_MIC_GATE_MAX -30
+#define AUDIO_MIC_GATE_DEFAULT -60   // dBFS; a starting value to tune on the panel (KB docs/22)
+
 // Visualizer slots in use: 0,1,2,3,5,6. Slot 4 held a dropped effect; map it
 // and any out-of-range value to 0 (Classic EQ) so a device that still has it
 // saved lands on a real style.
@@ -143,6 +150,11 @@ struct Settings {
   bool scopeFlat;               // Oscilloscope: one trace color, no deflection gradient
   uint8_t scopeTrail;           // Oscilloscope: ghost traces behind the live one (0-4)
   uint8_t scopeGain;            // Oscilloscope: trace height percent (50-200)
+  // Where the visualizer's sound comes from (the microphones exist in AUDIO_MIC_ENABLED builds)
+  uint8_t audioSource;          // 0 = auto (the PC stream wins while it arrives), 1 = PC only, 2 = microphones only
+  uint8_t micGainDb;            // ES7210 PGA gain, 0-37 dB
+  int8_t micGateDb;             // noise gate on the frame's RMS level, dBFS
+  bool micAgc;                  // automatic gain on the band scaling
 
   // Format options
   bool useRpmKFormat;       // Show RPM as K (e.g., 1.2K instead of 1200)
@@ -443,6 +455,7 @@ extern Settings settings;
 // Oscilloscope tunables, shared by load, save and the web handlers.
 void applyScopeDefaults();
 void clampScopeSettings();
+void clampAudioSettings();
 extern MetricData metricData;
 extern bool displayAvailable;
 extern bool ntpSynced;

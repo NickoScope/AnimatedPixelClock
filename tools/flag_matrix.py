@@ -48,7 +48,10 @@ COMBOS = [
                                "-DCONTROL_ENCODER_ENABLED -DMQTT_BUS_ENABLED "
                                "-DFB_MQTT_ENABLED -DCARDS_ENABLED -DCAROUSEL_ENABLED "
                                "-DNSLUA_ENABLED -DWORLDCLOCK_ENABLED -DRAILBOARD_ENABLED -DRAILBOARD_DIRECT_ENABLED "
-                               "-DLUA_EFFECTS_ENABLED -DCLIPS_SD_ENABLED -DMEDIAPLAYER_ENABLED -DMARKET_ENABLED", True),
+                               "-DLUA_EFFECTS_ENABLED -DCLIPS_SD_ENABLED -DMEDIAPLAYER_ENABLED -DMARKET_ENABLED "
+                               "-DAUDIO_MIC_ENABLED", True),
+    ("mic on",                 "-DAUDIO_MIC_ENABLED", True),
+    ("mic only, no PC stream", "-DAUDIO_MIC_ENABLED -DAUDIO_MIC_ONLY", True),
     ("card clips + knob",      "-DCONTROL_ENCODER_ENABLED -DCLIPS_SD_ENABLED", True),
     ("media + bus + knob",     "-DMEDIAPLAYER_ENABLED -DMQTT_BUS_ENABLED -DCONTROL_ENCODER_ENABLED", True),
     ("media + carousel + cards", "-DMEDIAPLAYER_ENABLED -DMQTT_BUS_ENABLED -DCONTROL_ENCODER_ENABLED "
@@ -73,6 +76,7 @@ COMBOS = [
                                "-DCONTROL_ENCODER_ENABLED", False),
     ("market without the bus", "-DMARKET_ENABLED -DCONTROL_ENCODER_ENABLED", False),
     ("market without the knob", "-DMARKET_ENABLED -DMQTT_BUS_ENABLED", False),
+    ("mic only, no mic",       "-DAUDIO_MIC_ONLY", False),
 ]
 
 # Built from bringup/ with their own source filters. When provision.cpp was

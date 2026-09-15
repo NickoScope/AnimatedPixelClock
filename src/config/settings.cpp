@@ -84,6 +84,13 @@ void applyScopeDefaults() {
   settings.scopeGain = SCOPE_GAIN_DEFAULT;
 }
 
+void clampAudioSettings() {
+  if (settings.audioSource > 2) settings.audioSource = 0;
+  if (settings.micGainDb > AUDIO_MIC_GAIN_MAX) settings.micGainDb = AUDIO_MIC_GAIN_DEFAULT;
+  if (settings.micGateDb < AUDIO_MIC_GATE_MIN || settings.micGateDb > AUDIO_MIC_GATE_MAX)
+    settings.micGateDb = AUDIO_MIC_GATE_DEFAULT;
+}
+
 void clampScopeSettings() {
   if (settings.scopeTrail > SCOPE_TRAIL_MAX) settings.scopeTrail = SCOPE_TRAIL_DEFAULT;
   if (settings.scopeGain < SCOPE_GAIN_MIN || settings.scopeGain > SCOPE_GAIN_MAX)
@@ -169,6 +176,10 @@ void loadSettings() {
     settings.vizShowClock = true;
     settings.vizStyle = 0;
     applyScopeDefaults();
+    settings.audioSource = 0;
+    settings.micGainDb = AUDIO_MIC_GAIN_DEFAULT;
+    settings.micGateDb = AUDIO_MIC_GATE_DEFAULT;
+    settings.micAgc = true;
     settings.tronBikeStyle = 0;
     settings.marioBounceHeight = 35; // Default: 3.5 (35 = 3.5 in tenths)
     settings.marioBounceSpeed = 6;   // Default: 0.6 (6 = 0.6 in tenths)
@@ -420,6 +431,11 @@ void loadSettings() {
   settings.scopeTrail = preferences.getUChar("scopeTrail", SCOPE_TRAIL_DEFAULT);
   settings.scopeGain = preferences.getUChar("scopeGain", SCOPE_GAIN_DEFAULT);
   clampScopeSettings();
+  settings.audioSource = preferences.getUChar("audioSrc", 0);
+  settings.micGainDb = preferences.getUChar("micGainDb", AUDIO_MIC_GAIN_DEFAULT);
+  settings.micGateDb = preferences.getChar("micGateDb", AUDIO_MIC_GATE_DEFAULT);
+  settings.micAgc = preferences.getBool("micAgc", true);
+  clampAudioSettings();
   settings.marioBounceHeight =
       preferences.getUChar("marioBnceH", 35); // Default: 3.5
   settings.marioBounceSpeed =
@@ -771,6 +787,10 @@ void saveSettings() {
   preferences.putBool("scopeFlat", settings.scopeFlat);
   preferences.putUChar("scopeTrail", settings.scopeTrail);
   preferences.putUChar("scopeGain", settings.scopeGain);
+  preferences.putUChar("audioSrc", settings.audioSource);
+  preferences.putUChar("micGainDb", settings.micGainDb);
+  preferences.putChar("micGateDb", settings.micGateDb);
+  preferences.putBool("micAgc", settings.micAgc);
   preferences.putUChar("marioBnceH", settings.marioBounceHeight);
   preferences.putUChar("marioBnceS", settings.marioBounceSpeed);
   preferences.putBool("marioSmooth", settings.marioSmoothAnimation);

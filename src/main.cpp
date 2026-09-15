@@ -197,6 +197,9 @@ static inline uint8_t ctrlPageCount() {
 #include "network/network.h"
 #include "notify/notify.h"
 #include "viz/visualizer.h"
+#if defined(AUDIO_MIC_ENABLED)
+#include "audio/audio_mic.h"
+#endif
 #include "weather/weather.h"
 #include "health/boot_health.h"
 #include "web/web.h"
@@ -522,6 +525,12 @@ void setup() {
 #endif
 #if defined(MARKET_ENABLED)
   marketBegin();                   // subscribes now and reads the LittleFS record: populated before anyone turns to it
+#endif
+
+#if defined(AUDIO_MIC_ENABLED)
+  // The onboard microphones: capture and DSP on core 0, packets into the visualizer (src/audio/audio_mic.h).
+  audioBegin();
+  MEMTRACE("audio");
 #endif
 
   // Configure hardware watchdog timer
@@ -974,6 +983,10 @@ void loop() {
 
   // Handle UDP packets - always process to track PC online status accurately
   handleUDP();
+#if defined(AUDIO_MIC_ENABLED)
+  // The microphones' newest spectrum packet, when they are the visualizer's source.
+  audioPoll(httpForceViz);
+#endif
 
   // Check timeout
   if (millis() - lastReceived > TIMEOUT && metricData.online) {
