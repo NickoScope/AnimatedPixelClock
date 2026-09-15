@@ -48,7 +48,8 @@ COMBOS = [
                                "-DCONTROL_ENCODER_ENABLED -DMQTT_BUS_ENABLED "
                                "-DFB_MQTT_ENABLED -DCARDS_ENABLED -DCAROUSEL_ENABLED "
                                "-DNSLUA_ENABLED -DWORLDCLOCK_ENABLED -DRAILBOARD_ENABLED -DRAILBOARD_DIRECT_ENABLED "
-                               "-DLUA_EFFECTS_ENABLED -DCLIPS_SD_ENABLED -DMEDIAPLAYER_ENABLED -DMARKET_ENABLED", True),
+                               "-DLUA_EFFECTS_ENABLED -DCLIPS_SD_ENABLED -DMEDIAPLAYER_ENABLED -DMARKET_ENABLED "
+                               "-DCLIMATE_ENABLED", True),
     ("card clips + knob",      "-DCONTROL_ENCODER_ENABLED -DCLIPS_SD_ENABLED", True),
     ("media + bus + knob",     "-DMEDIAPLAYER_ENABLED -DMQTT_BUS_ENABLED -DCONTROL_ENCODER_ENABLED", True),
     ("media + carousel + cards", "-DMEDIAPLAYER_ENABLED -DMQTT_BUS_ENABLED -DCONTROL_ENCODER_ENABLED "
@@ -56,6 +57,8 @@ COMBOS = [
     ("market + bus + knob",     "-DMARKET_ENABLED -DMQTT_BUS_ENABLED -DCONTROL_ENCODER_ENABLED", True),
     ("market, local defaults",  "-DMARKET_ENABLED -DMQTT_BUS_ENABLED -DCONTROL_ENCODER_ENABLED "
                                r'-DMARKET_LOCAL_DEFAULTS_FILE=\"../../tools/market/panel/local_defaults_example.h\"', True),
+    ("climate + bus",          "-DCLIMATE_ENABLED -DMQTT_BUS_ENABLED", True),
+    ("climate without MQTT",   "-DCLIMATE_ENABLED", True),
     ("cards without the bus",  "-DCARDS_ENABLED", False),
     ("world clock, no encoder", "-DWORLDCLOCK_ENABLED", False),
     ("rail board without bus", "-DRAILBOARD_ENABLED -DCONTROL_ENCODER_ENABLED", False),
