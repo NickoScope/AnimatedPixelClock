@@ -133,7 +133,7 @@ struct Settings {
   int16_t climateTempOffset;    // tenths of a degree C added to the reading, -200..200 (default 0)
   int16_t climateHumOffset;     // tenths of a %RH added after the compensation, -200..200 (default 0)
   bool climateRhFollowsT;       // recompute RH at the corrected temperature (default on)
-  uint8_t climateShow;          // weather screen: 0 off, 1 indoor line, 2 badge, 3 split (not drawn yet)
+  uint8_t climateShow;          // weather screen: 0 off, 1 the outside | inside split (default)
   bool climateHa;               // Home Assistant discovery sensors over the MQTT bus (default off)
 
   // Ambient screensaver (scheduled, replaces the clock)

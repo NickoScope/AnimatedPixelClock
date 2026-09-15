@@ -7,6 +7,8 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 
+#include "climate_model.h"   // ClimateState, and the bounds of the settings
+
 #if defined(CLIMATE_ENABLED)
 
 #if !defined(CLIMATE_I2C_SDA) || !defined(CLIMATE_I2C_SCL)
@@ -20,14 +22,6 @@
 #error "CLIMATE_ENABLED needs the board's I2C pins: define CLIMATE_I2C_SDA and CLIMATE_I2C_SCL"
 #endif
 #endif
-
-enum class ClimateState : uint8_t {
-  Off,       // switched off in the portal
-  Probing,   // looking for the sensor, no reading yet
-  Ok,        // a reading younger than climate::staleAfterMs()
-  Stale,     // the last good reading is older than that
-  Absent,    // nothing answered (or something that is not an SHTC3 did)
-};
 
 struct ClimateReading {
   ClimateState state;

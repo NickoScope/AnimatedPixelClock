@@ -129,9 +129,25 @@ static void bounds() {
   CHECK(climate::clampOffset(-500) == -200);
   CHECK(climate::clampOffset(-35) == -35);
   CHECK(climate::clampOffset(999) == 200);
-  CHECK(climate::clampShow(2) == 2);
+  CHECK(climate::clampShow(1) == 1);
+  CHECK(climate::clampShow(2) == 0);
   CHECK(climate::clampShow(7) == 0);
   CHECK(climate::clampShow(-1) == 0);
+}
+
+static void weatherScreen() {
+  // What the weather screen draws for each state (design B, 2026-09-15 19:10).
+  using climate::WeatherIndoor;
+  const uint8_t on = climate::kShowSplit, off = climate::kShowOff;
+  CHECK(climate::weatherIndoor(true, on, ClimateState::Ok) == WeatherIndoor::Live);
+  CHECK(climate::weatherIndoor(true, on, ClimateState::Stale) == WeatherIndoor::Stale);
+  CHECK(climate::weatherIndoor(true, on, ClimateState::Absent) == WeatherIndoor::None);    // today's screen
+  CHECK(climate::weatherIndoor(true, on, ClimateState::Probing) == WeatherIndoor::None);
+  CHECK(climate::weatherIndoor(true, on, ClimateState::Off) == WeatherIndoor::None);
+  CHECK(climate::weatherIndoor(false, on, ClimateState::Ok) == WeatherIndoor::None);       // the sensor switched off
+  CHECK(climate::weatherIndoor(true, off, ClimateState::Ok) == WeatherIndoor::None);       // "On the weather screen" off
+  CHECK(climate::weatherIndoor(true, off, ClimateState::Stale) == WeatherIndoor::None);
+  CHECK(climate::weatherIndoor(true, 7, ClimateState::Ok) == WeatherIndoor::None);
 }
 
 int main() {
@@ -144,6 +160,7 @@ int main() {
   smoothing();
   staleness();
   bounds();
+  weatherScreen();
   std::printf("%d checks, %d failed\n", g_checks, g_fail);
   return g_fail ? 1 : 0;
 }

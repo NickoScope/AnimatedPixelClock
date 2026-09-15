@@ -166,7 +166,7 @@ void loadSettings() {
     settings.climateTempOffset = 0;
     settings.climateHumOffset = 0;
     settings.climateRhFollowsT = true;
-    settings.climateShow = 0;
+    settings.climateShow = climate::kShowSplit;
     settings.climateHa = false;
     settings.ambientEnabled = false;
     settings.ambientStyle = 0;
@@ -402,7 +402,7 @@ void loadSettings() {
   settings.climateTempOffset = climate::clampOffset(preferences.getShort("climTOff", 0));
   settings.climateHumOffset = climate::clampOffset(preferences.getShort("climHOff", 0));
   settings.climateRhFollowsT = preferences.getBool("climRhT", true);
-  settings.climateShow = climate::clampShow(preferences.getUChar("climShow", 0));
+  settings.climateShow = climate::clampShow(preferences.getUChar("climShow", climate::kShowSplit));
   settings.climateHa = preferences.getBool("climHa", false); // Default: no entities until asked
   settings.ambientEnabled =
       preferences.getBool("ambEn", false); // Default: Disabled

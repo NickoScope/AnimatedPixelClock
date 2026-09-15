@@ -65,7 +65,7 @@ bool     s_reset   = false;   // the next cycle starts with a soft reset
 bool     s_have    = false;   // a good reading exists
 bool     s_fresh   = false;   // a reading the MQTT side has not published yet
 uint32_t s_stepUs = 0, s_waitUs = 0;
-uint32_t s_dueMs = 0, s_lastOkMs = 0;
+uint32_t s_dueMs = 0, s_lastOkMs = 0, s_foundMs = 0;   // s_foundMs: when the ID first matched
 uint8_t  s_tries = 0, s_fails = 0, s_probes = 0;
 uint32_t s_reads = 0, s_crcErrors = 0, s_i2cErrors = 0, s_resets = 0;
 climate::Smoother s_smooth;
@@ -248,6 +248,33 @@ void haLoop() {
 }
 #endif  // MQTT_BUS_ENABLED
 
+// The corrected reading, recomputed only when the smoothed values or the
+// settings behind it change: the weather screen asks for it every frame, and
+// the humidity compensation is two exp() calls.
+struct Corrected {
+  bool valid = false;
+  float st = 0.0f, srh = 0.0f;
+  int16_t tOff = 0, hOff = 0;
+  bool follow = false;
+  climate::Reading r{};
+};
+Corrected s_corr;
+
+const climate::Reading &corrected() {
+  if (!s_corr.valid || s_corr.st != s_smooth.t || s_corr.srh != s_smooth.rh ||
+      s_corr.tOff != settings.climateTempOffset || s_corr.hOff != settings.climateHumOffset ||
+      s_corr.follow != settings.climateRhFollowsT) {
+    s_corr.st = s_smooth.t;
+    s_corr.srh = s_smooth.rh;
+    s_corr.tOff = settings.climateTempOffset;
+    s_corr.hOff = settings.climateHumOffset;
+    s_corr.follow = settings.climateRhFollowsT;
+    s_corr.r = climate::correct(s_smooth.t, s_smooth.rh, s_corr.tOff, s_corr.hOff, s_corr.follow);
+    s_corr.valid = true;
+  }
+  return s_corr.r;
+}
+
 }  // namespace
 
 void climateBegin() {
@@ -321,6 +348,7 @@ void climateLoop() {
         s_probes = 0;
         if (!s_ever) {
           s_ever = true;
+          s_foundMs = millis();
 #if defined(MQTT_BUS_ENABLED)
           s_haDirty = true;                            // the entities can go out now
 #endif
@@ -363,21 +391,24 @@ void climateLoop() {
 ClimateReading climateGet() {
   ClimateReading r{};
   const uint32_t now = millis();
+  const uint16_t ivl = settings.climateIntervalS;
   if (!settings.climateEnabled) {
     r.state = ClimateState::Off;
   } else if (!s_wire) {
     r.state = ClimateState::Absent;
-  } else if (!s_have) {
-    r.state = (s_foreign || (!s_ever && s_probes >= kProbesToAbsent)) ? ClimateState::Absent : ClimateState::Probing;
+  } else if (s_have) {
+    r.state = climate::isStale(now, s_lastOkMs, ivl) ? ClimateState::Stale : ClimateState::Ok;
+  } else if (s_ever) {
+    // Found, but no good reading since: stale once that has lasted as long as a reading may.
+    r.state = climate::isStale(now, s_foundMs, ivl) ? ClimateState::Stale : ClimateState::Probing;
   } else {
-    r.state = climate::isStale(now, s_lastOkMs, settings.climateIntervalS) ? ClimateState::Stale : ClimateState::Ok;
+    r.state = (s_foreign || s_probes >= kProbesToAbsent) ? ClimateState::Absent : ClimateState::Probing;
   }
   if (s_have && settings.climateEnabled) {
     r.have = true;
     r.sensorTempC = s_smooth.t;
     r.sensorHumidity = s_smooth.rh;
-    const climate::Reading c = climate::correct(s_smooth.t, s_smooth.rh, settings.climateTempOffset,
-                                                settings.climateHumOffset, settings.climateRhFollowsT);
+    const climate::Reading &c = corrected();   // cached: no exp() on a frame that changed nothing
     r.tempC = c.tempC;
     r.humidity = c.humidity;
     r.ageMs = now - s_lastOkMs;

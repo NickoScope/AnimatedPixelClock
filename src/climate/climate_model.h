@@ -7,6 +7,15 @@
 #include <cmath>
 #include <cstdint>
 
+// What the reader knows of the sensor (climate.cpp, climateGet()).
+enum class ClimateState : uint8_t {
+  Off,       // switched off in the portal
+  Probing,   // looking for the sensor, no reading yet
+  Ok,        // a reading younger than climate::staleAfterMs()
+  Stale,     // the last good reading is older than that, or a found sensor has given none for as long
+  Absent,    // nothing answered (or something that is not an SHTC3 did)
+};
+
 namespace climate {
 
 // ── settings' bounds ────────────────────────────────────────────────────────
@@ -18,10 +27,12 @@ static const uint16_t kIntervalMaxS     = 300;
 static const uint16_t kIntervalDefaultS = 10;    // the sensor's own response time is 5-30 s (datasheet Table 2)
 static const int16_t  kOffsetMinTenths  = -200;  // -20.0 °C or %RH
 static const int16_t  kOffsetMaxTenths  = 200;   // +20.0
-// What the weather screen draws: 0 nothing, 1 an indoor line, 2 an indoor
-// badge, 3 split. Stored now; drawn once the owner has picked a design
-// (tools/climate/preview/).
-static const uint8_t  kShowCount = 4;
+// What the weather screen draws of the indoor reading: 0 nothing, 1 design B,
+// the "outside | inside" split the owner chose on 2026-09-15 19:10
+// (tools/climate/preview/b_split_*). The split is the default.
+static const uint8_t  kShowOff   = 0;
+static const uint8_t  kShowSplit = 1;
+static const uint8_t  kShowCount = 2;
 
 inline uint16_t clampInterval(long s) {
   return s < kIntervalMinS ? kIntervalMinS : s > kIntervalMaxS ? kIntervalMaxS : (uint16_t)s;
@@ -30,6 +41,19 @@ inline int16_t clampOffset(long tenths) {
   return tenths < kOffsetMinTenths ? kOffsetMinTenths : tenths > kOffsetMaxTenths ? kOffsetMaxTenths : (int16_t)tenths;
 }
 inline uint8_t clampShow(long v) { return (v >= 0 && v < kShowCount) ? (uint8_t)v : 0; }
+
+// What the weather screen shows of the reading: the split with values while one
+// is fresh, the split with dashes once it is stale, and today's screen when the
+// sensor is switched off, absent or still being looked for, or the portal's
+// "On the weather screen" is off.
+enum class WeatherIndoor : uint8_t { None, Live, Stale };
+
+inline WeatherIndoor weatherIndoor(bool enabled, uint8_t show, ClimateState state) {
+  if (!enabled || show != kShowSplit) return WeatherIndoor::None;
+  if (state == ClimateState::Ok) return WeatherIndoor::Live;
+  if (state == ClimateState::Stale) return WeatherIndoor::Stale;
+  return WeatherIndoor::None;
+}
 
 // ── humidity at another temperature ─────────────────────────────────────────
 // Sensirion, "Introduction to Humidity", Version 2.0, August 2009: the Magnus

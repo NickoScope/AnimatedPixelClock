@@ -717,14 +717,12 @@ static const char PAGE_HTML[] PROGMEM = R"PAGE(<!doctype html>
                 <div class="select-wrap">
                   <select name="climateShow" id="climateShow">
                     <option value="0">Off</option>
-                    <option value="1">Indoor line</option>
-                    <option value="2">Indoor badge</option>
-                    <option value="3">Split</option>
+                    <option value="1">Outside | inside</option>
                   </select>
                 </div>
               </div>
             </div>
-            <p class="field-hint">The panel shows degrees in the weather's unit; the offsets are in &deg;C. The weather screen draws the indoor reading once its design is chosen.</p>
+            <p class="field-hint">The weather screen puts the indoor reading in a column beside the outside temperature while the sensor answers, dashes when its reading goes stale, and its usual layout when there is no sensor. Degrees follow the weather's unit; the offsets are in &deg;C.</p>
             <label class="check-row standalone" style="margin-top:16px" data-need="climateha">
               <input type="checkbox" name="climateHa" id="climateHa">
               <span class="check-box" aria-hidden="true"></span>
