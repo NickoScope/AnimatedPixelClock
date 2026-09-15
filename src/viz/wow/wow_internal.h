@@ -121,13 +121,13 @@ struct State {
   int nRings = 0;
 
   // Beat Particles
-  float *rgb = nullptr;           // kH x kW x 3, float32 as RgbCanvas
+  uint8_t *rgb = nullptr;         // kH x kW x 3 bytes, as gfx.RgbCanvas
   Particle *parts = nullptr;
   int nParts = 0;
   Star stars[kStars] = {};
 
   // Scope Afterglow
-  float *glow = nullptr;          // kH x kW, float32
+  uint8_t *glow = nullptr;        // kH x kW bytes, 255 = full
 
   // Twin VU
   real pos[2] = {}, vel[2] = {};

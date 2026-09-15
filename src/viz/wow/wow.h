@@ -55,7 +55,7 @@ class Engine {
  public:
   using AllocFn = void *(*)(size_t bytes);
 
-  // The state and every effect's buffers, about 90 KB, from alloc (PSRAM on
+  // The state and every effect's buffers, about 48 KB, from alloc (PSRAM on
   // the panel). Nothing is allocated after this.
   bool begin(AllocFn alloc);
   bool ready() const { return s_ != nullptr; }

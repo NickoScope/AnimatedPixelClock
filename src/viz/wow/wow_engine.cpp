@@ -20,9 +20,9 @@ bool Engine::begin(AllocFn alloc) {
   if (!mem) return false;
   State *s = new (mem) State();
   s->cols = static_cast<uint8_t *>(alloc((size_t)kW * kH));
-  s->rgb = static_cast<float *>(alloc((size_t)kW * kH * 3 * sizeof(float)));
+  s->rgb = static_cast<uint8_t *>(alloc((size_t)kW * kH * 3));
   s->parts = static_cast<Particle *>(alloc((size_t)kMaxParts * sizeof(Particle)));
-  s->glow = static_cast<float *>(alloc((size_t)kW * kH * sizeof(float)));
+  s->glow = static_cast<uint8_t *>(alloc((size_t)kW * kH));
   if (!s->cols || !s->rgb || !s->parts || !s->glow) return false;
   for (int i = 0; i < 64; i++) s->lut[i] = col(inferno(i / R(63.0)));
   s_ = s;
@@ -55,7 +55,7 @@ void Engine::reset(int effect, real react) {
       s.nRings = 0;
       break;
     case BEAT_PARTICLES:
-      for (size_t i = 0; i < (size_t)kW * kH * 3; i++) s.rgb[i] = 0.0f;
+      std::memset(s.rgb, 0, (size_t)kW * kH * 3);
       s.nParts = 0;
       // Python builds the list left to right: x, y, speed per star.
       for (Star &st : s.stars) {
@@ -65,7 +65,7 @@ void Engine::reset(int effect, real react) {
       }
       break;
     case SCOPE_AFTERGLOW:
-      for (size_t i = 0; i < (size_t)kW * kH; i++) s.glow[i] = 0.0f;
+      std::memset(s.glow, 0, (size_t)kW * kH);
       break;
     case TWIN_VU:
       for (int m = 0; m < 2; m++) {

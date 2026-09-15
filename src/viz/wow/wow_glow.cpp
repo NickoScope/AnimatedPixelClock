@@ -1,8 +1,7 @@
 /*
  * Styles 11-14: Beat Particles, Scope Afterglow, Twin VU, Synthwave Grid.
  * BeatParticles, ScopeAfterglow, TwinVU and Synthwave in tools/audiofx/effects_wow.py.
- * The float buffers are float32 there too; every scalar is made float before it
- * meets them, as NumPy 2 does with a Python float.
+ * The particle canvas and the afterglow are bytes with integer maths, as there.
  */
 #if defined(VIZ_WOW_ENABLED) || !defined(ARDUINO)
 
@@ -17,16 +16,14 @@ constexpr double kDegToRad = 3.141592653589793 / 180.0;   // math.radians()
 const Rgb kPalettes[3] = {{R(235), R(50), R(130)}, {R(40), R(210), R(235)}, {R(235), R(190), R(70)}};
 
 // RgbCanvas.add()
-inline void addLight(float *rgb, real x, real y, real r, real g, real b) {
+inline void addLight(uint8_t *rgb, real x, real y, real r, real g, real b) {
   const int ix = (int)x, iy = (int)y;
   if (ix < 0 || ix >= kW || iy < 0 || iy >= kH) return;
-  float *p = rgb + (iy * kW + ix) * 3;
-  p[0] = std::min(235.0f, p[0] + (float)r);
-  p[1] = std::min(235.0f, p[1] + (float)g);
-  p[2] = std::min(235.0f, p[2] + (float)b);
+  uint8_t *p = rgb + (iy * kW + ix) * 3;
+  p[0] = (uint8_t)std::min(235, p[0] + (int)r);
+  p[1] = (uint8_t)std::min(235, p[1] + (int)g);
+  p[2] = (uint8_t)std::min(235, p[2] + (int)b);
 }
-
-inline uint32_t clip255(float v) { return (uint32_t)std::min(255.0f, std::max(0.0f, v)); }
 
 }  // namespace
 
@@ -53,7 +50,7 @@ void renderBeatParticles(State &s, Canvas &cv, real dt) {
   const VizFrame &f = s.f;
   step(s, dt);
   const size_t cells = (size_t)kW * kH * 3;
-  for (size_t i = 0; i < cells; i++) s.rgb[i] *= 0.8f;   // fade(0.80)
+  for (size_t i = 0; i < cells; i++) s.rgb[i] = (uint8_t)(s.rgb[i] * 4 / 5);   // fade(4, 5)
   for (Star &st : s.stars) {
     st.y += dt * (4 + 20 * R(f.bass)) * st.speed;
     if (st.y >= kH) {
@@ -81,8 +78,8 @@ void renderBeatParticles(State &s, Canvas &cv, real dt) {
   for (int x = 64 - width; x < 64 + width; x++) addLight(s.rgb, R(x), R(63), R(120), R(30), R(90));
   for (int y = 0; y < kH; y++) {   // blit()
     for (int x = 0; x < kW; x++) {
-      const float *p = s.rgb + (y * kW + x) * 3;
-      cv.setPixel(x, y, (uint16_t)(((clip255(p[0]) & 0xF8) << 8) | ((clip255(p[1]) & 0xFC) << 3) | (clip255(p[2]) >> 3)));
+      const uint8_t *p = s.rgb + (y * kW + x) * 3;
+      cv.setPixel(x, y, (uint16_t)(((p[0] & 0xF8) << 8) | ((p[1] & 0xFC) << 3) | (p[2] >> 3)));
     }
   }
 }
@@ -90,8 +87,8 @@ void renderBeatParticles(State &s, Canvas &cv, real dt) {
 void renderScopeAfterglow(State &s, Canvas &cv, real dt) {
   const VizFrame &f = s.f;
   step(s, dt);
-  const float decay = (float)std::exp(-dt / R(0.09));
-  for (size_t i = 0; i < (size_t)kW * kH; i++) s.glow[i] *= decay;
+  const int keep = (int)(std::exp(-dt / R(0.09)) * R(256.0));   // fixed point: glow * keep >> 8
+  for (size_t i = 0; i < (size_t)kW * kH; i++) s.glow[i] = (uint8_t)((s.glow[i] * keep) >> 8);
   const int cy = 36, half = 26;
   bool havePrev = false;
   int y0 = 0;
@@ -103,13 +100,13 @@ void renderScopeAfterglow(State &s, Canvas &cv, real dt) {
       for (int k = 0; k <= steps; k++) {
         const int yy = y0 + pyfloordiv((y - y0) * k, steps);
         if (yy < 0 || yy >= kH) continue;
-        s.glow[yy * kW + i] = 1.0f;
+        s.glow[yy * kW + i] = 255;
         if (s.beatEnv > R(0.2)) {
-          const float edge = (float)(R(0.5) * s.beatEnv);
+          const int edge = (int)(R(0.5) * s.beatEnv * R(255.0));
           for (int dy : {-1, 1}) {
             if (yy + dy < 0 || yy + dy >= kH) continue;
-            float &g = s.glow[(yy + dy) * kW + i];
-            if (edge > g) g = edge;
+            uint8_t &g = s.glow[(yy + dy) * kW + i];
+            if (edge > g) g = (uint8_t)edge;
           }
         }
       }
@@ -124,9 +121,9 @@ void renderScopeAfterglow(State &s, Canvas &cv, real dt) {
   const Rgb lo = {R(40), R(235), R(120)}, hi = {R(235), R(190), R(60)}, core = {R(190), R(235), R(200)};
   for (int y = 0; y < kH; y++) {
     for (int x = 0; x < kW; x++) {
-      const float gf = s.glow[y * kW + x];
-      if (!(gf > 0.04f)) continue;
-      const real g = gf;
+      const uint8_t gb = s.glow[y * kW + x];
+      if (gb <= 10) continue;   // 0.04 of full
+      const real g = gb / R(255.0);
       const real dev = std::abs(y - cy) / R(half);
       const Rgb base = mix(lo, hi, dev);
       const Rgb c = g > R(0.7) ? mix(base, core, std::max(R(0.0), g - R(0.7)) / R(0.3)) : base;

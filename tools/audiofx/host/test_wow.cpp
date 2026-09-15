@@ -23,6 +23,7 @@
 #include "viz_frame.h"
 #include "wav_io.h"
 #include "wow.h"
+#include "wow_internal.h"
 
 namespace {
 
@@ -184,5 +185,9 @@ int main(int argc, char **argv) {
     renderEffect(eng, k, frames, seconds, cv, out + (pc ? "/pc_wow_" : "/wow_") + std::to_string(k) + ".raw");
   printf("%zu frames in, %d effects x %d display frames out, real = %s\n", frames.size(), wow::kEffects,
          (int)(seconds * kFps), sizeof(wow::real) == 8 ? "double" : "float");
+  const size_t buffers = (size_t)wow::kW * wow::kH * 5 + wow::kMaxParts * sizeof(wow::Particle);
+  printf("engine memory: state %zu B + buffers %zu B (spectrogram, particle canvas, particle pool, afterglow); "
+         "VizFrame %zu B, PcFrameDeriver %zu B (host, 64-bit pointers)\n",
+         sizeof(wow::State), buffers, sizeof(wow::VizFrame), sizeof(wow::PcFrameDeriver));
   return 0;
 }

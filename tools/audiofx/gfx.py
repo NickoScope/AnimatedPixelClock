@@ -150,25 +150,26 @@ class Canvas:
 
 
 class RgbCanvas:
-    """Float RGB 0..255 for effects that fade or add light: persistence, glow.
-    On the panel this is a PSRAM buffer; every pixel still ends as RGB565."""
+    """8-bit RGB for effects that fade or add light. On the panel this is a
+    128x64x3 byte buffer in PSRAM (src/viz/wow/wow_glow.cpp): integer maths, so
+    the two agree exactly, and a quarter of what a float buffer would take."""
 
     def __init__(self):
-        self.buf = np.zeros((H, W, 3), np.float32)
+        self.buf = np.zeros((H, W, 3), np.uint8)
 
-    def fade(self, k):
-        self.buf *= k
+    def fade(self, num, den):
+        self.buf = (self.buf.astype(np.uint16) * num // den).astype(np.uint8)
 
     def add(self, x, y, r, g, b):
         x, y = int(x), int(y)
         if 0 <= x < W and 0 <= y < H:
             p = self.buf[y, x]
-            p[0] = min(235.0, p[0] + r)
-            p[1] = min(235.0, p[1] + g)
-            p[2] = min(235.0, p[2] + b)
+            p[0] = min(235, int(p[0]) + int(r))
+            p[1] = min(235, int(p[1]) + int(g))
+            p[2] = min(235, int(p[2]) + int(b))
 
     def blit(self, cv):
-        q = np.clip(self.buf, 0, 255).astype(np.uint32)
+        q = self.buf.astype(np.uint32)
         cv.px[:] = (((q[..., 0] & 0xF8) << 8) | ((q[..., 1] & 0xFC) << 3) | (q[..., 2] >> 3)).astype(np.uint16)
 
 

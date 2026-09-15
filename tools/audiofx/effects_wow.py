@@ -9,8 +9,8 @@ bass/mid/treble, beats with a strength, the waveform.
 
 Written so that C++ can repeat it exactly:
 - scalars are Python floats, IEEE double; the host comparison builds C++ with double
-- buffers that are float32 here are float in C++, and a Python scalar mixed
-  into them is float32 first (NumPy 2 promotes weakly)
+- the fading buffers are bytes with integer maths (a float canvas would be 98 KB
+  rewritten 60 times a second through the S3's PSRAM cache)
 - no NumPy maths on scalars, no np.interp, no Mersenne Twister: XorShift32
 - round() is half to even, like C's nearbyint(); % and // keep Python's signs
 - the rotation, the grid offset and the hue wrap, so float on the panel stays exact
@@ -253,7 +253,7 @@ class BeatParticles(Wow):
 
     def __init__(self, react=1.0):
         super().__init__(react)
-        self.canvas = RgbCanvas()                   # 128x64x3 float32 in PSRAM on the panel
+        self.canvas = RgbCanvas()                   # 128x64x3 bytes in PSRAM on the panel
         self.parts = []
         self.stars = [[self.rng.uniform(0, W), self.rng.uniform(0, H), self.rng.uniform(0.2, 1.0)] for _ in range(50)]
 
@@ -271,7 +271,7 @@ class BeatParticles(Wow):
         f = self.f
         self.step(dt)
         c = self.canvas
-        c.fade(0.80)
+        c.fade(4, 5)
         for s in self.stars:
             s[1] += dt * (4 + 20 * f["bass"]) * s[2]
             if s[1] >= H:
@@ -296,12 +296,13 @@ class ScopeAfterglow(Wow):
 
     def __init__(self, react=1.0):
         super().__init__(react)
-        self.glow = np.zeros((H, W), np.float32)    # 128x64 float32 in PSRAM on the panel
+        self.glow = np.zeros((H, W), np.uint8)      # 128x64 bytes in PSRAM on the panel
 
     def render(self, cv, now, dt):
         f = self.f
         self.step(dt)
-        self.glow *= math.exp(-dt / 0.09)
+        keep = int(math.exp(-dt / 0.09) * 256.0)     # fixed point: glow * keep >> 8
+        self.glow = ((self.glow.astype(np.uint16) * keep) >> 8).astype(np.uint8)
         cy, half = 36, 26
         prev = None
         for i in range(128):
@@ -313,11 +314,12 @@ class ScopeAfterglow(Wow):
                 for s in range(steps + 1):
                     yy = y0 + (y - y0) * s // steps
                     if 0 <= yy < H:
-                        self.glow[yy, i] = 1.0
+                        self.glow[yy, i] = 255
                         if self.beat_env > 0.2:
+                            edge = int(0.5 * self.beat_env * 255.0)
                             for dy in (-1, 1):
-                                if 0 <= yy + dy < H:
-                                    self.glow[yy + dy, i] = max(self.glow[yy + dy, i], 0.5 * self.beat_env)
+                                if 0 <= yy + dy < H and edge > self.glow[yy + dy, i]:
+                                    self.glow[yy + dy, i] = edge
             prev = (i, y)
         grid = col(20, 70, 40, 0.5 + 0.5 * self.beat_env)
         for x in range(0, W, 16):
@@ -325,9 +327,9 @@ class ScopeAfterglow(Wow):
                 cv.pixel(x, y, grid)
         for x in range(0, W, 3):
             cv.pixel(x, cy, grid)
-        ys, xs = np.nonzero(self.glow > 0.04)
+        ys, xs = np.nonzero(self.glow > 10)             # 0.04 of full
         for y, x in zip(ys, xs):
-            g = float(self.glow[y, x])
+            g = int(self.glow[y, x]) / 255.0
             dev = abs(y - cy) / float(half)
             base = mix((40, 235, 120), (235, 190, 60), dev)
             core = mix(base, (190, 235, 200), max(0.0, g - 0.7) / 0.3) if g > 0.7 else base
