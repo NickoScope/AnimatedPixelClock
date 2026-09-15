@@ -5,7 +5,10 @@ src/climate/shtc3.h and src/climate/climate_model.h are plain C++, so they are
 compiled here with the host compiler and checked against the numbers Sensirion
 prints: the CRC examples of the SHTC3 datasheet's Table 16, the measurement of
 its Figure 7 (63 %RH, 23.7 °C), the ID mask of Table 15, and the design guide's
-"1 °C at 90 %RH is 5 %RH". No board, no Arduino.
+"1 °C at 90 %RH is 5 %RH". The reading cycle, src/climate/climate_reader.h,
+runs on a mock bus and clock: a reading with at most one transaction per pass,
+a held line skipped without a transaction, a stalled transaction followed by a
+minute with nothing sent. No board, no Arduino.
 
   python3 tools/climate/check_climate.py
 """

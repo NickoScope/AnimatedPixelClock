@@ -1,7 +1,7 @@
 #pragma once
 // The board's own temperature and humidity sensor: the Sensirion SHTC3 on the
-// Waveshare ESP32-S3-RGB-Matrix, read from loop() without ever waiting on the
-// bus. Found by its ID register; nothing to set up. src/climate/README.md,
+// Waveshare ESP32-S3-RGB-Matrix, read from loop(), at most one I2C
+// transaction a pass and none while a line is held low. Found by its ID register; nothing to set up. src/climate/README.md,
 // and docs/21-onboard-climate-sensor.md in the knowledge base for the sources.
 
 #include <Arduino.h>
@@ -26,7 +26,7 @@ struct ClimateReading {
 };
 
 void climateBegin();                    // in setup(), after loadSettings()
-void climateLoop();                     // every loop() pass: at most one short I2C transaction
+void climateLoop();                     // every loop() pass: at most one I2C transaction, none on a held bus
 ClimateReading climateGet();
 const char *climateStateName(ClimateState s);
 void climateSettingsChanged();          // after the portal or an import changed a climate setting

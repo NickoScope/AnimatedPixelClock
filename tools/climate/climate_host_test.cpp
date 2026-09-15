@@ -3,10 +3,14 @@
 // and the humidity design guide (Version 2, March 2024). Built and run by
 // tools/climate/check_climate.py.
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
+#include <vector>
 
 #include "climate_model.h"
+#include "climate_reader.h"
 #include "shtc3.h"
 
 static int g_fail = 0, g_checks = 0;
@@ -150,6 +154,221 @@ static void weatherScreen() {
   CHECK(climate::weatherIndoor(true, 7, ClimateState::Ok) == WeatherIndoor::None);
 }
 
+// ── the reader, on a mock bus (climate_reader.h) ────────────────────────────
+// The bus and the clock are simulated: a transaction takes 0.3-0.7 ms, a held
+// line makes one take the driver's one-second ceiling, and loop() passes come
+// 1 ms apart.
+class MockBus : public climate::Port {
+ public:
+  uint64_t nowUs = 5000000;      // 5 s after boot
+  bool present = true;           // an SHTC3 answers at 0x70
+  bool sda = true, scl = true;   // the lines' levels
+  uint32_t stallUs = 0;          // every transaction takes this long and times out
+  uint32_t slowUs = 0;           // the next transaction succeeds, but takes this long
+  int transactions = 0;
+  std::vector<uint16_t> commands;
+
+  int write(uint16_t cmd) override {
+    transactions++;
+    commands.push_back(cmd);
+    if (stallUs) {
+      nowUs += stallUs;
+      return 5;                  // Wire's code for ESP_ERR_TIMEOUT
+    }
+    nowUs += take(300);
+    if (!present) return 2;
+    if (!awake_ && cmd != shtc3::kWakeup) return 2;   // asleep, it answers nothing but the wake-up (section 5.2)
+    switch (cmd) {
+      case shtc3::kWakeup: awake_ = true; break;
+      case shtc3::kSleep: awake_ = false; break;
+      case shtc3::kReadId: pending_ = 1; break;
+      case shtc3::kMeasureNormal: pending_ = 2; readyUs_ = nowUs + 10800; break;   // tMEAS, Table 5
+      default: break;
+    }
+    return 0;
+  }
+
+  size_t read(uint8_t *buf, size_t n) override {
+    transactions++;
+    if (stallUs) {
+      nowUs += stallUs;
+      return 0;
+    }
+    nowUs += take(700);
+    if (!present || !awake_) return 0;
+    if (pending_ == 1 && n == 3) {
+      const uint8_t id[2] = {0x08, 0x87};                // xxxx'1xxx'xx00'0111 with x bits set
+      buf[0] = id[0];
+      buf[1] = id[1];
+      buf[2] = shtc3::crc8(id, 2);
+      pending_ = 0;
+      return 3;
+    }
+    if (pending_ == 2 && n == 6) {
+      if (nowUs < readyUs_) return 0;                      // still measuring: NACK (section 5.5)
+      const uint8_t frame[6] = {0x64, 0x8B, 0xC7, 0xA1, 0x33, 0x1C};   // Figure 7: 23.7 °C, 63 %RH
+      std::memcpy(buf, frame, sizeof(frame));
+      pending_ = 0;
+      return 6;
+    }
+    return 0;
+  }
+
+  bool linesHigh() override { return sda && scl; }
+  uint32_t ms() override { return (uint32_t)(nowUs / 1000); }
+  uint32_t us() override { return (uint32_t)nowUs; }
+  bool asleep() const { return !awake_; }
+
+ private:
+  uint32_t take(uint32_t normal) {
+    const uint32_t t = slowUs ? slowUs : normal;
+    slowUs = 0;
+    return t;
+  }
+  bool awake_ = false;
+  int pending_ = 0;
+  uint64_t readyUs_ = 0;
+};
+
+// One loop() pass, 1 ms after the one before; the transactions it made.
+static int pass(climate::Reader &r, MockBus &bus) {
+  bus.nowUs += 1000;
+  const int before = bus.transactions;
+  r.loop(10);
+  return bus.transactions - before;
+}
+
+// Passes until done() or maxMs of simulated time. No pass may make more than one transaction.
+template <class F>
+static bool runUntil(climate::Reader &r, MockBus &bus, uint32_t maxMs, F done) {
+  const uint64_t end = bus.nowUs + (uint64_t)maxMs * 1000;
+  int worst = 0;
+  while (bus.nowUs < end && !done()) {
+    const int n = pass(r, bus);
+    if (n > worst) worst = n;
+  }
+  CHECK(worst <= 1);
+  return done();
+}
+
+static void readerReads() {
+  using shtc3::kMeasureNormal;
+  using shtc3::kReadId;
+  using shtc3::kSleep;
+  using shtc3::kWakeup;
+  MockBus bus;
+  climate::Reader r(bus);
+  CHECK(runUntil(r, bus, 1000, [&] { return r.counters().reads == 1; }));
+  NEAR(r.temperature(), 23.7, 0.05);
+  NEAR(r.humidity(), 63.0, 0.05);
+  CHECK(r.state(bus.ms(), 10) == ClimateState::Ok);
+  CHECK(r.idRead() && r.id() == 0x0887 && r.ever());
+  CHECK(runUntil(r, bus, 100, [&] { return bus.asleep(); }));    // the sleep command, on its own pass
+  CHECK(bus.commands == (std::vector<uint16_t>{kWakeup, kReadId, kMeasureNormal, kSleep}));
+  CHECK(bus.transactions == 6);                                 // wake, ID, ID read, measure, read, sleep
+  bus.commands.clear();
+  CHECK(runUntil(r, bus, 11000, [&] { return r.counters().reads == 2; }));   // the next one, without the ID
+  CHECK(runUntil(r, bus, 100, [&] { return bus.asleep(); }));
+  CHECK(bus.commands == (std::vector<uint16_t>{kWakeup, kMeasureNormal, kSleep}));
+  CHECK(r.counters().busStuck == 0 && r.counters().busStalls == 0 && r.counters().i2cErrors == 0);
+}
+
+static void readerHeldLine() {
+  // SCL held low from the start: nothing is ever sent, the cycle is skipped once a minute.
+  MockBus bus;
+  climate::Reader r(bus);
+  bus.scl = false;
+  CHECK(runUntil(r, bus, 1000, [&] { return r.counters().busStuck == 1; }));
+  CHECK(bus.transactions == 0);
+  CHECK(!runUntil(r, bus, 59000, [&] { return r.counters().busStuck == 2; }));
+  CHECK(runUntil(r, bus, 2000, [&] { return r.counters().busStuck == 2; }));
+  CHECK(bus.transactions == 0);
+  CHECK(r.state(bus.ms(), 10) == ClimateState::Probing);        // never found: the weather screen keeps today's layout
+  r.settingsChanged(10);                                        // a settings save does not cut the wait short
+  CHECK(!runUntil(r, bus, 30000, [&] { return bus.transactions > 0; }));
+  bus.scl = true;                                               // released: the next look reads the sensor
+  CHECK(runUntil(r, bus, 31000, [&] { return r.counters().reads == 1; }));
+  CHECK(r.counters().busStuck == 2);
+
+  // SDA low for one look only, another module's transaction: a 5 ms wait, not a minute.
+  MockBus bus2;
+  climate::Reader r2(bus2);
+  bus2.sda = false;
+  CHECK(pass(r2, bus2) == 0);                                   // Off -> Due
+  CHECK(pass(r2, bus2) == 0);                                   // Due: SDA low, look again in 5 ms
+  bus2.sda = true;
+  CHECK(runUntil(r2, bus2, 100, [&] { return r2.counters().reads == 1; }));
+  CHECK(r2.counters().busStuck == 0);
+}
+
+static void readerStall() {
+  using shtc3::kMeasureNormal;
+  using shtc3::kSleep;
+  // Found and read once; then every transaction takes the driver's one-second ceiling.
+  MockBus bus;
+  climate::Reader r(bus);
+  CHECK(runUntil(r, bus, 1000, [&] { return r.counters().reads == 1 && bus.asleep(); }));
+  bus.stallUs = 1000000;
+  const int before = bus.transactions;
+  CHECK(runUntil(r, bus, 12000, [&] { return r.counters().busStalls == 1; }));
+  CHECK(bus.transactions == before + 1);                        // the wake-up that stalled, and no sleep command after it
+  const int after = bus.transactions;
+  CHECK(!runUntil(r, bus, 59000, [&] { return bus.transactions != after; }));   // a minute with nothing on the bus
+  CHECK(runUntil(r, bus, 2000, [&] { return r.counters().busStalls == 2; }));
+  CHECK(bus.transactions == after + 1);
+  CHECK(r.state(bus.ms(), 10) == ClimateState::Stale);          // the weather screen shows dashes
+  bus.stallUs = 0;                                              // the bus recovers: the ID is read again first
+  bus.commands.clear();
+  CHECK(runUntil(r, bus, 62000, [&] { return r.counters().reads == 2; }));
+  CHECK(bus.commands.size() >= 3 && bus.commands[0] == shtc3::kWakeup && bus.commands[1] == shtc3::kReadId);
+  CHECK(r.state(bus.ms(), 10) == ClimateState::Ok);
+
+  // The measurement's read stalls: no sleep command after it either.
+  MockBus b2;
+  climate::Reader r2(b2);
+  CHECK(runUntil(r2, b2, 1000, [&] { return !b2.commands.empty() && b2.commands.back() == kMeasureNormal; }));
+  b2.stallUs = 1000000;
+  CHECK(runUntil(r2, b2, 2000, [&] { return r2.counters().busStalls == 1; }));
+  const size_t sent = b2.commands.size();
+  CHECK(b2.commands.back() == kMeasureNormal);
+  CHECK(!runUntil(r2, b2, 59000, [&] { return b2.commands.size() != sent; }));
+  CHECK(r2.counters().reads == 0);
+  CHECK(std::find(b2.commands.begin(), b2.commands.end(), kSleep) == b2.commands.end());
+
+  // Successful but past kStallUs: a stall all the same. Just under: a normal cycle.
+  MockBus b3;
+  climate::Reader r3(b3);
+  CHECK(pass(r3, b3) == 0);
+  b3.slowUs = climate::kStallUs + 50000;
+  CHECK(pass(r3, b3) == 1);
+  CHECK(r3.counters().busStalls == 1);
+  CHECK(!runUntil(r3, b3, 59000, [&] { return b3.transactions != 1; }));
+  MockBus b4;
+  climate::Reader r4(b4);
+  CHECK(pass(r4, b4) == 0);
+  b4.slowUs = climate::kStallUs - 10000;
+  CHECK(runUntil(r4, b4, 1000, [&] { return r4.counters().reads == 1; }));
+  CHECK(r4.counters().busStalls == 0);
+
+  CHECK(climate::classifyWrite(0, 400) == climate::Xfer::Ok);
+  CHECK(climate::classifyWrite(2, 400) == climate::Xfer::Fail);      // NACK: fast, the sensor absent
+  CHECK(climate::classifyWrite(5, 400) == climate::Xfer::Stall);     // Wire's timeout, however fast
+  CHECK(climate::classifyWrite(0, climate::kStallUs + 1) == climate::Xfer::Stall);
+  CHECK(climate::classifyRead(true, climate::kStallUs) == climate::Xfer::Ok);
+  CHECK(climate::classifyRead(false, 700) == climate::Xfer::Fail);
+  CHECK(climate::classifyRead(true, 1000000) == climate::Xfer::Stall);
+}
+
+static void readerAbsent() {
+  MockBus bus;
+  bus.present = false;
+  climate::Reader r(bus);
+  CHECK(runUntil(r, bus, 10000, [&] { return r.state(bus.ms(), 10) == ClimateState::Absent; }));
+  CHECK(bus.transactions == 3);                                 // three NACKed wake-ups, 2 s apart
+  CHECK(r.counters().busStalls == 0 && r.counters().i2cErrors == 0 && r.counters().busStuck == 0);
+  CHECK(!runUntil(r, bus, 55000, [&] { return bus.transactions != 3; }));   // then once a minute
+}
+
 int main() {
   datasheetCrc();
   datasheetFigure7();
@@ -161,6 +380,10 @@ int main() {
   staleness();
   bounds();
   weatherScreen();
+  readerReads();
+  readerHeldLine();
+  readerStall();
+  readerAbsent();
   std::printf("%d checks, %d failed\n", g_checks, g_fail);
   return g_fail ? 1 : 0;
 }
