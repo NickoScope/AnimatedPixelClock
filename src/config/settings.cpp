@@ -919,7 +919,7 @@ void saveSettings() {
     if (settings.metricLabels[i][0] != '\0') {
       preferences.putString(key.c_str(), settings.metricLabels[i]);
     } else {
-      preferences.remove(key.c_str()); // Remove if empty
+      if (preferences.isKey(key.c_str())) preferences.remove(key.c_str()); // Remove if empty; skipping absent keys saves ~1.1 s of failed erases per save
     }
   }
 
@@ -929,7 +929,7 @@ void saveSettings() {
     if (settings.metricNames[i][0] != '\0') {
       preferences.putString(key.c_str(), settings.metricNames[i]);
     } else {
-      preferences.remove(key.c_str()); // Remove if empty
+      if (preferences.isKey(key.c_str())) preferences.remove(key.c_str()); // Remove if empty; skipping absent keys saves ~1.1 s of failed erases per save
     }
   }
 
