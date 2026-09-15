@@ -392,6 +392,12 @@ void setup() {
   // Load settings from flash
   loadSettings();
   MEMTRACE("settings");
+#if defined(BOARD_WAVESHARE_RGB_MATRIX)
+  // The NS4150B speaker amp's enable (BSP_POWER_AMP_IO, GPIO11) has no pull at reset
+  // and nothing else drives it: hold the amp off.
+  pinMode(11, OUTPUT);
+  digitalWrite(11, LOW);
+#endif
 
   // Mount the animation filesystem (formats the partition on first use)
   animStoreInit();
@@ -537,7 +543,7 @@ void setup() {
 #endif
 
 #if defined(AUDIO_MIC_ENABLED)
-  // The onboard microphones: capture and DSP on core 0, packets into the visualizer (src/audio/audio_mic.h).
+  // The onboard microphones' PSRAM buffers. Capture and I2S start only while the visualizer shows them (src/audio/audio_mic.h).
   audioBegin();
   MEMTRACE("audio");
 #endif
