@@ -81,3 +81,18 @@ its object and queues from `malloc`: IDF 4.4.7 `driver/i2s.c:740, 747, 851-868,
 - `es7210::begin()` sends about 80 I2C transactions in one loop pass (40-80 ms at 100 kHz), again every ~6 s while I2S keeps stalling.
 - `audioApplySettings()` ignores `es7210::lastStalled()`: a gain write that stalls is not backed off.
 - `/api/info` does not report the loop task's own stack margin.
+
+From the delta audit of `e7ad859` (2026-09-15), LOW, not fixed:
+- `es7210::end()` runs after MCLK has stopped; if the codec ignores I2C without MCLK, the mic bias stays on.
+- A stop that coincides with an I2S install failure reports "idle" instead of "i2s failed".
+- `startCapture()` resets `s_codecRetryMs`, which drops the 60 s I2C back-off.
+- `s_meterDb` and `s_meterClipped` are not reset on stop, so an idle `/api/info` shows a stale level.
+- A partial PSRAM failure in `audioBegin()` leaks the blocks it did get (once, in `setup()`).
+- A start right after `finishStop()` can hold two task stacks (~5.5 KB) until the idle task frees the old one.
+- GPIO11 floats from reset until `setup()` drives it low after `loadSettings()`.
+
+Measured on the panel, build `c71bdb5`, 2026-09-15 (KB docs/22 §12.1):
+- DSP 11.8–15.1 ms per 20 ms frame on core 0, max 19.8 ms; 1 overrun in about 110 s. Try the esp-dsp FFT.
+- Task stack: 1,232 of 5,120 B used. There is room to trim to about 3 KB.
+- `audioInternalBytes` reported 6,340 B while free internal heap fell by 10.4 KB on start, so the figure under-reports.
+- `loopMaxMs` up to 43 ms while styles render (5–11 ms idle).
