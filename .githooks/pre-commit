@@ -58,6 +58,16 @@ if git diff --cached --name-only | grep -qE '^(tools/web_assets_gen\.py|src/web/
   }
 fi
 
+# The onboard climate sensor: its arithmetic against the SHTC3 datasheet's own
+# examples. Offline, host compiler only.
+if git diff --cached --name-only | grep -qE '^(src/climate/|tools/climate/)'; then
+  python3 tools/climate/check_climate.py || {
+    echo
+    echo "pre-commit: the climate host test failed (see above)."
+    exit 1
+  }
+fi
+
 # The Lua effects are embedded in the firmware from the scripts luasim runs.
 # Checked offline, like the world map: the generator needs only the scripts.
 if git diff --cached --name-only | grep -qE '^(tools/luasim/gen_effects\.py|tools/luasim/scripts/.*\.lua|src/lua/lua_effects_scripts\.h)$'; then
