@@ -135,6 +135,8 @@ static uint16_t s_refused      = 0;
 static size_t   s_jsonPeak     = 0;
 
 static bool     s_fsReady    = false;
+static uint32_t s_fsNoSpace  = 0;      // writes skipped because the record would not fit
+static size_t   s_fsFreeBytes = 0;     // LittleFS free space at the last check
 static bool     s_fsHave     = false;   // a record was read at boot
 static bool     s_fsDirty    = false;   // a history payload was accepted since the record
 static uint32_t s_fsDirtyMs  = 0;       // millis() of the last one
@@ -476,6 +478,25 @@ static void fsTick() {
     }
     s_fsRenamePending = false;
   }
+  // Only a record that fits is written. littlefs (f53a0cc, pinned by esp_littlefs 41873c2) divides by
+  // cfg->block_count in its own "No more free space" log line (lfs.c:689-691), and esp_littlefs sets that
+  // to 0 to autodetect the block count (esp_littlefs.c:945): a write that runs out of space reboots the
+  // panel with IntegerDivideByZero instead of failing. Seen 2026-09-15: 12 KB free of 3.5 MB after the
+  // animation uploads, a reboot every ~16 s while the market data kept arriving. The margin covers the
+  // file's block pointers and metadata, and small writes from other modules during the ~21 passes.
+  {
+    const size_t totalB = LittleFS.totalBytes(), usedB = LittleFS.usedBytes();
+    const size_t freeB  = totalB > usedB ? totalB - usedB : 0;
+    const size_t needB  = recordSize() + recordSize() / 4 + 4 * 4096;
+    s_fsFreeBytes = freeB;
+    if (freeB < needB) {
+      s_fsNoSpace++;
+      snprintf(s_st->fsNote, sizeof(s_st->fsNote), "no space: needs %u B, %u B free", (unsigned)needB, (unsigned)freeB);
+      s_fsGen       = s_st->m.gen;   // not tried again for this generation
+      s_fsWrittenMs = ms | 1;        // nor before MARKET_FS_MIN_GAP_MS
+      return;
+    }
+  }
   if (!recordWrite(s_st->m, s_rec, recordSize())) return;
   s_fsFile = LittleFS.open(FS_TMP, "w");
   if (!s_fsFile) { s_fsFails++; snprintf(s_st->fsNote, sizeof(s_st->fsNote), "cannot open tmp"); return; }
@@ -612,6 +633,8 @@ void marketWebJson(JsonObject out) {
   if (s_cfgSentMs) cfg["agoS"] = (millis() - s_cfgSentMs) / 1000UL;
   JsonObject fs = out["fs"].to<JsonObject>();
   fs["ready"]   = s_fsReady;
+  fs["free"]    = (unsigned long)s_fsFreeBytes;
+  fs["noSpace"] = s_fsNoSpace;
   fs["have"]    = s_fsHave;
   fs["note"]    = (const char *)s_st->fsNote;
   fs["bytes"]   = (uint32_t)recordSize();
