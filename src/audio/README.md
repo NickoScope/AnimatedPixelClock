@@ -16,7 +16,7 @@ the LED-MATRIX APOLLO knowledge base.
 
 | Task | Core | Does |
 |---|---|---|
-| `audio` (priority 5) | 0 | I2S0 at 48 kHz, MCLK on IO12; the DSP while the visualizer shows the microphones; frames into a spinlocked handover |
+| `audio` (priority 5), only while wanted | 0 | I2S0 at 48 kHz, MCLK on IO12; the DSP while the visualizer shows the microphones; frames into a spinlocked handover |
 | `loopTask` | 1 | `setup()`, then `loop()`: `audioPoll()` configures the ES7210 once MCLK runs, feeds the visualizer; web handlers change settings |
 
 `setup()` and `loop()` both run in `loopTask` (arduino-esp32 2.0.17,
@@ -55,3 +55,29 @@ How this module keeps the rule:
 A new I2C user: call `boardI2cBegin()` (idempotent), check `boardI2cLinesHigh()`
 before a transaction, and run from the loop task. Work that belongs elsewhere
 sets a flag that `loop()` services.
+
+## Start and stop
+
+The task (5,120 B stack and its TCB, both internal RAM: `portmacro.h:436-437` in
+the S3 port) and the I2S driver (4 x 1,024 B of DMA buffers, `MALLOC_CAP_DMA`, plus
+its object and queues from `malloc`: IDF 4.4.7 `driver/i2s.c:740, 747, 851-868,
+1964, 2018`) exist only while needed; the DSP buffers are PSRAM, allocated once in
+`audioBegin()`.
+- **Start**, from `audioPoll()`: the visualizer is on screen and it wants the
+  microphones (source mic, `AUDIO_MIC_ONLY`, or auto with no PC stream for 1.5 s).
+  A failed start retries after 30 s.
+- **Stop**, 25 s after that ends (the visualizer off, or a PC stream arriving):
+  `audioPoll()` sets a request; the task leaves its read loop within 100 ms, calls
+  `i2s_driver_uninstall()`, records its own stack high-water mark and deletes
+  itself; the next `audioPoll()` sees it gone, powers the ES7210 down with
+  `es7210::end()` and reports `audioMic` "idle". No other task ever calls
+  FreeRTOS on the task's handle.
+- `/api/info`: `audioMicRunning`, `audioMicStarts` (churn), `audioStackFreeBytes`
+  (the task's own last reading), `audioInternalBytes` (free internal heap before
+  the start minus after the codec came up).
+
+## Backlog
+
+- `es7210::begin()` sends about 80 I2C transactions in one loop pass (40-80 ms at 100 kHz), again every ~6 s while I2S keeps stalling.
+- `audioApplySettings()` ignores `es7210::lastStalled()`: a gain write that stalls is not backed off.
+- `/api/info` does not report the loop task's own stack margin.
