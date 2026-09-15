@@ -6,9 +6,9 @@ finds it and reads it without ever making `loop()` wait on the bus. It reports:
 - a card in the portal's Clock page;
 - two Home Assistant sensors, on request, over the MQTT bus.
 
-The weather screen does not draw it yet. Three designs wait for the owner in
-`tools/climate/preview/`. The design and its sources are in the knowledge base,
-`docs/21-onboard-climate-sensor.md`.
+The weather screen draws it as design B, "outside | inside". The owner chose it
+on 2026-09-15 from the previews in `tools/climate/preview/`. The design and its
+sources are in the knowledge base, `docs/21-onboard-climate-sensor.md`.
 
 ## Hardware
 
@@ -38,7 +38,9 @@ The weather screen does not draw it yet. Three designs wait for the owner in
 |---|---|
 | `shtc3.h` | the datasheet: commands, timing, CRC-8, ID mask, conversions. No I/O, tested on the host |
 | `climate_model.h` | after the sensor: smoothing, offsets, humidity at the corrected temperature (Magnus), staleness, the settings' bounds. Tested on the host |
-| `climate.h/.cpp` | the reader in `loop()`, `/api/info`'s object, the Home Assistant discovery |
+| `climate.h/.cpp` | the reader in `loop()`, `/api/info`'s object, the pause, the Home Assistant discovery |
+| `../clocks/weather_layout.h` | the weather clock on any GFX target, design B included; render.py's `CL_B_*` name for name |
+| `../clocks/clock_weather.cpp` | gathers the time, the weather and `climateGet()` for it |
 
 ## The cycle
 
@@ -87,8 +89,15 @@ offsets, a new offset shows at once.
 - `tempC`, `humidity`, `sensorTempC`, `sensorHumidity`, `ageS`, while a reading
   exists;
 - the counters `reads`, `crcErrors`, `i2cErrors`, `softResets`;
+- `id`, the ID register as read (`"0x...."`). An SHTC3 has
+  `id & 0x083F == 0x0807` (datasheet Table 15);
 - `foreignDevice`, if something other than an SHTC3 answered;
+- `pausedS`, while `/api/climate/pause` holds the reader;
 - with the bus, `ha` and `haPublishes`.
+
+`GET /api/climate/pause?s=0-600` starts no new reading for that long, so the
+weather screen's stale state can be seen on a healthy board; `s=0` resumes. It
+is runtime only and not saved.
 
 ## Settings
 
@@ -103,12 +112,37 @@ are exported and imported with the rest. Their bounds are in
 | Temperature offset, °C | `climateTempOffset` (tenths) | `climTOff` | 0 | ±20.0 |
 | Humidity offset, %RH | `climateHumOffset` (tenths) | `climHOff` | 0 | ±20.0 |
 | Correct the humidity with the temperature | `climateRhFollowsT` | `climRhT` | on | |
-| On the weather screen | `climateShow` | `climShow` | 0 off | 1 line, 2 badge, 3 split. Stored, not drawn yet |
+| On the weather screen | `climateShow` | `climShow` | 1 Outside \| inside | 0 off |
 | Publish to Home Assistant | `climateHa` | `climHa` | **off** | only in builds with the bus |
 
 The card is `data-need="climate"`: `/api/portal` lists the feature only in
 `CLIMATE_ENABLED` builds. `handleSave()` touches these settings only when the
 card's fields were posted.
+
+## The weather screen
+
+Design B, drawn by `drawWeatherScreen()` in `src/clocks/weather_layout.h`.
+`climate::weatherIndoor()` decides what it shows (host tested):
+
+| `/api/info` `climate.state` | On the weather screen | Screen |
+|---|---|---|
+| `ok` | Outside \| inside | the split with the values |
+| `stale` | Outside \| inside | the split with `--.-°` and `--%`, all dim |
+| `absent`, `probing`, `off` | any | today's screen |
+| any | Off | today's screen |
+
+- **Probing** counts as absent, so a board without the part shows no dashes
+  while it is being looked for.
+- **Found but silent.** A sensor found but giving no reading turns stale after
+  three intervals (at least 30 s).
+- **The unit letter.** A three-character outside temperature (-10 °C and below,
+  100 °F and above) keeps its degree mark and drops the letter.
+- **No heap and no I2C on a frame.** `climateGet()` reads the reader's
+  snapshot, and the corrected reading is cached, so a frame that changed
+  nothing runs no `exp()`.
+
+`tools/climate/check_weather_screen.py` holds the header's frames to the
+previews, pixel for pixel.
 
 ## Home Assistant
 
@@ -140,6 +174,9 @@ with seven taken.
 - `python3 tools/climate/check_climate.py`: the arithmetic against the
   datasheet's examples. The pre-commit hook runs it.
 - `python3 tools/climate/render.py`: the previews and their layout budget.
+- `python3 tools/climate/check_weather_screen.py`: the weather screen's firmware
+  drawing on the host's Adafruit GFX against the previews, pixel for pixel. The
+  pre-commit hook runs it.
 - `python3 tools/flag_matrix.py`.
 
 ## Not verified on hardware
@@ -153,6 +190,8 @@ with seven taken.
 - The heap the I2C driver takes (`freeInternalHeap` in `/api/info` before and
   after).
 - The time `loop()` spends in "climate" (`loopSlowPart`).
+- Design B on the panel: live, stale (with the pause) and the fallback, and the
+  indoor colours as the panel shows them.
 
 ## Upstream
 
@@ -161,7 +200,8 @@ the weather clock. For that PR:
 - `shtc3.h`, `climate_model.h` and the reader;
 - no flag: compiled for the Waveshare env and found by its ID;
 - the portal card, and `/api/info`;
-- the weather-screen design once chosen.
+- design B: `weather_layout.h` and `clock_weather.cpp`. Compare upstream's
+  weather clock with the fork's first.
 
 **Stays in the fork:**
 - the Home Assistant discovery (the MQTT bus is fork-only);

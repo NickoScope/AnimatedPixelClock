@@ -52,6 +52,11 @@ def c565(c):
 
 
 def gfx_dir():
+    # The panel's own env first: tools/flag_matrix.py installs a scratch env's
+    # copy next to it while it runs, and a half-copied library would not build.
+    own = ROOT / ".pio/libdeps/matrix-waveshare-rgb/Adafruit GFX Library"
+    if (own / "Adafruit_GFX.cpp").is_file():
+        return own
     hits = sorted(glob.glob(str(ROOT / ".pio/libdeps/*/Adafruit GFX Library/Adafruit_GFX.cpp")))
     if not hits:
         sys.exit("check_weather_screen: build any env once so PlatformIO installs Adafruit GFX")

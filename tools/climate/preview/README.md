@@ -1,9 +1,22 @@
 # Weather screen with the indoor reading: previews, 2026-09-15
 
 The owner's request (18:24): build the board's temperature/humidity sensor
-into the weather screen, beautifully. Three designs are drawn here **before
-any weather-screen code**. The owner picks one; the firmware then copies that
-design's `CL_*` constants from `tools/climate/render.py`.
+into the weather screen, beautifully. Three designs were drawn here before any
+weather-screen code.
+
+**Chosen: B, split "outside | inside"** (owner, 2026-09-15 19:10). The firmware
+draws it from `src/clocks/weather_layout.h`, whose `CL_B_*` constants, colours,
+house glyph and dashes equal render.py's name for name.
+
+`tools/climate/check_weather_screen.py` runs that header on the host with the
+real Adafruit GFX library. It draws 11 frames, and all of them come out
+pixel-identical, with the strings in `frames.json`:
+- `today_live`, `today_absent`, `today_worst`;
+- the three `b_split_*` frames;
+- B with the sensor absent, which must equal `today_absent`;
+- the four edge frames below.
+
+A and C stay here as the record of the choice.
 
 Every PNG is drawn by `tools/climate/render.py`. Each frame exists at 6x
 (`name.png`) and at 1:1 (`name_128x64.png`). `contact_sheet.png` shows them all
@@ -86,6 +99,13 @@ The time and the details row do not move.
   the rule; the degree mark stays (`b_split_worst`). That happens at -10 °C and
   below, or 100 °F and above.
 
+**The edge frames** (`b_split_edge_*`, sheet `b_edges_sheet.png`, synthetic):
+- -9 °C and 99 °F keep the letter.
+- -10 °C and 100 °F drop the letter and keep the degree mark.
+
+The check reads this off the firmware's raster: the degree ring's pixels are
+lit, and the letter's are not.
+
 ### C: badge (`c_badge_*`)
 
 **Nothing on today's screen moves.** Two Picopixel lines sit at the right edge,
@@ -145,12 +165,11 @@ The icon stands for all seven kinds at every animation phase over 9.6 s.
 No two parts may touch or come within one pixel, and nothing may leave the
 panel. **Clean: 1792 cases.**
 
-## Not decided here
+## Decided, and still open
 
-- Which design, A, B or C.
-- Whether the humidity belongs on the screen at all. It could live only in the
-  portal and Home Assistant, which would let C become one line.
-- The indoor colours: white and dim are a first proposal.
-
-The portal already stores the choice (`climateShow`: 1 line, 2 badge, 3 split),
-but the weather screen draws nothing until the chosen design is built.
+- **Decided:** B. The portal's "On the weather screen" is Off or
+  Outside | inside (`climateShow` 0 or 1), with the split as the default.
+- **Open:** the indoor colours. White and dim were a first proposal and went in
+  as drawn; judge them on the panel.
+- **Open:** "Weather not set up" and "Fetching weather..." stay as they are,
+  with no indoor column. No design was drawn for them.
