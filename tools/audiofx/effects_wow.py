@@ -1,21 +1,48 @@
-"""Proposed "wow" versions of the visualizer, for the owner to choose from.
-Nothing here is in the firmware yet.
+"""The eight visualizer effects the owner picked on 2026-09-15 (styles 7-14),
+as the reference src/viz/wow/ is held to pixel for pixel
+(tools/audiofx/host/compare_wow.py).
 
-Each effect takes the richer frame the onboard DSP produces 50 times a second
-(tools/audiofx/dsp.py, src/audio/audio_dsp.h): smoothed levels, peak holds,
-bass/mid/treble, beats with a strength, loudness, the waveform. Drawing stays
-within what the panel's GFX calls and a PSRAM buffer can do.
+Each effect takes the frame the onboard DSP produces 50 times a second
+(tools/audiofx/dsp.py, src/audio/audio_dsp.h), or one derived from a PC packet
+(src/viz/wow/viz_frame.cpp): band bytes, smoothed levels, peak holds,
+bass/mid/treble, beats with a strength, the waveform.
+
+Written so that C++ can repeat it exactly:
+- scalars are Python floats, IEEE double; the host comparison builds C++ with double
+- buffers that are float32 here are float in C++, and a Python scalar mixed
+  into them is float32 first (NumPy 2 promotes weakly)
+- no NumPy maths on scalars, no np.interp, no Mersenne Twister: XorShift32
+- round() is half to even, like C's nearbyint(); % and // keep Python's signs
+- the rotation, the grid offset and the hue wrap, so float on the panel stays exact
 
 House style: black ground, bright but never blown out. No channel above 235.
 """
 import math
-import random
 
 import numpy as np
 
-from gfx import H, W, RgbCanvas, rgb565
+from gfx import BLACK, WHITE, H, W, RgbCanvas, rgb565
 
 CAP = 235
+SEED = 2463534242
+
+
+class XorShift32:
+    """Marsaglia's xorshift32; XorShift32 in src/viz/wow/wow_internal.h is its twin."""
+
+    def __init__(self, seed=SEED):
+        self.s = seed & 0xFFFFFFFF
+
+    def next(self):
+        x = self.s
+        x ^= (x << 13) & 0xFFFFFFFF
+        x ^= x >> 17
+        x ^= (x << 5) & 0xFFFFFFFF
+        self.s = x
+        return x
+
+    def uniform(self, a, b):
+        return a + (b - a) * (self.next() / 4294967296.0)
 
 
 def col(r, g, b, k=1.0):
@@ -50,19 +77,23 @@ class Wow:
     name = "wow"
     title = ""
 
-    def __init__(self, seed=1):
-        self.rng = random.Random(seed)
+    def __init__(self, react=1.0):
+        self.rng = XorShift32()
+        self.react = react              # settings.vizBeatFx / 100
         self.f = None
         self.beat_env = 0.0
         self.hue = 0.0
         self.hue_target = 0.0
 
     def update(self, frame):
-        """Called once per DSP frame, in order, so no beat is missed."""
+        """Called once per frame, in order, so no beat is missed."""
         self.f = frame
-        if frame["beat"]:
-            self.beat_env = max(self.beat_env, 0.55 + 0.45 * frame["strength"])
-            self.hue_target += 0.07
+        if frame["beat"] and self.react > 0.0:
+            self.beat_env = max(self.beat_env, (0.55 + 0.45 * frame["strength"]) * self.react)
+            self.hue_target += 0.07 * self.react
+            if self.hue_target >= 64.0:     # exact in float and double; hsv() reads only the fraction
+                self.hue_target -= 64.0
+                self.hue -= 64.0
             self.on_beat(frame)
 
     def on_beat(self, frame):
@@ -73,12 +104,13 @@ class Wow:
         self.hue += (self.hue_target - self.hue) * (1.0 - math.exp(-dt / 0.25))
 
     def clock(self, cv, text):
-        cv.fill_rect(W - 34, 0, 34, 10, 0)
-        cv.text(W - 31, 1, text, col(200, 200, 210))
+        """drawVizClock() in src/viz/visualizer.cpp, as on every style."""
+        cv.fill_rect(W - 34, 0, 34, 10, BLACK)
+        cv.text(W - 31, 1, text, WHITE)
 
 
 class PrismEQ(Wow):
-    name, title = "w1_prism_eq", "Prism EQ (from Classic EQ)"
+    name, title = "w1_prism_eq", "Prism EQ (7)"
 
     def render(self, cv, now, dt):
         f = self.f
@@ -108,7 +140,7 @@ class PrismEQ(Wow):
 
 
 class NeonMirrorPlus(Wow):
-    name, title = "w2_neon_mirror_plus", "Neon Mirror+ (from Neon Mirror)"
+    name, title = "w2_neon_mirror_plus", "Neon Mirror+ (8)"
 
     def render(self, cv, now, dt):
         f = self.f
@@ -134,52 +166,64 @@ class NeonMirrorPlus(Wow):
 
 
 class Spectrogram(Wow):
-    name, title = "w3_spectrogram", "Spectrogram (from Phosphor Waterfall)"
+    name, title = "w3_spectrogram", "Spectrogram (9)"
 
-    def __init__(self, seed=1):
-        super().__init__(seed)
-        self.buf = np.zeros((H, W), np.float32)     # 128x64 bytes in PSRAM on the panel
-        self.ticks = np.zeros(W, np.float32)
-        centers = (np.arange(32) + 0.5) * (H / 32.0)
-        self.rows = np.arange(H) + 0.5
-        self.centers = centers
+    def __init__(self, react=1.0):
+        super().__init__(react)
+        self.idx = np.zeros((H, W), np.int32)       # 128x64 bytes of colour index in PSRAM on the panel
+        self.ticks = [0] * W
+        self.lut = [col(*inferno(i / 63.0)) for i in range(64)]
 
     def update(self, frame):
         super().update(frame)
-        self.buf[:, :-1] = self.buf[:, 1:]
-        self.ticks[:-1] = self.ticks[1:]
-        col_v = np.interp(self.rows, self.centers, frame["bands8"] / 255.0)   # raw bytes: crisp in time
-        self.buf[:, -1] = col_v[::-1]                # bass at the bottom
-        self.ticks[-1] = 1.0 if frame["beat"] else 0.0
+        fp = [int(v) / 255.0 for v in frame["bands8"]]   # raw bytes: crisp in time
+        column = [0] * H
+        for r in range(H):          # linear between band centres 1, 3, ..., 63, flat beyond: np.interp's rule
+            x = r + 0.5
+            if x <= 1.0:
+                v = fp[0]
+            elif x >= 63.0:
+                v = fp[31]
+            else:
+                j = int((x - 1.0) / 2.0)
+                t = (x - (2 * j + 1)) / 2.0
+                v = fp[j] + (fp[j + 1] - fp[j]) * t
+            column[H - 1 - r] = int(min(63.0, max(0.0, v * 63.0)))   # bass at the bottom
+        steps = frame.get("steps", 1)
+        for s in range(steps):      # a PC packet stands for two DSP frames: same scroll speed
+            self.idx[:, :-1] = self.idx[:, 1:]
+            self.idx[:, -1] = column
+            self.ticks = self.ticks[1:] + [1 if (frame["beat"] and s == steps - 1) else 0]
 
     def render(self, cv, now, dt):
         self.step(dt)
-        lut = [col(*inferno(i / 63.0)) for i in range(64)]
-        idx = np.clip(self.buf * 63.0, 0, 63).astype(np.int32)
         for y in range(H):
-            row = idx[y]
+            row = self.idx[y]
             for x in range(W):
                 if row[x]:
-                    cv.px[y, x] = lut[row[x]]
-        for x in np.nonzero(self.ticks)[0]:
-            cv.vline(int(x), 0, 3, col(235, 200, 90))
+                    cv.px[y, x] = self.lut[row[x]]
+        for x in range(W):
+            if self.ticks[x]:
+                cv.vline(x, 0, 3, col(235, 200, 90))
 
 
 class RadialBloom(Wow):
-    name, title = "w4_radial_bloom", "Radial Bloom (from Purple LED Stage)"
+    name, title = "w4_radial_bloom", "Radial Bloom (10)"
+    MAX_RINGS = 16
 
-    def __init__(self, seed=1):
-        super().__init__(seed)
+    def __init__(self, react=1.0):
+        super().__init__(react)
         self.rot = 0.0
         self.rings = []
 
     def on_beat(self, frame):
         self.rings.append([6.0 + frame["bass"] * 6.0, 0.5 + 0.5 * frame["strength"]])
+        self.rings = self.rings[-self.MAX_RINGS:]
 
     def render(self, cv, now, dt):
         f = self.f
         self.step(dt)
-        self.rot += dt * (0.12 + f["treble"] * 0.5)
+        self.rot = (self.rot + dt * (0.12 + f["treble"] * 0.5)) % (2 * math.pi)
         cx, cy = 64, 33
         r0 = 5.0 + f["bass"] * 7.0
         for ring in self.rings:
@@ -204,11 +248,12 @@ class RadialBloom(Wow):
 
 
 class BeatParticles(Wow):
-    name, title = "w5_beat_particles", "Beat Particles (from Starfield Overdrive)"
+    name, title = "w5_beat_particles", "Beat Particles (11)"
+    KEEP = 180
 
-    def __init__(self, seed=1):
-        super().__init__(seed)
-        self.canvas = RgbCanvas()                   # 128x64x3 bytes in PSRAM on the panel
+    def __init__(self, react=1.0):
+        super().__init__(react)
+        self.canvas = RgbCanvas()                   # 128x64x3 float32 in PSRAM on the panel
         self.parts = []
         self.stars = [[self.rng.uniform(0, W), self.rng.uniform(0, H), self.rng.uniform(0.2, 1.0)] for _ in range(50)]
 
@@ -220,7 +265,7 @@ class BeatParticles(Wow):
             a = -math.pi / 2 + self.rng.uniform(-1.05, 1.05)
             v = self.rng.uniform(45, 95) * (0.6 + frame["strength"])
             self.parts.append([64.0, 62.0, math.cos(a) * v, math.sin(a) * v, 1.0, palette])
-        self.parts = self.parts[-180:]
+        self.parts = self.parts[-self.KEEP:]
 
     def render(self, cv, now, dt):
         f = self.f
@@ -247,12 +292,11 @@ class BeatParticles(Wow):
 
 
 class ScopeAfterglow(Wow):
-    name, title = "w6_scope_afterglow", "Scope Afterglow (from Oscilloscope)"
+    name, title = "w6_scope_afterglow", "Scope Afterglow (12)"
 
-    def __init__(self, seed=1):
-        super().__init__(seed)
-        self.glow = np.zeros((H, W), np.float32)    # 128x64 bytes in PSRAM on the panel
-        self.wave_serial = -1
+    def __init__(self, react=1.0):
+        super().__init__(react)
+        self.glow = np.zeros((H, W), np.float32)    # 128x64 float32 in PSRAM on the panel
 
     def render(self, cv, now, dt):
         f = self.f
@@ -291,10 +335,10 @@ class ScopeAfterglow(Wow):
 
 
 class TwinVU(Wow):
-    name, title = "w7_twin_vu", "Twin VU with afterglow (new)"
+    name, title = "w7_twin_vu", "Twin VU (13)"
 
-    def __init__(self, seed=1):
-        super().__init__(seed)
+    def __init__(self, react=1.0):
+        super().__init__(react)
         self.pos = [0.0, 0.0]
         self.vel = [0.0, 0.0]
         self.ghosts = [[], []]
@@ -335,10 +379,10 @@ class TwinVU(Wow):
 
 
 class Synthwave(Wow):
-    name, title = "w8_synthwave_grid", "Synthwave Grid (new)"
+    name, title = "w8_synthwave_grid", "Synthwave Grid (14)"
 
-    def __init__(self, seed=1):
-        super().__init__(seed)
+    def __init__(self, react=1.0):
+        super().__init__(react)
         self.offset = 0.0
 
     def render(self, cv, now, dt):
@@ -346,7 +390,7 @@ class Synthwave(Wow):
         self.step(dt)
         horizon = 30
         energy = (f["bass"] + f["mid"] + f["treble"]) / 3.0
-        self.offset += dt * (0.7 + energy * 2.0 + self.beat_env * 2.5)
+        self.offset = (self.offset + dt * (0.7 + energy * 2.0 + self.beat_env * 2.5)) % 1.0
         for y in range(horizon):
             cv.hline(0, y, W, col(18, 4, 30, y / float(horizon)))
         sr = 13 + int(f["bass"] * 5)
@@ -379,3 +423,4 @@ class Synthwave(Wow):
 
 
 ALL = [PrismEQ, NeonMirrorPlus, Spectrogram, RadialBloom, BeatParticles, ScopeAfterglow, TwinVU, Synthwave]
+STYLE = {cls.name: 7 + i for i, cls in enumerate(ALL)}   # settings.vizStyle

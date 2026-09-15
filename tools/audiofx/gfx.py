@@ -11,6 +11,7 @@ Sources, all in this tree:
   circle()   Adafruit_GFX::drawCircle(), midpoint
 """
 import json
+import math
 import pathlib
 
 import numpy as np
@@ -127,7 +128,7 @@ class Canvas:
     def fill_circle(self, x0, y0, r, c):
         x0, y0, r = int(x0), int(y0), int(r)
         for dy in range(-r, r + 1):
-            half = int((r * r - dy * dy) ** 0.5)
+            half = int(math.sqrt(r * r - dy * dy))
             self.hline(x0 - half, y0 + dy, 2 * half + 1, c)
 
     def text(self, x, y, s, c):
