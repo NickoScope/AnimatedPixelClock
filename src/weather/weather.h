@@ -10,16 +10,7 @@
 
 #include <Arduino.h>
 
-// Condition groups the icon renderer understands (mapped from WMO codes).
-enum WeatherIconKind : uint8_t {
-  WICON_SUN = 0,
-  WICON_PARTCLOUD,
-  WICON_CLOUD,
-  WICON_FOG,
-  WICON_RAIN,
-  WICON_SNOW,
-  WICON_STORM,
-};
+#include "weather_icons.h"   // the condition groups the icon renderer understands (mapped from WMO codes)
 
 struct WeatherData {
   bool valid;            // true once at least one fetch succeeded

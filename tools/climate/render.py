@@ -4,13 +4,20 @@ reading added, 128x64: three designs for the owner to choose from before any
 weather-screen code is written (owner, 2026-09-15 18:24: build the board's
 temperature/humidity sensor and fit it beautifully into the weather screen).
 
-"today" is the weather clock the panel draws now. Its layout #defines, the
-drawTemperature() position and its default colours are read out of
-src/clocks/clock_weather.cpp and src/config/settings.cpp, and every draw call is
-mirrored line by line: the icons, the size-3 temperature with its drawCircle
-degree, the details row, drawNoWiFiIcon() (executed from its source),
-drawMeridiemIndicator(). The variants change it only where their constants
-below say.
+"today" is the weather clock the panel draws. Its layout #defines are read out
+of src/clocks/weather_layout.h and its default colours out of
+src/config/settings.cpp, and every draw call is mirrored line by line: the
+icons, the size-3 temperature with its drawCircle degree, the details row, the
+no-WiFi icon (its calls executed from src/clocks/wifi_icon.h), AM/PM. The
+variants change it only where their constants below say.
+
+The owner chose B on 2026-09-15 19:10. The firmware draws it from
+weather_layout.h, whose CL_B_* values, colours, house glyph and dashes equal the
+ones below name for name. tools/climate/check_weather_screen.py runs that header
+on the host with the real Adafruit GFX library and holds its frames to these,
+pixel for pixel. The b_split_edge_* frames are the unit letter's edge: three
+characters (-10 °C and below, 100 °F and above) keep the degree mark and drop
+the letter.
 
 Fonts are the panel's: the built-in 5x7 (tools/glcdfont.json, Adafruit GFX
 drawChar at sizes 1-3, with its "c >= 176 -> c + 1" classic quirk) and
@@ -25,7 +32,7 @@ variant falls back to today's screen, drawn once as today_absent. A layout
 budget renders each design with the widest strings, every icon at every
 animation phase, and refuses an overlap or ink off the panel.
 
-  python3 tools/climate/render.py     # frames into preview/ at 6x and 1:1, contact_sheet.png, frames.json
+  python3 tools/climate/render.py     # frames into preview/ at 6x and 1:1, contact_sheet.png, b_edges_sheet.png, frames.json
 """
 import json
 import math
@@ -44,16 +51,14 @@ W, H = 128, 64
 SCALE = 6
 
 # ── today's weather clock, read from the firmware ────────────────────────────
-WX = (ROOT / "src/clocks/clock_weather.cpp").read_text()
+WX = (ROOT / "src/clocks/weather_layout.h").read_text()
 _def = {m[1]: int(m[2]) for m in re.finditer(r"#define\s+(W[A-Z_]+)\s+(\d+)", WX)}
 WTIME_Y, WICON_X, WICON_Y = _def["WTIME_Y"], _def["WICON_X"], _def["WICON_Y"]
 WICON_SIZE, WDETAIL_Y = _def["WICON_SIZE"], _def["WDETAIL_Y"]
-_t = re.search(r"drawTemperature\((\d+),\s*WICON_Y\s*\+\s*(\d+)", WX)
-WTEMP_X, WTEMP_DY = int(_t[1]), int(_t[2])
-MERIDIEM_X = int(re.search(r"drawMeridiemIndicator\((\d+),\s*WTIME_Y\s*\+\s*(\d+)", WX)[1])
-MERIDIEM_DY = int(re.search(r"drawMeridiemIndicator\((\d+),\s*WTIME_Y\s*\+\s*(\d+)", WX)[2])
-WIFI_SRC = re.search(r"void drawNoWiFiIcon\(int x, int y\)\s*\{(.*?)\n\}",
-                     (ROOT / "src/clocks/clock_globals.cpp").read_text(), re.S)[1]
+WTEMP_X, WTEMP_DY = _def["WTEMP_X"], _def["WTEMP_DY"]
+MERIDIEM_X, MERIDIEM_DY = _def["WMERIDIEM_X"], _def["WMERIDIEM_DY"]
+WIFI_SRC = re.search(r"void drawNoWiFiIconOn\(G &g, int x, int y\)\s*\{(.*?)\n\}",
+                     (ROOT / "src/clocks/wifi_icon.h").read_text(), re.S)[1]
 
 SETTINGS = (ROOT / "src/config/settings.cpp").read_text()
 
@@ -408,7 +413,7 @@ def no_wifi(f, sc):
     if sc["wifi"]:
         return
     with f.part("nowifi"):
-        for m in re.finditer(r"display\.(drawPixel|fillRect|drawLine)\(([^;]*)\);", WIFI_SRC):
+        for m in re.finditer(r"g\.(drawPixel|fillRect|drawLine)\(([^;]*)\);", WIFI_SRC):
             args = [eval(a.replace("DISPLAY_WHITE", "0"), {}, {"x": 0, "y": 0}) for a in m[2].split(",")]
             if m[1] == "drawPixel":
                 f.dot(args[0], args[1], WHITE)
@@ -519,6 +524,12 @@ WORST = dict(time=(12, 47), h12=True, pm=True, wifi=False, F=True, now=2000, pha
              ind=dict(state="live", t=27.0, rh=100.0))
 
 SCENES = {"live": LIVE, "stale": STALE, "worst": WORST}
+# B's unit-letter edge, synthetic, on either side of three characters (WORST is
+# the third case, 104 °F). The details row follows the outside temperature.
+EDGE = {"edge_m9c": dict(LIVE, out=dict(LIVE["out"], kind="snow", t=-9.4, hi=-6.0, lo=-12.4, rh=86)),
+        "edge_m10c": dict(LIVE, out=dict(LIVE["out"], kind="snow", t=-9.6, hi=-6.0, lo=-12.4, rh=86)),
+        "edge_99f": dict(LIVE, F=True, out=dict(LIVE["out"], kind="sun", t=37.2, hi=38.3, lo=24.1, rh=31)),
+        "edge_100f": dict(LIVE, F=True, out=dict(LIVE["out"], kind="sun", t=37.8, hi=38.9, lo=24.1, rh=31))}
 
 
 def draw(fn, sc):
@@ -609,15 +620,33 @@ def contact_sheet(frames):
     sheet.save(PREVIEW / "contact_sheet.png")
 
 
+def edges_sheet(frames):
+    names = ("b_split_edge_m9c", "b_split_edge_m10c", "b_split_edge_99f", "b_split_edge_100f")
+    labels = ("-9 C: letter kept", "-10 C: letter dropped", "99 F: letter kept", "100 F: letter dropped")
+    k, pad, lab = 4, 16, 18
+    cw, chh = W * k, H * k
+    sheet = Image.new("RGB", (pad + 2 * (cw + pad), pad + 2 * (lab + chh + pad)), (22, 22, 22))
+    d = ImageDraw.Draw(sheet)
+    font = ImageFont.load_default()
+    for i, (n, t) in enumerate(zip(names, labels)):
+        x, y = pad + (i % 2) * (cw + pad), pad + (i // 2) * (lab + chh + pad)
+        d.text((x, y), t, fill=(230, 180, 90), font=font)
+        sheet.paste(frames[n].img.resize((cw, chh), Image.NEAREST), (x, y + lab))
+    sheet.save(PREVIEW / "b_edges_sheet.png")
+
+
 def main():
     PREVIEW.mkdir(exist_ok=True)
     frames = {"today_live": draw(today, LIVE), "today_absent": draw(today, ABSENT), "today_worst": draw(today, WORST)}
     for vname, fn in VARIANTS.items():
         for sname, sc in SCENES.items():
             frames[f"{vname}_{sname}"] = draw(fn, sc)
+    for ename, sc in EDGE.items():                   # B only: the unit letter's edge
+        frames[f"b_split_{ename}"] = draw(variant_b, sc)
     for name, f in frames.items():
         save(f, name)
     contact_sheet(frames)
+    edges_sheet(frames)
     report, bad = budget()
     meta = {"_meta": {"budget": report, "problems": bad,
                       "colours_before_565": {"amber": CL_AMBER, "dim": CL_DIM, "rule": CL_RULE,
