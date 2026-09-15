@@ -249,3 +249,11 @@ From the code audit of 776fc04..7a0c49b (2026-09-15). Not fixed on purpose:
 - **Pillow.** The pre-commit hook's `check_weather_screen.py` needs it.
 - **`%.1f`.** The panel formats a float and the previews a double, so they can
   differ at an exact .x5.
+
+From the final audit of the merged branch `b26f764` (2026-09-15), MINOR, not fixed:
+- **`Reader::stop()`.** The sleep command goes out without the per-transaction
+  timing the read path has.
+- **Loop-task assert.** `WirePort` has no `-DAUDIO_DEBUG`-style check that it
+  runs on the loop task; es7210 has one.
+- **`/api/climate/pause?s=abc`.** A non-numeric value parses as 0 and silently
+  ends the pause instead of answering 400.
