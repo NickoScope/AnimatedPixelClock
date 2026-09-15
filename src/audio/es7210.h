@@ -24,7 +24,14 @@ constexpr uint8_t kAddr = 0x40;
 // ES7210 PGA steps (es7210_reg.h, es7210_gain_value_t): 0..33 dB in 3 dB, then 34.5, 36, 37.5.
 constexpr float kGainMaxDb = 37.5f;
 
-// True when the chip ACKs its address. Starts Wire on 47/48 if nobody has.
+// Every call below talks I2C on the board's shared bus, which src/board/board_i2c
+// starts at 100 kHz. Call them from the loop task only, so all traffic on that
+// bus stays on one core. Each returns false while the bus is not started.
+
+// True once boardI2cBegin() has started Wire.
+bool busReady();
+
+// True when the chip ACKs its address.
 bool probe();
 
 // Reset and configure for MIC1 + MIC2, 16-bit Philips I2S, slave, no TDM, then

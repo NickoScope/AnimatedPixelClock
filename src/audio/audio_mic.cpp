@@ -44,8 +44,8 @@ constexpr unsigned long kRetryMs = 30000;
 constexpr unsigned long kStallMs = 1000;
 constexpr unsigned long kActiveHoldMs = 5000;
 
-enum MicState : uint8_t { MIC_OFF, MIC_STARTING, MIC_OK, MIC_NO_CODEC, MIC_NO_I2S, MIC_NO_MEMORY, MIC_STALLED };
-const char *const kStateNames[] = {"off", "starting", "ok", "no codec", "i2s failed", "no memory", "stalled"};
+enum MicState : uint8_t { MIC_OFF, MIC_STARTING, MIC_OK, MIC_NO_CODEC, MIC_NO_I2S, MIC_NO_MEMORY, MIC_STALLED, MIC_NO_I2C };
+const char *const kStateNames[] = {"off", "starting", "ok", "no codec", "i2s failed", "no memory", "stalled", "no i2c bus"};
 const char *const kSourceNames[] = {"auto", "pc", "mic"};
 
 portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
@@ -61,6 +61,11 @@ volatile unsigned long s_meterClipMs = 0;
 volatile bool s_meterClipped = false;
 TaskHandle_t s_task = nullptr;
 size_t s_internalBefore = 0;
+// The task sets s_i2sReady once MCLK runs; the loop task then configures the
+// codec over I2C and sets s_codecUp. A stall clears it for another bring-up.
+volatile bool s_i2sReady = false, s_codecUp = false;
+volatile unsigned long s_codecRetryMs = 0;
+uint8_t s_gainApplied = 255;   // loop task only
 
 // loop() only.
 unsigned long s_lastPcMs = 0;
@@ -130,6 +135,31 @@ void meter(const int16_t *hop) {
   }
 }
 
+// Loop task: the ES7210 register sequence, so every I2C transaction on the
+// shared bus happens on one core. MCLK is already running.
+void codecBringUp() {
+  if (!es7210::busReady()) {
+    if (s_state != MIC_NO_I2C) Serial.println("[audio] the I2C bus is not started (boardI2cBegin); the ES7210 waits");
+    s_state = MIC_NO_I2C;
+    s_codecRetryMs = millis() + kRetryMs;
+    return;
+  }
+  const uint8_t gain = settings.micGainDb;
+  if (!es7210::begin(gain)) {
+    s_state = MIC_NO_CODEC;
+    Serial.printf("[audio] no ES7210 answering at 0x%02X on I2C 47/48\n", es7210::kAddr);
+    s_codecRetryMs = millis() + kRetryMs;
+    return;
+  }
+  s_gainApplied = gain;
+  s_state = MIC_OK;
+  s_codecUp = true;
+  const size_t now = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+  if (!s_internalCost) s_internalCost = s_internalBefore > now ? (uint32_t)(s_internalBefore - now) : 0;
+  Serial.printf("[audio] ES7210 up: 48 kHz, gain %u dB, internal heap cost about %u B\n", (unsigned)gain,
+                (unsigned)s_internalCost);
+}
+
 void captureTask(void *) {
   void *dspMem = psram(sizeof(audiodsp::Dsp));
   void *workMem = psram(sizeof(audiodsp::Frame));
@@ -146,8 +176,7 @@ void captureTask(void *) {
   }
 
   QueueHandle_t events = nullptr;
-  bool i2sUp = false, codecUp = false;
-  uint8_t gainApplied = 255;
+  bool i2sUp = false;
   size_t got = 0;
   unsigned long lastData = millis();
   for (;;) {
@@ -161,23 +190,16 @@ void captureTask(void *) {
         continue;
       }
       vTaskDelay(pdMS_TO_TICKS(20));   // MCLK runs before the codec is touched, as the BSP orders it
+      s_i2sReady = true;
     }
-    if (!codecUp) {
-      const uint8_t gain = settings.micGainDb;
-      if (!es7210::begin(gain)) {
-        s_state = MIC_NO_CODEC;
-        Serial.printf("[audio] no ES7210 answering at 0x%02X on I2C 47/48\n", es7210::kAddr);
-        vTaskDelay(pdMS_TO_TICKS(kRetryMs));
-        continue;
-      }
-      codecUp = true;
-      gainApplied = gain;
+    if (!s_codecUp) {
+      // audioPoll() on the loop task configures the codec. Keep the DMA
+      // flowing meanwhile and drop what arrives.
+      size_t n = 0;
+      i2s_read(kPort, reinterpret_cast<char *>(hop), hopBytes, &n, pdMS_TO_TICKS(100));
+      got = 0;
       lastData = millis();
-      s_state = MIC_OK;
-      const size_t now = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
-      if (!s_internalCost) s_internalCost = s_internalBefore > now ? (uint32_t)(s_internalBefore - now) : 0;
-      Serial.printf("[audio] ES7210 up: 48 kHz, gain %u dB, internal heap cost about %u B\n",
-                    (unsigned)gain, (unsigned)s_internalCost);
+      continue;
     }
     if (s_settingsDirty) {
       s_settingsDirty = false;
@@ -185,7 +207,6 @@ void captureTask(void *) {
       c.agc = settings.micAgc;
       c.gateDb = settings.micGateDb;
       dsp->setConfig(c);
-      if (settings.micGainDb != gainApplied && es7210::setGainDb(settings.micGainDb)) gainApplied = settings.micGainDb;
     }
 
     size_t n = 0;
@@ -195,12 +216,13 @@ void captureTask(void *) {
       if (ev.type == I2S_EVENT_RX_Q_OVF) s_overruns++;
     if (n == 0) {
       if (millis() - lastData > kStallMs) {
-        // No samples for a second: bring the codec up again on the next pass.
+        // No samples for a second: audioPoll() brings the codec up again, 5 s
+        // from now, so a broken driver does not re-init it every second.
         s_state = MIC_STALLED;
         s_stalls++;
-        codecUp = false;
+        s_codecRetryMs = millis() + 5000;
+        s_codecUp = false;
         got = 0;
-        vTaskDelay(pdMS_TO_TICKS(5000));   // a broken driver must not re-init the codec every second
       }
       continue;
     }
@@ -232,6 +254,9 @@ void captureTask(void *) {
 void audioApplySettings() {
   clampAudioSettings();
   s_settingsDirty = true;
+  // The web handlers call this on the loop task, so the gain goes over I2C from here.
+  if (s_codecUp && settings.micGainDb != s_gainApplied && es7210::setGainDb(settings.micGainDb))
+    s_gainApplied = settings.micGainDb;
 }
 
 void audioBegin() {
@@ -247,6 +272,7 @@ void audioBegin() {
 }
 
 void audioPoll(bool vizShown) {
+  if (s_i2sReady && !s_codecUp && (int32_t)(millis() - s_codecRetryMs) >= 0) codecBringUp();
   if (vizShown && micFeedsViz()) s_lastActiveMs = millis();
   uint8_t packet[audiodsp::kPacketLen];
   bool have;

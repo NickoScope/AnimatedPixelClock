@@ -24,12 +24,13 @@
 
 enum AudioSource : uint8_t { AUDIO_SRC_AUTO = 0, AUDIO_SRC_PC = 1, AUDIO_SRC_MIC = 2 };
 
-// setup(): start the capture task. It brings up I2S, then the codec, and
-// retries both every 30 s if either is missing.
+// setup(): start the capture task, which brings up I2S and MCLK. Retries every 30 s.
 void audioBegin();
 
 // loop(), every pass: vizShown is whether the visualizer is on screen. The DSP
 // runs only while it is (and 5 s after); off screen the task keeps a level meter.
+// This is also where the ES7210 is configured over I2C, once MCLK runs and the
+// shared bus is started (boardI2cBegin), and again after a stall.
 void audioPoll(bool vizShown);
 
 // network.cpp, for each "FFT1" packet from the PC: false when it must be dropped.

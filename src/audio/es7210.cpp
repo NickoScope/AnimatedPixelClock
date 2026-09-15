@@ -13,11 +13,6 @@
 namespace es7210 {
 namespace {
 
-// BSP_I2C_SDA / BSP_I2C_SCL (bsp/config.h) and BSP_I2C_FREQ_HZ (bsp/esp32_s3_matrix.h).
-constexpr int kSda = 47;
-constexpr int kScl = 48;
-constexpr uint32_t kI2cHz = 400000;
-
 // es7210_reg.h
 enum : uint8_t {
   RESET_00 = 0x00, CLOCK_OFF_01 = 0x01, MAINCLK_02 = 0x02, POWER_DOWN_06 = 0x06, OSR_07 = 0x07,
@@ -29,16 +24,6 @@ enum : uint8_t {
   MIC1_POWER_47 = 0x47, MIC2_POWER_48 = 0x48, MIC3_POWER_49 = 0x49, MIC4_POWER_4A = 0x4A,
   MIC12_POWER_4B = 0x4B, MIC34_POWER_4C = 0x4C,
 };
-
-bool s_wire = false;
-
-bool startWire() {
-  // Wire.begin() on a bus another module already started logs a warning and
-  // returns true (Wire.cpp, "Bus already started in Master Mode"); it has its
-  // own lock, so the capture task on core 0 may share it with loop().
-  if (!s_wire) s_wire = Wire.begin(kSda, kScl, kI2cHz);
-  return s_wire;
-}
 
 bool writeReg(uint8_t reg, uint8_t value) {
   Wire.beginTransmission(kAddr);
@@ -94,14 +79,21 @@ bool micSelect(uint8_t code) {
 
 }  // namespace
 
+// The bus belongs to src/board/board_i2c: boardI2cBegin() in setup() starts
+// Wire on SDA 47 / SCL 48 at 100 kHz, one clock and one timeout for every device
+// on it. This driver never begins the bus or sets its clock; until then it fails.
+// 100 kHz is also the speed esp_codec_dev drives this chip at
+// (components/esp_codec_dev/platform/audio_codec_ctrl_i2c.c, DEFAULT_I2C_CLOCK).
+bool busReady() { return i2cIsInit(0); }
+
 bool probe() {
-  if (!startWire()) return false;
+  if (!busReady()) return false;
   Wire.beginTransmission(kAddr);
   return Wire.endTransmission() == 0;
 }
 
 bool begin(float gainDb) {
-  if (!startWire()) return false;
+  if (!busReady()) return false;
   const uint8_t code = gainCode(gainDb);
 
   // es7210_open()
@@ -149,6 +141,7 @@ bool begin(float gainDb) {
 }
 
 bool setGainDb(float gainDb) {
+  if (!busReady()) return false;
   const uint8_t code = gainCode(gainDb);
   bool ok = updateReg(MIC1_GAIN_43, 0x0F, code);
   ok &= updateReg(MIC2_GAIN_44, 0x0F, code);
@@ -157,6 +150,7 @@ bool setGainDb(float gainDb) {
 
 // es7210_stop()
 bool end() {
+  if (!busReady()) return false;
   bool ok = true;
   ok &= writeReg(MIC1_POWER_47, 0xFF);
   ok &= writeReg(MIC2_POWER_48, 0xFF);
