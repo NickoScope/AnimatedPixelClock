@@ -2238,5 +2238,40 @@ class RestartTests(unittest.TestCase):
         self.assertEqual(len(again._mq.published), n)
 
 
+class AppDaemonArgsTests(unittest.TestCase):
+    """HA 2026-09-15: AppDaemon 4.5 puts its own AppConfig fields into self.args, config_path as a pathlib.Path
+    (appdaemon/models/config/app.py, 4.5.13). They must not reach the settings, config_last or any payload."""
+
+    def test_appdaemon_fields_are_dropped(self):
+        store = tempfile.mkdtemp()
+        args = app_args(store_dir=store)
+        args.update({"name": "matrix_market", "config_path": pathlib.Path("/config/apps/apps.yaml"),
+                     "module": "matrix_market.app", "class": "MatrixMarket", "priority": 50.0,
+                     "dependencies": set(), "disable": False, "pin_app": True})
+        a = MatrixMarket(args)
+        a.initialize()
+        settle(a)
+        self.addCleanup(a.terminate)
+        a._refresh("probe", False)                     # raised TypeError on a PosixPath before the fix
+        last = a._store.load_table("config_last")
+        self.assertIsNotNone(last)
+        json.dumps(last)                                # every value is JSON-native
+        for key in ("config_path", "name", "module", "class", "priority", "dependencies", "disable", "pin_app"):
+            self.assertNotIn(key, last, key)
+
+    def test_a_failing_job_logs_where(self):
+        a = MatrixMarket(app_args())
+        a.initialize()
+        settle(a)
+        self.addCleanup(a.terminate)
+        def boom():
+            raise ValueError("probe")
+        a._worker.put(boom)
+        settle(a)
+        lines = [msg for level, msg in a.logs if "ValueError in boom" in msg]
+        self.assertTrue(lines, "the failure is logged")
+        self.assertIn("test_matrix_market.py:", lines[-1], "with the file and line it came from")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

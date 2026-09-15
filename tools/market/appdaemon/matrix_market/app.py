@@ -24,6 +24,8 @@ import json
 import pathlib
 import queue
 import threading
+import traceback
+import sys
 import time
 from typing import Callable, List, Optional
 
@@ -37,6 +39,17 @@ from .features import Context, Feature
 from .publisher import CONFIG_MAX, Publisher, Topics
 from .registry import FEATURES, PROVIDERS
 from .store import Store
+
+
+APPDAEMON_KEYS = frozenset({"name", "config_path", "module", "class", "dependencies", "global_dependencies",
+                            "global", "disable", "priority", "pin_app", "pin_thread", "log", "log_level"})
+
+
+def _tail_traceback(frames: int = 6) -> str:
+    """The last frames of the exception being handled, file:line and function only (no values), so a failure
+    inside AppDaemon can be located from its log."""
+    tb = traceback.extract_tb(sys.exc_info()[2])[-frames:]
+    return " <- ".join("%s:%d %s" % (pathlib.Path(f.filename).name, f.lineno, f.name) for f in reversed(tb))
 
 
 DEBOUNCE_S = 5          # a burst of portal saves costs one recompute (the panel's audit rule)
@@ -80,7 +93,7 @@ class Worker:
                 with self.busy:
                     fn(*args)
             except Exception as e:              # the message too (audit MINOR 8); messages carry paths, never queries
-                self.log("market: %s in %s: %s" % (type(e).__name__, getattr(fn, "__name__", "a job"), str(e)[:200]), level="WARNING")
+                self.log("market: %s in %s: %s [%s]" % (type(e).__name__, getattr(fn, "__name__", "a job"), str(e)[:200], _tail_traceback()), level="WARNING")
             finally:
                 self.q.task_done()
 
@@ -95,7 +108,10 @@ def build_features(ctx: Context, names: List[str], device: str) -> List[Feature]
 
 class MatrixMarket(hass.Hass):
     def initialize(self):
-        args = dict(self.args or {})
+        # AppDaemon 4.5's AppConfig.args is its whole model dump: name, config_path (a pathlib.Path), module,
+        # class, priority and the rest next to our keys (appdaemon/models/config/app.py, 4.5.13). Kept out of the
+        # settings, or config_last and the payloads meet a Path that JSON cannot write (seen on HA 2026-09-15).
+        args = {k: v for k, v in dict(self.args or {}).items() if k not in APPDAEMON_KEYS}
         store_dir = args.get("store_dir") or config.DEFAULT_STORE_DIR
         # The local override: <store_dir>/local.json unless local_file says otherwise ("" = none). Never under
         # apps/, where AppDaemon would read it as app configuration (audit M2).
@@ -219,7 +235,7 @@ class MatrixMarket(hass.Hass):
             try:
                 f.on_connect()
             except Exception as e:
-                self.log("market: %s in %s.on_connect: %s" % (type(e).__name__, f.name, str(e)[:120]), level="WARNING")
+                self.log("market: %s in %s.on_connect: %s [%s]" % (type(e).__name__, f.name, str(e)[:120], _tail_traceback()), level="WARNING")
         self._refresh("reconnect", False)
 
     def _on_message(self, client, userdata, msg):
@@ -328,7 +344,7 @@ class MatrixMarket(hass.Hass):
                 f.contribute(snap, fetch)
             except Exception as e:
                 failed.append(f.name)
-                self.log("market: %s in %s.contribute: %s; its previous records stay" % (type(e).__name__, f.name, str(e)[:200]),
+                self.log("market: %s in %s.contribute: %s; its previous records stay [%s]" % (type(e).__name__, f.name, str(e)[:200], _tail_traceback()),
                          level="WARNING")
         snap.asof = (self._ctx.data.get("asof") or dt.date.min).isoformat() if self._ctx.data.get("asof") else None
         status = self.status_payload()
