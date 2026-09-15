@@ -120,6 +120,21 @@ void setupWebServer() {
  server.on("/metrics", handleMetricsAPI);
  server.on("/api/info", HTTP_GET, handleDeviceInfo);
  server.on("/api/diagnostics", HTTP_GET, handleDeviceInfo);
+#if defined(CLIMATE_ENABLED)
+ // GET /api/climate/pause?s=0-600 - start no reading of the board's sensor for
+ // that long, so the weather screen's stale state can be seen on the panel;
+ // s=0 resumes. Runtime only, not saved, like the display routes below.
+ server.on("/api/climate/pause", HTTP_GET, []() {
+   server.sendHeader("Access-Control-Allow-Origin", "*");
+   const long s = server.hasArg("s") ? server.arg("s").toInt() : -1;
+   if (s < 0 || s > 600) {
+     server.send(400, "application/json", "{\"success\":false,\"error\":\"s must be 0-600\"}");
+     return;
+   }
+   climatePause((uint32_t)s);
+   server.send(200, "application/json", String("{\"success\":true,\"pausedS\":") + s + "}");
+ });
+#endif
  server.on("/api/anim/play", HTTP_GET, handleAnimPlay);
  server.on("/api/export", HTTP_GET, handleExportConfig);
  server.on("/api/import", HTTP_POST, handleImportConfig);

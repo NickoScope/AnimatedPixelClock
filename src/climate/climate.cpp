@@ -64,6 +64,10 @@ bool     s_foreign = false;   // something at 0x70 answered with another ID
 bool     s_reset   = false;   // the next cycle starts with a soft reset
 bool     s_have    = false;   // a good reading exists
 bool     s_fresh   = false;   // a reading the MQTT side has not published yet
+bool     s_idRead  = false;   // the ID register was read with a good CRC
+uint16_t s_id      = 0;       // its value, whatever answered at 0x70 (/api/info)
+bool     s_paused  = false;   // climatePause(): no cycle starts before s_pauseUntilMs
+uint32_t s_pauseUntilMs = 0;
 uint32_t s_stepUs = 0, s_waitUs = 0;
 uint32_t s_dueMs = 0, s_lastOkMs = 0, s_foundMs = 0;   // s_foundMs: when the ID first matched
 uint8_t  s_tries = 0, s_fails = 0, s_probes = 0;
@@ -303,6 +307,10 @@ void climateLoop() {
       return;
 
     case Step::Due:
+      if (s_paused) {
+        if ((int32_t)(millis() - s_pauseUntilMs) < 0) return;
+        s_paused = false;
+      }
       if ((int32_t)(millis() - s_dueMs) < 0) return;
       if (!send(shtc3::kWakeup)) {
         failed(true, false);
@@ -335,7 +343,9 @@ void climateLoop() {
           failed(false, true);
           return;
         }
-        if (!shtc3::isShtc3Id(shtc3::wordValue(id))) {
+        s_id = shtc3::wordValue(id);
+        s_idRead = true;
+        if (!shtc3::isShtc3Id(s_id)) {
           // Something else answers at 0x70: send it nothing more than a look once a minute.
           s_foreign = true;
           s_step = Step::Due;
@@ -439,6 +449,11 @@ void climateSettingsChanged() {
 #endif
 }
 
+void climatePause(uint32_t seconds) {
+  s_paused = seconds > 0;
+  s_pauseUntilMs = millis() + seconds * 1000UL;
+}
+
 void climateInfoJson(JsonObject out) {
   const ClimateReading r = climateGet();
   out["state"] = climateStateName(r.state);
@@ -455,6 +470,15 @@ void climateInfoJson(JsonObject out) {
   out["i2cErrors"] = s_i2cErrors;
   out["softResets"] = s_resets;
   if (s_foreign) out["foreignDevice"] = true;
+  if (s_idRead) {
+    char id[8];
+    snprintf(id, sizeof(id), "0x%04X", s_id);
+    out["id"] = id;   // an SHTC3 has (id & 0x083F) == 0x0807: datasheet Table 15
+  }
+  if (s_paused) {
+    const int32_t left = (int32_t)(s_pauseUntilMs - millis());
+    out["pausedS"] = left > 0 ? (uint32_t)left / 1000UL : 0UL;
+  }
 #if defined(MQTT_BUS_ENABLED)
   out["ha"] = settings.climateHa;
   out["haPublishes"] = s_haPublishes;

@@ -38,6 +38,7 @@ void climateLoop();                     // every loop() pass: at most one short 
 ClimateReading climateGet();
 const char *climateStateName(ClimateState s);
 void climateSettingsChanged();          // after the portal or an import changed a climate setting
+void climatePause(uint32_t seconds);    // no new reading for that long (0 resumes), so the stale state can be seen; not saved
 void climateInfoJson(JsonObject out);   // /api/info's "climate"
 
 #endif  // CLIMATE_ENABLED
