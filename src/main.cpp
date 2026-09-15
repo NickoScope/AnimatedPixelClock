@@ -28,6 +28,12 @@
 #if defined(CLIPS_SD_ENABLED)
 #include "clips/clip_sd.h"
 #endif
+#if defined(CLIMATE_ENABLED)
+#include "climate/climate.h"
+#endif
+#if defined(BOARD_WAVESHARE_RGB_MATRIX)
+#include "board/board_i2c.h"
+#endif
 
 // ========== External Objects ==========
 extern WiFiUDP udp;              // Defined in network.cpp
@@ -376,6 +382,9 @@ void setup() {
   Serial.begin(115200);
   delay(1000);
   healthBegin();   // confirms an OTA image only once it has run, and reports the last crash: src/health
+#if defined(BOARD_WAVESHARE_RGB_MATRIX)
+  boardI2cBegin();  // the board's shared I2C bus, once, before any module on it: src/board/board_i2c.h
+#endif
 
   // Load settings from flash
   loadSettings();
@@ -540,6 +549,10 @@ void setup() {
 
   // Background weather fetcher (idles cheaply while weather is disabled)
   MEMTRACE("weather");
+#if defined(CLIMATE_ENABLED)
+  climateBegin();   // the board's SHTC3 on I2C; found and read from loop(): src/climate
+  MEMTRACE("climate");
+#endif
 
   // Show IP address for 5 seconds (configurable via web interface)
   if (displayAvailable && settings.showIPAtBoot) {
@@ -932,6 +945,14 @@ void loop() {
 #endif
   weatherLoop();             // starts a one-shot fetch task when one is due
   loopMark("weather");
+#if defined(CLIMATE_ENABLED)
+  climateLoop();             // at most one I2C transaction to the board's SHTC3, none while a line is held low
+  loopMark("climate");
+#if defined(MQTT_BUS_ENABLED)
+  climateHaLoop();           // its Home Assistant sensors: MQTT only, so "climate" above means I2C
+  loopMark("climate ha");
+#endif
+#endif
 #if defined(MEDIAPLAYER_ENABLED)
   mediaLoop();               // the selection out, coalesced volume, the knob's timers
   loopMark("media");

@@ -7,6 +7,7 @@
 #include "settings.h"
 #include "../config/config.h"
 #include "../timezones.h"
+#include "../climate/climate_model.h"
 #include <Preferences.h>
 
 
@@ -160,6 +161,13 @@ void loadSettings() {
     settings.weatherLon = 0;
     settings.weatherUseFahrenheit = false;
     settings.weatherApiKey[0] = '\0';
+    settings.climateEnabled = true;
+    settings.climateIntervalS = climate::kIntervalDefaultS;
+    settings.climateTempOffset = 0;
+    settings.climateHumOffset = 0;
+    settings.climateRhFollowsT = true;
+    settings.climateShow = climate::kShowSplit;
+    settings.climateHa = false;
     settings.ambientEnabled = false;
     settings.ambientStyle = 0;
     settings.ambientStartHour = 20;
@@ -388,6 +396,14 @@ void loadSettings() {
   String loadedWeatherKey = preferences.getString("weatherKey", "");
   strncpy(settings.weatherApiKey, loadedWeatherKey.c_str(), 32);
   settings.weatherApiKey[32] = '\0';
+  settings.climateEnabled = preferences.getBool("climEn", true);
+  settings.climateIntervalS =
+      climate::clampInterval(preferences.getUShort("climIvl", climate::kIntervalDefaultS));
+  settings.climateTempOffset = climate::clampOffset(preferences.getShort("climTOff", 0));
+  settings.climateHumOffset = climate::clampOffset(preferences.getShort("climHOff", 0));
+  settings.climateRhFollowsT = preferences.getBool("climRhT", true);
+  settings.climateShow = climate::clampShow(preferences.getUChar("climShow", climate::kShowSplit));
+  settings.climateHa = preferences.getBool("climHa", false); // Default: no entities until asked
   settings.ambientEnabled =
       preferences.getBool("ambEn", false); // Default: Disabled
   settings.ambientStyle =
@@ -758,6 +774,13 @@ void saveSettings() {
   preferences.putFloat("weatherLon", settings.weatherLon);
   preferences.putBool("weatherF", settings.weatherUseFahrenheit);
   preferences.putString("weatherKey", settings.weatherApiKey);
+  preferences.putBool("climEn", settings.climateEnabled);
+  preferences.putUShort("climIvl", settings.climateIntervalS);
+  preferences.putShort("climTOff", settings.climateTempOffset);
+  preferences.putShort("climHOff", settings.climateHumOffset);
+  preferences.putBool("climRhT", settings.climateRhFollowsT);
+  preferences.putUChar("climShow", settings.climateShow);
+  preferences.putBool("climHa", settings.climateHa);
   preferences.putBool("ambEn", settings.ambientEnabled);
   preferences.putUChar("ambStyle", settings.ambientStyle);
   preferences.putUChar("ambStart", settings.ambientStartHour);

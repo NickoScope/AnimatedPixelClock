@@ -125,6 +125,16 @@ struct Settings {
   float weatherLon;             // Location longitude
   bool weatherUseFahrenheit;    // false = Celsius
   char weatherApiKey[33];       // Optional commercial API key ("" = free endpoint)
+  // Onboard temperature/humidity sensor (the board's SHTC3, src/climate). The
+  // fields exist in every build; only CLIMATE_ENABLED builds read the sensor.
+  // Bounds and defaults: src/climate/climate_model.h.
+  bool climateEnabled;          // read the sensor (default on: an absent one costs a look a minute)
+  uint16_t climateIntervalS;    // seconds between readings, 5-300 (default 10)
+  int16_t climateTempOffset;    // tenths of a degree C added to the reading, -200..200 (default 0)
+  int16_t climateHumOffset;     // tenths of a %RH added after the compensation, -200..200 (default 0)
+  bool climateRhFollowsT;       // recompute RH at the corrected temperature (default on)
+  uint8_t climateShow;          // weather screen: 0 off, 1 the outside | inside split (default)
+  bool climateHa;               // Home Assistant discovery sensors over the MQTT bus (default off)
 
   // Ambient screensaver (scheduled, replaces the clock)
   bool ambientEnabled;          // Enable the scheduled ambient window

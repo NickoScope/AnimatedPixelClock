@@ -9,6 +9,7 @@
 #include "clock_constants.h"
 #include "clocks.h"
 #include "../display/display.h"
+#include "wifi_icon.h"
 #include <cstring>
 
 // ========== Common Digit Positioning ==========
@@ -185,26 +186,5 @@ void resetClockAnimationState() {
 // ========== WiFi Status Icon ==========
 // Draw a "no WiFi" icon (8x8 pixels) - WiFi symbol with diagonal cross
 void drawNoWiFiIcon(int x, int y) {
-  // WiFi arcs (signal strength bars)
-  // Small arc (closest to antenna)
-  display.drawPixel(x + 3, y + 5, DISPLAY_WHITE);
-  display.drawPixel(x + 4, y + 5, DISPLAY_WHITE);
-
-  // Medium arc
-  display.drawPixel(x + 2, y + 4, DISPLAY_WHITE);
-  display.drawPixel(x + 5, y + 4, DISPLAY_WHITE);
-  display.drawPixel(x + 2, y + 3, DISPLAY_WHITE);
-  display.drawPixel(x + 5, y + 3, DISPLAY_WHITE);
-
-  // Large arc (outer signal)
-  display.drawPixel(x + 1, y + 2, DISPLAY_WHITE);
-  display.drawPixel(x + 6, y + 2, DISPLAY_WHITE);
-  display.drawPixel(x + 0, y + 1, DISPLAY_WHITE);
-  display.drawPixel(x + 7, y + 1, DISPLAY_WHITE);
-
-  // Center dot (antenna/device)
-  display.fillRect(x + 3, y + 6, 2, 2, DISPLAY_WHITE);
-
-  // Diagonal cross (X through the icon to indicate "no connection")
-  display.drawLine(x, y, x + 7, y + 7, DISPLAY_WHITE);
+  drawNoWiFiIconOn(display, x, y);   // wifi_icon.h, which the weather screen's host check also runs
 }

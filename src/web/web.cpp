@@ -18,6 +18,10 @@
 #include "../timezones.h"
 #include "../viz/visualizer.h"
 #include "../weather/weather.h"
+#include "../climate/climate_model.h"
+#if defined(CLIMATE_ENABLED)
+#include "../climate/climate.h"
+#endif
 #include "web_assets.h"   // the portal as gzip: page, style, script, icon, Panel group
 #include "web_panel.h"
 #if defined(CONTROL_ENCODER_ENABLED)
@@ -116,6 +120,21 @@ void setupWebServer() {
  server.on("/metrics", handleMetricsAPI);
  server.on("/api/info", HTTP_GET, handleDeviceInfo);
  server.on("/api/diagnostics", HTTP_GET, handleDeviceInfo);
+#if defined(CLIMATE_ENABLED)
+ // GET /api/climate/pause?s=0-600 - start no reading of the board's sensor for
+ // that long, so the weather screen's stale state can be seen on the panel;
+ // s=0 resumes. Runtime only, not saved, like the display routes below.
+ server.on("/api/climate/pause", HTTP_GET, []() {
+   server.sendHeader("Access-Control-Allow-Origin", "*");
+   const long s = server.hasArg("s") ? server.arg("s").toInt() : -1;
+   if (s < 0 || s > 600) {
+     server.send(400, "application/json", "{\"success\":false,\"error\":\"s must be 0-600\"}");
+     return;
+   }
+   climatePause((uint32_t)s);
+   server.send(200, "application/json", String("{\"success\":true,\"pausedS\":") + s + "}");
+ });
+#endif
  server.on("/api/anim/play", HTTP_GET, handleAnimPlay);
  server.on("/api/export", HTTP_GET, handleExportConfig);
  server.on("/api/import", HTTP_POST, handleImportConfig);
@@ -266,6 +285,9 @@ void handleDeviceInfo() {
  WeatherData weather = getWeather();
  doc["weatherValid"] = weather.valid;
  if (weather.valid) doc["weatherAgeSeconds"] = (millis() - weather.fetchedAt) / 1000;
+#if defined(CLIMATE_ENABLED)
+ climateInfoJson(doc["climate"].to<JsonObject>());   // the board's SHTC3: src/climate
+#endif
  if (server.uri() == "/api/diagnostics")
    server.sendHeader("Content-Disposition", "attachment; filename=pixelclock-diagnostics.json");
 
@@ -797,11 +819,20 @@ void handlePortalValues() {
   doc["ip"] = WiFi.localIP().toString();
   doc["freeHeap"] = ESP.getFreeHeap();
   doc["minBright"] = isZeroBrightnessAllowed() ? 0 : 1;
+  {
 #if defined(CONTROL_ENCODER_ENABLED)
-  doc["features"] = panelWebFeatures();   // the page drops the Panel parts not listed
+    String features = panelWebFeatures();   // the page drops the Panel parts not listed
 #else
-  doc["features"] = "";                   // no Panel group at all
+    String features;                        // no Panel group at all
 #endif
+#if defined(CLIMATE_ENABLED)
+    features += features.length() ? " climate" : "climate";   // the Indoor sensor card
+#if defined(MQTT_BUS_ENABLED)
+    features += " climateha";                                  // and its Home Assistant switch
+#endif
+#endif
+    doc["features"] = features;
+  }
   doc["scopeTrailMax"] = SCOPE_TRAIL_MAX;
   doc["scopeTrailDefault"] = SCOPE_TRAIL_DEFAULT;
 
@@ -913,6 +944,13 @@ void handlePortalValues() {
   form["weatherLon"] = dtostrf(settings.weatherLon, 6, 4, num);
   form["weatherFahrenheit"] = settings.weatherUseFahrenheit;
   form["weatherApiKey"] = settings.weatherApiKey;
+  form["climateEnabled"] = settings.climateEnabled;
+  form["climateIntervalS"] = settings.climateIntervalS;
+  form["climateTempOffset"] = dtostrf(settings.climateTempOffset / 10.0, 1, 1, num);
+  form["climateHumOffset"] = dtostrf(settings.climateHumOffset / 10.0, 1, 1, num);
+  form["climateRhFollowsT"] = settings.climateRhFollowsT;
+  form["climateShow"] = settings.climateShow;
+  form["climateHa"] = settings.climateHa;
   form["use24Hour"] = settings.use24Hour ? 1 : 0;
   form["dateFormat"] = settings.dateFormat;
 
@@ -1288,6 +1326,23 @@ void handleSave() {
  }
  }
  weatherSettingsChanged(); // wake the fetch task for the new location
+ }
+
+ // Save indoor sensor settings. Its card is dropped from builds without
+ // CLIMATE_ENABLED, so nothing is touched unless its fields came with the form.
+ if (server.hasArg("climateIntervalS")) {
+ settings.climateEnabled = server.hasArg("climateEnabled");
+ settings.climateIntervalS = climate::clampInterval(server.arg("climateIntervalS").toInt());
+ settings.climateTempOffset = climate::clampOffset(lroundf(server.arg("climateTempOffset").toFloat() * 10.0f));
+ settings.climateHumOffset = climate::clampOffset(lroundf(server.arg("climateHumOffset").toFloat() * 10.0f));
+ settings.climateRhFollowsT = server.hasArg("climateRhFollowsT");
+ if (server.hasArg("climateShow")) settings.climateShow = climate::clampShow(server.arg("climateShow").toInt());
+#if defined(CLIMATE_ENABLED) && defined(MQTT_BUS_ENABLED)
+ settings.climateHa = server.hasArg("climateHa");   // the switch is on the page only in these builds
+#endif
+#if defined(CLIMATE_ENABLED)
+ climateSettingsChanged();
+#endif
  }
 
  // Save ambient screensaver settings (guard on a field that always posts so
@@ -1827,6 +1882,13 @@ void handleExportConfig() {
  json += "\"weatherLon\":" + String(settings.weatherLon, 4) + ",";
  json += "\"weatherUseFahrenheit\":" + String(settings.weatherUseFahrenheit ? "true" : "false") + ",";
  json += "\"weatherApiKey\":\"" + String(settings.weatherApiKey) + "\",";
+ json += "\"climateEnabled\":" + String(settings.climateEnabled ? "true" : "false") + ",";
+ json += "\"climateIntervalS\":" + String(settings.climateIntervalS) + ",";
+ json += "\"climateTempOffset\":" + String(settings.climateTempOffset) + ",";   // tenths of a degree C
+ json += "\"climateHumOffset\":" + String(settings.climateHumOffset) + ",";     // tenths of a %RH
+ json += "\"climateRhFollowsT\":" + String(settings.climateRhFollowsT ? "true" : "false") + ",";
+ json += "\"climateShow\":" + String(settings.climateShow) + ",";
+ json += "\"climateHa\":" + String(settings.climateHa ? "true" : "false") + ",";
  json += "\"ambientEnabled\":" + String(settings.ambientEnabled ? "true" : "false") + ",";
  json += "\"ambientStyle\":" + String(settings.ambientStyle) + ",";
  json += "\"ambientStartHour\":" + String(settings.ambientStartHour) + ",";
@@ -2057,6 +2119,13 @@ void handleImportConfig() {
      settings.weatherApiKey[32] = '\0';
    }
  }
+ if (!doc["climateEnabled"].isNull()) settings.climateEnabled = doc["climateEnabled"];
+ if (!doc["climateIntervalS"].isNull()) settings.climateIntervalS = climate::clampInterval(doc["climateIntervalS"].as<long>());
+ if (!doc["climateTempOffset"].isNull()) settings.climateTempOffset = climate::clampOffset(doc["climateTempOffset"].as<long>());
+ if (!doc["climateHumOffset"].isNull()) settings.climateHumOffset = climate::clampOffset(doc["climateHumOffset"].as<long>());
+ if (!doc["climateRhFollowsT"].isNull()) settings.climateRhFollowsT = doc["climateRhFollowsT"];
+ if (!doc["climateShow"].isNull()) settings.climateShow = climate::clampShow(doc["climateShow"].as<long>());
+ if (!doc["climateHa"].isNull()) settings.climateHa = doc["climateHa"];
  if (!doc["ambientEnabled"].isNull()) settings.ambientEnabled = doc["ambientEnabled"];
  // Read as int and normalize so the retired lava slot (2) or a bad value maps
  // to 0 (Space Invaders) rather than wrapping into the uint8_t field.
@@ -2222,6 +2291,9 @@ void handleImportConfig() {
  applyTimezone();
  ntpSynced = false; // Force NTP resync after config import
  weatherSettingsChanged(); // imported location may differ - refetch now
+#if defined(CLIMATE_ENABLED)
+ climateSettingsChanged();
+#endif
 
  // Imported config can change clockStyle. Reset every clock's animation
  // state so a previous in-flight animation doesn't carry stale time

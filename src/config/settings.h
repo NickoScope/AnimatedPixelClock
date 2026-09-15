@@ -17,7 +17,7 @@ void loadSettings();
 void saveSettings();
 
 // Save the clock style alone: one NVS key, for the knob and the portal's style
-// switch. saveSettings() writes 129 keys.
+// switch. saveSettings() writes 136 keys.
 void saveClockStyle();
 
 // Brightness helpers
