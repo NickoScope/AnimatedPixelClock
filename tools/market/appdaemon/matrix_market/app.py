@@ -118,8 +118,21 @@ class MatrixMarket(hass.Hass):
 
         store_dir = wiring.get("store_dir") or config.DEFAULT_STORE_DIR
         self._store = Store(store_dir)
+        # Start from the panel's last config, not from apps.yaml. The panel's retained config is read only after
+        # the first generation is queued; a first generation from apps.yaml would publish another allocation to
+        # the panel, write it into HA's statistics and clear the panel's own symbols (final audit, MAJOR).
+        # When the retained config then arrives it is identical, so nothing is recomputed.
+        last = self._store.load_table("config_last")
+        if last:
+            restored = config.from_panel(base, last)
+            if not restored.errors:
+                self._settings = restored
+                self.log("market: starting from the panel's last config", level="INFO")
+            else:
+                self.log("market: the stored panel config was refused (%s); starting from apps.yaml"
+                         % ", ".join(e["key"] or e["code"] for e in restored.errors[:4]), level="WARNING")
         provider_cls = PROVIDERS.get(wiring["provider"])
-        self._provider = provider_cls(gap_s=float(base["fetch.history_gap_s"]), user_agent=wiring["user_agent"], log=self.log)
+        self._provider = provider_cls(gap_s=float(self._settings["fetch.history_gap_s"]), user_agent=wiring["user_agent"], log=self.log)
         self._topics = Topics(wiring["topic_base"], self._device)
 
         self._mq = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="appdaemon-matrix-market-" + self._device)
@@ -137,7 +150,7 @@ class MatrixMarket(hass.Hass):
             tz = ZoneInfo(str(self.get_timezone()))
         except Exception:
             tz = None
-        self._ctx = Context(base, self._store, self._provider, self._publisher, self.log,
+        self._ctx = Context(self._settings, self._store, self._provider, self._publisher, self.log,
                             scheduler=self, enqueue=self._worker.put, tz=tz, stopping=self._worker.stop_event)
         self._ctx.data["device"] = self._device
         self._ctx.data["user_agent"] = wiring["user_agent"]
@@ -157,7 +170,7 @@ class MatrixMarket(hass.Hass):
         self._mq.loop_start()
         self.request_refresh("start", fetch="stale")
         self.log("market: v%s, device %s, features %s, %d symbols, store %s"
-                 % (__version__, self._device, ",".join(f.name for f in self._features), len(base.watched_symbols()), store_dir))
+                 % (__version__, self._device, ",".join(f.name for f in self._features), len(self._settings.watched_symbols()), store_dir))
 
     def terminate(self):
         """Stop the features, let the worker finish its current job (bounded), say `offline` at QoS 1 and wait for

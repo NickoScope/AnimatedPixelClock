@@ -2193,5 +2193,50 @@ class CliTests(unittest.TestCase):
         self.assertIn("`portfolio.capital`", out)
 
 
+class RestartTests(unittest.TestCase):
+    """Final audit MAJOR: after a restart the first generation uses the panel's last config, not apps.yaml."""
+
+    PANEL = {"v": 2, "tickers": [{"sym": "AAPL", "name": "AAPL"}], "ticker": "AAPL",
+             "portfolio": {"positions": [{"sym": "IWDA.AS", "w": 100.0, "asset_class": "equity"}]}}
+
+    def message(self, a, payload):
+        a._on_message(a._mq, None, types.SimpleNamespace(topic=ROOT + "config", payload=payload))
+        settle(a)
+
+    def fire_debounce(self, a):
+        for cb, delay in list(a.timers):
+            if getattr(cb, "__name__", "") == "_debounced":
+                a.timers.remove((cb, delay))
+                cb()
+        settle(a)
+
+    def test_restart_starts_from_the_panel_config(self):
+        store = tempfile.mkdtemp()
+        raw = json.dumps(self.PANEL, separators=(",", ":")).encode()
+        first = MatrixMarket(app_args(store_dir=store))
+        first.initialize()
+        settle(first)
+        self.message(first, raw)
+        self.fire_debounce(first)
+        first.terminate()
+
+        again = MatrixMarket(app_args(store_dir=store))
+        again.initialize()
+        settle(again)
+        self.addCleanup(again.terminate)
+        pub = [(t[len(ROOT):], p) for t, p, q, r in again._mq.published if t.startswith(ROOT)]
+        holdings = [json.loads(p) for leaf, p in pub if leaf == "holdings/hold" and p]
+        self.assertTrue(holdings, "a first generation was published")
+        self.assertEqual({r["sym"] for r in holdings[0]["rows"] if r.get("sym") != "CASH"}, {"IWDA.AS"},
+                         "the panel's allocation, not apps.yaml's")
+        cleared = [leaf for leaf, p in pub if not p and leaf.startswith("ticker/AAPL/")]
+        self.assertEqual(cleared, [], "the panel's ticker is not cleared")
+        n = len(again._mq.published)
+        self.message(again, raw)
+        self.assertFalse([t for t in again.timers if getattr(t[0], "__name__", "") == "_debounced"],
+                         "the retained config is identical: no recompute")
+        self.assertEqual(len(again._mq.published), n)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)
