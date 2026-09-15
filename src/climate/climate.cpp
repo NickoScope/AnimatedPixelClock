@@ -97,7 +97,9 @@ bool waited() { return (uint32_t)(micros() - s_stepUs) >= s_waitUs; }
 // sent back to sleep, so a failure does not leave it idling at 45 uA (Table 3).
 void failed(bool noAnswer, bool awake) {
   if (awake) send(shtc3::kSleep);
-  if (noAnswer) s_i2cErrors++;
+  // A look for a sensor that was never found is not an error: counting it would
+  // grow i2cErrors by one a minute on a board without the part.
+  if (noAnswer && s_ever) s_i2cErrors++;
   const uint32_t now = millis();
   s_step = Step::Due;
   if (!s_ever) {
