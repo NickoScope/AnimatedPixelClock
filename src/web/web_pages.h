@@ -684,6 +684,53 @@ static const char PAGE_HTML[] PROGMEM = R"PAGE(<!doctype html>
               </div>
             </div>
           </div>
+          <div class="card" data-need="climate">
+            <h2 class="card-title">Indoor sensor <span class="tag" id="climateTag">--</span></h2>
+            <label class="check-row standalone">
+              <input type="checkbox" name="climateEnabled" id="climateEnabled">
+              <span class="check-box" aria-hidden="true"></span>
+              <span class="check-text"><strong>Read the board's temperature and humidity sensor</strong><span class="ct-hint">The SHTC3 on the controller. It shares the board with the ESP32 and reads warmer than the room: after half an hour of normal use, compare it with a thermometer nearby and set the offset.</span></span>
+            </label>
+            <p class="field-hint" id="climateNow">--</p>
+            <div class="grid-2" style="margin-top:12px">
+              <div class="field" style="margin-bottom:0">
+                <label class="field-label" for="climateTempOffset">Temperature offset, &deg;C</label>
+                <input type="number" name="climateTempOffset" id="climateTempOffset" step="0.1" min="-20" max="20">
+              </div>
+              <div class="field" style="margin-bottom:0">
+                <label class="field-label" for="climateHumOffset">Humidity offset, %RH</label>
+                <input type="number" name="climateHumOffset" id="climateHumOffset" step="0.1" min="-20" max="20">
+              </div>
+            </div>
+            <label class="check-row standalone" style="margin-top:16px">
+              <input type="checkbox" name="climateRhFollowsT" id="climateRhFollowsT">
+              <span class="check-box" aria-hidden="true"></span>
+              <span class="check-text"><strong>Correct the humidity with the temperature</strong><span class="ct-hint">Warm air holds the same water at a lower relative humidity, so the humidity is recomputed at the corrected temperature before its own offset is added.</span></span>
+            </label>
+            <div class="grid-2" style="margin-top:16px">
+              <div class="field" style="margin-bottom:0">
+                <label class="field-label" for="climateIntervalS">Read every, seconds</label>
+                <input type="number" name="climateIntervalS" id="climateIntervalS" step="1" min="5" max="300">
+              </div>
+              <div class="field" style="margin-bottom:0">
+                <label class="field-label" for="climateShow">On the weather screen</label>
+                <div class="select-wrap">
+                  <select name="climateShow" id="climateShow">
+                    <option value="0">Off</option>
+                    <option value="1">Indoor line</option>
+                    <option value="2">Indoor badge</option>
+                    <option value="3">Split</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+            <p class="field-hint">The panel shows degrees in the weather's unit; the offsets are in &deg;C. The weather screen draws the indoor reading once its design is chosen.</p>
+            <label class="check-row standalone" style="margin-top:16px" data-need="climateha">
+              <input type="checkbox" name="climateHa" id="climateHa">
+              <span class="check-box" aria-hidden="true"></span>
+              <span class="check-text"><strong>Publish to Home Assistant</strong><span class="ct-hint">Indoor temperature and humidity as two MQTT sensors that Home Assistant finds by discovery. Switching it off removes them.</span></span>
+            </label>
+          </div>
           <div id="colorsClock"></div>
         </section>
 
@@ -1853,12 +1900,21 @@ function updateDiagnostics(d) {
  if(d.animationFailureCode)lines.push('Playback error code: '+d.animationFailureCode);
  if(d.lastAnimationError)lines.push('Last upload error: '+d.lastAnimationError);
  if(d.weatherValid)lines.push('Weather age: '+d.weatherAgeSeconds+'s');
+ if(d.climate)lines.push('Indoor sensor: '+d.climate.state+(typeof d.climate.tempC==='number'?', '+d.climate.tempC.toFixed(1)+' C, '+Math.round(d.climate.humidity)+' %RH':'')+', CRC errors '+d.climate.crcErrors+', I2C errors '+d.climate.i2cErrors);
  $('#diagnosticsText').textContent=lines.join('\n');
 }
 
+function climateStatus(c) {
+var tag = $('#climateTag'), now = $('#climateNow');
+if (!c || !tag || !now) return;
+tag.textContent = c.state;
+if (typeof c.tempC === 'number') now.textContent = 'Now ' + c.tempC.toFixed(1) + ' \u00b0C and ' + Math.round(c.humidity) + ' %RH; the sensor itself reads ' + c.sensorTempC.toFixed(1) + ' \u00b0C and ' + Math.round(c.sensorHumidity) + ' %RH (' + c.ageS + ' s ago).';
+else now.textContent = c.state === 'absent' ? 'No SHTC3 answered on the I2C bus.' : c.state === 'off' ? 'Not reading.' : 'Looking for the sensor.';
+}
 function refreshStatus() {
 fetch('/api/info').then(function (r) { return r.json(); }).then(function (d) {
 updateDiagnostics(d);
+climateStatus(d.climate);
 if (d.ip) { var e = $('#srIp'); if (e) e.textContent = d.ip; }
 if (d.hostname) { var h = $('#srHost'); if (h) h.textContent = String(d.hostname).replace(/\.local$/, ''); }
 if (typeof d.uptime === 'number') { var u = $('#srUptime'); if (u) u.textContent = fmtUptime(d.uptime); }

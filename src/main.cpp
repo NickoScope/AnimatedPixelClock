@@ -28,6 +28,9 @@
 #if defined(CLIPS_SD_ENABLED)
 #include "clips/clip_sd.h"
 #endif
+#if defined(CLIMATE_ENABLED)
+#include "climate/climate.h"
+#endif
 
 // ========== External Objects ==========
 extern WiFiUDP udp;              // Defined in network.cpp
@@ -540,6 +543,10 @@ void setup() {
 
   // Background weather fetcher (idles cheaply while weather is disabled)
   MEMTRACE("weather");
+#if defined(CLIMATE_ENABLED)
+  climateBegin();   // the board's SHTC3 on I2C; found and read from loop(): src/climate
+  MEMTRACE("climate");
+#endif
 
   // Show IP address for 5 seconds (configurable via web interface)
   if (displayAvailable && settings.showIPAtBoot) {
@@ -932,6 +939,10 @@ void loop() {
 #endif
   weatherLoop();             // starts a one-shot fetch task when one is due
   loopMark("weather");
+#if defined(CLIMATE_ENABLED)
+  climateLoop();             // at most one short I2C transaction to the board's SHTC3
+  loopMark("climate");
+#endif
 #if defined(MEDIAPLAYER_ENABLED)
   mediaLoop();               // the selection out, coalesced volume, the knob's timers
   loopMark("media");
