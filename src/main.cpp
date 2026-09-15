@@ -946,8 +946,12 @@ void loop() {
   weatherLoop();             // starts a one-shot fetch task when one is due
   loopMark("weather");
 #if defined(CLIMATE_ENABLED)
-  climateLoop();             // at most one short I2C transaction to the board's SHTC3
+  climateLoop();             // at most one I2C transaction to the board's SHTC3, none while a line is held low
   loopMark("climate");
+#if defined(MQTT_BUS_ENABLED)
+  climateHaLoop();           // its Home Assistant sensors: MQTT only, so "climate" above means I2C
+  loopMark("climate ha");
+#endif
 #endif
 #if defined(MEDIAPLAYER_ENABLED)
   mediaLoop();               // the selection out, coalesced volume, the knob's timers

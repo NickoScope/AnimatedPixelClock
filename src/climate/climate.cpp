@@ -211,9 +211,6 @@ void climateBegin() {
 }
 
 void climateLoop() {
-#if defined(MQTT_BUS_ENABLED)
-  haLoop();   // before the switch below: switching off also removes the entities
-#endif
   if (!settings.climateEnabled) {
     if (s_reader.running()) s_reader.stop();
     return;
@@ -221,6 +218,12 @@ void climateLoop() {
   if (!s_wire) return;
   s_reader.loop(settings.climateIntervalS);
 }
+
+#if defined(MQTT_BUS_ENABLED)
+// After climateLoop() in the same pass: a sensor switched off there has its
+// entities removed here.
+void climateHaLoop() { haLoop(); }
+#endif
 
 ClimateReading climateGet() {
   ClimateReading r{};

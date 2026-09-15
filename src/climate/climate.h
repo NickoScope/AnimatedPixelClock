@@ -27,6 +27,9 @@ struct ClimateReading {
 
 void climateBegin();                    // in setup(), after loadSettings()
 void climateLoop();                     // every loop() pass: at most one I2C transaction, none on a held bus
+#if defined(MQTT_BUS_ENABLED)
+void climateHaLoop();                   // every loop() pass after it: the Home Assistant sensors, MQTT only
+#endif
 ClimateReading climateGet();
 const char *climateStateName(ClimateState s);
 void climateSettingsChanged();          // after the portal or an import changed a climate setting
