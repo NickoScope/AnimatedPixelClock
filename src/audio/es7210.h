@@ -26,10 +26,19 @@ constexpr float kGainMaxDb = 37.5f;
 
 // Every call below talks I2C on the board's shared bus, which src/board/board_i2c
 // starts at 100 kHz. Call them from the loop task only, so all traffic on that
-// bus stays on one core. Each returns false while the bus is not started.
+// bus stays on one core, and reads never share Wire's receive buffer with another
+// task. Each returns false while the bus is not started, and stops at the first
+// failed transaction: a stuck bus costs one stalled transaction, not fifty.
 
 // True once boardI2cBegin() has started Wire.
 bool busReady();
+
+// SDA and SCL both read high. Check before a sequence: a held line makes every
+// transaction take about a second.
+bool busFree();
+
+// The last call ended on a transaction over 100 ms or a timeout.
+bool lastStalled();
 
 // True when the chip ACKs its address.
 bool probe();

@@ -50,7 +50,7 @@ COMBOS = [
                                "-DNSLUA_ENABLED -DWORLDCLOCK_ENABLED -DRAILBOARD_ENABLED -DRAILBOARD_DIRECT_ENABLED "
                                "-DLUA_EFFECTS_ENABLED -DCLIPS_SD_ENABLED -DMEDIAPLAYER_ENABLED -DMARKET_ENABLED "
                                "-DAUDIO_MIC_ENABLED -DVIZ_WOW_ENABLED", True),
-    ("mic on",                 "-DAUDIO_MIC_ENABLED", True),
+    ("mic on, debug asserts",  "-DAUDIO_MIC_ENABLED -DAUDIO_DEBUG", True),
     ("mic only, no PC stream", "-DAUDIO_MIC_ENABLED -DAUDIO_MIC_ONLY", True),
     ("viz wow styles",         "-DVIZ_WOW_ENABLED", True),
     ("viz wow + mic",          "-DVIZ_WOW_ENABLED -DAUDIO_MIC_ENABLED", True),
