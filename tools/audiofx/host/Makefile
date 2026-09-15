@@ -7,7 +7,7 @@ CXX      ?= c++
 CXXFLAGS := -std=c++17 -O2 -Wall -Wextra -Werror -I$(SRC)
 # No fused multiply-add: Python cannot contract a*b+c, so the C++ must not either.
 WOWFLAGS := $(CXXFLAGS) -ffp-contract=off -I$(VIZ)
-WOW_SRC  := $(VIZ)/viz_frame.cpp $(VIZ)/wow_canvas.cpp $(VIZ)/wow_engine.cpp $(VIZ)/wow_bars.cpp $(VIZ)/wow_glow.cpp
+WOW_SRC  := $(VIZ)/viz_frame.cpp $(VIZ)/wow_canvas.cpp $(VIZ)/wow_engine.cpp $(VIZ)/wow_bars.cpp $(VIZ)/wow_glow.cpp $(VIZ)/wow_matrix.cpp
 WOW_DEPS := test_wow.cpp wav_io.h $(WOW_SRC) $(wildcard $(VIZ)/*.h) $(SRC)/audio_dsp.cpp $(SRC)/audio_dsp.h
 
 build/test_dsp: test_dsp.cpp $(SRC)/audio_dsp.cpp $(SRC)/audio_dsp.h

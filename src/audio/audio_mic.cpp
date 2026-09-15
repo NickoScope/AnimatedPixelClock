@@ -306,7 +306,7 @@ void captureTask(void *) {
       s_shared = *work;
       s_haveFrame = true;
 #if defined(VIZ_WOW_ENABLED)
-      if (s_wowRing && settings.vizStyle >= wow::kFirstStyle) {
+      if (s_wowRing && wow::effectForStyle(settings.vizStyle) >= 0) {   // styles 2 and 7-14
         if (s_wowCount == kWowRing) {   // audioPoll() fell behind: the oldest goes
           s_wowHead = (s_wowHead + 1) % kWowRing;
           s_wowCount--;

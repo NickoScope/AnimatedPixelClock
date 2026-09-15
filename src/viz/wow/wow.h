@@ -27,8 +27,17 @@ namespace wow {
 using real = WOW_REAL;
 
 constexpr int kW = 128, kH = 64;
-constexpr int kEffects = 8;
+constexpr int kEffects = 9;             // 0-7: styles 7-14; 8: Code EQ, style 2
 constexpr int kFirstStyle = 7;          // settings.vizStyle of the first one
+constexpr int kCodeEqStyle = 2;         // replaces Phosphor Waterfall (owner, 2026-09-15)
+constexpr int kCodeEqEffect = 8;
+
+// settings.vizStyle -> effect 0..8, or -1 when the style is not one of these.
+inline int effectForStyle(int style) {
+  if (style == kCodeEqStyle) return kCodeEqEffect;
+  if (style >= kFirstStyle && style < kFirstStyle + 8) return style - kFirstStyle;
+  return -1;
+}
 extern const char *const kNames[kEffects];
 
 // gfx.py's primitives, clipped here. A backend supplies the in-bounds writes.
@@ -47,6 +56,7 @@ class Canvas {
   void circle(int x0, int y0, int r, uint16_t c);              // Adafruit_GFX::drawCircle
   void fillCircle(int x0, int y0, int r, uint16_t c);          // spans of int(sqrt(r*r - dy*dy))
   void text(int x, int y, const char *s, uint16_t c);          // 6 px a character
+  void fillRect(int x, int y, int w, int h, uint16_t c);      // gfx.fill_rect, clipped
 };
 
 struct State;

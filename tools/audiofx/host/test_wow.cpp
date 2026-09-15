@@ -12,6 +12,7 @@
  * PcFrameDeriver, as a PC companion's would be (outdir/pc_wow_<k>.raw), and the
  * beats it finds are printed.
  */
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -121,14 +122,21 @@ void renderEffect(wow::Engine &eng, int k, const std::vector<Timed> &frames, dou
   eng.reset(k, (wow::real)1.0);
   size_t fi = 0;
   const int total = (int)(seconds * kFps);
+  double sumUs = 0.0, maxUs = 0.0;
   for (int n = 0; n < total; n++) {
     const double now = n * 1000.0 / kFps;
     while (fi < frames.size() && frames[fi].t * 1000.0 <= now) eng.update(frames[fi++].f);
     cv.clear();
+    const auto t0 = std::chrono::steady_clock::now();
     eng.render(cv, (wow::real)(1.0 / kFps));
+    const double us = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count();
+    sumUs += us;
+    if (us > maxUs) maxUs = us;
     fwrite(cv.px, 2, wow::kW * wow::kH, o);
   }
   fclose(o);
+  printf("  render effect %d (%s): mean %.1f us, max %.1f us per frame on this host\n", k, wow::kNames[k],
+         sumUs / total, maxUs);
 }
 
 }  // namespace
@@ -175,7 +183,7 @@ int main(int argc, char **argv) {
     }
   }
   if (pc) printf("%s(%d)\n", pcBeats ? " " : "pc beats: none ", pcBeats);
-  if (!pc) writeFrames(out + "/frames.bin", frames);
+  writeFrames(out + "/frames.bin", frames);   // with --pc, the frames PcFrameDeriver made
 
   static wow::Engine eng;
   if (!eng.begin(hostAlloc)) return 1;

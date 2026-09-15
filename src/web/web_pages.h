@@ -911,7 +911,7 @@ static const char PAGE_HTML[] PROGMEM = R"PAGE(<!doctype html>
             <div class="field">
               <label class="field-label" for="vizStyle">Visualizer style</label>
               <div class="select-wrap"><select name="vizStyle" id="vizStyle"><option value="0">Classic EQ</option><option value="1">Neon Mirror</option><option value="2">Phosphor Waterfall</option><option value="3">Purple LED Stage</option><option value="5">Starfield Overdrive</option><option value="6">Oscilloscope</option><option value="7">Prism EQ</option><option value="8">Neon Mirror+</option><option value="9">Spectrogram</option><option value="10">Radial Bloom</option><option value="11">Beat Particles</option><option value="12">Scope Afterglow</option><option value="13">Twin VU</option><option value="14">Synthwave Grid</option></select></div>
-              <p class="field-hint">Classic EQ: original bars. Neon Mirror: cyan and magenta pulses. Phosphor Waterfall: scrolling green and amber trails. Purple LED Stage: curved purple and pink LED waves pulsing with the music. Starfield Overdrive: persistent music-pulsing trails, short hyperspace bursts and bright star tips. Oscilloscope: the live waveform on a lab-scope graticule with a phosphor trail; needs the companion app from this release. Prism EQ to Synthwave Grid react to beats as well; fed from the PC stream their beats land later and coarser than from the microphones. Save settings to apply.</p>
+              <p class="field-hint">Classic EQ: original bars. Neon Mirror: cyan and magenta pulses. Phosphor Waterfall: scrolling green and amber trails; on boards with styles 7-14 this slot is Code EQ (Matrix), bars of glyphs rising out of a green Matrix rain, torn by a glitch line on the beat. Purple LED Stage: curved purple and pink LED waves pulsing with the music. Starfield Overdrive: persistent music-pulsing trails, short hyperspace bursts and bright star tips. Oscilloscope: the live waveform on a lab-scope graticule with a phosphor trail; needs the companion app from this release. Prism EQ to Synthwave Grid react to beats as well; fed from the PC stream their beats land later and coarser than from the microphones. Save settings to apply.</p>
             </div>
             <div class="field" id="vizBeatFxField" style="display:none">
               <label class="field-label" for="vizBeatFx">Beat reactivity (%)</label>
@@ -2023,6 +2023,7 @@ var micCard = $('#vizMicCard'), srcField = $('#audioSourceField');
 if (micCard) micCard.style.display = d.audioMic ? '' : 'none';   // builds with microphones only
 if (srcField) srcField.style.display = d.audioMicOnly ? 'none' : '';
 if (!d.vizWow) $$('#vizStyle option').forEach(function (o) { if (+o.value >= 7) o.remove(); });   // styles 7-14: VIZ_WOW_ENABLED builds
+if (d.vizWow) { var codeEq = $('#vizStyle option[value="2"]'); if (codeEq) codeEq.textContent = 'Code EQ (Matrix)'; }   // style 2 in those builds
 var beatFx = $('#vizBeatFxField');
 if (beatFx) beatFx.style.display = d.vizWow ? '' : 'none';
 Object.keys(v).forEach(function (n) {
