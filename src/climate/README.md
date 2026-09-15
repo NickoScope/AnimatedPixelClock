@@ -24,7 +24,7 @@ sources are in the knowledge base, `docs/21-onboard-climate-sensor.md`.
 
 | Flag | Needs | In |
 |---|---|---|
-| `CLIMATE_ENABLED` | `BOARD_WAVESHARE_RGB_MATRIX`, or `CLIMATE_I2C_SDA` and `CLIMATE_I2C_SCL` (`#error` otherwise) | `matrix-waveshare-rgb` |
+| `CLIMATE_ENABLED` | `BOARD_WAVESHARE_RGB_MATRIX` (`#error` otherwise): the bus is `src/board/board_i2c.h` | `matrix-waveshare-rgb` |
 | `MQTT_BUS_ENABLED` | optional: adds the Home Assistant discovery and its switch | `matrix-waveshare-rgb` |
 
 `tools/flag_matrix.py` builds three rows with the module:
@@ -38,26 +38,45 @@ sources are in the knowledge base, `docs/21-onboard-climate-sensor.md`.
 |---|---|
 | `shtc3.h` | the datasheet: commands, timing, CRC-8, ID mask, conversions. No I/O, tested on the host |
 | `climate_model.h` | after the sensor: smoothing, offsets, humidity at the corrected temperature (Magnus), staleness, the settings' bounds. Tested on the host |
-| `climate.h/.cpp` | the reader in `loop()`, `/api/info`'s object, the pause, the Home Assistant discovery |
+| `climate_reader.h` | the reading cycle as a state machine over a Port: one transaction per pass at most, the held-line check, the stall back-off. Tested on the host on a mock bus |
+| `climate.h/.cpp` | Wire behind the reader's Port, the corrections, `/api/info`'s object, the pause, the Home Assistant discovery |
+| `../board/board_i2c.h/.cpp` | the board's shared I2C bus: begun once, 100 kHz, the line check, and what Wire's mutex covers across tasks |
 | `../clocks/weather_layout.h` | the weather clock on any GFX target, design B included; render.py's `CL_B_*` name for name |
 | `../clocks/clock_weather.cpp` | gathers the time, the weather and `climateGet()` for it |
 
 ## The cycle
 
-One reading follows the datasheet's section 5.4 and is one I2C transaction per
-`loop()` pass:
+`climate_reader.h`, tested on the host. Each `loop()` pass makes **at most
+one** I2C transaction; a step that needs two spreads over two passes.
 
-| Step | Command | Then |
+| Pass | Transaction | Then |
 |---|---|---|
-| wake up | 0x3517 | wait 1 ms (tPU is at most 240 µs) |
-| on first contact, and after a soft reset | read ID 0xEFC8, check the CRC and the product code (`xxxx'1xxx'xx00'0111`) | |
-| measure, normal mode, temperature first, **clock stretching off** | 0x7866 | wait 15 ms (tMEAS is at most 12.1 ms) |
-| read six bytes | | a NACK means it is still measuring: up to three more tries 5 ms apart |
-| check both CRCs | | |
-| sleep | 0xB098 | the next reading one interval later (default 10 s) |
+| due | none. SDA and SCL must both read high; if one is low, look again 5 ms later, and if it still is, skip the cycle for a minute (`busStuck`) | |
+| wake up | write 0x3517 | wait 1 ms (tPU is at most 240 µs) |
+| after three failed cycles in a row | write the soft reset 0x805D | wait 1 ms |
+| first contact, and after a soft reset or a stall | write read-ID 0xEFC8 | |
+| | read 3 bytes: the CRC and the product code (`xxxx'1xxx'xx00'0111`) | |
+| measure, normal mode, temperature first, **clock stretching off** | write 0x7866 | wait 15 ms (tMEAS is at most 12.1 ms) |
+| | read 6 bytes and check both CRCs. A NACK means it is still measuring: up to three more tries, 5 ms apart | |
+| sleep | write 0xB098 | the next reading one interval later (default 10 s) |
 
-The bus runs at 100 kHz with a 20 ms transaction timeout. No command asks for
-stretching, so a healthy transaction takes about a millisecond.
+A first reading is six passes with a transaction; later readings are four.
+
+**A held bus.** Wire's timeout does not bound a transaction. ESP-IDF v4.4.7
+waits at least a second for the I2C driver's next event, and a line held low
+sends none (`src/board/board_i2c.h` gives the source lines). A NACK still comes
+back at once. So:
+- the line check above keeps transactions off a bus whose lines read low;
+- every transaction is timed. One slower than 100 ms, or that Wire reports as a
+  timeout (code 5), ends the cycle with nothing more sent, not even the sleep
+  command. Nothing goes on the bus for a minute (`busStalls`), and the ID is
+  read again afterwards.
+
+A bus that fails that way costs `loop()` at most one second a minute.
+
+**The bus belongs to the board.** `boardI2cBegin()` (100 kHz, Wire's 50 ms
+timeout) runs once in `setup()` before any module; `climateBegin()` calls it
+again, which costs nothing.
 
 - **Absent.** Three unanswered looks, 2 s apart, make the sensor absent. It is
   looked for again once a minute. Something at 0x70 with a foreign ID counts as
@@ -88,7 +107,8 @@ offsets, a new offset shows at once.
 - `intervalS`;
 - `tempC`, `humidity`, `sensorTempC`, `sensorHumidity`, `ageS`, while a reading
   exists;
-- the counters `reads`, `crcErrors`, `i2cErrors`, `softResets`;
+- the counters `reads`, `crcErrors`, `i2cErrors`, `softResets`, `busStuck`
+  (cycles skipped on a held line) and `busStalls` (transactions that stalled);
 - `id`, the ID register as read (`"0x...."`). An SHTC3 has
   `id & 0x083F == 0x0807` (datasheet Table 15);
 - `foreignDevice`, if something other than an SHTC3 answered;
@@ -189,7 +209,10 @@ with seven taken.
   plan is in docs/21.
 - The heap the I2C driver takes (`freeInternalHeap` in `/api/info` before and
   after).
-- The time `loop()` spends in "climate" (`loopSlowPart`).
+- The time `loop()` spends in "climate" (`loopSlowPart`). Home Assistant's
+  publishing is marked "climate ha", so "climate" is I2C only.
+- Whether the line check ever reads a low line from another module's
+  transaction once the ES7210 shares the bus (`busStuck` should stay 0).
 - Design B on the panel: live, stale (with the pause) and the fallback, and the
   indoor colours as the panel shows them.
 
@@ -206,3 +229,23 @@ the weather clock. For that PR:
 **Stays in the fork:**
 - the Home Assistant discovery (the MQTT bus is fork-only);
 - the flag and its flag-matrix rows.
+
+## Backlog
+
+From the code audit of 776fc04..7a0c49b (2026-09-15). Not fixed on purpose:
+- **Export units.** `/api/export` writes the offsets in tenths, while the
+  portal shows and posts °C and %RH.
+- **Offset fields.** An empty or non-numeric offset field goes through
+  `toFloat()` and `lroundf()` unchecked (NaN).
+- **`clampShow()`.** An out-of-range stored value falls back to 0 (off), not to
+  the default split.
+- **The bus while disabled.** `Wire.begin` runs even when the sensor is
+  switched off (now `boardI2cBegin()` in `setup()`).
+- **Empty retained configs.** While Home Assistant publishing is off, empty
+  retained configs go out on every connect.
+- **AM/PM twice.** `weather_layout.h` repeats the logic of
+  `drawMeridiemIndicator()`.
+- **C-style casts** in the new code.
+- **Pillow.** The pre-commit hook's `check_weather_screen.py` needs it.
+- **`%.1f`.** The panel formats a float and the previews a double, so they can
+  differ at an exact .x5.
