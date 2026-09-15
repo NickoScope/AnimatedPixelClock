@@ -36,6 +36,20 @@ bool vizShouldDisplay();
 const uint8_t* vizWaveform();
 uint32_t vizWaveSerial();
 
+#if defined(VIZ_WOW_ENABLED)
+#include "wow/viz_frame.h"
+
+// Styles 7-14 (src/viz/wow): setup() allocates their buffers, about 63 KB of PSRAM with the frame queue.
+bool vizWowBegin();
+
+// The microphones' packet: what vizIngest() stores, without deriving a frame
+// from it; the DSP hands over its own, richer frames through vizWowFeed().
+bool vizIngestMic(const uint8_t* buf, int len);
+
+// One frame for styles 7-14, kept until the next render. Loop task only.
+void vizWowFeed(const wow::VizFrame& f);
+#endif
+
 // Render one frame of the bar EQ (call at 60 Hz while forced mode active).
 void displayVisualizer();
 

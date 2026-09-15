@@ -9,6 +9,9 @@
 #include "../utils/utils.h"
 #include "../timezones.h"
 #include "../viz/visualizer.h"
+#if defined(AUDIO_MIC_ENABLED)
+#include "../audio/audio_mic.h"
+#endif
 #include "improv_setup.h"
 #include <Preferences.h>
 #include <esp_wifi.h>
@@ -514,6 +517,13 @@ void handleUDP() {
       // Binary spectrum packets ("FFT1" + 32 bands) arrive at ~25 Hz - take
       // the fast path with no JSON parse and no serial logging. They do NOT
       // touch lastReceived/online: stats freshness stays truthful.
+#if defined(AUDIO_MIC_ENABLED)
+      // When the microphones own the visualizer a PC spectrum packet is
+      // consumed here and dropped, never parsed as stats.
+      if (len >= VIZ_PACKET_LEN && memcmp(buffer, "FFT1", 4) == 0 && !audioAcceptPcPacket()) {
+        return;
+      }
+#endif
       if (vizIngest((const uint8_t*)buffer, len)) {
         return;
       }

@@ -17,6 +17,15 @@
 #include "../display/display.h"
 #include <math.h>
 
+#if defined(VIZ_WOW_ENABLED)
+#if !defined(BOARD_HAS_PSRAM)
+#error "VIZ_WOW_ENABLED keeps the effects' buffers in PSRAM"
+#endif
+#include <esp_heap_caps.h>
+#include <new>
+#include "wow/wow.h"
+#endif
+
 #define VIZ_BAR_W 3          // lit pixels per bar (1px gap -> 32 * 4 = 128)
 #define VIZ_MAX_H 56.0f      // px, leaves headroom for the corner clock
 #define VIZ_SMOOTH 0.35f     // per-frame pull toward the packet value
@@ -145,7 +154,7 @@ static void drawPhosphorWaterfall(unsigned long now, bool stale) {
   }
 }
 
-bool vizIngest(const uint8_t* buf, int len) {
+static bool ingestPacket(const uint8_t* buf, int len) {
   if (len < VIZ_PACKET_LEN || memcmp(buf, "FFT1", 4) != 0) return false;
   memcpy(vizBands, buf + 4, VIZ_BANDS);
   if (len >= VIZ_WAVE_PACKET_LEN) {
@@ -159,6 +168,85 @@ bool vizIngest(const uint8_t* buf, int len) {
   vizLastReceived = millis();
   ++vizPacketSerial;
   vizEverReceived = true;
+  return true;
+}
+
+#if defined(VIZ_WOW_ENABLED)
+// ---- Styles 7-14: src/viz/wow ----
+namespace {
+
+constexpr int kWowQueue = 16;           // 320 ms of DSP frames between two renders
+wow::Engine* s_wow = nullptr;           // everything below lives in PSRAM
+wow::VizFrame* s_wowQueue = nullptr;
+wow::PcFrameDeriver* s_pcDeriver = nullptr;
+int s_wowHead = 0, s_wowCount = 0;
+unsigned long s_pcWowMs = 0;
+
+void* wowPsram(size_t n) { return heap_caps_calloc(1, n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT); }
+
+bool wowStyle(uint8_t style) {
+  return style >= wow::kFirstStyle && style < wow::kFirstStyle + wow::kEffects;
+}
+
+// The effects' own primitives, the panel's pixels.
+class PanelCanvas : public wow::Canvas {
+ public:
+  void setPixel(int x, int y, uint16_t c) override { display.drawPixel(x, y, c); }
+  void spanH(int x, int y, int w, uint16_t c) override { display.drawFastHLine(x, y, w, c); }
+  void spanV(int x, int y, int h, uint16_t c) override { display.drawFastVLine(x, y, h, c); }
+  void glyph(int x, int y, unsigned char ch, uint16_t c) override { display.drawChar(x, y, ch, c, c, 1); }
+};
+
+// A PC packet carries bands and the waveform only: rebuild the rest (viz_frame.cpp).
+void wowFromPc() {
+  if (!s_pcDeriver || !wowStyle(settings.vizStyle)) return;
+  const unsigned long now = millis();
+  if (now - s_pcWowMs > 1000) s_pcDeriver->reset();   // a new stream: no stale beat history
+  const float dt = (now - s_pcWowMs) / 1000.0f;       // the deriver clamps it to 10..100 ms
+  s_pcWowMs = now;
+  uint8_t wave[VIZ_WAVE_POINTS];
+  if (vizWaveEver) memcpy(wave, vizWave, sizeof(wave));
+  else memset(wave, 128, sizeof(wave));
+  wow::VizFrame f;
+  s_pcDeriver->feed(vizBands, wave, dt, f);
+  vizWowFeed(f);
+}
+
+}  // namespace
+
+bool vizWowBegin() {
+  if (s_wow) return true;
+  void* e = wowPsram(sizeof(wow::Engine));
+  void* d = wowPsram(sizeof(wow::PcFrameDeriver));
+  s_wowQueue = static_cast<wow::VizFrame*>(wowPsram(kWowQueue * sizeof(wow::VizFrame)));
+  wow::Engine* eng = e ? new (e) wow::Engine() : nullptr;
+  if (!eng || !d || !s_wowQueue || !eng->begin(wowPsram)) {
+    Serial.println("[viz] no PSRAM for styles 7-14");
+    return false;
+  }
+  s_pcDeriver = new (d) wow::PcFrameDeriver();
+  s_wow = eng;
+  return true;
+}
+
+void vizWowFeed(const wow::VizFrame& f) {
+  if (!s_wow || !wowStyle(settings.vizStyle)) return;
+  if (s_wowCount == kWowQueue) {   // no render for 320 ms: the oldest frame goes
+    s_wowHead = (s_wowHead + 1) % kWowQueue;
+    s_wowCount--;
+  }
+  s_wowQueue[(s_wowHead + s_wowCount) % kWowQueue] = f;
+  s_wowCount++;
+}
+
+bool vizIngestMic(const uint8_t* buf, int len) { return ingestPacket(buf, len); }
+#endif
+
+bool vizIngest(const uint8_t* buf, int len) {
+  if (!ingestPacket(buf, len)) return false;
+#if defined(VIZ_WOW_ENABLED)
+  wowFromPc();
+#endif
   return true;
 }
 
@@ -265,6 +353,27 @@ void displayVisualizer() {
   }
   if (settings.vizStyle == 6)
     drawOscilloscope(vizWaveform(), vizWaveserial, stale, dt, resetStyle);
+#if defined(VIZ_WOW_ENABLED)
+  if (wowStyle(settings.vizStyle)) {
+    if (s_wow) {
+      const int effect = settings.vizStyle - wow::kFirstStyle;
+      const wow::real react = settings.vizBeatFx / 100.0f;
+      if (resetStyle || s_wow->effect() != effect) s_wow->reset(effect, react);
+      else s_wow->setReact(react);
+      for (; s_wowCount > 0; s_wowCount--) {   // every frame since the last render, in order
+        s_wow->update(s_wowQueue[s_wowHead]);
+        s_wowHead = (s_wowHead + 1) % kWowQueue;
+      }
+      PanelCanvas cv;
+      s_wow->render(cv, dt);
+    } else {
+      display.setTextSize(1);
+      display.setTextColor(DISPLAY_WHITE);
+      display.setCursor(4, 40);
+      display.print("Style needs PSRAM");
+    }
+  }
+#endif
 
   if (stale) {
     display.setTextSize(1);

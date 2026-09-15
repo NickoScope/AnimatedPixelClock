@@ -75,6 +75,9 @@ WebServer server(80);
 extern bool httpForceClock;
 extern bool httpForceAmbient;
 extern bool httpForceViz;
+#if defined(AUDIO_MIC_ENABLED)
+#include "../audio/audio_mic.h"
+#endif
 
 // ========== Web Server Setup ==========
 static uint32_t runningFirmwareBytes = 0;
@@ -287,6 +290,9 @@ void handleDeviceInfo() {
  if (weather.valid) doc["weatherAgeSeconds"] = (millis() - weather.fetchedAt) / 1000;
 #if defined(CLIMATE_ENABLED)
  climateInfoJson(doc["climate"].to<JsonObject>());   // the board's SHTC3: src/climate
+#endif
+#if defined(AUDIO_MIC_ENABLED)
+ audioInfoJson(doc.as<JsonObject>());   // audioSource, audioLevelDb, audioBpm, audioClipping, ...
 #endif
  if (server.uri() == "/api/diagnostics")
    server.sendHeader("Content-Disposition", "attachment; filename=pixelclock-diagnostics.json");
@@ -983,6 +989,20 @@ void handlePortalValues() {
   form["scopeFlat"] = settings.scopeFlat;
   form["scopeTrail"] = settings.scopeTrail;
   form["scopeGain"] = settings.scopeGain;
+  form["audioSource"] = settings.audioSource;
+  form["micGainDb"] = settings.micGainDb;
+  form["micGateDb"] = settings.micGateDb;
+  form["micAgc"] = settings.micAgc;
+  form["vizBeatFx"] = settings.vizBeatFx;
+#if defined(VIZ_WOW_ENABLED)
+  doc["vizWow"] = true;         // the page lists styles 7-14 and their beat setting
+#endif
+#if defined(AUDIO_MIC_ENABLED)
+  doc["audioMic"] = true;       // the page shows its Sound source card
+#endif
+#if defined(AUDIO_MIC_ONLY)
+  doc["audioMicOnly"] = true;   // and hides the source choice
+#endif
 
   // --- Display layout ---
   form["clockPosition"] = settings.clockPosition;
@@ -1387,6 +1407,22 @@ void handleSave() {
    clampScopeSettings();
  }
  }
+
+#if defined(AUDIO_MIC_ENABLED)
+ // The Sound source card. Gain and gate always post with it, so the AGC box
+ // (absent when unchecked) is only read when they came.
+ if (server.hasArg("micGainDb") && server.hasArg("micGateDb")) {
+   if (server.hasArg("audioSource")) settings.audioSource = (uint8_t)constrain(server.arg("audioSource").toInt(), 0, 2);
+   settings.micGainDb = (uint8_t)constrain(server.arg("micGainDb").toInt(), 0, AUDIO_MIC_GAIN_MAX);
+   settings.micGateDb = (int8_t)constrain(server.arg("micGateDb").toInt(), AUDIO_MIC_GATE_MIN, AUDIO_MIC_GATE_MAX);
+   settings.micAgc = server.hasArg("micAgc");
+   audioApplySettings();
+ }
+#endif
+
+#if defined(VIZ_WOW_ENABLED)
+ if (server.hasArg("vizBeatFx")) settings.vizBeatFx = (uint8_t)constrain(server.arg("vizBeatFx").toInt(), 0, 100);
+#endif
 
  // Save Mario bounce settings
  if (server.hasArg("marioBounceHeight")) {
@@ -1902,6 +1938,11 @@ void handleExportConfig() {
  json += "\"scopeFlat\":" + String(settings.scopeFlat ? "true" : "false") + ",";
  json += "\"scopeTrail\":" + String(settings.scopeTrail) + ",";
  json += "\"scopeGain\":" + String(settings.scopeGain) + ",";
+ json += "\"audioSource\":" + String(settings.audioSource) + ",";
+ json += "\"micGainDb\":" + String(settings.micGainDb) + ",";
+ json += "\"micGateDb\":" + String(settings.micGateDb) + ",";
+ json += "\"micAgc\":" + String(settings.micAgc ? "true" : "false") + ",";
+ json += "\"vizBeatFx\":" + String(settings.vizBeatFx) + ",";
 
  // Metric labels
  json += "\"metricLabels\":[";
@@ -2147,6 +2188,15 @@ void handleImportConfig() {
  if (!doc["scopeFlat"].isNull()) settings.scopeFlat = doc["scopeFlat"].as<bool>();
  if (!doc["scopeTrail"].isNull()) settings.scopeTrail = doc["scopeTrail"].as<int>();
  if (!doc["scopeGain"].isNull()) settings.scopeGain = doc["scopeGain"].as<int>();
+ if (!doc["audioSource"].isNull()) settings.audioSource = (uint8_t)constrain(doc["audioSource"].as<int>(), 0, 2);
+ if (!doc["micGainDb"].isNull()) settings.micGainDb = (uint8_t)constrain(doc["micGainDb"].as<int>(), 0, AUDIO_MIC_GAIN_MAX);
+ if (!doc["micGateDb"].isNull()) settings.micGateDb = (int8_t)constrain(doc["micGateDb"].as<int>(), AUDIO_MIC_GATE_MIN, AUDIO_MIC_GATE_MAX);
+ if (!doc["micAgc"].isNull()) settings.micAgc = doc["micAgc"].as<bool>();
+ if (!doc["vizBeatFx"].isNull()) settings.vizBeatFx = (uint8_t)constrain(doc["vizBeatFx"].as<int>(), 0, 100);
+ clampAudioSettings();
+#if defined(AUDIO_MIC_ENABLED)
+ audioApplySettings();
+#endif
  clampScopeSettings();
  if (!doc["vizStyle"].isNull()) {
    int style = doc["vizStyle"].as<int>();

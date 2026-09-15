@@ -903,15 +903,20 @@ static const char PAGE_HTML[] PROGMEM = R"PAGE(<!doctype html>
         <section class="page" data-page="viz">
           <div class="page-header">
             <h1 class="page-h1">Audio visualizer</h1>
-            <p class="page-lede">Retro effects driven by your PC's sound. Needs the companion app running with its <strong>Audio visualizer</strong> option enabled.</p>
+            <p class="page-lede">Retro effects driven by sound: your PC's, through the companion app's <strong>Audio visualizer</strong> option, or the room's, on a board with microphones.</p>
           </div>
 
           <div class="card">
             <h2 class="card-title">Effect</h2>
             <div class="field">
               <label class="field-label" for="vizStyle">Visualizer style</label>
-              <div class="select-wrap"><select name="vizStyle" id="vizStyle"><option value="0">Classic EQ</option><option value="1">Neon Mirror</option><option value="2">Phosphor Waterfall</option><option value="3">Purple LED Stage</option><option value="5">Starfield Overdrive</option><option value="6">Oscilloscope</option></select></div>
-              <p class="field-hint">Classic EQ: original bars. Neon Mirror: cyan and magenta pulses. Phosphor Waterfall: scrolling green and amber trails. Purple LED Stage: curved purple and pink LED waves pulsing with the music. Starfield Overdrive: persistent music-pulsing trails, short hyperspace bursts and bright star tips. Oscilloscope: the live waveform on a lab-scope graticule with a phosphor trail; needs the companion app from this release. Save settings to apply.</p>
+              <div class="select-wrap"><select name="vizStyle" id="vizStyle"><option value="0">Classic EQ</option><option value="1">Neon Mirror</option><option value="2">Phosphor Waterfall</option><option value="3">Purple LED Stage</option><option value="5">Starfield Overdrive</option><option value="6">Oscilloscope</option><option value="7">Prism EQ</option><option value="8">Neon Mirror+</option><option value="9">Spectrogram</option><option value="10">Radial Bloom</option><option value="11">Beat Particles</option><option value="12">Scope Afterglow</option><option value="13">Twin VU</option><option value="14">Synthwave Grid</option></select></div>
+              <p class="field-hint">Classic EQ: original bars. Neon Mirror: cyan and magenta pulses. Phosphor Waterfall: scrolling green and amber trails. Purple LED Stage: curved purple and pink LED waves pulsing with the music. Starfield Overdrive: persistent music-pulsing trails, short hyperspace bursts and bright star tips. Oscilloscope: the live waveform on a lab-scope graticule with a phosphor trail; needs the companion app from this release. Prism EQ to Synthwave Grid react to beats as well; fed from the PC stream their beats land later and coarser than from the microphones. Save settings to apply.</p>
+            </div>
+            <div class="field" id="vizBeatFxField" style="display:none">
+              <label class="field-label" for="vizBeatFx">Beat reactivity (%)</label>
+              <input type="number" name="vizBeatFx" id="vizBeatFx" min="0" max="100" step="5">
+              <p class="field-hint">Prism EQ to Synthwave Grid: how hard a beat flashes, shifts the colours and throws rings and particles. 0 ignores beats. Default 100.</p>
             </div>
             <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
               <button type="button" class="btn" id="vizStartBtn">Start visualizer</button>
@@ -922,6 +927,32 @@ static const char PAGE_HTML[] PROGMEM = R"PAGE(<!doctype html>
               <input type="checkbox" name="vizShowClock" id="vizShowClock">
               <span class="check-box" aria-hidden="true"></span>
               <span class="check-text"><strong>Show small clock</strong><span class="ct-hint">Keeps a small HH:MM in the corner over the bars.</span></span>
+            </label>
+          </div>
+
+          <div class="card" id="vizMicCard" style="display:none">
+            <h2 class="card-title">Sound source</h2>
+            <div class="field" id="audioSourceField">
+              <label class="field-label" for="audioSource">Source</label>
+              <div class="select-wrap"><select name="audioSource" id="audioSource"><option value="0">Auto: the PC stream when it arrives, the microphones otherwise</option><option value="1">PC companion only</option><option value="2">Microphones only</option></select></div>
+              <p class="field-hint">Auto hands over to the microphones 1.5 s after the PC stream stops, and back as soon as it returns.</p>
+            </div>
+            <div class="grid-2">
+              <div class="field">
+                <label class="field-label" for="micGainDb">Microphone gain (dB)</label>
+                <input type="number" name="micGainDb" id="micGainDb" min="0" max="37" step="1">
+                <p class="field-hint">The codec's preamp, 0 to 37. Lower it if the panel reports clipping. Default 30.</p>
+              </div>
+              <div class="field">
+                <label class="field-label" for="micGateDb">Noise gate (dBFS)</label>
+                <input type="number" name="micGateDb" id="micGateDb" min="-90" max="-30" step="1">
+                <p class="field-hint">Below this level the bars stay dark, so a quiet room is not drawn as music. Default -60.</p>
+              </div>
+            </div>
+            <label class="check-row standalone" style="margin-top:12px">
+              <input type="checkbox" name="micAgc" id="micAgc">
+              <span class="check-box" aria-hidden="true"></span>
+              <span class="check-text"><strong>Automatic gain</strong><span class="ct-hint">Scales the bars to the loudest sound of the last seconds. Off: a fixed scale. Default on.</span></span>
             </label>
           </div>
 
@@ -1988,6 +2019,12 @@ for (i = 0; i <= d.scopeTrailMax; i++) trail.push([i, i + (i === d.scopeTrailDef
 fillOptions(el.namedItem('scopeTrail'), trail);
 fillOptions(el.namedItem('timezoneRegion'), [['', '-- Select Region --']].concat(d.timezones.map(function (n, k) { return [k, n]; })));
 buildColors(d);
+var micCard = $('#vizMicCard'), srcField = $('#audioSourceField');
+if (micCard) micCard.style.display = d.audioMic ? '' : 'none';   // builds with microphones only
+if (srcField) srcField.style.display = d.audioMicOnly ? 'none' : '';
+if (!d.vizWow) $$('#vizStyle option').forEach(function (o) { if (+o.value >= 7) o.remove(); });   // styles 7-14: VIZ_WOW_ENABLED builds
+var beatFx = $('#vizBeatFxField');
+if (beatFx) beatFx.style.display = d.vizWow ? '' : 'none';
 Object.keys(v).forEach(function (n) {
 var c = el.namedItem(n);
 if (!c) return;
