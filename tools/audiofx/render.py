@@ -88,8 +88,9 @@ def render(name, kind, factory, frames, wav, seconds, mp4):
     if ff:
         ff.stdin.close()
         ff.wait()
-    gif[0].save(OUT / f"{name}.gif", save_all=True, append_images=gif[1:], duration=1000 // FPS * GIF_EVERY,
-                loop=0, disposal=1)
+    # 50 ms a frame. GIF counts centiseconds: 1000 // FPS * GIF_EVERY (48) played as 40 ms, 25 % fast.
+    gif[0].save(OUT / f"{name}.gif", save_all=True, append_images=gif[1:],
+                duration=round(1000 * GIF_EVERY / FPS), loop=0, disposal=1)
     return stills
 
 
