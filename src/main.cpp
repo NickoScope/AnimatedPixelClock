@@ -378,7 +378,7 @@ void cycleClockScreens() {
 #define MEMTRACE(tag)
 #endif
 
-static void onAllocFailed(size_t size, uint32_t caps, const char *function_name);
+static IRAM_ATTR void onAllocFailed(size_t size, uint32_t caps, const char *function_name);
 
 void setup() {
 #if defined(BOARD_HAS_PSRAM)
@@ -813,7 +813,7 @@ static uint32_t s_heapMinSeen = 0;
 static volatile uint32_t s_allocFails = 0, s_allocFailBytes = 0, s_allocFailCaps = 0;
 static char s_allocFailTask[16] = "";
 static uint32_t s_allocFailsPrinted = 0;
-static void onAllocFailed(size_t size, uint32_t caps, const char *) {
+static IRAM_ATTR void onAllocFailed(size_t size, uint32_t caps, const char *) {   // called from IRAM heap code
   s_allocFailBytes = (uint32_t)size;
   s_allocFailCaps = caps;
   const char *name = pcTaskGetName(nullptr);

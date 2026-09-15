@@ -39,7 +39,7 @@ constexpr int kPinMclk = 12, kPinBclk = 43, kPinWs = 38, kPinDin = 39;
 // 4 x 256 frames x 2 channels x 2 bytes = 4 KB of internal DMA memory
 // (driver/i2s.c allocates it MALLOC_CAP_DMA), 21 ms of slack before an overrun.
 constexpr int kDmaBufs = 4, kDmaFrames = 256;
-constexpr uint32_t kStackBytes = 3584;     // panel 2026-09-15: 1,232 of 5,120 B used (audioStackFreeBytes 3,888)
+constexpr uint32_t kStackBytes = 4096;     // panel 2026-09-15: 1,232 of 5,120 B used; audit: I2S-failure path ~2.3-2.6 KB
 constexpr UBaseType_t kPriority = 5;       // above the Lua and clip tasks (1), below Wi-Fi
 constexpr BaseType_t kCore = 0;            // loop() and the panel refresh stay on core 1
 constexpr unsigned long kPcFreshMs = 1500;
