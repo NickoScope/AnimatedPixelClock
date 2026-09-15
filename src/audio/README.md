@@ -100,3 +100,12 @@ Measured on the panel, build `c71bdb5`, 2026-09-15 (KB docs/22 §12.1):
 - Task stack: 1,232 of 5,120 B used. There is room to trim to about 3 KB.
 - `audioInternalBytes` reported 6,340 B while free internal heap fell by 10.4 KB on start, so the figure under-reports.
 - `loopMaxMs` up to 43 ms while styles render (5–11 ms idle).
+
+From the audits of the heap diagnostics (`4687134`) and of Code EQ (`a55a477`), 2026-09-15, LOW, not fixed:
+- `loopMark()` reports only minimum drops of 1 KB or more; smaller steps add up silently.
+- `loopMark()` sets `s_markUs` before printing, so the print time is charged to the next part.
+- The failed-allocation counter and task name can tear when two cores write at once; diagnostics only.
+- `wow_matrix.cpp:138` has no clamp of its own: a level above 1.0625 would write `stack[c][-1]`. It is unreachable today because both sources feed an EMA of byte/255. Clamp `hgt` to [0, ROWS] and `bass`/`treble`/`m` to [0, 1].
+- When the stream stops, frozen bars stay under "No audio data" for up to 10 s (the same in styles 7-14).
+- `visualizer.cpp:49`: the Phosphor Waterfall's 832 B of BSS are dead in flag builds; the comments in `wow.h` ("0..7") and `viz_frame.h` ("7-14") are stale.
+- `wow_matrix.cpp:39,48,66,125`: a local `col` shadows `wow::col()`.
