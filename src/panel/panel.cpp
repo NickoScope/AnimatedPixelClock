@@ -1,4 +1,5 @@
 #include "panel.h"
+#include "panel_pages.h"
 
 #if defined(CONTROL_ENCODER_ENABLED)
 
@@ -100,9 +101,17 @@ struct PanelState {
 };
 
 static const uint16_t ALL_PAGES = (uint16_t)((1u << PANEL_KEY_COUNT) - 1);
+// A "pages" mask without a "pgKnown" written against it is taken to know the
+// six keys the first build to write "pages" knew (6cfc23c, 2026-09-14 18:01:
+// CLOCK..CARDS); LUA arrived four minutes later in merge 62a0e6a, MEDIA and
+// MARKET after. So the Lua, media and market pages start on once. Someone who
+// had switched one of them off sees it on again once; the other way round a
+// page would stay invisible with nothing to say why. panel_pages.h.
+static const uint16_t LEGACY_KNOWN_PAGES = (uint16_t)((1u << PANEL_KEY_LUA) - 1);
 
 static PanelState s_cur;
 static PanelState s_saved;       // what NVS holds, field by field
+static uint32_t   s_savedStamp = 0;   // NVS "pgKnown" (known << 16 | pages), 0 when never written
 static uint32_t   s_dirtyAt = 0;
 
 static void markDirty() {
@@ -185,10 +194,20 @@ void panelBegin() {
   // read-write creates the namespace once; the numeric getters below only log
   // at verbose level for a missing key (Preferences.cpp, arduino-esp32 2.0.17).
   uint8_t storedHome = WC_HOME_UNSET;   // what NVS holds, even when it is no city any more
+  bool     storedPages = false;          // NVS has a "pages" mask
+  uint16_t storedMask  = 0;              // and this is it, before the keys it did not know
   Preferences p;
   if (p.begin(NS, false)) {
     PanelState d = s_cur;
-    s_cur.pages = (uint16_t)((p.getUShort("pages", d.pages) & ALL_PAGES) | (1u << PANEL_KEY_CLOCK));
+    // Keys this build adds since the mask was written start on (panel_pages.h).
+    // A u32 from its first release: the u16 form of commit 3f8b7f1 was never on a panel.
+    storedPages = p.isKey("pages");
+    const bool haveStamp = p.isKey("pgKnown");
+    storedMask   = p.getUShort("pages", d.pages);
+    s_savedStamp = haveStamp ? p.getULong("pgKnown", 0) : 0;
+    s_cur.pages = storedPages ? panelPagesMigrate(storedMask, haveStamp, s_savedStamp, ALL_PAGES, LEGACY_KNOWN_PAGES,
+                                                  (uint16_t)(1u << PANEL_KEY_CLOCK))
+                              : (uint16_t)(ALL_PAGES | (1u << PANEL_KEY_CLOCK));
 
     PanelCarousel c;
     c.enabled   = p.getUChar("carOn", d.car.enabled) != 0;
@@ -284,6 +303,12 @@ void panelBegin() {
   // mistaken for the owner's choice.
   s_saved.wcHome = storedHome;
   if (s_saved.wcHome != s_cur.wcHome) markDirty();
+  // A mask from a build that knew fewer keys: written back with "pgKnown" at
+  // the first save, so a page switched off after this boot stays off.
+  if (storedPages && s_savedStamp != panelPagesStamp(ALL_PAGES, s_cur.pages)) {
+    s_saved.pages = storedMask;
+    markDirty();
+  }
 
   applyKnob();
   applyCarousel();
@@ -311,6 +336,10 @@ void panelTick() {
   // and the next change retries it.
   PanelState &c = s_cur, &w = s_saved;
   if (c.pages != w.pages && p.putUShort("pages", c.pages)) w.pages = c.pages;
+  // After "pages", never before it, and against the value "pages" now holds.
+  if (c.pages == w.pages && s_savedStamp != panelPagesStamp(ALL_PAGES, w.pages) &&
+      p.putULong("pgKnown", panelPagesStamp(ALL_PAGES, w.pages)))
+    s_savedStamp = panelPagesStamp(ALL_PAGES, w.pages);
   if (c.car.enabled != w.car.enabled && p.putUChar("carOn", c.car.enabled)) w.car.enabled = c.car.enabled;
   if (c.car.idleS != w.car.idleS && p.putUShort("carIdle", c.car.idleS)) w.car.idleS = c.car.idleS;
   if (c.car.slotS != w.car.slotS && p.putUShort("carSlot", c.car.slotS)) w.car.slotS = c.car.slotS;

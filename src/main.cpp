@@ -61,6 +61,9 @@ bool httpForceYachtRadar = false;   // yacht radar page override
 #if defined(LUA_EFFECTS_ENABLED)
 #include "lua/lua_effects_page.h"    // LUA_EFFECT_COUNT, which the page enum below needs
 #endif
+#if defined(MARKET_ENABLED)
+#include "market/market.h"           // MARKET_PAGE_COUNT, which the page enum below needs
+#endif
 #if defined(CONTROL_ENCODER_ENABLED)
 // Pages the knob cycles through, in the order a long press walks them. The
 // clock is first because it is what the panel should fall back to.
@@ -81,6 +84,13 @@ enum CtrlPage : uint8_t {
 #if defined(RAILBOARD_ENABLED)
   PAGE_RAILBOARD,                // the other board, so the two sit together
 #endif
+#if defined(MARKET_ENABLED)
+  // The four market pages, each a page of its own so the knob and the carousel
+  // walk them one at a time: MARKETS, TICKER, PORTFOLIO, HOLDINGS (src/market).
+  // One portal switch for all four, as the Lua effects have.
+  PAGE_MARKET_FIRST,
+  PAGE_MARKET_LAST = PAGE_MARKET_FIRST + MARKET_PAGE_COUNT - 1,
+#endif
 #if defined(YACHTRADAR_ENABLED)
   PAGE_YACHTRADAR,
 #endif
@@ -94,6 +104,12 @@ static uint8_t ctrlPage = PAGE_CLOCK;
 // The effect a page shows, or -1 if it is not an effect page.
 static inline int16_t ctrlLuaEffect(uint8_t page) {
   return (page >= PAGE_LUA_FIRST && page <= PAGE_LUA_LAST) ? (int16_t)(page - PAGE_LUA_FIRST) : -1;
+}
+#endif
+#if defined(MARKET_ENABLED)
+// The market page a page shows (market::Page), or -1 if it is not one.
+static inline int16_t ctrlMarketSub(uint8_t page) {
+  return (page >= PAGE_MARKET_FIRST && page <= PAGE_MARKET_LAST) ? (int16_t)(page - PAGE_MARKET_FIRST) : -1;
 }
 #endif
 
@@ -152,6 +168,9 @@ static uint16_t ctrlPageSeconds(uint8_t page) {
 #endif
 #if defined(MEDIAPLAYER_ENABLED)
   if (page == PAGE_MEDIA) return 20;       // docs/17-media-player.md 3.5
+#endif
+#if defined(MARKET_ENABLED)
+  if (ctrlMarketSub(page) >= 0) return marketDwellS();   // display.dwell_s, 20 s by default (docs/18)
 #endif
   return (page == PAGE_CLOCK) ? 25 : 15;
 }
@@ -233,6 +252,10 @@ int getOptimalRefreshRate() {
 #if defined(MEDIAPLAYER_ENABLED) && defined(CONTROL_ENCODER_ENABLED)
   // 20 Hz while a title scrolls or the knob's countdown runs, else 5 Hz.
   if (ctrlPage == PAGE_MEDIA) return mediaRefreshHz();
+#endif
+#if defined(MARKET_ENABLED)
+  // 20 Hz while the exchange tape scrolls, else 5 Hz: nothing else on the pages moves.
+  if (ctrlMarketSub(ctrlPage) >= 0) return marketRefreshHz();
 #endif
 #if defined(FLIGHTBOARD_ENABLED)
   // A board that changes twice a minute; anything faster is wasted DMA.
@@ -497,6 +520,9 @@ void setup() {
 #if defined(MEDIAPLAYER_ENABLED)
   mediaBegin();                    // subscribes now: the retained state is in before the page is
 #endif
+#if defined(MARKET_ENABLED)
+  marketBegin();                   // subscribes now and reads the LittleFS record: populated before anyone turns to it
+#endif
 
   // Configure hardware watchdog timer
   esp_task_wdt_init(15, true);
@@ -544,8 +570,31 @@ static bool ctrlPageHasControls(uint8_t page) {
 #if defined(MEDIAPLAYER_ENABLED)
   if (page == PAGE_MEDIA) return true;
 #endif
+#if defined(MARKET_ENABLED)
+  if (ctrlMarketSub(page) >= 0) return true;
+#endif
   (void)page;
   return false;
+}
+
+// How long an entered page stays entered without the knob: the market pages
+// ask for less (docs/18: 10 s of quiet leaves).
+static uint32_t ctrlEnterTimeoutMs(uint8_t page) {
+#if defined(MARKET_ENABLED)
+  if (ctrlMarketSub(page) >= 0) return marketEnterTimeoutMs();
+#endif
+  (void)page;
+  return CTRL_ENTER_TIMEOUT_MS;
+}
+
+// A page its own module keeps off the walk, beyond the portal's switches: a
+// market page switched off with display.pages.
+static bool ctrlPageVisitable(uint8_t page) {
+#if defined(MARKET_ENABLED)
+  if (ctrlMarketSub(page) >= 0) return marketPageEnabled((uint8_t)ctrlMarketSub(page));
+#endif
+  (void)page;
+  return true;
 }
 
 static const char *ctrlPageName(uint8_t page) {
@@ -567,6 +616,9 @@ static const char *ctrlPageName(uint8_t page) {
 #endif
 #if defined(MEDIAPLAYER_ENABLED)
   if (page == PAGE_MEDIA) return "MEDIA";
+#endif
+#if defined(MARKET_ENABLED)
+  if (ctrlMarketSub(page) >= 0) return marketPageName((uint8_t)ctrlMarketSub(page));
 #endif
   return "CLOCK";
 }
@@ -594,6 +646,9 @@ uint8_t panelPageKey(uint8_t page) {
   // Found when the two helpers' branches met: without it they reported "other"
   // and could not be switched off.
   if (ctrlLuaEffect(page) >= 0) return PANEL_KEY_LUA;
+#endif
+#if defined(MARKET_ENABLED)
+  if (ctrlMarketSub(page) >= 0) return PANEL_KEY_MARKET;   // the four pages, one switch
 #endif
   switch (page) {
   case PAGE_CLOCK:       return PANEL_KEY_CLOCK;
@@ -625,7 +680,7 @@ static uint8_t ctrlNextVisited(uint8_t from, int8_t d) {
   int p = from;
   for (int k = 0; k < n; k++) {
     p = (p + (d > 0 ? 1 : -1) + n) % n;
-    if (panelPageEnabled(panelPageKey((uint8_t)p))) break;
+    if (panelPageEnabled(panelPageKey((uint8_t)p)) && ctrlPageVisitable((uint8_t)p)) break;
   }
   return (uint8_t)p;
 }
@@ -745,7 +800,7 @@ void loop() {
   // consequences worth knowing: with the encoder compiled out both pages are
   // unreachable, and /api/status does not report them.
   controlLoop();
-  if (ctrlEntered && millis() - ctrlLastEventMs > CTRL_ENTER_TIMEOUT_MS) ctrlEntered = false;
+  if (ctrlEntered && millis() - ctrlLastEventMs > ctrlEnterTimeoutMs(ctrlPage)) ctrlEntered = false;
   for (CtrlEvent e = controlTake(); e != CTRL_NONE; e = controlTake()) {
 #if defined(CAROUSEL_ENABLED)
     carouselNote();            // somebody is here; stop advancing on our own
@@ -771,6 +826,14 @@ void loop() {
         continue;
       }
 #endif
+#if defined(MARKET_ENABLED)
+      // Two or three stops: WINDOW, then the page's own list, then out.
+      if (ctrlMarketSub(ctrlPage) >= 0) {
+        ctrlEntered = marketKnobClick((uint8_t)ctrlMarketSub(ctrlPage), ctrlEntered);
+        ctrlToast(marketKnobHint());
+        continue;
+      }
+#endif
       if (ctrlPageHasControls(ctrlPage)) {
         ctrlEntered = !ctrlEntered;
         ctrlToast(ctrlEntered ? ctrlEnterHint(ctrlPage) : "TURN: PAGES");
@@ -779,6 +842,9 @@ void loop() {
     }
     const int8_t d = (e == CTRL_CW) ? 1 : -1;
     if (!ctrlEntered) { ctrlBrowse(d); continue; }
+#if defined(MARKET_ENABLED)
+    if (ctrlMarketSub(ctrlPage) >= 0) { marketKnob((uint8_t)ctrlMarketSub(ctrlPage), d); continue; }
+#endif
     switch (ctrlPage) {
 #if defined(FLIGHTBOARD_ENABLED)
     case PAGE_FLIGHTBOARD: fbKnob(d); break;
@@ -869,6 +935,10 @@ void loop() {
 #if defined(MEDIAPLAYER_ENABLED)
   mediaLoop();               // the selection out, coalesced volume, the knob's timers
   loopMark("media");
+#endif
+#if defined(MARKET_ENABLED)
+  marketLoop();              // the config out, deferred NVS and LittleFS writes, the knob's timers
+  loopMark("market");
 #endif
 
 #if defined(YACHTRADAR_ENABLED)
@@ -1024,6 +1094,11 @@ void loop() {
 #if defined(MEDIAPLAYER_ENABLED)
     if (ctrlPage == PAGE_MEDIA) {
       mediaRender();
+    } else
+#endif
+#if defined(MARKET_ENABLED)
+    if (ctrlMarketSub(ctrlPage) >= 0) {
+      marketRender((uint8_t)ctrlMarketSub(ctrlPage));
     } else
 #endif
 #if defined(YACHTRADAR_ENABLED)

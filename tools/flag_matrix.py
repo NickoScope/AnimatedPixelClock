@@ -17,8 +17,10 @@ import pathlib, subprocess, sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 PIO  = pathlib.Path.home() / ".platformio/penv/bin/platformio"
+# MARKET_NO_LOCAL_DEFAULTS: every row builds the market pages' neutral defaults,
+# whatever src/market/market_local_defaults.h holds on this machine.
 COMMON = ("-DBOARD_HAS_PSRAM -DBOARD_WAVESHARE_RGB_MATRIX "
-          "-DARDUINO_USB_MODE=1 -DARDUINO_USB_CDC_ON_BOOT=1")
+          "-DARDUINO_USB_MODE=1 -DARDUINO_USB_CDC_ON_BOOT=1 -DMARKET_NO_LOCAL_DEFAULTS")
 
 # (name, flags, must_build). The false ones are dependencies we declare with
 # #error: a build that succeeds there would mean the guard is not doing its job.
@@ -46,11 +48,14 @@ COMBOS = [
                                "-DCONTROL_ENCODER_ENABLED -DMQTT_BUS_ENABLED "
                                "-DFB_MQTT_ENABLED -DCARDS_ENABLED -DCAROUSEL_ENABLED "
                                "-DNSLUA_ENABLED -DWORLDCLOCK_ENABLED -DRAILBOARD_ENABLED -DRAILBOARD_DIRECT_ENABLED "
-                               "-DLUA_EFFECTS_ENABLED -DCLIPS_SD_ENABLED -DMEDIAPLAYER_ENABLED", True),
+                               "-DLUA_EFFECTS_ENABLED -DCLIPS_SD_ENABLED -DMEDIAPLAYER_ENABLED -DMARKET_ENABLED", True),
     ("card clips + knob",      "-DCONTROL_ENCODER_ENABLED -DCLIPS_SD_ENABLED", True),
     ("media + bus + knob",     "-DMEDIAPLAYER_ENABLED -DMQTT_BUS_ENABLED -DCONTROL_ENCODER_ENABLED", True),
     ("media + carousel + cards", "-DMEDIAPLAYER_ENABLED -DMQTT_BUS_ENABLED -DCONTROL_ENCODER_ENABLED "
                                "-DCAROUSEL_ENABLED -DCARDS_ENABLED", True),
+    ("market + bus + knob",     "-DMARKET_ENABLED -DMQTT_BUS_ENABLED -DCONTROL_ENCODER_ENABLED", True),
+    ("market, local defaults",  "-DMARKET_ENABLED -DMQTT_BUS_ENABLED -DCONTROL_ENCODER_ENABLED "
+                               r'-DMARKET_LOCAL_DEFAULTS_FILE=\"../../tools/market/panel/local_defaults_example.h\"', True),
     ("cards without the bus",  "-DCARDS_ENABLED", False),
     ("world clock, no encoder", "-DWORLDCLOCK_ENABLED", False),
     ("rail board without bus", "-DRAILBOARD_ENABLED -DCONTROL_ENCODER_ENABLED", False),
@@ -66,6 +71,8 @@ COMBOS = [
     ("media without the knob", "-DMEDIAPLAYER_ENABLED -DMQTT_BUS_ENABLED", False),
     ("media radio (phase 2)",  "-DMEDIAPLAYER_ENABLED -DMEDIAPLAYER_RADIO_ENABLED -DMQTT_BUS_ENABLED "
                                "-DCONTROL_ENCODER_ENABLED", False),
+    ("market without the bus", "-DMARKET_ENABLED -DCONTROL_ENCODER_ENABLED", False),
+    ("market without the knob", "-DMARKET_ENABLED -DMQTT_BUS_ENABLED", False),
 ]
 
 # Built from bringup/ with their own source filters. When provision.cpp was

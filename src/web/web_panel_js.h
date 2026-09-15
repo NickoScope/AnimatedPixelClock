@@ -57,12 +57,12 @@ function segSet(id, v) {
   each(g.querySelectorAll('button'), function (b) { var on = b.getAttribute('data-v') === String(v); b.classList.toggle('on', on); b.setAttribute('aria-pressed', on ? 'true' : 'false'); });
 }
 
-var NAMES = { clock: 'Clock', world: 'World clock', flights: 'Flight board', trains: 'Rail board', media: 'Media', yachts: 'Yacht radar', cards: 'Card', other: 'Page' };
-var HINTS = { clock: 'Always on - where the panel falls back to', world: 'Daylight map and the time', flights: 'Arrivals and departures', trains: 'Departures, then arrivals, for one station', media: 'Now playing on a Home Assistant player', yachts: 'AIS vessels in the bay', other: 'Always visited' };
+var NAMES = { clock: 'Clock', world: 'World clock', flights: 'Flight board', trains: 'Rail board', media: 'Media', market: 'Market', yachts: 'Yacht radar', cards: 'Card', other: 'Page' };
+var HINTS = { clock: 'Always on - where the panel falls back to', world: 'Daylight map and the time', flights: 'Arrivals and departures', trains: 'Departures, then arrivals, for one station', media: 'Now playing on a Home Assistant player', market: 'MARKETS, TICKER, PORTFOLIO, HOLDINGS from Home Assistant', yachts: 'AIS vessels in the bay', other: 'Always visited' };
 var pageIdx = {}, lastPanel = null;
 
 // ---------------------------------------------------------------- polling
-var POLL = { pnow: [pollNow, 2000], pflights: [pollFb, 5000], ptrains: [pollRb, 5000], pmedia: [pollMp, 2000], pworld: [pollWc, 30000], pyachts: [pollYr, 3000], plua: [pollEffects, 3000], pknob: [pollKnob, 250] };
+var POLL = { pnow: [pollNow, 2000], pflights: [pollFb, 5000], ptrains: [pollRb, 5000], pmedia: [pollMp, 2000], pworld: [pollWc, 30000], pyachts: [pollYr, 3000], plua: [pollEffects, 3000], pknob: [pollKnob, 250], pmarket: [pollMk, 5000] };
 var active = null, timer = null;
 function activePage() { var s = document.querySelector('section.page.active'); return s && POLL[s.dataset.page] ? s.dataset.page : null; }
 function tick() {
@@ -1617,6 +1617,402 @@ if ($('knRev')) {
     api('/api/knob').then(function (d) { knBase = { cw: d.stats.cw, ccw: d.stats.ccw, click: d.stats.click, long: d.stats.long }; renderKnob(d); });
   });
 }
+
+// ---------------------------------------------------------------- market (src/market, /api/market)
+// The controls come from the registry /api/market sends: one row per setting
+// with its type, group, bounds and default; the three core groups are cards,
+// the advanced groups are folds with a summary of what is not at its default.
+// Nothing is written until Save, which posts every row as {config:{...}} and
+// shows the field the panel names when it refuses.
+var mkLast = null, mkBuilt = '', mkDirty = false, mkState = {}, mkBase = {}, mkReg = null;
+var MK_CLASSES = ['', 'equity', 'bond', 'real_assets', 'gold', 'cash'];
+function mkEl(tag, cls, html) { var e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; }
+function mkRow(key) { var r = null; (mkReg ? mkReg.rows : []).forEach(function (x) { if (x.key === key) r = x; }); return r; }
+function mkFmtNum(v, row) { return (row.dec ? (+v).toFixed(row.dec) : String(Math.round(+v))) + (row.unit ? ' ' + row.unit : ''); }
+function mkSame(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
+function mkTouch() { mkDirty = true; var m = $('mkMsg'); if (m) { m.textContent = 'Unsaved changes'; m.classList.remove('pn-err'); } mkRefreshSums(); }
+// The folds' closed lines follow the state as it is now, saved or not.
+function mkRefreshSums() {
+  if (!mkReg) return;
+  mkReg.groups.forEach(function (g) {
+    var e = document.querySelector('details[data-group="' + g.key + '"] .mk-fold-sum');
+    if (e) e.textContent = mkSummary(g);
+  });
+}
+
+// ---- the controls, by type. Each writes mkState[key] and returns an element.
+function mkScalar(row, val) {
+  var wrap = mkEl('div', 'field'), id = 'mk_' + row.key.replace(/\W/g, '_');
+  if (row.type === 'bool') {
+    wrap.innerHTML = '<label class="check-row standalone"><input type="checkbox" id="' + id + '"><span class="check-box" aria-hidden="true"></span>' +
+      '<span class="check-text"><strong>' + esc(row.label) + '</strong>' + (row.hint ? '<span class="ct-hint">' + esc(row.hint) + '</span>' : '') + '</span></label>';
+    var cb = wrap.querySelector('input'); cb.checked = !!val;
+    cb.addEventListener('change', function () { mkState[row.key] = cb.checked; mkTouch(); });
+    return wrap;
+  }
+  var ctl;
+  if (row.type === 'enum') {
+    ctl = mkEl('select'); ctl.id = id;
+    row.opts.forEach(function (o) { var op = document.createElement('option'); op.value = o; op.textContent = o.replace(/_/g, ' '); ctl.appendChild(op); });
+    ctl.value = val;
+    var sw = mkEl('div', 'select-wrap'); sw.appendChild(ctl);
+    wrap.innerHTML = '<label class="field-label" for="' + id + '">' + esc(row.label) + '</label>';
+    wrap.appendChild(sw);
+    ctl.addEventListener('change', function () { mkState[row.key] = ctl.value; mkTouch(); });
+  } else if (row.type === 'int' || row.type === 'num') {
+    ctl = mkEl('input'); ctl.type = 'number'; ctl.id = id; ctl.min = row.min; ctl.max = row.max;
+    ctl.step = row.type === 'int' ? 1 : (row.dec ? Math.pow(10, -row.dec) : 1); ctl.value = val;
+    var rr = mkEl('div', 'range-row'); rr.appendChild(ctl);
+    if (row.unit) rr.appendChild(mkEl('span', 'mk-unit', esc(row.unit)));
+    wrap.innerHTML = '<label class="field-label" for="' + id + '">' + esc(row.label) + '</label>';
+    wrap.appendChild(rr);
+    ctl.addEventListener('input', function () { mkState[row.key] = ctl.value === '' ? null : +ctl.value; mkTouch(); });
+  } else {   // date, time, sym
+    ctl = mkEl('input'); ctl.id = id; ctl.type = row.type === 'date' ? 'date' : (row.type === 'time' ? 'time' : 'text');
+    if (row.type === 'sym') { ctl.className = 'pn-crs'; ctl.maxLength = 12; ctl.placeholder = 'symbol'; }
+    ctl.value = val;
+    wrap.innerHTML = '<label class="field-label" for="' + id + '">' + esc(row.label) + '</label>';
+    wrap.appendChild(ctl);
+    ctl.addEventListener('input', function () { mkState[row.key] = row.type === 'sym' ? ctl.value.toUpperCase().trim() : ctl.value; mkTouch(); });
+  }
+  if (row.hint) wrap.appendChild(mkEl('p', 'field-hint', esc(row.hint)));
+  return wrap;
+}
+
+// Symbols with a short name (indices, tickers) or names alone (exchanges): chips and an add row.
+function mkChips(row, val) {
+  var wrap = mkEl('div', 'field full'), named = row.type === 'symlist';
+  wrap.innerHTML = '<span class="field-label">' + esc(row.label) + ' <span class="mk-unit" id="cnt_' + row.key.replace(/\W/g, '_') + '"></span></span>';
+  var tray = mkEl('div', 'chip-tray mk-chips'), add = mkEl('div', 'mk-addrow');
+  var symIn = mkEl('input'); symIn.type = 'text'; symIn.placeholder = named ? 'symbol, e.g. ^GSPC' : 'exchange, e.g. LSE'; symIn.className = 'pn-crs'; symIn.maxLength = named ? 12 : 10;
+  var nameIn = mkEl('input'); nameIn.type = 'text'; nameIn.placeholder = 'short name'; nameIn.maxLength = 8;
+  var btn = mkEl('button', 'btn btn-sm', 'Add'); btn.type = 'button';
+  add.appendChild(symIn); if (named) add.appendChild(nameIn); add.appendChild(btn);
+  function draw() {
+    var list = mkState[row.key];
+    tray.innerHTML = list.length ? '' : '<span class="chip-empty">none</span>';
+    list.forEach(function (it, i) {
+      var c = mkEl('span', 'chip', '<span class="cn">' + esc(named ? it.sym : it) + '</span>' + (named && it.name !== it.sym ? '<span class="cb">' + esc(it.name) + '</span>' : '') +
+        '<button type="button" class="mk-x" title="remove" data-i="' + i + '">&times;</button>');
+      tray.appendChild(c);
+    });
+    setText('cnt_' + row.key.replace(/\W/g, '_'), list.length + ' of ' + row.max);
+    btn.disabled = list.length >= row.max;
+  }
+  tray.addEventListener('click', function (e) { var b = e.target.closest('.mk-x'); if (!b) return; mkState[row.key].splice(+b.getAttribute('data-i'), 1); draw(); mkTouch(); });
+  function addOne() {
+    var sym = symIn.value.toUpperCase().trim(), name = nameIn.value.toUpperCase().trim();
+    if (!sym || mkState[row.key].length >= row.max) return;
+    if (mkState[row.key].some(function (it) { return (named ? it.sym : it) === sym; })) { note('mkMsg', sym + ' is already listed', true); return; }
+    mkState[row.key].push(named ? { sym: sym, name: name || sym } : sym);
+    symIn.value = nameIn.value = ''; draw(); mkTouch(); symIn.focus();
+  }
+  btn.addEventListener('click', addOne);
+  [symIn, nameIn].forEach(function (i) { i.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); addOne(); } }); });
+  wrap.appendChild(tray); wrap.appendChild(add);
+  if (row.hint) wrap.appendChild(mkEl('p', 'field-hint', esc(row.hint)));
+  draw();
+  return wrap;
+}
+
+// The allocation (symbol, weight, and a folded detail line: entry, class, proxy)
+// and the benchmark blend (symbol, weight), with a live sum bar capped at 100.
+function mkWeights(row, val) {
+  var wrap = mkEl('div', 'field full'), full = row.type === 'poslist';
+  wrap.innerHTML = '<span class="field-label">' + esc(row.label) + '</span>';
+  var box = mkEl('div'), bar = mkEl('div', 'mk-sum', '<span></span>'), txt = mkEl('div', 'mk-sumtxt');
+  var add = mkEl('button', 'btn btn-sm', full ? 'Add position' : 'Add symbol'); add.type = 'button';
+  function sum() { return mkState[row.key].reduce(function (a, p) { return a + (+p.w || 0); }, 0); }
+  function drawSum() {
+    var s = sum(), over = s > 100.005, list = mkState[row.key];
+    bar.firstChild.style.width = Math.min(100, s) + '%';
+    bar.classList.toggle('over', over); txt.classList.toggle('over', over);
+    txt.textContent = s.toFixed(2) + ' % of 100' + (over ? ' - too much: Save is off until the weights fit' : (full && s < 99.995 ? ', the rest stays in cash' : '')) + ' · ' + list.length + ' of ' + row.max;
+    var save = $('mkSave'); if (save) save.disabled = mkOverWeight();
+    add.disabled = list.length >= row.max;
+  }
+  function draw() {
+    box.innerHTML = '';
+    var head = mkEl('div', 'mk-pos head', '<span>symbol</span><span>weight ' + (row.unit || '%') + '</span><span></span><span></span>');
+    box.appendChild(head);
+    mkState[row.key].forEach(function (p, i) {
+      var line = mkEl('div', 'mk-pos');
+      line.innerHTML = '<input type="text" class="sym" maxlength="12" value="' + esc(p.sym) + '" placeholder="symbol">' +
+        '<input type="number" min="0.01" max="100" step="0.01" value="' + esc(p.w) + '">' +
+        (full ? '<button type="button" class="mk-more" title="entry date, asset class, proxy">' + ((p.entry || p.asset_class || p.proxy) ? 'more &bull;' : 'more') + '</button>' : '<span></span>') +
+        '<button type="button" class="mk-x" title="remove">&times;</button>';
+      var ins = line.querySelectorAll('input');
+      ins[0].addEventListener('input', function () { p.sym = ins[0].value.toUpperCase().trim(); mkTouch(); });
+      ins[1].addEventListener('input', function () { p.w = ins[1].value === '' ? 0 : +ins[1].value; drawSum(); mkTouch(); });
+      line.querySelector('.mk-x').addEventListener('click', function () { mkState[row.key].splice(i, 1); draw(); mkTouch(); });
+      box.appendChild(line);
+      if (full) {
+        var more = mkEl('div', 'mk-more-row'); more.hidden = true;   // folded, whatever is set: the bullet on 'more' says there is something
+        more.innerHTML = '<div><label class="field-label">entry</label><input type="date" value="' + esc(p.entry || '') + '"></div>' +
+          '<div><label class="field-label">asset class</label><div class="select-wrap"><select>' + MK_CLASSES.map(function (c) { return '<option value="' + c + '">' + (c ? c.replace('_', ' ') : '-') + '</option>'; }).join('') + '</select></div></div>' +
+          '<div><label class="field-label">proxy</label><input type="text" class="pn-crs" maxlength="12" value="' + esc(p.proxy || '') + '" placeholder="older series"></div>';
+        var mi = more.querySelectorAll('input, select');
+        mi[1].value = p.asset_class || '';
+        mi[0].addEventListener('input', function () { p.entry = mi[0].value || null; mkTouch(); });
+        mi[1].addEventListener('change', function () { p.asset_class = mi[1].value || null; mkTouch(); });
+        mi[2].addEventListener('input', function () { p.proxy = mi[2].value.toUpperCase().trim() || null; mkTouch(); });
+        line.querySelector('.mk-more').addEventListener('click', function () { more.hidden = !more.hidden; });
+        box.appendChild(more);
+      }
+    });
+    drawSum();
+  }
+  add.addEventListener('click', function () { if (mkState[row.key].length < row.max) { mkState[row.key].push({ sym: '', w: 0 }); draw(); mkTouch(); var last = box.querySelectorAll('.sym'); if (last.length) last[last.length - 1].focus(); } });
+  wrap.appendChild(box); wrap.appendChild(bar); wrap.appendChild(txt);
+  var actions = mkEl('div', 'mk-presets'); actions.appendChild(add);
+  if (!full) {
+    var b1 = mkEl('button', 'btn btn-sm', '60/40'), b2 = mkEl('button', 'btn btn-sm', 'Same weights'); b1.type = b2.type = 'button';
+    b1.title = "The shape of Vanguard's Balanced Composite: 60 % VFINX (S&P 500 index fund), 40 % VBMFX (total bond market index fund), on adjusted closes";
+    b1.addEventListener('click', function () { mkState[row.key] = [{ sym: 'VFINX', w: 60 }, { sym: 'VBMFX', w: 40 }]; draw(); mkTouch(); });
+    b2.title = "The portfolio's own symbols and weights";
+    b2.addEventListener('click', function () { mkState[row.key] = (mkState['portfolio.positions'] || []).slice(0, row.max).map(function (p) { return { sym: p.sym, w: p.w }; }); draw(); mkTouch(); });
+    actions.appendChild(b1); actions.appendChild(b2);
+  }
+  wrap.appendChild(actions);
+  if (row.hint) wrap.appendChild(mkEl('p', 'field-hint', esc(row.hint)));
+  draw();
+  return wrap;
+}
+function mkOverWeight() {
+  var over = false;
+  (mkReg ? mkReg.rows : []).forEach(function (r) {
+    if ((r.type === 'poslist' || r.type === 'wlist') && mkState[r.key]) over = over || mkState[r.key].reduce(function (a, p) { return a + (+p.w || 0); }, 0) > 100.005;
+  });
+  return over;
+}
+
+// symbol: percent pairs (the TER overrides).
+function mkMap(row, val) {
+  var wrap = mkEl('div', 'field full');
+  wrap.innerHTML = '<span class="field-label">' + esc(row.label) + '</span>';
+  var box = mkEl('div'), add = mkEl('button', 'btn btn-sm', 'Add symbol'); add.type = 'button';
+  function draw() {
+    box.innerHTML = '';
+    var keys = Object.keys(mkState[row.key]);
+    if (!keys.length) box.appendChild(mkEl('p', 'field-hint', 'none: the app uses Yahoo\'s expense ratios'));
+    keys.forEach(function (k) {
+      var line = mkEl('div', 'mk-pos');
+      line.innerHTML = '<input type="text" class="sym" maxlength="12" value="' + esc(k) + '"><input type="number" min="0" max="10" step="0.01" value="' + esc(mkState[row.key][k]) + '"><span class="mk-unit">' + esc(row.unit || '') + '</span><button type="button" class="mk-x" title="remove">&times;</button>';
+      var ins = line.querySelectorAll('input');
+      ins[0].addEventListener('change', function () { var v = mkState[row.key][k]; delete mkState[row.key][k]; k = ins[0].value.toUpperCase().trim(); if (k) mkState[row.key][k] = v; draw(); mkTouch(); });
+      ins[1].addEventListener('input', function () { mkState[row.key][k] = +ins[1].value; mkTouch(); });
+      line.querySelector('.mk-x').addEventListener('click', function () { delete mkState[row.key][k]; draw(); mkTouch(); });
+      box.appendChild(line);
+    });
+    add.disabled = keys.length >= row.max;
+  }
+  add.addEventListener('click', function () { var k = prompt('Symbol'); if (!k) return; k = k.toUpperCase().trim(); if (k && !(k in mkState[row.key])) { mkState[row.key][k] = 0; draw(); mkTouch(); } });
+  wrap.appendChild(box); wrap.appendChild(add);
+  if (row.hint) wrap.appendChild(mkEl('p', 'field-hint', esc(row.hint)));
+  draw();
+  return wrap;
+}
+
+function mkJson(row, val) {
+  var wrap = mkEl('div', 'field full'), id = 'mk_' + row.key;
+  wrap.innerHTML = '<label class="field-label" for="' + id + '">' + esc(row.label) + '</label>';
+  var ta = mkEl('textarea', 'mk-json'); ta.id = id; ta.value = JSON.stringify(val || {}, null, 1); ta.spellcheck = false;
+  ta.addEventListener('input', function () { try { mkState[row.key] = JSON.parse(ta.value || '{}'); ta.classList.remove('mk-bad'); } catch (e) { ta.classList.add('mk-bad'); } mkTouch(); });
+  wrap.appendChild(ta);
+  if (row.hint) wrap.appendChild(mkEl('p', 'field-hint', esc(row.hint) + ' At most ' + row.cap + ' bytes.'));
+  return wrap;
+}
+
+function mkControl(row, val) {
+  switch (row.type) {
+  case 'symlist': case 'namelist': return mkChips(row, val);
+  case 'poslist': case 'wlist': return mkWeights(row, val);
+  case 'termap': return mkMap(row, val);
+  case 'json': return mkJson(row, val);
+  default: return mkScalar(row, val);
+  }
+}
+
+// What a fold says while closed: its rows that are not at their default.
+function mkSummary(g) {
+  var parts = [];
+  mkReg.rows.forEach(function (r) {
+    if (r.group !== g.key || mkSame(mkState[r.key], r.def)) return;
+    var v = mkState[r.key];
+    if (r.type === 'bool') parts.push((v ? '' : 'no ') + r.label.toLowerCase());
+    else if (r.type === 'int' || r.type === 'num') parts.push(r.label.toLowerCase() + ' ' + mkFmtNum(v, r));
+    else if (r.type === 'enum') parts.push(String(v).replace(/_/g, ' '));
+    else if (Array.isArray(v)) parts.push(v.length + ' ' + r.label.toLowerCase());
+    else if (typeof v === 'object') parts.push(Object.keys(v).length + ' ' + r.label.toLowerCase());
+    else parts.push(r.label.toLowerCase() + ' ' + v);
+  });
+  return parts.length ? parts.join(', ') : 'defaults';
+}
+
+function mkBuild(d) {
+  var open = {};
+  each(document.querySelectorAll('#mkAdv details[open]'), function (f) { open[f.getAttribute('data-group')] = 1; });
+  mkReg = d.registry;
+  mkState = JSON.parse(JSON.stringify(d.config));
+  mkBase = JSON.parse(JSON.stringify(d.config));   // what Save compares against: only the rows changed here go out
+  var core = $('mkCore'), adv = $('mkAdv');
+  core.innerHTML = adv.innerHTML = '';
+  mkReg.groups.forEach(function (g) {
+    var rows = mkReg.rows.filter(function (r) { return r.group === g.key; });
+    if (!rows.length) return;
+    var grid = mkEl('div', 'mk-grid');
+    rows.forEach(function (r) { grid.appendChild(mkControl(r, mkState[r.key])); });
+    if (!g.adv) {
+      var card = mkEl('div', 'card', '<h2 class="card-title">' + esc(g.label) + '</h2>');
+      card.appendChild(grid);
+      core.appendChild(card);
+    } else {
+      var fold = mkEl('details', 'card mk-fold');
+      fold.setAttribute('data-group', g.key);
+      if (open[g.key]) fold.open = true;
+      fold.innerHTML = '<summary><span>' + esc(g.label) + '</span><span class="mk-fold-sum">' + esc(mkSummary(g)) + '</span></summary>';
+      var body = mkEl('div', 'mk-fold-body'); body.appendChild(grid);
+      var reset = mkEl('button', 'mk-reset', 'Reset ' + esc(g.label.toLowerCase()) + ' to defaults'); reset.type = 'button';
+      reset.addEventListener('click', function () {
+        api('/api/market', { reset: g.key }).then(function (r) { mkDirty = false; mkBuilt = ''; renderMk(r); note('mkMsg', g.label + ' back to defaults, saved and published.'); })
+          .catch(function (err) { note('mkMsg', err.message, true); });
+      });
+      body.appendChild(reset);
+      fold.appendChild(body);
+      adv.appendChild(fold);
+    }
+  });
+  mkDirty = false;
+  note('mkMsg', '');
+  mkRefreshSums();
+  var save = $('mkSave'); if (save) save.disabled = mkOverWeight();
+}
+
+function pollMk() { return api('/api/market').then(renderMk); }
+function mkNum(v, cur) { return v == null ? '--' : (Math.round(v).toLocaleString('en').replace(/,/g, ' ') + (cur ? ' ' + cur : '')); }
+function mkPct(x) { return x == null ? '--' : ((x >= 0 ? '+' : '') + (100 * x).toFixed(Math.abs(100 * x) < 100 ? 1 : 0) + ' %'); }
+// The panel found no PSRAM for the store: no registry and no config came, so
+// there is no form to build; say so and keep the bus diagnostics.
+function mkNoMemory(d) {
+  mkBuilt = ''; mkReg = null; mkDirty = false;
+  var core = $('mkCore'), adv = $('mkAdv'), save = $('mkSave'), mq = d.mqtt || {}, led = $('mkLed');
+  if (core) core.innerHTML = '<div class="card"><h2 class="card-title">Settings <span class="tag">unavailable</span></h2>' +
+    '<p class="note warn"><span class="note-k">No memory</span>The panel could not allocate the market store in PSRAM at boot (' +
+    esc(d.storeBytes) + ' B, and ' + esc(d.recordBytes) + ' B for the flash copy), so there are no settings to edit and the pages say NO MEMORY. A reboot tries again.</p></div>';
+  if (adv) adv.innerHTML = '';
+  if (save) save.disabled = true;
+  if (led) { led.classList.remove('online'); led.classList.add('offline'); }
+  setText('mkStTag', 'no memory');
+  setText('mkTitle', 'no PSRAM for the market store');
+  ['mkAsof', 'mkFetched', 'mkView', 'mkHold', 'mkRebal', 'mkRx', 'mkCfg', 'mkNvs', 'mkFs', 'mkWindows'].forEach(function (id) { setText(id, '--'); });
+  setText('mkDiagTag', 'no memory');
+  setText('mkMq', (mq.connected ? 'connected' : String(mq.status || '--').toLowerCase()) + (mq.configured ? '' : ' · no broker stored'));
+  setText('mkBridge', { online: 'online', offline: 'offline - the app stopped, or lost the broker', unknown: 'has said nothing yet' }[d.bridge] || '--');
+  setText('mkTopics', 'not subscribed: no store');
+  var box = $('mkSymbols'); if (box) box.innerHTML = '<span class="empty">no store</span>';
+}
+function renderMk(d) {
+  mkLast = d;
+  pageIdx.market = d.page;
+  if (!d.ready) { mkNoMemory(d); return; }
+  var sig = JSON.stringify(d.registry);
+  if (sig !== mkBuilt) { mkBuilt = sig; mkBuild(d); }
+  else if (!mkDirty && !mkSame(mkState, d.config)) mkBuild(d);   // moved by the knob or another browser
+  var st = (d.model || {}).status || {}, mq = d.mqtt || {}, v = d.view || {}, pf = ((d.model || {}).portfolio) || {};
+  var live = d.bridge === 'online' && st.have && st.state === 'ok';
+  var led = $('mkLed'); if (led) { led.classList.toggle('online', live); led.classList.toggle('offline', !live); }
+  setText('mkStTag', !d.ready ? 'no memory' : (d.bridge === 'offline' ? 'app offline' : (st.have ? st.state : 'waiting')));
+  setText('mkTitle', st.have ? ('app ' + st.state + (st.err ? ' · ' + st.err : '')) : (d.bridge === 'online' ? 'app online, no status yet' : 'waiting for Home Assistant'));
+  setText('mkAsof', st.asof || '--');
+  setText('mkFetched', st.fetched || '--');
+  setText('mkView', (v.window || '--') + ' · ' + (v.mode || '--') + ' · ticker ' + (v.ticker || '--') + ' · on hand: ' + ((v.presets || []).join(' ') || '--'));
+  ['hold', 'rebal'].forEach(function (m) {
+    var p = pf[m] || {};
+    setText(m === 'hold' ? 'mkHold' : 'mkRebal', p.have ? mkNum(p.value, p.cur) + ' · TWR ' + mkPct(p.twr != null ? p.twr : p.chg) + ' over ' + (v.window || '') +
+      (p.ann != null ? ' · ANN ' + mkPct(p.ann) : '') + (p.flows ? ' · XIRR ' + mkPct(p.xirrAnn) : '') + ' · MDD ' + mkPct(p.mdd) +
+      (p.mddPeak ? ' ' + p.mddPeak.slice(0, 7) + '>' + p.mddTrough.slice(0, 7) + (p.mddRecovery ? ', back ' + p.mddRecovery.slice(0, 7) : ', not recovered') : '') +
+      ' · as of ' + (p.to || '--') : 'nothing received');
+  });
+  setText('mkDiagTag', d.showing ? 'on screen' : 'not on screen');
+  setText('mkMq', (mq.connected ? 'connected' : String(mq.status || '--').toLowerCase()) + (mq.configured ? '' : ' · no broker stored'));
+  setText('mkBridge', { online: 'online', offline: 'offline - the app stopped, or lost the broker', unknown: 'has said nothing yet' }[d.bridge] || '--');
+  setText('mkRx', d.accepted + ' payloads' + (d.rxAgoS != null ? ', last ' + ago(d.rxAgoS) : '') + ' · ' + d.refused + ' refused' + (d.lastRefusal ? ' (last ' + d.lastRefusal + ')' : '') + ' · JSON peak ' + d.jsonPeak + ' B');
+  var c = d.cfgOut || {};
+  setText('mkCfg', (c.tooBig ? 'TOO BIG: ' + c.bytes + ' B over ' + c.max : (c.sent ? 'published, ' + c.bytes + ' B' : 'not sent yet')) + (c.agoS != null ? ' · ' + ago(c.agoS) : '') + ' · ' + c.count + ' sent' + (c.skipped ? ' · ' + c.skipped + ' identical, not sent' : ''));
+  var n = d.nvs || {};
+  setText('mkNvs', (n.saved ? 'saved' : 'saving') + ' · ' + n.note + ' · ' + n.bytes + ' of ' + n.max + ' B · ' + n.writes + ' writes' + (n.fails ? ', ' + n.fails + ' failed' : ''));
+  var f = d.fs || {};
+  setText('mkFs', (!f.ready ? 'LittleFS not mounted' : f.note) + ' · ' + f.bytes + ' B' + (f.pending ? ' · write pending' : '') + ' · ' + f.writes + ' writes' + (f.fails ? ', ' + f.fails + ' failed' : ''));
+  var md = d.model || {};
+  var wins = function (mask) { var out = []; (mkReg && mkRow('display.window') ? mkRow('display.window').opts : []).forEach(function (p, i) { if (mask & (1 << i)) out.push(p); }); return out.join(' ') || 'none'; };
+  setText('mkWindows', 'model gen ' + md.gen + ', ' + md.bytes + ' B · portfolio hold ' + wins((pf.hold || {}).windows || 0) + ' · rebal ' + wins((pf.rebal || {}).windows || 0));
+  setText('mkTopics', d.root ? d.root + '{config, status, index/+/+, ticker/+/+, portfolio/+/+, holdings/+, live, intraday/+, tape, ha}' + (d.subscribed && d.handler ? '' : ' · MQTT bus refused the subscription') : 'waiting for the MAC');
+  var box = $('mkSymbols');
+  if (box) {
+    var rows = '<span class="h">symbol</span><span class="h">windows</span><span class="h">last</span><span class="h">live</span><span class="h">app: as of · bars · TER</span>';
+    var stat = {}; (st.symbols || []).forEach(function (s) { stat[s.sym] = s; });
+    var any = false;
+    (md.indices || []).concat(md.tickers || []).forEach(function (s) {
+      any = true;
+      var w = s.w || {}, l = s.live, q = stat[s.sym] || {};
+      rows += '<span>' + esc(s.sym) + (s.name !== s.sym ? ' <span class="dim">' + esc(s.name) + '</span>' : '') + '</span><span>' + wins(s.windows) + '</span>' +
+        '<span>' + (w.have ? (+w.last).toLocaleString('en') + ' ' + esc(w.cur) + ' ' + mkPct(w.chg) : '<span class="dim">--</span>') + '</span>' +
+        '<span>' + (l ? esc(l.state) + (l.day != null ? ' ' + mkPct(l.day) : '') + (l.feed ? ' · ' + esc(l.feed) : '') + (l.delayS ? ' ' + Math.round(l.delayS / 60) + ' min' : '') : '<span class="dim">--</span>') + '</span>' +
+        '<span class="' + (q.sym ? '' : 'warn') + '">' + (q.sym ? esc(q.asof || '--') + ' · ' + q.bars + ' bars' + (q.ter != null ? ' · TER ' + (100 * q.ter).toFixed(2) + ' % (' + esc(q.terSrc) + ')' : '') : 'not in the app\'s status') + '</span>';
+    });
+    box.innerHTML = any ? rows : '<span class="empty">no symbols watched</span>';
+  }
+}
+
+// A row as it is sent: the allocation and the blend without empty lines and
+// with the optional fields only when set, as the panel sends them back.
+function mkNorm(r, v) {
+  if (r.type === 'poslist') return (v || []).filter(function (p) { return p.sym; }).map(function (p) { var o = { sym: p.sym, w: +p.w }; if (p.entry) o.entry = p.entry; if (p.asset_class) o.asset_class = p.asset_class; if (p.proxy) o.proxy = p.proxy; return o; });
+  if (r.type === 'wlist') return (v || []).filter(function (p) { return p.sym; }).map(function (p) { return { sym: p.sym, w: +p.w }; });
+  return v;
+}
+// Only the rows changed in this form: a window or a ticker the knob moved
+// meanwhile is not overwritten with what the form was built from.
+function mkCollect() {
+  var cfg = {};
+  mkReg.rows.forEach(function (r) {
+    var v = mkNorm(r, mkState[r.key]);
+    if (!mkSame(v, mkNorm(r, mkBase[r.key]))) cfg[r.key] = v;
+  });
+  return cfg;
+}
+function mkMark(key, on) {
+  var e = document.getElementById('mk_' + String(key).replace(/\W/g, '_'));
+  if (e) e.classList.toggle('mk-bad', on);
+}
+if ($('mkSave')) $('mkSave').addEventListener('click', function () {
+  if (!mkReg) return;
+  var btn = this, cfg = mkCollect();
+  each(document.querySelectorAll('.mk-bad'), function (e) { e.classList.remove('mk-bad'); });
+  if (mkOverWeight()) { note('mkMsg', 'the weights sum to more than 100 %', true); return; }
+  var keys = Object.keys(cfg);
+  if (!keys.length) { mkDirty = false; note('mkMsg', 'Nothing changed.'); return; }
+  btn.disabled = true;
+  api('/api/market', { config: cfg }).then(function (d) {
+    mkDirty = false; btn.disabled = false; mkBuilt = ''; renderMk(d);
+    var saved = d.nvs && d.nvs.saved, c = d.cfgOut || {};
+    note('mkMsg', (saved ? 'Saved ' : 'Applied, not yet in flash (' + (d.nvs ? d.nvs.note : '?') + '), ') + keys.length + (keys.length === 1 ? ' setting' : ' settings') +
+      (!c.sent ? '; the config goes out once MQTT is connected.'
+        : (c.unchanged ? '; the panel-only settings do not change what Home Assistant reads, so nothing was republished.'
+          : ' and published. Home Assistant recomputes; the pages follow when it republishes.')), !saved);
+  }).catch(function (err) {
+    btn.disabled = false;
+    var m = /^([\w.]+):/.exec(err.message);
+    if (m) mkMark(m[1], true);
+    note('mkMsg', err.message, true);
+  });
+});
+if ($('mkRevert')) $('mkRevert').addEventListener('click', function () { if (mkLast) { mkBuilt = ''; renderMk(mkLast); } });
+each(document.querySelectorAll('[data-mkshow]'), function (b) {
+  b.addEventListener('click', function () {
+    api('/api/market', { show: b.getAttribute('data-mkshow') }).then(function (d) { renderMk(d); flash(b, 'On screen'); }).catch(function (err) { flash(b, err.message, true); });
+  });
+});
 
 // ---------------------------------------------------------------- start
 api('/api/panel').then(learn).catch(function () {});

@@ -90,7 +90,7 @@ static char     s_sel[kPlayerIdLen]      = "";
 static char     s_selSaved[kPlayerIdLen] = "";
 static uint32_t s_selDirtyAt = 0;
 static bool     s_selToSend  = false;
-static bool     s_wasUp      = false;
+static uint32_t s_seenConnects = 0;   // mqttBusConnects() when the selection last went out on a connect
 
 static bool     s_bridgeHave   = false;
 static bool     s_bridgeOnline = false;
@@ -271,8 +271,12 @@ bool setSelected(const char *id) {
 // have lost it.
 static void selectionTick() {
   const bool up = mqttBusConnected();
-  if (up && !s_wasUp && s_sel[0]) s_selToSend = true;
-  s_wasUp = up;
+  // Every connect, by the bus's counter: a reconnect inside one mqttBusLoop() is no down-up edge here.
+  const uint32_t connects = mqttBusConnects();
+  if (connects != s_seenConnects) {
+    s_seenConnects = connects;
+    if (s_sel[0]) s_selToSend = true;
+  }
   if (!up || !s_selToSend || !s_topics || !s_sel[0]) return;
   char body[96];
   const size_t n = selectPayload(body, sizeof(body), s_sel);

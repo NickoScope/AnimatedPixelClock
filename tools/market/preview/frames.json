@@ -1,0 +1,811 @@
+{
+ "_meta": {
+  "asof": "2026-09-14",
+  "bench": "^SP500TR total return, in EUR, growth of 10 000 from the inception",
+  "budget": {
+   "MARKETS row 33: 2x slot | badge D + 3 digits and the day change": 14,
+   "PORTFOLIO contributions, STALE footer: XIRR | STALE date": 41,
+   "PORTFOLIO contributions, footer: XIRR DIV | date": 31,
+   "PORTFOLIO drawdown stop, footer: MDD .. REC | the right edge": 1,
+   "PORTFOLIO drawdown stop, row 25: 2x slot | STALE date": 12,
+   "PORTFOLIO footer as approved: DIV TER~ CASH | date": 4,
+   "PORTFOLIO row 16: 2x slot | TWR and the change": 3,
+   "PORTFOLIO row 25: 2x slot | ANN": 16,
+   "TICKER heading: 8-character symbol, tag, currency | ANN": 3,
+   "TICKER row 25: 2x slot | badge D + 3 digits and the day change": 2
+  },
+  "config": [
+   [
+    "VOO",
+    100.0
+   ]
+  ],
+  "contrib_example": 1000.0,
+  "example_allocation": [
+   [
+    "SYNTH01X",
+    20.0
+   ],
+   [
+    "SYNTH02X",
+    15.0
+   ],
+   [
+    "SYNTH03X",
+    10.0
+   ],
+   [
+    "SYNTH04X",
+    10.0
+   ],
+   [
+    "SYNTH05X",
+    8.0
+   ],
+   [
+    "SYNTH06X",
+    7.0
+   ],
+   [
+    "SYNTH07X",
+    6.0
+   ],
+   [
+    "SYNTH08X",
+    5.0
+   ],
+   [
+    "SYNTH09X",
+    5.0
+   ],
+   [
+    "SYNTH10X",
+    4.0
+   ],
+   [
+    "SYNTH11X",
+    3.0
+   ],
+   [
+    "SYNTH12X",
+    3.0
+   ],
+   [
+    "SYNTH13X",
+    2.0
+   ],
+   [
+    "SYNTH14X",
+    2.0
+   ]
+  ],
+  "lags_s": {
+   "realtime": 0,
+   "yahoo_eu_measured": [
+    902,
+    906
+   ]
+  },
+  "listing": {
+   "AAPL": "2021-09-13",
+   "EURUSD=X": "2003-12-01",
+   "IWDA.AS": "2009-09-01",
+   "VOO": "2010-10-01",
+   "^FCHI": "1990-03-01",
+   "^GDAXI": "2000-01-01",
+   "^GSPC": "1984-12-01",
+   "^IXIC": "2000-01-01"
+  },
+  "synth_bases": {
+   "SYNTH01X": "^FCHI",
+   "SYNTH02X": "^GDAXI",
+   "SYNTH03X": "VOO",
+   "SYNTH04X": "^GSPC",
+   "SYNTH05X": "^IXIC",
+   "SYNTH06X": "AAPL",
+   "SYNTH07X": "^FCHI",
+   "SYNTH08X": "^GDAXI",
+   "SYNTH09X": "VOO",
+   "SYNTH10X": "^GSPC",
+   "SYNTH11X": "^IXIC",
+   "SYNTH12X": "AAPL",
+   "SYNTH13X": "^FCHI",
+   "SYNTH14X": "^GDAXI"
+  }
+ },
+ "holdings_hold": {
+  "asof": "AS OF 14 SEP",
+  "heading": "HOLDINGS 1/1 MAX",
+  "now": "2026-09-15T08:40:00+02:00",
+  "page": "1/1",
+  "rows": [
+   "VOO 100>99% +596%",
+   "CASH 0>1%"
+  ],
+  "tape": "NYSE CLOSED  NASDAQ CLOSED  XETRA PRE  EURONEXT CLOSED",
+  "title": "HOLDINGS HOLD, the real portfolio"
+ },
+ "holdings_synth14_p1": {
+  "asof": "AS OF 14 SEP",
+  "heading": "HOLDINGS 1/4 MAX",
+  "now": "2026-09-15T08:40:00+02:00",
+  "page": "1/4",
+  "rows": [
+   "SYNTH01X 20>18% +28.7%",
+   "SYNTH02X 15>14% +186%",
+   "SYNTH03X 10>10% +481%",
+   "SYNTH04X 10>10% +458%"
+  ],
+  "tape": "NYSE CLOSED  NASDAQ CLOSED  XETRA PRE  EURONEXT CLOSED",
+  "title": "HOLDINGS 1/4, 14 synthetic positions + CASH"
+ },
+ "holdings_synth14_p2_stale": {
+  "asof": "STALE 14 SEP",
+  "heading": "HOLDINGS 2/4 5Y",
+  "now": "2026-09-21T08:40:00+02:00",
+  "page": "2/4",
+  "rows": [
+   "SYNTH05X 8>35% +1 970%",
+   "SYNTH06X 7>3% +108%",
+   "SYNTH07X 6>2% +59.8%",
+   "SYNTH08X 5>3% +151%"
+  ],
+  "tape": "NYSE CLOSED  NASDAQ CLOSED  XETRA PRE  EURONEXT CLOSED",
+  "title": "HOLDINGS 2/4, STALE"
+ },
+ "holdings_synth14_p4": {
+  "asof": "AS OF 14 SEP",
+  "heading": "HOLDINGS 4/4 MAX",
+  "now": "2026-09-15T08:40:00+02:00",
+  "page": "4/4",
+  "rows": [
+   "SYNTH13X 2>1% +54.2%",
+   "SYNTH14X 2>2% +452%",
+   "CASH 0>0%"
+  ],
+  "tape": "NYSE CLOSED  NASDAQ CLOSED  XETRA PRE  EURONEXT CLOSED",
+  "title": "HOLDINGS 4/4, the last page with CASH"
+ },
+ "markets_1y_dax": {
+  "asof": "AS OF 14 SEP",
+  "heading": "MARKETS 1Y",
+  "now": "2026-09-14T22:30:00+02:00",
+  "primary": {
+   "chg": "+6.5%",
+   "label": "CLOSE 14 SEP",
+   "lag_s": null,
+   "last": "25 441",
+   "mn": "DAX",
+   "state": "CLOSED",
+   "window": "2025-09-14..2026-09-14"
+  },
+  "rows": [
+   "SPX 7 620 +11.3%",
+   "NDX 26 186 +15.6%",
+   "CAC 8 118 +2.8%"
+  ],
+  "tape": "NYSE POST  NASDAQ POST  XETRA CLOSED  EURONEXT CLOSED",
+  "title": "MARKETS, 1Y, DAX primary, 22:30 Paris: NYSE POST"
+ },
+ "markets_1y_dax_d15": {
+  "asof": "AS OF 14 SEP",
+  "heading": "MARKETS 1Y",
+  "now": "2026-09-14T11:00:00+02:00",
+  "primary": {
+   "chg": "+6.5%",
+   "label": "D15 -0.5%",
+   "lag_s": 902,
+   "last": "25 441",
+   "mn": "DAX",
+   "state": "OPEN",
+   "window": "2025-09-14..2026-09-14"
+  },
+  "rows": [
+   "SPX 7 620 +11.3%",
+   "NDX 26 186 +15.6%",
+   "CAC 8 118 +2.8%"
+  ],
+  "tape": "NYSE PRE  NASDAQ PRE  XETRA OPEN  EURONEXT OPEN",
+  "title": "MARKETS, 1Y, DAX primary, 11:00 Paris: Yahoo's measured European lag, D15"
+ },
+ "markets_5y_closed": {
+  "asof": "AS OF 14 SEP",
+  "heading": "MARKETS 5Y",
+  "now": "2026-09-15T08:40:00+02:00",
+  "primary": {
+   "chg": "+66.8%",
+   "label": "CLOSE 14 SEP",
+   "lag_s": null,
+   "last": "7 620",
+   "mn": "SPX",
+   "state": "CLOSED",
+   "window": "2021-09-14..2026-09-14"
+  },
+  "rows": [
+   "NDX 26 186 +81.2%",
+   "CAC 8 118 +24.5%",
+   "DAX 25 441 +66.7%"
+  ],
+  "tape": "NYSE CLOSED  NASDAQ CLOSED  XETRA PRE  EURONEXT CLOSED",
+  "title": "MARKETS, 5Y, 08:40 Paris: CLOSE, XETRA in PRE"
+ },
+ "markets_err": {
+  "error": "DATA ERR NOTHING STORED",
+  "heading": "MARKETS MAX",
+  "now": "2026-09-15T08:40:00+02:00",
+  "tape": "NYSE --  NASDAQ --  XETRA --  EURONEXT --",
+  "title": "MARKETS: DATA ERR, nothing stored"
+ },
+ "markets_max_open": {
+  "asof": "AS OF 14 SEP",
+  "heading": "MARKETS MAX",
+  "now": "2026-09-14T18:00:00+02:00",
+  "primary": {
+   "chg": "+458%",
+   "label": "LIVE -0.5%",
+   "lag_s": 0,
+   "last": "7 620",
+   "mn": "SPX",
+   "state": "OPEN",
+   "window": "2000-01-01..2026-09-14"
+  },
+  "rows": [
+   "NDX 26 186 +565%",
+   "CAC 8 118 +43.4%",
+   "DAX 25 441 +272%"
+  ],
+  "tape": "NYSE OPEN  NASDAQ OPEN  XETRA POST  EURONEXT CLOSED",
+  "title": "MARKETS, MAX, 12:00 New York: SPX LIVE"
+ },
+ "markets_max_open_d15": {
+  "asof": "AS OF 14 SEP",
+  "heading": "MARKETS MAX",
+  "now": "2026-09-14T18:00:00+02:00",
+  "primary": {
+   "chg": "+458%",
+   "label": "D15 -0.5%",
+   "lag_s": 902,
+   "last": "7 620",
+   "mn": "SPX",
+   "state": "OPEN",
+   "window": "2000-01-01..2026-09-14"
+  },
+  "rows": [
+   "NDX 26 186 +565%",
+   "CAC 8 118 +43.4%",
+   "DAX 25 441 +272%"
+  ],
+  "tape": "NYSE OPEN  NASDAQ OPEN  XETRA POST  EURONEXT CLOSED",
+  "title": "MARKETS, MAX, 12:00 New York: SPX behind the delay badge (a variant: the US lag is not measured)"
+ },
+ "markets_stale": {
+  "asof": "STALE 14 SEP",
+  "heading": "MARKETS YTD",
+  "now": "2026-09-21T08:40:00+02:00",
+  "primary": {
+   "chg": "+10.8%",
+   "label": "CLOSE 14 SEP",
+   "lag_s": null,
+   "last": "7 620",
+   "mn": "SPX",
+   "state": "CLOSED",
+   "window": "2025-12-01..2026-09-14"
+  },
+  "rows": [
+   "NDX 26 186 +12.7%",
+   "CAC 8 118 -0.4%",
+   "DAX 25 441 +3.9%"
+  ],
+  "tape": "NYSE CLOSED  NASDAQ CLOSED  XETRA PRE  EURONEXT CLOSED",
+  "title": "MARKETS, YTD, a week later: STALE"
+ },
+ "portfolio_contrib_max": {
+  "ann": "ANN +8.4%",
+  "asof": "14 SEP",
+  "bench": "^SP500TR total return, in EUR, growth of 10 000 from the inception",
+  "cagr": "+12.5%",
+  "chg": "+765%",
+  "colors": "green_red",
+  "footer": "XIRR +9.8%  DIV 22K",
+  "heading": "PORTFOLIO EUR",
+  "lines": [
+   "pts",
+   "px",
+   "bench"
+  ],
+  "mdd": "-19.6%",
+  "mdd_dates": {
+   "peak": "2020-01-01",
+   "recovery": "2020-08-01",
+   "trough": "2020-03-01"
+  },
+  "now": "2026-09-15T08:40:00+02:00",
+  "sinceStart": "+551%",
+  "stop": "-",
+  "tape": "NYSE CLOSED  NASDAQ CLOSED  XETRA PRE  EURONEXT CLOSED",
+  "title": "PORTFOLIO HOLD MAX, VOO with 1 000 EUR a year: TWR, ANN, XIRR",
+  "twr": "TWR +765%",
+  "value": "234.2K",
+  "window": "2000-01-01..2026-09-14",
+  "xirr": "+9.8%"
+ },
+ "portfolio_hold_5y": {
+  "ann": "ANN +13.6%",
+  "asof": "14 SEP",
+  "bench": "^SP500TR total return, in EUR, growth of 10 000 from the inception",
+  "cagr": "+13.6%",
+  "chg": "+89.3%",
+  "colors": "green_red",
+  "footer": "DIV 4.3K  TER~ 96  CASH 0.6%",
+  "heading": "PORTFOLIO EUR",
+  "lines": [
+   "pts",
+   "px",
+   "bench"
+  ],
+  "mdd": "-15.6%",
+  "mdd_dates": {
+   "peak": "2025-01-27",
+   "recovery": "2025-10-01",
+   "trough": "2025-04-01"
+  },
+  "now": "2026-09-15T08:40:00+02:00",
+  "sinceStart": "+798%",
+  "stop": "-",
+  "tape": "NYSE CLOSED  NASDAQ CLOSED  XETRA PRE  EURONEXT CLOSED",
+  "title": "PORTFOLIO HOLD 5Y",
+  "twr": "TWR +89.3%",
+  "value": "89 801",
+  "window": "2021-09-14..2026-09-14",
+  "xirr": "-"
+ },
+ "portfolio_hold_max": {
+  "ann": "ANN +8.6%",
+  "asof": "14 SEP",
+  "bench": "^SP500TR total return, in EUR, growth of 10 000 from the inception",
+  "cagr": "+8.6%",
+  "chg": "+798%",
+  "colors": "green_red",
+  "footer": "DIV 8.8K  TER~ 171  CASH 0.6%",
+  "heading": "PORTFOLIO EUR",
+  "lines": [
+   "pts",
+   "px",
+   "bench"
+  ],
+  "mdd": "-19.8%",
+  "mdd_dates": {
+   "peak": "2020-01-01",
+   "recovery": "2020-08-01",
+   "trough": "2020-03-01"
+  },
+  "now": "2026-09-15T08:40:00+02:00",
+  "sinceStart": "+798%",
+  "stop": "-",
+  "tape": "NYSE CLOSED  NASDAQ CLOSED  XETRA PRE  EURONEXT CLOSED",
+  "title": "PORTFOLIO HOLD MAX: VOO 100",
+  "twr": "TWR +798%",
+  "value": "89 801",
+  "window": "2000-01-01..2026-09-14",
+  "xirr": "-"
+ },
+ "portfolio_hold_max_mdd": {
+  "ann": "-",
+  "asof": "14 SEP",
+  "bench": "^SP500TR total return, in EUR, growth of 10 000 from the inception",
+  "cagr": "+8.6%",
+  "chg": "+798%",
+  "colors": "green_red",
+  "footer": "MDD -19.8%  20-01>20-03  REC 20-08",
+  "heading": "PORTFOLIO EUR",
+  "lines": [
+   "pts",
+   "px",
+   "bench"
+  ],
+  "marks": {
+   "columns": [
+    95,
+    96
+   ],
+   "points": [
+    95,
+    96
+   ]
+  },
+  "mdd": "-19.8%",
+  "mdd_dates": {
+   "peak": "2020-01-01",
+   "recovery": "2020-08-01",
+   "trough": "2020-03-01"
+  },
+  "now": "2026-09-15T08:40:00+02:00",
+  "sinceStart": "+798%",
+  "stop": "mdd",
+  "tape": "NYSE CLOSED  NASDAQ CLOSED  XETRA PRE  EURONEXT CLOSED",
+  "title": "PORTFOLIO HOLD MAX, the drawdown stop (a click): MDD with its dates",
+  "twr": "TWR +798%",
+  "value": "89 801",
+  "window": "2000-01-01..2026-09-14",
+  "xirr": "-"
+ },
+ "portfolio_nodiv": {
+  "ann": "ANN +13.2%",
+  "asof": "14 SEP",
+  "bench": "-",
+  "cagr": "+13.2%",
+  "chg": "+247%",
+  "colors": "green_red",
+  "footer": "DIV 0  TER~ 0  CASH 0.0%",
+  "heading": "PORTFOLIO EUR",
+  "lines": [
+   "pts",
+   "px"
+  ],
+  "mdd": "-13.4%",
+  "mdd_dates": {
+   "peak": "2021-09-01",
+   "recovery": "2023-09-01",
+   "trough": "2022-06-01"
+  },
+  "now": "2026-09-15T08:40:00+02:00",
+  "sinceStart": "+436%",
+  "stop": "-",
+  "tape": "NYSE CLOSED  NASDAQ CLOSED  XETRA PRE  EURONEXT CLOSED",
+  "title": "worst case: a position without dividends (DIV 0, the PX line hidden under V)",
+  "twr": "TWR +247%",
+  "value": "53 639",
+  "window": "2016-09-14..2026-09-14",
+  "xirr": "-"
+ },
+ "portfolio_rebal_5y": {
+  "ann": "ANN +13.6%",
+  "asof": "14 SEP",
+  "bench": "^SP500TR total return, in EUR, growth of 10 000 from the inception",
+  "cagr": "+13.6%",
+  "chg": "+89.3%",
+  "colors": "green_red",
+  "footer": "DIV 4.3K  TER~ 96  CASH 0.6%",
+  "heading": "PORTFOLIO EUR",
+  "lines": [
+   "pts",
+   "px",
+   "bench"
+  ],
+  "mdd": "-15.6%",
+  "mdd_dates": {
+   "peak": "2025-01-27",
+   "recovery": "2025-10-01",
+   "trough": "2025-04-01"
+  },
+  "now": "2026-09-15T08:40:00+02:00",
+  "sinceStart": "+798%",
+  "stop": "-",
+  "tape": "NYSE CLOSED  NASDAQ CLOSED  XETRA PRE  EURONEXT CLOSED",
+  "title": "PORTFOLIO REBAL 5Y",
+  "twr": "TWR +89.3%",
+  "value": "89 801",
+  "window": "2021-09-14..2026-09-14",
+  "xirr": "-"
+ },
+ "portfolio_rebal_max": {
+  "ann": "ANN +8.6%",
+  "asof": "14 SEP",
+  "bench": "^SP500TR total return, in EUR, growth of 10 000 from the inception",
+  "cagr": "+8.6%",
+  "chg": "+798%",
+  "colors": "green_red",
+  "footer": "DIV 8.8K  TER~ 171  CASH 0.6%",
+  "heading": "PORTFOLIO EUR",
+  "lines": [
+   "pts",
+   "px",
+   "bench"
+  ],
+  "mdd": "-19.8%",
+  "mdd_dates": {
+   "peak": "2020-01-01",
+   "recovery": "2020-08-01",
+   "trough": "2020-03-01"
+  },
+  "now": "2026-09-15T08:40:00+02:00",
+  "sinceStart": "+798%",
+  "stop": "-",
+  "tape": "NYSE CLOSED  NASDAQ CLOSED  XETRA PRE  EURONEXT CLOSED",
+  "title": "PORTFOLIO REBAL MAX",
+  "twr": "TWR +798%",
+  "value": "89 801",
+  "window": "2000-01-01..2026-09-14",
+  "xirr": "-"
+ },
+ "portfolio_stale": {
+  "ann": "ANN +8.6%",
+  "asof": "STALE 14 SEP",
+  "bench": "^SP500TR total return, in EUR, growth of 10 000 from the inception",
+  "cagr": "+8.6%",
+  "chg": "+798%",
+  "colors": "green_red",
+  "footer": "DIV 8.8K  TER~ 171",
+  "heading": "PORTFOLIO EUR",
+  "lines": [
+   "pts",
+   "px",
+   "bench"
+  ],
+  "mdd": "-19.8%",
+  "mdd_dates": {
+   "peak": "2020-01-01",
+   "recovery": "2020-08-01",
+   "trough": "2020-03-01"
+  },
+  "now": "2026-09-21T08:40:00+02:00",
+  "sinceStart": "+798%",
+  "stop": "-",
+  "tape": "NYSE CLOSED  NASDAQ CLOSED  XETRA PRE  EURONEXT CLOSED",
+  "title": "PORTFOLIO HOLD MAX, a week later: STALE",
+  "twr": "TWR +798%",
+  "value": "89 801",
+  "window": "2000-01-01..2026-09-14",
+  "xirr": "-"
+ },
+ "portfolio_synth14_hold_max": {
+  "ann": "ANN +6.2%",
+  "asof": "14 SEP",
+  "bench": "^SP500TR total return, in EUR, growth of 10 000 from the inception",
+  "cagr": "+6.2%",
+  "chg": "+395%",
+  "colors": "green_red",
+  "footer": "DIV 1.2K  TER~ 19  CASH 0.1%",
+  "heading": "PORTFOLIO EUR",
+  "lines": [
+   "pts",
+   "px",
+   "bench"
+  ],
+  "mdd": "-43.1%",
+  "mdd_dates": {
+   "peak": "2000-03-01",
+   "recovery": "2013-10-01",
+   "trough": "2003-02-01"
+  },
+  "now": "2026-09-15T08:40:00+02:00",
+  "sinceStart": "+395%",
+  "stop": "-",
+  "tape": "NYSE CLOSED  NASDAQ CLOSED  XETRA PRE  EURONEXT CLOSED",
+  "title": "PORTFOLIO HOLD MAX, 14 synthetic positions, an example allocation",
+  "twr": "TWR +395%",
+  "value": "49 479",
+  "window": "2000-01-01..2026-09-14",
+  "xirr": "-"
+ },
+ "portfolio_synth14_hold_max_mdd": {
+  "ann": "-",
+  "asof": "14 SEP",
+  "bench": "^SP500TR total return, in EUR, growth of 10 000 from the inception",
+  "cagr": "+6.2%",
+  "chg": "+395%",
+  "colors": "green_red",
+  "footer": "MDD -43.1%  00-03>03-02  REC 13-10",
+  "heading": "PORTFOLIO EUR",
+  "lines": [
+   "pts",
+   "px",
+   "bench"
+  ],
+  "marks": {
+   "columns": [
+    0,
+    14
+   ],
+   "points": [
+    0,
+    14
+   ]
+  },
+  "mdd": "-43.1%",
+  "mdd_dates": {
+   "peak": "2000-03-01",
+   "recovery": "2013-10-01",
+   "trough": "2003-02-01"
+  },
+  "now": "2026-09-15T08:40:00+02:00",
+  "sinceStart": "+395%",
+  "stop": "mdd",
+  "tape": "NYSE CLOSED  NASDAQ CLOSED  XETRA PRE  EURONEXT CLOSED",
+  "title": "PORTFOLIO HOLD MAX, the example allocation, the drawdown stop",
+  "twr": "TWR +395%",
+  "value": "49 479",
+  "window": "2000-01-01..2026-09-14",
+  "xirr": "-"
+ },
+ "portfolio_synth14_rebal_5y": {
+  "ann": "ANN +10.7%",
+  "asof": "14 SEP",
+  "bench": "^SP500TR total return, in EUR, growth of 10 000 from the inception",
+  "cagr": "+10.7%",
+  "chg": "+66.6%",
+  "colors": "green_red",
+  "footer": "DIV 460  TER~ 7  CASH 0.1%",
+  "heading": "PORTFOLIO EUR",
+  "lines": [
+   "pts",
+   "px",
+   "bench"
+  ],
+  "mdd": "-17.5%",
+  "mdd_dates": {
+   "peak": "2021-12-27",
+   "recovery": "2023-06-01",
+   "trough": "2022-09-26"
+  },
+  "now": "2026-09-14T22:30:00+02:00",
+  "sinceStart": "+330%",
+  "stop": "-",
+  "tape": "NYSE POST  NASDAQ POST  XETRA CLOSED  EURONEXT CLOSED",
+  "title": "PORTFOLIO REBAL 5Y, the same 14",
+  "twr": "TWR +66.6%",
+  "value": "43 006",
+  "window": "2021-09-14..2026-09-14",
+  "xirr": "-"
+ },
+ "ticker_aapl_short": {
+  "ann": "ANN +17.9%",
+  "asof": "AS OF 14 SEP",
+  "chg": "+128%",
+  "colors": "green_red",
+  "footer": "HI 334  LO 130",
+  "heading": "AAPL MAX USD",
+  "label": "CLOSE 14 SEP",
+  "lag_s": null,
+  "last": "333.1",
+  "now": "2026-09-15T08:40:00+02:00",
+  "session": "synthetic, 128 of 128 slots",
+  "state": "CLOSED",
+  "tape": "NYSE CLOSED  NASDAQ CLOSED  XETRA PRE  EURONEXT CLOSED",
+  "title": "worst case: short history (AAPL, 5 years weekly) on MAX",
+  "window": "2021-09-13..2026-09-14"
+ },
+ "ticker_err": {
+  "error": "DATA ERR NOTHING STORED",
+  "heading": "VOO MAX USD",
+  "now": "2026-09-15T08:40:00+02:00",
+  "tape": "NYSE --  NASDAQ --  XETRA --  EURONEXT --",
+  "title": "TICKER: DATA ERR"
+ },
+ "ticker_gspc_1y_open": {
+  "ann": "-",
+  "asof": "AS OF 14 SEP",
+  "chg": "+15.2%",
+  "colors": "green_red",
+  "footer": "HI 7 799  LO 6 344",
+  "heading": "^GSPC 1Y USD",
+  "label": "LIVE -0.5%",
+  "lag_s": 0,
+  "last": "7 620",
+  "now": "2026-09-14T18:00:00+02:00",
+  "session": "synthetic, 49 of 128 slots",
+  "state": "OPEN",
+  "tape": "NYSE OPEN  NASDAQ OPEN  XETRA POST  EURONEXT CLOSED",
+  "title": "TICKER ^GSPC (daily sample), 1Y, LIVE at 12:00 New York",
+  "window": "2025-09-15..2026-09-14"
+ },
+ "ticker_gspc_1y_open_bluered": {
+  "ann": "-",
+  "asof": "AS OF 14 SEP",
+  "chg": "+15.2%",
+  "colors": "blue_red",
+  "footer": "HI 7 799  LO 6 344",
+  "heading": "^GSPC 1Y USD",
+  "label": "LIVE -0.5%",
+  "lag_s": 0,
+  "last": "7 620",
+  "now": "2026-09-14T18:00:00+02:00",
+  "session": "synthetic, 49 of 128 slots",
+  "state": "OPEN",
+  "tape": "NYSE OPEN  NASDAQ OPEN  XETRA POST  EURONEXT CLOSED",
+  "title": "TICKER ^GSPC, 1Y, LIVE: the blue/red colour scheme",
+  "window": "2025-09-15..2026-09-14"
+ },
+ "ticker_gspc_1y_open_d15": {
+  "ann": "-",
+  "asof": "AS OF 14 SEP",
+  "chg": "+15.2%",
+  "colors": "green_red",
+  "footer": "HI 7 799  LO 6 344",
+  "heading": "^GSPC 1Y USD",
+  "label": "D15 -0.5%",
+  "lag_s": 902,
+  "last": "7 620",
+  "now": "2026-09-14T18:00:00+02:00",
+  "session": "synthetic, 49 of 128 slots",
+  "state": "OPEN",
+  "tape": "NYSE OPEN  NASDAQ OPEN  XETRA POST  EURONEXT CLOSED",
+  "title": "TICKER ^GSPC, 1Y, 12:00 New York: D15 (a variant: the US lag is not measured)",
+  "window": "2025-09-15..2026-09-14"
+ },
+ "ticker_voo_5y": {
+  "ann": "ANN +12.1%",
+  "asof": "AS OF 14 SEP",
+  "chg": "+77.3%",
+  "colors": "green_red",
+  "footer": "HI 705  LO 328",
+  "heading": "VOO 5Y USD",
+  "label": "CLOSE 14 SEP",
+  "lag_s": null,
+  "last": "699.3",
+  "now": "2026-09-14T22:30:00+02:00",
+  "session": "synthetic, 128 of 128 slots",
+  "state": "POST",
+  "tape": "NYSE POST  NASDAQ POST  XETRA CLOSED  EURONEXT CLOSED",
+  "title": "TICKER VOO, 5Y, 22:30 Paris: POST",
+  "window": "2021-09-14..2026-09-14"
+ },
+ "ticker_voo_max": {
+  "ann": "ANN +12.4%",
+  "asof": "AS OF 14 SEP",
+  "chg": "+546%",
+  "colors": "green_red",
+  "footer": "HI 705  LO 104",
+  "heading": "VOO MAX USD",
+  "label": "CLOSE 14 SEP",
+  "lag_s": null,
+  "last": "699.3",
+  "now": "2026-09-15T08:40:00+02:00",
+  "session": "synthetic, 128 of 128 slots",
+  "state": "CLOSED",
+  "tape": "NYSE CLOSED  NASDAQ CLOSED  XETRA PRE  EURONEXT CLOSED",
+  "title": "TICKER VOO, MAX, CLOSE",
+  "window": "2010-10-01..2026-09-14"
+ },
+ "ticker_voo_ytd": {
+  "ann": "-",
+  "asof": "AS OF 14 SEP",
+  "chg": "+11.5%",
+  "colors": "green_red",
+  "footer": "HI 705  LO 598",
+  "heading": "VOO YTD USD",
+  "label": "CLOSE 14 SEP",
+  "lag_s": null,
+  "last": "699.3",
+  "now": "2026-09-15T08:40:00+02:00",
+  "session": "synthetic, 128 of 128 slots",
+  "state": "CLOSED",
+  "tape": "NYSE CLOSED  NASDAQ CLOSED  XETRA PRE  EURONEXT CLOSED",
+  "title": "TICKER VOO, YTD, CLOSE",
+  "window": "2025-12-01..2026-09-14"
+ },
+ "ticker_worst_neg": {
+  "ann": "ANN +7.4%",
+  "asof": "AS OF 14 SEP",
+  "chg": "+565%",
+  "colors": "green_red",
+  "footer": "HI -5 860  LO -134.9K",
+  "heading": "ABCDEFGH MAX USD",
+  "label": "CLOSE 14 SEP",
+  "lag_s": null,
+  "last": "-130.9K",
+  "now": "2026-09-15T08:40:00+02:00",
+  "session": "none",
+  "state": "CLOSED",
+  "tape": "NYSE CLOSED  NASDAQ CLOSED  XETRA PRE  EURONEXT CLOSED",
+  "title": "worst case: 8-char symbol, six-figure negative (synthetic)",
+  "window": "2000-01-01..2026-09-14"
+ },
+ "ticker_worst_pct": {
+  "ann": "ANN +10.2%",
+  "asof": "AS OF 14 SEP",
+  "chg": "+1 245%",
+  "colors": "green_red",
+  "footer": "HI 55 193  LO 746",
+  "heading": "GROWTH8X MAX USD",
+  "label": "CLOSE 14 SEP",
+  "lag_s": null,
+  "last": "52 998",
+  "now": "2026-09-14T22:30:00+02:00",
+  "session": "none",
+  "state": "POST",
+  "tape": "NYSE POST  NASDAQ POST  XETRA CLOSED  EURONEXT CLOSED",
+  "title": "worst case: +1 245 % (synthetic)",
+  "window": "2000-01-01..2026-09-14"
+ }
+}

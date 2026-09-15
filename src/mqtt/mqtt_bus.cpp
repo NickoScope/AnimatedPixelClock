@@ -46,6 +46,7 @@ static uint16_t s_port = MQTT_BUS_PORT_DEFAULT;
 static char     s_clientId[24];
 static uint32_t s_lastTry  = 0;
 static bool     s_noBroker = false;
+static uint32_t s_connects = 0;   // successful connects since boot (mqttBusConnects)
 
 static void onMessage(char *topic, uint8_t *payload, unsigned int len) {
   for (uint8_t i = 0; i < s_handlerCount; i++) {
@@ -92,6 +93,28 @@ bool mqttBusPublish(const char *topic, const char *payload, bool retain) {
   return s_mq.connected() && s_mq.publish(topic, payload, retain);
 }
 
+bool mqttBusPublishLarge(const char *topic, const uint8_t *payload, size_t len, bool retain) {
+  if (!s_mq.connected() || !topic || !payload || !len || len > 65535) return false;
+  // A short write leaves part of a packet on the socket, and the broker would
+  // take the next packet's bytes for the rest of this one. WiFiClient::write
+  // returns what it sent after ten 1 s selects without progress (arduino-esp32
+  // 2.0.17, WiFiClient.cpp:27-28 and 389-434), so a short count is real: the
+  // socket is closed and mqttBusLoop() reconnects and re-subscribes. Closed,
+  // not disconnect(): that writes a DISCONNECT packet, which would land inside
+  // the half-sent PUBLISH. PubSubClient::connected() then sees the closed
+  // client and reports the connection lost.
+  if (!s_mq.beginPublish(topic, (unsigned int)len, retain)) {   // the header, written short
+    s_net.stop();
+    return false;
+  }
+  if (s_mq.write(payload, len) != len) {
+    s_net.stop();
+    return false;
+  }
+  s_mq.endPublish();   // PubSubClient 2.8: sends nothing, returns 1
+  return true;
+}
+
 void mqttBusBegin() {
   Preferences p;
   if (p.begin("fb", true)) {
@@ -136,6 +159,7 @@ void mqttBusLoop() {
     esp_task_wdt_add(NULL);
     esp_task_wdt_reset();
     if (!ok) return;
+    s_connects++;
     // Subscriptions do not survive a reconnect, so the whole remembered set is
     // re-applied here rather than by whoever asked for them.
     for (uint8_t i = 0; i < s_subCount; i++) s_mq.subscribe(s_subs[i]);
@@ -145,6 +169,8 @@ void mqttBusLoop() {
 }
 
 bool mqttBusConnected() { return s_mq.connected(); }
+
+uint32_t mqttBusConnects() { return s_connects; }
 
 bool mqttBusConfigured() { return !s_host.isEmpty(); }
 

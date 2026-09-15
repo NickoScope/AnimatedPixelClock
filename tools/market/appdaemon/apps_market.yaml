@@ -1,0 +1,94 @@
+# Market dashboard for the LED panel: add this entry to AppDaemon's apps.yaml
+# (the add-on's apps directory: /config/apps inside the container, /addon_configs/<slug>_appdaemon/apps
+# from the host), after the others.
+#
+# Needs, in the same apps directory: the package directory matrix_market/ (this
+# repository's tools/market/appdaemon/matrix_market/, whole) with tools/market/market_ref.py
+# copied into it. The add-on's python_packages option must list paho-mqtt, and may list
+# yfinance, pandas and exchange_calendars (optional: the expense ratio through
+# yfinance's crumb handling, and exchange holidays for the tape; without them
+# the app uses Yahoo's own crumb and Yahoo's session hours).
+# Every settings key below is one row of matrix_market/config.py's SCHEMA; the local
+# override <store_dir>/local.json (the real allocation and the private wiring, never
+# committed, never under apps/) lays over these, and the panel's retained `config`
+# payload over both, key by key.
+
+matrix_market:
+  module: matrix_market.app      # the package: apps/matrix_market/__init__.py makes it one
+  class: MatrixMarket
+  # ── wiring: the two placeholders refuse to start until set, here, with !secret, or in local.json ──
+  device: "<panel-id>"           # the panel's six hex digits: its portal, Market > Diagnostics > topics
+  topic_base: nickoscope_matrix
+  mqtt_host: "<your-broker>"     # by IP: the add-on's container has no mDNS
+  mqtt_port: 1883
+  mqtt_user: !secret mqtt_user   # the broker login from AppDaemon's secrets.yaml
+  mqtt_pass: !secret mqtt_pass
+  store_dir: /config/market      # inside the add-on's addon_config mount (/config); one JSON per symbol, the manifest, the ECB tables
+  # local_file: /config/market/local.json   # the default; "" for none. NEVER a .yaml under apps/: AppDaemon reads those as app config
+  provider: yahoo
+  # Drop a name to switch that feature off; the others keep working.
+  features: [history, portfolio, live, tape, ha_entities]
+
+  # ── settings (docs/18-stock-dashboard.md); the panel's config overrides them ──
+  indices:                        # the MARKETS page; the first is the primary and the benchmark
+    - {sym: "^GSPC", name: SPX}
+    - {sym: "^IXIC", name: NDX}
+    - {sym: "^FCHI", name: CAC}
+    - {sym: "^GDAXI", name: DAX}
+  tickers: []                     # the TICKER page's symbols (<= 8); the portal fills this
+  presets: [YTD, 1Y, 3Y, 5Y, 10Y, MAX]   # the panel adds the extras it switches on: WTD MTD 1M 3M 6M
+  portfolio:
+    capital: 10000                # in the portfolio currency
+    currency: EUR                 # EUR or USD
+    inception: "2000-01-01"
+    contrib: {amount: 0, every: year}   # every: month | quarter | year
+    # The committed default is a NEUTRAL example (this fork is public): the blend preset's pair as a
+    # two-fund 60/40 portfolio. The real allocation goes into <store_dir>/local.json (never committed, never
+    # under apps/), which the app lays over this file at start.
+    # Per row: asset_class equity | bond | real_assets | gold | cash; entry (a date) and proxy (a
+    # backfill symbol) only when set.
+    positions:
+      - {sym: VFINX, w: 60, asset_class: equity}
+      - {sym: VBMFX, w: 40, asset_class: bond}
+  lines: {px: true, bench: true, gross: false}
+  display:
+    preset: 1Y                    # the window the HA return / drawdown / stats sensors report
+    # tz: Europe/Paris            # the tape's next-change times; default AppDaemon's zone
+    scale: linear                 # or log: the lines are packed as log10 and flagged scale: log
+    fx_effect: false              # the panel's flag; the app publishes fx regardless
+  tape:
+    exchanges: [NYSE, NASDAQ, LSE, XETRA, EURONEXT, TOKYO]
+  # ── v2 settings, the panel's keys (src/market/market_settings.cpp on wip/market-panel), at the approved defaults ──
+  rebal:                          # the model the panel shows; REBAL is always computed as the rule below
+    mode: hold                    # hold | calendar | bands | calendar_or_bands (calendar = the approved 31 December)
+    calendar: annual              # annual | semiannual | quarterly | monthly
+    bands: {abs_pts: 5, rel_pct: 25, check: monthly}   # Swedroe 5/25; daily | weekly | monthly
+    contrib_only: false           # new cash buys the underweight positions
+  returns:
+    measure: twr                  # twr | mwr: which figure the page names; chg is always the TWR, xirr the MWR
+    real: false                   # deflate by the euro-area HICP (ECB ICP.M.U2.N.000000.4.INX); unavailable -> status.realErr
+  dividends:
+    mode: sweep_yearend           # | reinvest_paydate (Portfolio Visualizer's convention) | drop
+  contrib: {index_inflation: false}
+  withdraw: {amount: 0, kind: amount, every: year}     # kind: amount | pct (of the balance); every: month | quarter | year
+  cash: {yield_pct: 0}
+  ter: {}                         # TER overrides in percent per year, e.g. {VWCE.DE: 0.22}, for funds Yahoo lacks
+  tax: {div_withholding_pct: 0}   # the owner's rule is TER only: 0
+  costs: {per_trade_fixed: 0, per_trade_pct: 0}
+  bench:
+    mode: single                  # single | blend
+    symbol: "^SP500TR"            # the owner's choice (11:43): total return, in the portfolio currency, scaled to the capital
+    blend: []                     # legs [{sym, w}] or a preset: 60_40 (VFINX 60 + VBMFX 40, adjclose) | same_weights; [] = same_weights
+    extra: [{sym: "^SP500TR", name: SPTR}]   # up to two more benchmarks for HA's sensors
+    telltale: false               # publish portfolio / benchmark as the `tell` line (it takes the benchmark line's slot)
+  mdd_basis: daily                # or month_end, Portfolio Visualizer's drawdown basis
+  stats: {risk_free_pct: 0}
+  live: {poll_s: 60}              # the live poll while an exchange is open (Yahoo's measured update period; 30-300)
+  fetch:
+    daily_at: "07:00"             # local time
+    history_gap_s: 10             # seconds between two Yahoo history requests (the pacing rule; apps.yaml only)
+    ter_days: 30
+    keepalive_h: 6
+  stale: {session_min: 20, history_days: 3}
+  alert: {day_move_pct: 0, drawdown_pct: 0, out_of_band: false}   # HA binary sensors only, all off
+  ha: {discovery: true, prefix: homeassistant}

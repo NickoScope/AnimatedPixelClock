@@ -11,6 +11,9 @@
 // itself. Only fields that differ from what was last written are written.
 //
 //   pages    u16  bit per PanelPageKey, set = the knob and the carousel visit it
+//   pgKnown  u32  known << 16 | pages: the keys the build that wrote "pages" knew, and the value it wrote.
+//                 A key added since starts on; absent, or its pages half not the stored "pages" (an older
+//                 firmware rewrote it), and the mask is taken to know CLOCK..CARDS only (panel_pages.h)
 //   carOn    u8   carousel advances on its own
 //   carIdle  u16  seconds without the knob before it starts
 //   carSlot  u16  seconds per page, 0 = each page its own time
@@ -45,6 +48,7 @@ enum PanelPageKey : uint8_t {
   // "pages", and a key inserted earlier would move every bit after it.
   PANEL_KEY_LUA,            // every Lua effect page, as one switch
   PANEL_KEY_MEDIA,          // the media player's now-playing page
+  PANEL_KEY_MARKET,         // the four market pages, as one switch
   PANEL_KEY_COUNT,
   PANEL_KEY_NONE = 0xFF,    // a page this module does not know: always visited
 };

@@ -43,6 +43,13 @@
 //   POST /api/media         one of {"select":"media_player.x"} | {"cmd":"toggle|play|pause|next|prev"}
 //                           | {"vol":0..100} | {"vol_step":-20..20} | {"mute":b} | {"play_fav":"id"}
 //                           400 bad input; 409 not in Home Assistant's lists, or no player; 503 MQTT down
+//   GET  /api/market        dev, root, bridge, config {every setting by its dotted key}, registry {groups,
+//                           rows}, view, model {indices, tickers, portfolio, holdings, live, tape,
+//                           status}, nvs, cfgOut, fs, refused, mqtt          (MARKET_ENABLED only)
+//   POST /api/market        one of {"config":{"rebal.mode":"bands",...}} (validated whole; an unknown
+//                           key is kept for the app) | {"show":"markets|ticker|portfolio|holdings"}
+//                           | {"republish":true} | {"reset":"<group>"|"all"}
+//                           400 names the field; 503 no memory      (src/market/market_settings.h)
 //   GET  /api/knob          settings, defaults, bounds, stats
 //   POST /api/knob          {"reverse":b,"lockoutMs":n,"debounceMs":n,"detent":-1..1}
 //                           | {"defaults":true}
@@ -90,6 +97,7 @@
 #include "../mqtt/mqtt_bus.h"
 #include "../panel/panel.h"
 #include "../railboard/railboard.h"
+#include "../market/market.h"
 #include "../media/media.h"
 #include "../utils/utils.h"
 #include "../viz/visualizer.h"
@@ -149,7 +157,7 @@ static void fail(int code, const char *why) {
 
 static bool isPost() { return server.method() == HTTP_POST; }
 
-static bool readBody(JsonDocument &doc) {
+static bool readBody(JsonDocument &doc, size_t bodyMax = BODY_MAX) {
   // Only a JSON content type. With it, a browser must ask this server first (a
   // CORS preflight, an OPTIONS request) before another site's page may post
   // here, and no route answers OPTIONS. A text/plain body needs no such
@@ -159,8 +167,14 @@ static bool readBody(JsonDocument &doc) {
     return false;
   }
   if (!server.hasArg("plain")) { fail(400, "missing JSON body"); return false; }
+  // WebServer has already read the whole body and kept it as a String argument
+  // before this handler runs (arduino-esp32 2.0.17, Parsing.cpp:199-218), and
+  // arg() returns a second copy by value (WebServer.h:117). Refusing on
+  // Content-Length first saves that second copy for a body over the limit;
+  // the first cannot be avoided from here.
+  if (server.clientContentLength() > (int)bodyMax) { fail(413, "body too large"); return false; }
   const String body = server.arg("plain");
-  if (body.length() > BODY_MAX) { fail(413, "body too large"); return false; }
+  if (body.length() > bodyMax) { fail(413, "body too large"); return false; }
   if (deserializeJson(doc, body) || !doc.is<JsonObject>()) { fail(400, "invalid JSON"); return false; }
   return true;
 }
@@ -183,7 +197,7 @@ static bool optBool(JsonVariantConst v, bool *out) {
 }
 
 static const char *const KEY_NAMES[PANEL_KEY_COUNT] = {
-  "clock", "world", "flights", "trains", "yachts", "cards", "lua", "media"};
+  "clock", "world", "flights", "trains", "yachts", "cards", "lua", "media", "market"};
 
 static const char *keyName(uint8_t key) {
   return key < PANEL_KEY_COUNT ? KEY_NAMES[key] : "other";
@@ -206,7 +220,7 @@ static int pageOf(uint8_t key) {
 }
 
 #if defined(FLIGHTBOARD_ENABLED) || defined(RAILBOARD_ENABLED) || defined(WORLDCLOCK_ENABLED) || \
-    defined(YACHTRADAR_ENABLED) || defined(MEDIAPLAYER_ENABLED)
+    defined(YACHTRADAR_ENABLED) || defined(MEDIAPLAYER_ENABLED) || defined(MARKET_ENABLED)
 static void pageInfo(JsonDocument &doc, uint8_t key) {
   doc["page"]    = pageOf(key);
   doc["showing"] = panelPageKey(panelCurrentPage()) == key;
@@ -225,7 +239,8 @@ static bool styleKnown(long id) {
   return false;
 }
 
-#if defined(MQTT_BUS_ENABLED) && (defined(FB_MQTT_ENABLED) || defined(RAILBOARD_ENABLED) || defined(MEDIAPLAYER_ENABLED))
+#if defined(MQTT_BUS_ENABLED) && (defined(FB_MQTT_ENABLED) || defined(RAILBOARD_ENABLED) || defined(MEDIAPLAYER_ENABLED) || \
+                                  defined(MARKET_ENABLED))
 static void mqttJson(JsonObject o, const char *status) {
   o["configured"] = mqttBusConfigured();
   o["connected"]  = mqttBusConnected();
@@ -264,6 +279,9 @@ String panelWebFeatures() {
 #endif
 #if defined(MEDIAPLAYER_ENABLED)
   f += " media";
+#endif
+#if defined(MARKET_ENABLED)
+  f += " market";
 #endif
   return f;
 }
@@ -765,6 +783,34 @@ static void handleMedia() {
 }
 #endif
 
+// ---------------------------------------------------------------- /api/market
+#if defined(MARKET_ENABLED)
+// The settings are validated whole by market_settings.h and unknown keys inside
+// "config" are kept for the app; "show" puts one of the four pages on screen.
+// A config with sixteen positions and every row runs to a few KB, so the body
+// limit is wider here.
+static void handleMarket() {
+  if (isPost()) {
+    JsonDocument in(&s_alloc);
+    if (!readBody(in, 8192)) return;
+    char err[160] = "refused";
+    int sub = -1;
+    const int code = marketWebPost(in.as<JsonObjectConst>(), err, sizeof(err), &sub);
+    if (code != 200) REJECT(code, err);
+    if (sub >= 0) {
+      const int first = pageOf(PANEL_KEY_MARKET);
+      if (first < 0 || !panelShowPage((uint8_t)(first + sub))) REJECT(409, "the market pages are not in this build's page list");
+    }
+  }
+  JsonDocument doc(&s_alloc);
+  doc["success"] = true;
+  pageInfo(doc, PANEL_KEY_MARKET);
+  marketWebJson(doc.as<JsonObject>());
+  mqttJson(doc["mqtt"].to<JsonObject>(), mqttBusStatus());
+  sendDoc(doc);
+}
+#endif
+
 // ---------------------------------------------------------------- /api/knob
 static const char *eventName(uint8_t e) {
   switch (e) {
@@ -1089,6 +1135,9 @@ void panelWebBegin() {
 #endif
 #if defined(MEDIAPLAYER_ENABLED)
   route("/api/media", handleMedia);
+#endif
+#if defined(MARKET_ENABLED)
+  route("/api/market", handleMarket);
 #endif
 #if defined(CLIPS_SD_ENABLED)
   route("/api/clips", handleClips);

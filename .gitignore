@@ -34,3 +34,13 @@ tools/luasim/.fxbuild/
 
 # Broker credentials and API keys for env:provision - never committed
 provision_secrets.ini
+
+# Market app: the local daily-history store (fetched, not typed); the samples ARE committed
+**/market/store/
+
+# Market app: the local override with the real allocation and the private wiring (privacy rule 2026-09-15:
+# this fork is public); the old name too, so a stray copy cannot be committed
+**/market/**/local.json
+**/apps_market.local.yaml
+# The market pages' own defaults for one's build (src/market/README.md) - never committed
+src/market/market_local_defaults.h
