@@ -149,7 +149,7 @@ def run(exe, tmp, table):
     return frames, notes
 
 
-def unit_edge(name, raster, got, want_digits, problems):
+def unit_edge(name, raster, got, want_digits, fahrenheit, problems):
     """The degree ring and the letter beside the big temperature, read off the firmware's raster."""
     if got["outdoor"] != want_digits:
         problems.append(f"{name}: outdoor '{got['outdoor']}', the edge case needs '{want_digits}'")
@@ -160,7 +160,7 @@ def unit_edge(name, raster, got, want_digits, problems):
     ring = R.Frame()
     ring.circle(end_x + 2, y + 1, 2, (255, 255, 255))
     letter = R.Frame()
-    letter.text5(end_x + 7, y, "F" if got["outdoor"] and name.endswith("f") else "C", (255, 255, 255))
+    letter.text5(end_x + 7, y, "F" if fahrenheit else "C", (255, 255, 255))   # the letter this scene would draw
     lit = lambda fr: [(x, yy) for yy in range(H) for x in range(W) if fr.px[x, yy] != (0, 0, 0)]  # noqa: E731
     ring_ok = all(raster[yy][x] == temp for x, yy in lit(ring))
     letter_drawn = all(raster[yy][x] == temp for x, yy in lit(letter))
@@ -206,9 +206,10 @@ def main():
         print(f"  {name:22s} {'identical' if not diffs else 'DIFFERS':9s} to {expect:22s} {drawn}")
 
     print("unit letter:")
-    for name, digits in (("b_split_worst", "104"), ("b_split_edge_m10c", "-10"), ("b_split_edge_m9c", "-9"),
-                         ("b_split_edge_99f", "99"), ("b_split_edge_100f", "100")):
-        line = unit_edge(name, frames[name][0], notes[name], digits, problems)
+    for name, digits, sc in (("b_split_worst", "104", R.WORST), ("b_split_edge_m10c", "-10", R.EDGE["edge_m10c"]),
+                             ("b_split_edge_m9c", "-9", R.EDGE["edge_m9c"]), ("b_split_edge_99f", "99", R.EDGE["edge_99f"]),
+                             ("b_split_edge_100f", "100", R.EDGE["edge_100f"])):
+        line = unit_edge(name, frames[name][0], notes[name], digits, sc["F"], problems)
         if line:
             print("  " + line)
 
