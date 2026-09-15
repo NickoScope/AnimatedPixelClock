@@ -97,6 +97,12 @@ void Canvas::fillCircle(int x0, int y0, int r, uint16_t c) {
   }
 }
 
+void Canvas::fillRect(int x, int y, int w, int h, uint16_t c) {
+  if (w <= 0 || h <= 0) return;
+  const int y0 = std::max(0, y), y1 = std::min(kH, y + h);
+  for (int row = y0; row < y1; row++) hline(x, row, w, c);
+}
+
 void Canvas::text(int x, int y, const char *s, uint16_t c) {
   for (; *s; s++, x += 6) glyph(x, y, (unsigned char)*s, c);
 }

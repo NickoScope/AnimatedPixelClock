@@ -23,12 +23,14 @@ AFX = HOST.parent
 sys.path.insert(0, str(AFX))
 import dsp  # noqa: E402
 import effects_wow as wow  # noqa: E402
+import effects_matrix  # noqa: E402
 from gfx import H, W, Canvas, led_image, to888_array  # noqa: E402
 
 FPS = 60
 WAV = AFX / "wav/showreel.wav"
 FONT = AFX.parent / "glcdfont.json"
 RECORD = struct.Struct("<d32B128B32f32f4f4B")
+EFFECTS = wow.ALL + [effects_matrix.CodeEQ]   # the engine's effects 0-8; 8 is style 2
 
 
 def load_frames(path):
@@ -91,7 +93,7 @@ def line(name, r):
 
 def gifs(outdir, prefix):
     (AFX / "out").mkdir(exist_ok=True)
-    for k, cls in enumerate(wow.ALL):
+    for k, cls in enumerate(EFFECTS):
         c = np.fromfile(outdir / f"{prefix}{k}.raw", dtype="<u2").reshape(-1, H, W)
         imgs = [led_image(to888_array(c[n]), 6).convert("P", colors=128) for n in range(0, len(c), 3)]
         imgs[0].save(AFX / "out" / f"pc_{cls.name}.gif", save_all=True, append_images=imgs[1:], duration=50,
@@ -115,7 +117,7 @@ def main():
         subprocess.run([str(HOST / f"build/test_wow_{kind}"), str(WAV), str(FONT), str(outdir)], check=True)
     frames = load_frames(HOST / "build/wow_d/frames.bin")
     print(f"showreel: {len(frames)} DSP frames, beats at {[round(f['t'], 2) for f in frames if f['beat']]}")
-    for k, cls in enumerate(wow.ALL):
+    for k, cls in enumerate(EFFECTS):
         py = python_frames(cls, frames, seconds)
         results[cls.name] = (compare(py, HOST / f"build/wow_d/wow_{k}.raw"), compare(py, HOST / f"build/wow_f/wow_{k}.raw"))
     print("\nreal = double (the port against the Python reference; must be identical):")
@@ -129,6 +131,12 @@ def main():
     pcdir.mkdir(parents=True, exist_ok=True)
     print("\nfed from PC packets (PcFrameDeriver on the DSP's 40 ms packets):")
     subprocess.run([str(HOST / "build/test_wow_d"), str(WAV), str(FONT), str(pcdir), "--pc"], check=True)
+    pc_frames = load_frames(pcdir / "frames.bin")
+    print("\nfed from PC packets, real = double, against the Python effects on the same derived frames:")
+    for k, cls in enumerate(EFFECTS):
+        r = compare(python_frames(cls, pc_frames, seconds), pcdir / f"pc_wow_{k}.raw")
+        print(line(cls.name, r))
+        bad += bool(r["differ"])
     if args.pc_gifs:
         gifs(pcdir, "pc_wow_")
     print("\nthe C++ effects match effects_wow.py" if not bad else f"\n{bad} effect(s) differ in the double build")

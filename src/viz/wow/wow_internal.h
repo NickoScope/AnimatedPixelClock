@@ -21,7 +21,19 @@ constexpr int kMaxParts = kKeepParts + 58;   // plus one beat's worth before tri
 constexpr int kMaxRings = 16;                // RadialBloom.MAX_RINGS
 constexpr int kStars = 50;
 
-enum Effect { PRISM_EQ, NEON_MIRROR_PLUS, SPECTROGRAM, RADIAL_BLOOM, BEAT_PARTICLES, SCOPE_AFTERGLOW, TWIN_VU, SYNTHWAVE };
+enum Effect { PRISM_EQ, NEON_MIRROR_PLUS, SPECTROGRAM, RADIAL_BLOOM, BEAT_PARTICLES, SCOPE_AFTERGLOW, TWIN_VU, SYNTHWAVE,
+              CODE_EQ };
+constexpr int kMxCols = 21, kMxRows = 8, kFade = 32;   // clock_matrix.cpp MX_COLS, MX_ROWS, MX_FADE_LEVELS
+
+struct RainCol { real head, speed, respawn; uint8_t active, trail; };
+struct CodeEqState {
+  RainCol cols[kMxCols];
+  char chars[kMxCols][kMxRows];   // the rain's glyphs
+  char stack[kMxCols][kMxRows];   // the bars' glyphs
+  real glitch;
+  int glitchRow;
+  uint16_t lut[kFade], dim[kFade];
+};
 
 struct Rgb { real r, g, b; };
 
@@ -137,6 +149,9 @@ struct State {
 
   // Synthwave Grid
   real offset = R(0.0);
+
+  // Code EQ
+  CodeEqState eq = {};
 };
 
 void step(State &s, real dt);
@@ -153,5 +168,10 @@ void renderBeatParticles(State &s, Canvas &cv, real dt);
 void renderScopeAfterglow(State &s, Canvas &cv, real dt);
 void renderTwinVu(State &s, Canvas &cv, real dt);
 void renderSynthwave(State &s, Canvas &cv, real dt);
+
+void buildFade(uint16_t *lut, int pct);
+void resetCodeEq(State &s);
+void beatCodeEq(State &s);
+void renderCodeEq(State &s, Canvas &cv, real dt);
 
 }  // namespace wow

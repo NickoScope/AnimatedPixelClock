@@ -19,6 +19,10 @@ the LED-MATRIX APOLLO knowledge base.
 | `audio` (priority 5), only while wanted | 0 | I2S0 at 48 kHz, MCLK on IO12; the DSP while the visualizer shows the microphones; frames into a spinlocked handover |
 | `loopTask` | 1 | `setup()`, then `loop()`: `audioPoll()` configures the ES7210 once MCLK runs, feeds the visualizer; web handlers change settings |
 
+Visualizer styles 2 (Code EQ, in `VIZ_WOW_ENABLED` builds) and 7-14 draw from
+this module's DSP frames (`src/viz/wow`); from a PC stream they get the same
+frame rebuilt from each packet (`viz_frame.cpp`).
+
 `setup()` and `loop()` both run in `loopTask` (arduino-esp32 2.0.17,
 `cores/esp32/main.cpp`: `loopTask()` calls `setup()` once, then `loop()`).
 

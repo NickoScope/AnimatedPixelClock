@@ -12,7 +12,7 @@
 namespace wow {
 
 const char *const kNames[kEffects] = {"Prism EQ",       "Neon Mirror+",    "Spectrogram", "Radial Bloom",
-                                      "Beat Particles", "Scope Afterglow", "Twin VU",     "Synthwave Grid"};
+                                      "Beat Particles", "Scope Afterglow", "Twin VU",     "Synthwave Grid", "Code EQ"};
 
 bool Engine::begin(AllocFn alloc) {
   if (s_) return true;
@@ -25,6 +25,8 @@ bool Engine::begin(AllocFn alloc) {
   s->glow = static_cast<uint8_t *>(alloc((size_t)kW * kH));
   if (!s->cols || !s->rgb || !s->parts || !s->glow) return false;
   for (int i = 0; i < 64; i++) s->lut[i] = col(inferno(i / R(63.0)));
+  buildFade(s->eq.lut, 100);
+  buildFade(s->eq.dim, 45);
   s_ = s;
   reset(PRISM_EQ, R(1.0));
   return true;
@@ -77,6 +79,9 @@ void Engine::reset(int effect, real react) {
     case SYNTHWAVE:
       s.offset = R(0.0);
       break;
+    case CODE_EQ:
+      resetCodeEq(s);
+      break;
     default:
       break;
   }
@@ -96,6 +101,7 @@ void Engine::update(const VizFrame &f) {
     }
     if (s.effect == RADIAL_BLOOM) beatRadialBloom(s);
     if (s.effect == BEAT_PARTICLES) beatParticles(s);
+    if (s.effect == CODE_EQ) beatCodeEq(s);
   }
   if (s.effect == SPECTROGRAM) updateSpectrogram(s);
 }
@@ -111,7 +117,8 @@ void Engine::render(Canvas &cv, real dt) {
     case BEAT_PARTICLES: renderBeatParticles(s, cv, dt); break;
     case SCOPE_AFTERGLOW: renderScopeAfterglow(s, cv, dt); break;
     case TWIN_VU: renderTwinVu(s, cv, dt); break;
-    default: renderSynthwave(s, cv, dt); break;
+    case SYNTHWAVE: renderSynthwave(s, cv, dt); break;
+    default: renderCodeEq(s, cv, dt); break;
   }
 }
 

@@ -184,9 +184,7 @@ unsigned long s_pcWowMs = 0;
 
 void* wowPsram(size_t n) { return heap_caps_calloc(1, n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT); }
 
-bool wowStyle(uint8_t style) {
-  return style >= wow::kFirstStyle && style < wow::kFirstStyle + wow::kEffects;
-}
+bool wowStyle(uint8_t style) { return wow::effectForStyle(style) >= 0; }   // 2 (Code EQ) and 7-14
 
 // The effects' own primitives, the panel's pixels.
 class PanelCanvas : public wow::Canvas {
@@ -344,7 +342,12 @@ void displayVisualizer() {
   }
 
   if (settings.vizStyle == 1) drawNeonMirror();
-  if (settings.vizStyle == 2) drawPhosphorWaterfall(now, stale);
+#if defined(VIZ_WOW_ENABLED)
+  constexpr bool waterfallAt2 = false;   // style 2 is Code EQ here (src/viz/wow/wow_matrix.cpp)
+#else
+  constexpr bool waterfallAt2 = true;
+#endif
+  if (waterfallAt2 && settings.vizStyle == 2) drawPhosphorWaterfall(now, stale);
   if (settings.vizStyle == 3) drawPurpleStage(now);
   if (settings.vizStyle == 5) {
     float levels[VIZ_BANDS];
@@ -356,7 +359,7 @@ void displayVisualizer() {
 #if defined(VIZ_WOW_ENABLED)
   if (wowStyle(settings.vizStyle)) {
     if (s_wow) {
-      const int effect = settings.vizStyle - wow::kFirstStyle;
+      const int effect = wow::effectForStyle(settings.vizStyle);
       const wow::real react = settings.vizBeatFx / 100.0f;
       if (resetStyle || s_wow->effect() != effect) s_wow->reset(effect, react);
       else s_wow->setReact(react);
