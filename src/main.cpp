@@ -378,11 +378,14 @@ void cycleClockScreens() {
 #define MEMTRACE(tag)
 #endif
 
+static void onAllocFailed(size_t size, uint32_t caps, const char *function_name);
+
 void setup() {
 #if defined(BOARD_HAS_PSRAM)
   tlsUsePsram();   // before anything opens TLS - see network/tls_psram.cpp
 #endif
   Serial.begin(115200);
+  heap_caps_register_failed_alloc_callback(onAllocFailed);   // internal heap diagnostics: see loopMark()
   delay(1000);
   healthBegin();   // confirms an OTA image only once it has run, and reports the last crash: src/health
 #if defined(BOARD_WAVESHARE_RGB_MATRIX)
@@ -800,12 +803,52 @@ uint32_t loopMaxMs() { return s_loopMaxLastUs / 1000UL; }
 // and style changes, which the settings write turned out not to be.
 static uint32_t s_markUs = 0, s_partMaxUs = 0, s_partMaxLastUs = 0;
 static const char *s_partMaxTag = "", *s_partMaxLastTag = "";
+// Internal heap, added 2026-09-15: on the panel the minimum free internal heap fell
+// to about 1.3 KB twice with nothing on serial. loopMark() now says during which
+// part of loop() that minimum dropped by 1 KB or more, and a failed-allocation hook
+// records the last allocation that failed and the task that asked. The hook only
+// writes plain fields; the loop prints, into a stack buffer (Print::printf would
+// malloc for lines over 64 bytes, exactly when memory is short).
+static uint32_t s_heapMinSeen = 0;
+static volatile uint32_t s_allocFails = 0, s_allocFailBytes = 0, s_allocFailCaps = 0;
+static char s_allocFailTask[16] = "";
+static uint32_t s_allocFailsPrinted = 0;
+static void onAllocFailed(size_t size, uint32_t caps, const char *) {
+  s_allocFailBytes = (uint32_t)size;
+  s_allocFailCaps = caps;
+  const char *name = pcTaskGetName(nullptr);
+  strncpy(s_allocFailTask, name ? name : "?", sizeof(s_allocFailTask) - 1);
+  s_allocFails++;
+}
+uint32_t allocFailCount() { return s_allocFails; }
+uint32_t allocFailLastBytes() { return s_allocFailBytes; }
+const char *allocFailLastTask() { return s_allocFailTask; }
+
 static void loopMark(const char *tag) {
   const uint32_t nowUs = micros();
   const uint32_t us = s_markUs ? nowUs - s_markUs : 0;
   s_markUs = nowUs;
   if (us > s_partMaxUs) { s_partMaxUs = us; s_partMaxTag = tag; }
   if (us > 200000UL) Serial.printf("[loop] %s took %u ms\n", tag, (unsigned)(us / 1000UL));
+  char line[192];
+  const uint32_t heapMin = heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL);
+  if (s_heapMinSeen && heapMin + 1024 <= s_heapMinSeen) {
+    const int n = snprintf(line, sizeof(line),
+                           "[mem] internal minimum %u -> %u B during %s (free %u, largest %u, tasks %u)\n",
+                           (unsigned)s_heapMinSeen, (unsigned)heapMin, tag,
+                           (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                           (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+                           (unsigned)uxTaskGetNumberOfTasks());
+    if (n > 0) Serial.write((const uint8_t *)line, n < (int)sizeof(line) ? n : sizeof(line) - 1);
+  }
+  if (!s_heapMinSeen || heapMin < s_heapMinSeen) s_heapMinSeen = heapMin;
+  if (s_allocFails != s_allocFailsPrinted) {
+    s_allocFailsPrinted = s_allocFails;
+    const int n = snprintf(line, sizeof(line), "[mem] allocation failed: %u B, caps 0x%x, task %s, %u so far, before %s\n",
+                           (unsigned)s_allocFailBytes, (unsigned)s_allocFailCaps, s_allocFailTask,
+                           (unsigned)s_allocFailsPrinted, tag);
+    if (n > 0) Serial.write((const uint8_t *)line, n < (int)sizeof(line) ? n : sizeof(line) - 1);
+  }
 }
 const char *loopSlowPart() { return s_partMaxLastTag; }
 uint32_t loopSlowPartMs() { return s_partMaxLastUs / 1000UL; }
