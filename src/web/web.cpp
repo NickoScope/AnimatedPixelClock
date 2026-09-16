@@ -2284,7 +2284,12 @@ void handleImportConfig() {
      settings.weatherApiKey[32] = '\0';
    }
  }
- if (!doc["irEnabled"].isNull()) settings.irEnabled = doc["irEnabled"];
+ if (!doc["irEnabled"].isNull()) {
+   settings.irEnabled = doc["irEnabled"];
+#if defined(IR_ENABLED)
+   irSettingsChanged();   // the receiver follows the setting now, not after a reboot
+#endif
+ }
  if (!doc["climateEnabled"].isNull()) settings.climateEnabled = doc["climateEnabled"];
  if (!doc["climateIntervalS"].isNull()) settings.climateIntervalS = climate::clampInterval(doc["climateIntervalS"].as<long>());
  if (!doc["climateTempOffset"].isNull()) settings.climateTempOffset = climate::clampOffset(doc["climateTempOffset"].as<long>());

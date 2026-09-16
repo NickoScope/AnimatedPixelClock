@@ -30,6 +30,15 @@
 // 2.74 V and draws 1.6 mA when the receiver pulls down, inside its 5 mA rating.
 // CALCULATED, NOT MEASURED - src/ir/README.md carries it as the first thing to
 // check on the bench when the receiver is soldered.
+//
+// And IO45 and IO46 are strapping pins. IO45 selects VDD_SPI's voltage, so a
+// pull-up to 3V3 on it would be fatal on a module whose flash and PSRAM run at
+// 3.3 V - it would force them to 1.8 V and the board would not boot. This
+// module is safe because VDD_SPI is fixed at 1.8 V by the VDD_SPI_FORCE eFuse
+// (read off this board on 2026-09-14, and esptool reports "Embedded PSRAM 16MB
+// (AP_1v8)"), which is exactly why the knob may already pull them about. Check
+// the fuse with espefuse summary before soldering anything to IO45 on another
+// board. IO46 gates ROM messages at boot and, with GPIO0, picks the boot mode.
 #ifndef IR_PIN
 #define IR_PIN 45
 #endif

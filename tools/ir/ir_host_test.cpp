@@ -169,6 +169,60 @@ static void clockWrap() {
   CHECK(d.learnActive(nearEnd + ir::kLearnWindowMs) < 0);
 }
 
+// ── the three bugs the audit of 2026-09-16 found, at 25.5 days of uptime ────
+// millis() is 32 bits: 24.85 days is where a signed difference against a raw
+// timestamp changes sign. All three below passed the old tests, which only ever
+// looked at the wrap itself (0xFFFFFF00) and never at a deadline left behind.
+static const uint32_t kDays25 = 2204496000u;   // 25.5 days in milliseconds
+
+static void aButtonNobodyPressedIsNotHeld() {
+  Decoder d;
+  teach(d);
+  // Nothing has ever touched the remote. The old code compared a signed
+  // difference against a deadline of zero and called the button held from day
+  // 24.85 onwards - on any panel, with no remote in the room, and the encoder's
+  // seam fed that straight into the knob's own switch.
+  CHECK(!d.okDown(kDays25));
+  CHECK(!d.okDown(kDays25 + 1000));
+  // And a press that really happened a month ago is over, not held.
+  d.frame(1000, code(0x33));
+  CHECK(!d.okDown(kDays25));
+}
+
+static void aHoldIsClamped() {
+  Decoder d;
+  teach(d);
+  // /api/ir/sim takes hold from a query string: one GET with a huge number used
+  // to pin the button down for weeks.
+  d.simulate(1000, ir::kOk, 2000000000u);
+  CHECK(d.okDown(1000 + ir::kSimHoldMaxMs - 1));
+  CHECK(!d.okDown(1000 + ir::kSimHoldMaxMs));
+  CHECK(!d.okDown(1000 + 60000));
+}
+
+static void anAncientSlotIsNotRevived() {
+  Decoder d;
+  teach(d);
+  d.frame(1000, code(0x22));          // a detent, a month ago
+  CHECK(d.takeRotate() == 1);
+  // A repeat frame carries no code. Freshness is an age, so it is unsigned: a
+  // signed difference against a month-old timestamp read as "recent" and turned
+  // this into a detent out of nowhere.
+  const Outcome o = d.frame(kDays25, repeat());
+  CHECK(o.kind == Outcome::kNothing);
+  CHECK(d.takeRotate() == 0);
+}
+
+static void anAbandonedLearnWindowCloses() {
+  Decoder d;
+  teach(d);
+  d.learnArm(ir::kAux, 1000);
+  CHECK(d.learnActive(kDays25) < 0);        // armed and forgotten: it is not open
+  CHECK(d.learnRemainMs(kDays25) == 0);
+  CHECK(d.frame(kDays25, code(0x77)).kind == Outcome::kNothing);
+  CHECK(!d.map().bound(ir::kAux));
+}
+
 // ── the simulator takes the same path ───────────────────────────────────────
 static void simulationIsIndistinguishable() {
   Decoder d;
@@ -182,6 +236,7 @@ static void simulationIsIndistinguishable() {
   d.simulate(2000, ir::kOk, 1200);
   CHECK(d.okDown(2000 + 1100));
   CHECK(!d.okDown(2000 + 1200));
+  CHECK(1200 <= ir::kSimHoldMaxMs);    // the long-press test must stay inside the ceiling
   CHECK(!d.simulate(1000, ir::kSlotCount, 0).kind);     // out of range does nothing
   CHECK(d.simulate(3000, ir::kPower, 0).kind == Outcome::kReserved);
 }
@@ -293,6 +348,10 @@ int main() {
   aStaleRepeatExtendsNothing();
   noiseAndStrangersAreIgnored();
   clockWrap();
+  aButtonNobodyPressedIsNotHeld();
+  aHoldIsClamped();
+  anAncientSlotIsNotRevived();
+  anAbandonedLearnWindowCloses();
   simulationIsIndistinguishable();
   countersAndLiveJournal();
   consoleBasics();

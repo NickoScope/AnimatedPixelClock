@@ -104,6 +104,12 @@ static const uint32_t kHoldMs        = 250;
 static const uint32_t kRepeatFreshMs = 200;
 static const int8_t   kRotAccMax     = 3;
 static const uint32_t kLearnWindowMs = 15000;  // long enough to pick the remote up and aim it
+// The ceiling on a simulated hold. The portal's /api/ir/sim takes it from a
+// query string and the serial console from a typed line, so it is clamped where
+// both meet the state machine. Five seconds is four times the encoder's
+// long-press threshold - everything a test could want, and nothing that could
+// pin the button down.
+static const uint32_t kSimHoldMaxMs = 5000;
 
 // A protocol the decoder could not name. The library's own "unknown" value is
 // not visible here; ir.cpp passes the flag.
@@ -166,16 +172,28 @@ class Map {
 };
 
 // ── the state machine ───────────────────────────────────────────────────────
-// Every comparison against millis() is a signed difference, never `a < b` on
-// the raw values: the panel runs for months, millis() wraps at 49.7 days, and
-// an unsigned comparison across that wrap would hold the button down for weeks.
-// NickoScope32 paid for this one in an audit (v33.48.0 HIGH-1) before the port.
+// millis() wraps at 49.7 days and this panel runs for months, so no comparison
+// here is a plain `a < b` on raw timestamps. The rule is not "always signed",
+// though - that was the first version of this file and an audit found three
+// bugs in it on 2026-09-16:
+//
+//   An AGE - how long ago something happened - is an UNSIGNED elapsed time.
+//   A signed difference against a timestamp that is genuinely old reads as
+//   negative and calls it recent: a repeat frame revived a slot last seen a
+//   month before.
+//
+//   A DEADLINE - "held until" - is not compared at all here. It is stored as a
+//   start plus a span, and the span is zeroed the moment it runs out. A signed
+//   comparison against a deadline that was never set (zero) called the button
+//   held from day 24.85 onwards, on any panel, with no remote in the room.
+//
+// Both forms are exercised at 25.5 days by tools/ir/check_ir.py.
 class Decoder {
  public:
   void reset() {
     m_map.reset();
-    m_rot = 0; m_okUntilMs = 0; m_hitSlot = -1; m_hitMs = 0;
-    m_learnSlot = -1; m_learnUntilMs = 0;
+    m_rot = 0; m_okSinceMs = 0; m_okSpanMs = 0; m_hitSlot = -1; m_hitMs = 0;
+    m_learnSlot = -1; m_learnAtMs = 0;
     m_seenAny = false; m_seenProto = 0; m_seenValue = 0; m_seenRepeat = false; m_seenMs = 0;
     m_frames = 0; m_ignored = 0;
     for (uint8_t i = 0; i < kSlotCount; i++) m_hits[i] = 0;
@@ -212,7 +230,7 @@ class Decoder {
     if (f.repeat) {
       // No code of its own: it extends the slot that is being held, and only
       // while that slot is still fresh.
-      if (m_hitSlot < 0 || (int32_t)(nowMs - m_hitMs) > (int32_t)kRepeatFreshMs) { m_ignored++; return o; }
+      if (m_hitSlot < 0 || (uint32_t)(nowMs - m_hitMs) > kRepeatFreshMs) { m_ignored++; return o; }
       slot = m_hitSlot;
     } else {
       if (f.unknown) { m_ignored++; return o; }
@@ -229,8 +247,12 @@ class Decoder {
   Outcome simulate(uint32_t nowMs, uint8_t slot, uint32_t holdMs) {
     if (slot >= kSlotCount) return Outcome{Outcome::kNothing, -1, -1};
     if (slot == kOk && holdMs > 0) {
+      // Clamped here, the one place every simulated press goes through: the
+      // portal's /api/ir/sim takes hold from a query string, and an unbounded
+      // one would hold the button down for weeks.
+      if (holdMs > kSimHoldMaxMs) holdMs = kSimHoldMaxMs;
       m_hitSlot = (int8_t)slot; m_hitMs = nowMs; m_hits[slot]++;
-      m_okUntilMs = nowMs + holdMs;
+      m_okSinceMs = nowMs; m_okSpanMs = holdMs;
       return Outcome{Outcome::kButton, (int8_t)slot, -1};
     }
     return dispatch(nowMs, slot, false);
@@ -238,24 +260,29 @@ class Decoder {
 
   // ── the seam (called from the encoder's sampling task) ────────────────────
   int8_t takeRotate() { const int8_t v = m_rot; m_rot = 0; return v; }
-  bool   okDown(uint32_t nowMs) const { return (int32_t)(nowMs - m_okUntilMs) < 0; }
+  // Polled by the encoder's task at 1 kHz, so the span is cleared within a
+  // millisecond of running out and can never be mistaken for a fresh press.
+  bool okDown(uint32_t nowMs) {
+    if (!m_okSpanMs) return false;
+    if ((uint32_t)(nowMs - m_okSinceMs) >= m_okSpanMs) { m_okSpanMs = 0; return false; }
+    return true;
+  }
 
   // ── learning ──────────────────────────────────────────────────────────────
   bool learnArm(uint8_t slot, uint32_t nowMs) {
     if (slot >= kSlotCount) return false;
     m_learnSlot = (int8_t)slot;
-    m_learnUntilMs = nowMs + kLearnWindowMs;
+    m_learnAtMs = nowMs;
     return true;
   }
   void learnCancel() { m_learnSlot = -1; }
   int  learnActive(uint32_t nowMs) {
-    if (m_learnSlot >= 0 && (int32_t)(nowMs - m_learnUntilMs) >= 0) m_learnSlot = -1;   // the window closed
+    if (m_learnSlot >= 0 && (uint32_t)(nowMs - m_learnAtMs) >= kLearnWindowMs) m_learnSlot = -1;
     return m_learnSlot;
   }
   uint32_t learnRemainMs(uint32_t nowMs) {
     if (learnActive(nowMs) < 0) return 0;
-    const int32_t d = (int32_t)(m_learnUntilMs - nowMs);
-    return d > 0 ? (uint32_t)d : 0;
+    return kLearnWindowMs - (uint32_t)(nowMs - m_learnAtMs);
   }
 
   // ── what the portal and /api/info show ────────────────────────────────────
@@ -294,7 +321,7 @@ class Decoder {
         // A level, not an event: it is held while frames keep arriving, and the
         // encoder's own debounce then decides click or long press. This is why
         // a held remote button behaves exactly like a held knob.
-        m_okUntilMs = nowMs + kHoldMs;
+        m_okSinceMs = nowMs; m_okSpanMs = kHoldMs;
         o.kind = Outcome::kButton;
         break;
       default:
@@ -306,11 +333,12 @@ class Decoder {
 
   Map      m_map;
   int8_t   m_rot = 0;
-  uint32_t m_okUntilMs = 0;
+  uint32_t m_okSinceMs = 0;
+  uint32_t m_okSpanMs = 0;    // 0 = not held; never compared against a bare timestamp
   int8_t   m_hitSlot = -1;
   uint32_t m_hitMs = 0;
   int8_t   m_learnSlot = -1;
-  uint32_t m_learnUntilMs = 0;
+  uint32_t m_learnAtMs = 0;
   bool     m_seenAny = false;
   uint8_t  m_seenProto = 0;
   uint64_t m_seenValue = 0;
