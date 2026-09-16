@@ -49,7 +49,7 @@ COMBOS = [
                                "-DFB_MQTT_ENABLED -DCARDS_ENABLED -DCAROUSEL_ENABLED "
                                "-DNSLUA_ENABLED -DWORLDCLOCK_ENABLED -DRAILBOARD_ENABLED -DRAILBOARD_DIRECT_ENABLED "
                                "-DLUA_EFFECTS_ENABLED -DCLIPS_SD_ENABLED -DMEDIAPLAYER_ENABLED -DMARKET_ENABLED "
-                               "-DCLIMATE_ENABLED "
+                               "-DCLIMATE_ENABLED -DPRESENCE_ENABLED "
                                "-DAUDIO_MIC_ENABLED -DVIZ_WOW_ENABLED", True),
     ("mic on, debug asserts",  "-DAUDIO_MIC_ENABLED -DAUDIO_DEBUG", True),
     ("mic only, no PC stream", "-DAUDIO_MIC_ENABLED -DAUDIO_MIC_ONLY", True),
@@ -64,6 +64,11 @@ COMBOS = [
                                r'-DMARKET_LOCAL_DEFAULTS_FILE=\"../../tools/market/panel/local_defaults_example.h\"', True),
     ("climate + bus",          "-DCLIMATE_ENABLED -DMQTT_BUS_ENABLED", True),
     ("climate without MQTT",   "-DCLIMATE_ENABLED", True),
+    ("presence + bus + scene", "-DPRESENCE_ENABLED -DMQTT_BUS_ENABLED -DNSLUA_ENABLED "
+                               "-DLUA_EFFECTS_ENABLED -DCONTROL_ENCODER_ENABLED", True),
+    ("presence without bus",   "-DPRESENCE_ENABLED -DNSLUA_ENABLED -DLUA_EFFECTS_ENABLED "
+                               "-DCONTROL_ENCODER_ENABLED", False),
+    ("presence without scene", "-DPRESENCE_ENABLED -DMQTT_BUS_ENABLED", False),
     ("cards without the bus",  "-DCARDS_ENABLED", False),
     ("world clock, no encoder", "-DWORLDCLOCK_ENABLED", False),
     ("rail board without bus", "-DRAILBOARD_ENABLED -DCONTROL_ENCODER_ENABLED", False),

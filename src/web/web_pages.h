@@ -729,6 +729,37 @@ static const char PAGE_HTML[] PROGMEM = R"PAGE(<!doctype html>
               <span class="check-text"><strong>Publish to Home Assistant</strong><span class="ct-hint">Indoor temperature and humidity as two MQTT sensors that Home Assistant finds by discovery. Switching it off removes them.</span></span>
             </label>
           </div>
+          <div class="card" data-need="presence">
+            <h2 class="card-title">Presence radar <span class="tag" id="presenceTag">--</span></h2>
+            <p class="field-hint" id="presenceNow">--</p>
+            <div class="grid-2" style="margin-top:12px">
+              <div class="field" style="margin-bottom:0">
+                <label class="field-label" for="presenceScaleM">How far the fan reaches</label>
+                <div class="select-wrap">
+                  <select name="presenceScaleM" id="presenceScaleM">
+                    <option value="2">2 metres</option>
+                    <option value="4">4 metres</option>
+                    <option value="6">6 metres</option>
+                  </select>
+                </div>
+              </div>
+              <div class="field" style="margin-bottom:0">
+                <label class="field-label" for="presenceSource">What the Room radar page draws</label>
+                <div class="select-wrap">
+                  <select name="presenceSource" id="presenceSource">
+                    <option value="1">The room, from the sensor</option>
+                    <option value="0">The scripted demo</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+            <p class="field-hint">The radar reports three targets at a time and the page draws them on a fan 60 px deep. 4 metres suits a living room; at 6 the people sit in the bottom third of it. Beware 2: anyone further than that is dropped, so a person standing 2.1 m away shows as an empty room. Changing this redraws the page from scratch.</p>
+            <label class="check-row standalone" style="margin-top:16px">
+              <input type="checkbox" name="presenceMirrorX" id="presenceMirrorX">
+              <span class="check-box" aria-hidden="true"></span>
+              <span class="check-text"><strong>Mirror left and right</strong><span class="ct-hint">Which way the sensor counts +X is not known until somebody walks in one side of the room and is watched on the panel. If they come up on the wrong side, turn this on.</span></span>
+            </label>
+          </div>
           <div id="colorsClock"></div>
         </section>
 
@@ -1940,10 +1971,20 @@ tag.textContent = c.state;
 if (typeof c.tempC === 'number') now.textContent = 'Now ' + c.tempC.toFixed(1) + ' \u00b0C and ' + Math.round(c.humidity) + ' %RH; the sensor itself reads ' + c.sensorTempC.toFixed(1) + ' \u00b0C and ' + Math.round(c.sensorHumidity) + ' %RH (' + c.ageS + ' s ago).';
 else now.textContent = c.state === 'absent' ? 'No SHTC3 answered on the I2C bus.' : c.state === 'off' ? 'Not reading.' : 'Looking for the sensor.';
 }
+function presenceStatus(p) {
+var tag = $('#presenceTag'), now = $('#presenceNow');
+if (!p || !tag || !now) return;
+tag.textContent = p.source;
+var age = typeof p.lastMessageS === 'number' ? p.lastMessageS + ' s ago' : 'nothing yet';
+now.textContent = p.source === 'demo' ? 'Drawing the scripted demo, not the room.'
+: p.source === 'lost' ? 'The last message was ' + age + ', so the page says NO FEED rather than an empty room.'
+: p.targets + ' in the room; last message ' + age + '. ' + p.messages + ' messages, ' + p.parseFailures + ' refused, JSON peak ' + p.jsonPeak + ' of ' + p.jsonBytes + ' B.';
+}
 function refreshStatus() {
 fetch('/api/info').then(function (r) { return r.json(); }).then(function (d) {
 updateDiagnostics(d);
 climateStatus(d.climate);
+presenceStatus(d.presence);
 if (d.ip) { var e = $('#srIp'); if (e) e.textContent = d.ip; }
 if (d.hostname) { var h = $('#srHost'); if (h) h.textContent = String(d.hostname).replace(/\.local$/, ''); }
 if (typeof d.uptime === 'number') { var u = $('#srUptime'); if (u) u.textContent = fmtUptime(d.uptime); }

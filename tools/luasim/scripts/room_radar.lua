@@ -5,10 +5,11 @@
 -- side. This draws exactly that fan up from the middle of the bottom edge, so
 -- the picture is the sensor's own view of the room: 10 px to the metre.
 --
--- The people are scripted. fake_targets() returns what the radar would, a list
--- of {x, y, speed} in mm and cm/s, and on the panel it is the one function to
--- replace. The trails read the script's paths directly; on the panel they need
--- a short history per target slot instead.
+-- Two sources of people. `presence`, bound by src/presence when the panel has
+-- a real radar behind it, is preferred; fake_targets() invents them when it is
+-- absent or has no live feed, so the screen works with no Home Assistant and
+-- luasim keeps running this file unchanged. The scripted trails read the
+-- script's paths; the live ones read the binding's own ring of past positions.
 --
 -- The fan is about 3 900 pixels and every one is repainted each frame, so the
 -- per-pixel work is kept to a table read and one px.pixel call. The grid is
@@ -22,11 +23,20 @@ local sin, cos, sqrt, atan, exp, pi =
 local deg, rad = math.deg, math.rad
 local fmt = string.format
 
+-- src/presence binds `presence` before this chunk runs - see "the panel's own
+-- radar" below. It is read here as well, for the scale set in the portal.
+local RAD = rawget(_G, "presence")
+
 local STORY  = 24.0            -- seconds the scripted scene lasts; px.t() spans it
 PERIOD = STORY                 -- a global: the panel's px.t() spans PERIOD seconds (default 60)
 local CX, CY = 63.5, 63.0      -- the sensor
-local PPM    = 10              -- pixels per metre
-local RANGE, HALF = 6.0, 60    -- metres, and degrees either side
+-- How deep the fan reaches. 6 m is the sensor's own range and what the scripted
+-- story was drawn for; the panel offers 2, 4 or 6 m and defaults to 4, because
+-- at 6 m a living room leaves the top two thirds of the fan empty (docs/16 in
+-- the knowledge base). The fan stays 60 px deep, so the rest follows from it.
+local RANGE, HALF = RAD and RAD.scale() or 6.0, 60
+local PPM    = 60 / RANGE      -- pixels per metre
+local RINGS  = floor(RANGE)    -- a ring every metre
 
 -- The beam is decoration: the LD2450 does not sweep. It is what makes a fan of
 -- dots read as a radar, so it stays, and it stays dim.
@@ -71,7 +81,7 @@ do
       local ang = (my > 0 and r <= RANGE + 0.08) and deg(atan(mx, my))
       if ang and abs(ang) <= HALF + 0.8 then
         local lit = 0
-        for k = 1, 6 do                                -- a ring every metre
+        for k = 1, RINGS do                            -- a ring every metre
           local d = abs(r - k) * PPM
           if d < 1 then lit = max(lit, (1 - d) * ((k % 3 == 0) and 1.0 or 0.5)) end
         end
@@ -205,6 +215,43 @@ local function count_targets(s)
   return n
 end
 
+-- ---------------------------------------------------- the panel's own radar
+-- src/presence binds `presence` before this chunk runs: what the MTR-1 last
+-- reported, smoothed and aged. It is absent under luasim and fxhost, and in
+-- any build without PRESENCE_ENABLED, and it answers DEMO while no feed has
+-- arrived - in each of those the scripted story above runs instead.
+--
+--   state()      0 the story, 1 live targets, 2 the feed stopped and says so
+--   target(i)    x mm, y mm, speed cm/s, or nil for an empty slot. The binding
+--                has taken abs(mm/s) / 10 already, which is what > 12 tests.
+--   trail(i, k)  where slot i was k steps of 0.1 s ago, out of its ring
+--   count(k)     targets it held k steps ago, for the empty-room fade
+--   scale()      metres the fan covers; read at the top of this file
+local DEMO, LOST = 0, 2
+
+-- Refilled in place, never rebuilt: draw() asks the binding for targets 19
+-- times a frame, and this heap is PSRAM shared with the HUB75 driver. A live
+-- frame allocates nothing, where fake_targets() builds a table per person.
+local SLOT = {{x = 0, y = 0, speed = 0, slot = 1},
+              {x = 0, y = 0, speed = 0, slot = 2},
+              {x = 0, y = 0, speed = 0, slot = 3}}
+local LIVE = {}
+
+local function live_targets()
+  local n = 0
+  for i = 1, 3 do
+    local x, y, v = RAD.target(i)
+    if x and in_fan(x / 1000, y / 1000) then
+      local t = SLOT[i]
+      t.x, t.y, t.speed = x, y, v
+      n = n + 1
+      LIVE[n] = t
+    end
+  end
+  for i = #LIVE, n + 1, -1 do LIVE[i] = nil end
+  return LIVE
+end
+
 -- ---------------------------------------------------------------- the words
 local DIG = {
   ["0"]={".####.","######","##..##","##..##","##..##","##..##","##..##","##..##","##..##","######",".####."},
@@ -229,7 +276,7 @@ local TEAL = {0, 150, 115}
 
 -- The range labels on the fan's right edge never move, so they are placed once.
 local RANGE_LABELS = {}
-for _, k in ipairs({2, 4, 6}) do
+for _, k in ipairs(RANGE >= 6 and {2, 4, 6} or RANGE >= 4 and {2, 4} or {1, 2}) do
   local label = k .. "M"
   RANGE_LABELS[#RANGE_LABELS + 1] = {
     label, min(W - px.width(label), floor(CX + k * PPM * sin(rad(HALF)) + 4)),
@@ -241,12 +288,15 @@ local VISIBLE = {}             -- per trail step, for the target being drawn
 -- ---------------------------------------------------------------- draw
 function draw()
   local S = px.t() * STORY
-  local targets = fake_targets(S)
+  local state = RAD and RAD.state() or DEMO
+  local live = state ~= DEMO
+  local targets = live and live_targets() or fake_targets(S)
 
   -- An empty room fades down after a moment: the sleep idea, drawn.
   local seen = #targets > 0 and 1 or 0
   for k = 1, 4 do
-    if count_targets(S - k * 0.3) > 0 then seen = seen + 1 end
+    local was = live and RAD.count(k * 3) or count_targets(S - k * 0.3)
+    if was > 0 then seen = seen + 1 end
   end
   local g = 0.3 + 0.7 * seen / 5
 
@@ -269,7 +319,13 @@ function draw()
 
     -- trail, sampled at the radar's own 10 Hz
     for k = 1, 14 do
-      local x, y = pos(person, S - k * 0.1)
+      local x, y
+      if live then
+        local tx, ty = RAD.trail(t.slot, k)
+        if tx then x, y = tx / 1000, ty / 1000 end
+      else
+        x, y = pos(person, S - k * 0.1)
+      end
       local there = x ~= nil and in_fan(x, y)
       VISIBLE[k] = there
       if there then
@@ -310,7 +366,9 @@ function draw()
   -- Picopixel's glyphs start two rows below y, so 56 is the last row that fits.
   big(2, 51, tostring(n), white, white, white)
   if n == 0 then
-    px.text(10, 50, "EMPTY", dim(TEAL, g))
+    -- An empty room and a radar that stopped reporting draw the same picture,
+    -- so the second one is named rather than left to look like the first.
+    px.text(10, 50, state == LOST and "NO FEED" or "EMPTY", dim(TEAL, g))
   else
     px.text(10, 50, "IN ROOM", dim(TEAL, g))
     px.text(10, 56, fmt("NEAR %.1fM", near), dim(TEAL, g))

@@ -24,6 +24,10 @@ extern "C" {
 
 #include "nslua_sandbox.h"
 
+#if defined(PRESENCE_ENABLED)
+#include "../presence/presence.h"   // guarded: the host build has no ArduinoJson
+#endif
+
 static uint32_t nowMs() {
 #if defined(ARDUINO)
   return millis();
@@ -117,6 +121,14 @@ int openProtected(lua_State *L) {
   OpenCtx *c = static_cast<OpenCtx *>(lua_touserdata(L, 1));
   nslua_sandbox_open(L);
   luaPxOpen(L, c->canvas);
+#if defined(PRESENCE_ENABLED)
+  // The room radar's real targets, bound before the chunk runs so the script
+  // can read the scale at load. Not the P&P registry (nslua_bindings.h): that
+  // is opened by nslua.cpp only, and pulling it in here would put
+  // nslua_bindings.cpp into tools/luasim/fxhost, which compiles exactly three
+  // files of this directory and must keep matching luasim pixel for pixel.
+  presenceLuaOpen(L);
+#endif
   // Mode "t": source text only. The bytecode loader is not safe against
   // hostile input (see nslua.cpp).
   if (luaL_loadbufferx(L, c->src, c->len, c->chunk, "t") != LUA_OK) return lua_error(L);
