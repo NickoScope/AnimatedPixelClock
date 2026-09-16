@@ -62,6 +62,9 @@ COMBOS = [
     ("market + bus + knob",     "-DMARKET_ENABLED -DMQTT_BUS_ENABLED -DCONTROL_ENCODER_ENABLED", True),
     ("market, local defaults",  "-DMARKET_ENABLED -DMQTT_BUS_ENABLED -DCONTROL_ENCODER_ENABLED "
                                r'-DMARKET_LOCAL_DEFAULTS_FILE=\"../../tools/market/panel/local_defaults_example.h\"', True),
+    ("ma player client",       "-DMAPLAYER_ENABLED", True),
+    ("ma player audio half",   "-DMAPLAYER_ENABLED -DMAPLAYER_AUDIO_ENABLED", False),
+    ("ma player audio alone",  "-DMAPLAYER_AUDIO_ENABLED", False),
     ("ir console only",        "-DIR_ENABLED", True),
     ("ir + receiver",          "-DIR_ENABLED -DIR_RX_ENABLED", True),
     ("ir receiver with a knob","-DIR_ENABLED -DIR_RX_ENABLED -DCONTROL_ENCODER_ENABLED", False),

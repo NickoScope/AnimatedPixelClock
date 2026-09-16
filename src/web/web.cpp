@@ -27,6 +27,9 @@
 #include "../ir/ir.h"
 #include "../presence/presence.h"
 #endif
+#if defined(MAPLAYER_ENABLED)
+#include "../maplayer/maplayer.h"   // guarded by its own flag, not another module's
+#endif
 #include "web_assets.h"   // the portal as gzip: page, style, script, icon, Panel group
 #include "web_panel.h"
 #if defined(CONTROL_ENCODER_ENABLED)
@@ -378,6 +381,9 @@ void handleDeviceInfo() {
 #endif
 #if defined(IR_ENABLED)
  irInfoJson(doc["ir"].to<JsonObject>());   // the remote: src/ir
+#endif
+#if defined(MAPLAYER_ENABLED)
+ maplayerInfoJson(doc["maplayer"].to<JsonObject>());   // the Music Assistant player: src/maplayer
 #endif
 #if defined(AUDIO_MIC_ENABLED)
  audioInfoJson(doc.as<JsonObject>());   // audioSource, audioLevelDb, audioBpm, audioClipping, ...
