@@ -102,20 +102,28 @@ def simulate(rows, fps, story):
             t1, x1, y1, v1, fresh = seen[-1]
             # Count the messages in a row that filled this slot, and break the
             # run where the target teleported: both as the firmware does.
-            run, prev = 1, None
+            run, prev, broke = 1, None, False
             for s_t, s_x, s_y, _sv, s_fresh in seen:
-                if prev is None or s_fresh:
-                    run, prev = 1, (s_t, s_x, s_y)
+                # A predecessor older than the freshness window is not one: the
+                # feed went quiet without ever saying the slot was empty, and the
+                # firmware starts the slot over rather than drawing across it.
+                stalled = prev is not None and s_t - prev[0] > FRESH_S
+                if prev is None or s_fresh or stalled:
+                    run, prev, broke = 1, (s_t, s_x, s_y), True
                     continue
                 gap = max(s_t - prev[0], MIN_GAP_S)
                 reach = MAX_SPEED_MMS * gap
                 jumped = (s_x - prev[1]) ** 2 + (s_y - prev[2]) ** 2 > reach * reach
+                if jumped:
+                    broke = True
                 run = 1 if jumped else min(run + 1, CONFIRM)
                 prev = (s_t, s_x, s_y)
             if run < CONFIRM:
                 shown.append(None)        # one message is not a target yet
                 continue
-            t0, x0, y0 = (t1, x1, y1) if (fresh or len(seen) < 2) else seen[-2][:3]
+            # No predecessor after a restart, a jump or a stall: the dot sits where
+            # it is instead of sliding in from where the slot used to be.
+            t0, x0, y0 = (t1, x1, y1) if (fresh or broke or len(seen) < 2) else seen[-2][:3]
             at = now - LAG_S
             if at <= t0 or t1 <= t0:
                 x, y = x0, y0

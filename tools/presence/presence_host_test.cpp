@@ -356,11 +356,15 @@ static void confirmAndTeleport() {
   q.onMessage(1000, r);
   q.onMessage(2000, r);
   CHECK(q.target(2000, 0, nullptr, nullptr, nullptr));
-  const uint32_t afterStall = 2000 + presence::kFreshMs + 60000;
-  q.onMessage(afterStall, r);                       // the same place, long after
+  // Far enough apart in time and place that interpolating between them would
+  // stretch, and past about 142 s overflow, the arithmetic in target().
+  const uint32_t afterStall = 2000 + 200000;
+  fill(r, 0, -4000, 7000, 0);
+  q.onMessage(afterStall, r);
   CHECK(!q.target(afterStall, 0, nullptr, nullptr, nullptr));   // proof starts again
   q.onMessage(afterStall + 1000, r);
-  CHECK(q.target(afterStall + 1000, 0, &x, &y, nullptr) && x == 1000);
+  CHECK(q.target(afterStall + 1000, 0, &x, &y, nullptr));
+  CHECK(x == -4000 && y == 7000);                   // where it is, not on a line from where it was
 }
 
 int main() {

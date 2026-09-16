@@ -209,7 +209,7 @@ class Model {
       if (into <= 0 || span <= 0) {
         px = s.x0; py = s.y0;                       // not yet past the older sample
       } else if (into < span) {
-        // |dx| <= 2 * 4860 mm and into < span <= kFreshMs, so this stays well
+        // |dx| <= 2 * 4860 mm, |dy| <= 2 * 7560, and into < span <= kFreshMs, so this stays well
         // inside int32; a longer gap cannot reach here, because a slot that
         // was absent clears have0.
         px = s.x0 + (s.x1 - s.x0) * into / span;
