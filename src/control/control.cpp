@@ -5,6 +5,10 @@
 #include <Arduino.h>
 #include <esp_timer.h>
 
+#if defined(IR_ENABLED)
+#include "../ir/ir.h"   // the remote produces detents and a button level; see below
+#endif
+
 // ---------------------------------------------------------------- pins
 // From the vendor schematic (reference-drawings/controller in the knowledge
 // base), not from counting what the firmware happens not to use.
@@ -209,6 +213,15 @@ static void sampleTick(void *) {
     s_lastEnc = (s_lastEnc >> 2) | (ab << 2);
     s_encDir += kEncTab[s_lastEnc & 0x0F];
   }
+#if defined(IR_ENABLED)
+  // The remote's detents are drained here, inside the sampling task, so that
+  // the task stays the only writer of the event queue - loop() pushing events
+  // of its own would make two producers of a queue built for one. The knob's
+  // reverse setting is not applied: it exists to fix how one knob is wired, and
+  // the remote's left is left. src/ir/ir.h.
+  for (int8_t irRot = irTakeRotate(); irRot != 0; irRot += (irRot > 0 ? -1 : 1))
+    push(irRot > 0 ? CTRL_CW : CTRL_CCW);
+#endif
   const bool atDetent = (ab == 0b11) || (s_halfDetent == 1 && ab == 0b00);
   if (s_encDir != 0 && atDetent) {
     s_lastStepMs = now;
@@ -222,7 +235,14 @@ static void sampleTick(void *) {
   }
 
   // ---- switch
+  // The remote's button is a level, exactly like the switch's, so the debounce,
+  // the 500 ms click and the 1 s long press below decide what it was - one
+  // implementation of the gesture rather than two that drift.
+#if defined(IR_ENABLED)
+  const bool raw = (digitalRead(CTRL_PIN_SW) == LOW) || irOkDown(now);
+#else
   const bool raw = (digitalRead(CTRL_PIN_SW) == LOW);
+#endif
   if (raw != s_swRaw) { s_swRaw = raw; s_swRawSinceMs = now; }
   if (raw != s_swDown && (now - s_swRawSinceMs) >= debounceMs) {
     if (raw) { s_swDownAtMs = now; s_swLongSent = false; }

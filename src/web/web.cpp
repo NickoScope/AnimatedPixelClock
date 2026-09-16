@@ -24,6 +24,7 @@
 #include "../climate/climate.h"
 #endif
 #if defined(PRESENCE_ENABLED)
+#include "../ir/ir.h"
 #include "../presence/presence.h"
 #endif
 #include "web_assets.h"   // the portal as gzip: page, style, script, icon, Panel group
@@ -147,6 +148,55 @@ void setupWebServer() {
  // it when asked without an argument. The portal has the same checkbox, but its
  // save posts the whole form, so a one-setting route is what a script can use.
  // Unlike the display routes above this one is persisted: it is a stored setting.
+#if defined(IR_ENABLED)
+ // The remote's test bench, the portal's half of `ir sim` on the serial port.
+ // GET /api/ir/sim?slot=OK&hold=1200 - press a slot; hold is for the button
+ // GET /api/ir/learn?slot=OK, /api/ir/cancel
+ // GET /api/ir/clear?slot=OK or ?slot=all
+ server.on("/api/ir/sim", HTTP_GET, []() {
+   uint8_t slot = 0;
+   if (!ir::slotByName(server.arg("slot").c_str(), &slot)) {
+     server.send(400, "application/json", "{\"error\":\"no such slot\"}");
+     return;
+   }
+   const uint32_t hold = (uint32_t)server.arg("hold").toInt();
+   irSimulate(slot, hold);
+   server.send(200, "application/json",
+               String("{\"success\":true,\"slot\":\"") + ir::slotName(slot) + "\"}");
+ });
+ server.on("/api/ir/learn", HTTP_GET, []() {
+   uint8_t slot = 0;
+   if (!ir::slotByName(server.arg("slot").c_str(), &slot)) {
+     server.send(400, "application/json", "{\"error\":\"no such slot\"}");
+     return;
+   }
+   irLearnArm(slot);
+   server.send(200, "application/json",
+               String("{\"success\":true,\"learning\":\"") + ir::slotName(slot) +
+                   "\",\"windowMs\":" + String((unsigned long)ir::kLearnWindowMs) + "}");
+ });
+ server.on("/api/ir/cancel", HTTP_GET, []() {
+   irLearnCancel();
+   server.send(200, "application/json", "{\"success\":true}");
+ });
+ server.on("/api/ir/clear", HTTP_GET, []() {
+   const String s = server.arg("slot");
+   if (s == "all") {
+     irClearAll();
+     server.send(200, "application/json", "{\"success\":true,\"cleared\":\"all\"}");
+     return;
+   }
+   uint8_t slot = 0;
+   if (!ir::slotByName(s.c_str(), &slot)) {
+     server.send(400, "application/json", "{\"error\":\"no such slot\"}");
+     return;
+   }
+   irClearSlot(slot);
+   server.send(200, "application/json",
+               String("{\"success\":true,\"cleared\":\"") + ir::slotName(slot) + "\"}");
+ });
+#endif
+
  server.on("/api/presence/mirror", HTTP_GET, []() {
    server.sendHeader("Access-Control-Allow-Origin", "*");
    if (!server.hasArg("on")) {
@@ -325,6 +375,9 @@ void handleDeviceInfo() {
 #endif
 #if defined(PRESENCE_ENABLED)
  presenceInfoJson(doc["presence"].to<JsonObject>());   // the room radar: src/presence
+#endif
+#if defined(IR_ENABLED)
+ irInfoJson(doc["ir"].to<JsonObject>());   // the remote: src/ir
 #endif
 #if defined(AUDIO_MIC_ENABLED)
  audioInfoJson(doc.as<JsonObject>());   // audioSource, audioLevelDb, audioBpm, audioClipping, ...
@@ -875,6 +928,9 @@ void handlePortalValues() {
 #if defined(PRESENCE_ENABLED)
     features += features.length() ? " presence" : "presence";  // the Presence radar card
 #endif
+#if defined(IR_ENABLED)
+    features += features.length() ? " ir" : "ir";              // the Remote card
+#endif
     doc["features"] = features;
   }
   doc["scopeTrailMax"] = SCOPE_TRAIL_MAX;
@@ -995,6 +1051,9 @@ void handlePortalValues() {
   form["climateRhFollowsT"] = settings.climateRhFollowsT;
   form["climateShow"] = settings.climateShow;
   form["climateHa"] = settings.climateHa;
+  form["irEnabled"] = settings.irEnabled;
+  form["irCard"] = 1;   // the card's marker: handleSave() reads the checkbox only when it came with the form
+
   form["presenceScaleM"] = settings.presenceScaleM;
   form["presenceMirrorX"] = settings.presenceMirrorX;
   form["presenceSource"] = settings.presenceSource;
@@ -1403,6 +1462,16 @@ void handleSave() {
 #endif
 #if defined(CLIMATE_ENABLED)
  climateSettingsChanged();
+#endif
+ }
+
+ // Save the remote's setting. A checkbox posts nothing when it is off, so the
+ // card carries a hidden marker: without it a form that never had the card
+ // would read as "the owner just turned the remote off".
+ if (server.hasArg("irCard")) {
+   settings.irEnabled = server.hasArg("irEnabled");
+#if defined(IR_ENABLED)
+   irSettingsChanged();
 #endif
  }
 
@@ -2213,6 +2282,7 @@ void handleImportConfig() {
      settings.weatherApiKey[32] = '\0';
    }
  }
+ if (!doc["irEnabled"].isNull()) settings.irEnabled = doc["irEnabled"];
  if (!doc["climateEnabled"].isNull()) settings.climateEnabled = doc["climateEnabled"];
  if (!doc["climateIntervalS"].isNull()) settings.climateIntervalS = climate::clampInterval(doc["climateIntervalS"].as<long>());
  if (!doc["climateTempOffset"].isNull()) settings.climateTempOffset = climate::clampOffset(doc["climateTempOffset"].as<long>());

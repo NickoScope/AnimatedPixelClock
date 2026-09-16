@@ -155,6 +155,10 @@ struct Settings {
   bool presenceMirrorX;         // flip X; which way +X points in the room is unconfirmed (default off)
   uint8_t presenceSource;       // 0 the scripted story, 1 the radar (default 1)
 
+  // Infrared remote (src/ir). The field exists in every build; only IR_ENABLED
+  // builds have a decoder, and only IR_RX_ENABLED ones a receiver to switch off.
+  bool irEnabled;               // listen to the remote (default on)
+
   // Ambient screensaver (scheduled, replaces the clock)
   bool ambientEnabled;          // Enable the scheduled ambient window
   uint8_t ambientStyle;         // 0=Space Invaders, 1=Pac-Man chase, (2 reserved), 3=Starfield,

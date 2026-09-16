@@ -32,6 +32,7 @@
 #include "climate/climate.h"
 #endif
 #if defined(PRESENCE_ENABLED)
+#include "ir/ir.h"
 #include "presence/presence.h"
 #endif
 #if defined(BOARD_WAVESHARE_RGB_MATRIX)
@@ -582,6 +583,10 @@ void setup() {
   presenceBegin();  // subscribes for the MTR-1's targets on the shared bus: src/presence
   MEMTRACE("presence");
 #endif
+#if defined(IR_ENABLED)
+  irBegin();        // the remote's learned map, and its serial console: src/ir
+  MEMTRACE("ir");
+#endif
 
   // Show IP address for 5 seconds (configurable via web interface)
   if (displayAvailable && settings.showIPAtBoot) {
@@ -1025,6 +1030,10 @@ void loop() {
 #if defined(PRESENCE_ENABLED)
   presenceLoop();            // the room radar's trail ring, at 10 Hz. No I/O, no allocation.
   loopMark("presence");
+#endif
+#if defined(IR_ENABLED)
+  irLoop();                  // decoded frames and the serial console; the detents go to the knob's task
+  loopMark("ir");
 #endif
 #if defined(MEDIAPLAYER_ENABLED)
   mediaLoop();               // the selection out, coalesced volume, the knob's timers

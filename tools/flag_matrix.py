@@ -49,7 +49,7 @@ COMBOS = [
                                "-DFB_MQTT_ENABLED -DCARDS_ENABLED -DCAROUSEL_ENABLED "
                                "-DNSLUA_ENABLED -DWORLDCLOCK_ENABLED -DRAILBOARD_ENABLED -DRAILBOARD_DIRECT_ENABLED "
                                "-DLUA_EFFECTS_ENABLED -DCLIPS_SD_ENABLED -DMEDIAPLAYER_ENABLED -DMARKET_ENABLED "
-                               "-DCLIMATE_ENABLED -DPRESENCE_ENABLED "
+                               "-DCLIMATE_ENABLED -DPRESENCE_ENABLED -DIR_ENABLED "
                                "-DAUDIO_MIC_ENABLED -DVIZ_WOW_ENABLED", True),
     ("mic on, debug asserts",  "-DAUDIO_MIC_ENABLED -DAUDIO_DEBUG", True),
     ("mic only, no PC stream", "-DAUDIO_MIC_ENABLED -DAUDIO_MIC_ONLY", True),
@@ -62,6 +62,10 @@ COMBOS = [
     ("market + bus + knob",     "-DMARKET_ENABLED -DMQTT_BUS_ENABLED -DCONTROL_ENCODER_ENABLED", True),
     ("market, local defaults",  "-DMARKET_ENABLED -DMQTT_BUS_ENABLED -DCONTROL_ENCODER_ENABLED "
                                r'-DMARKET_LOCAL_DEFAULTS_FILE=\"../../tools/market/panel/local_defaults_example.h\"', True),
+    ("ir console only",        "-DIR_ENABLED", True),
+    ("ir + receiver",          "-DIR_ENABLED -DIR_RX_ENABLED", True),
+    ("ir receiver with a knob","-DIR_ENABLED -DIR_RX_ENABLED -DCONTROL_ENCODER_ENABLED", False),
+    ("ir receiver on its own", "-DIR_RX_ENABLED", False),
     ("climate + bus",          "-DCLIMATE_ENABLED -DMQTT_BUS_ENABLED", True),
     ("climate without MQTT",   "-DCLIMATE_ENABLED", True),
     ("presence + bus + scene", "-DPRESENCE_ENABLED -DMQTT_BUS_ENABLED -DNSLUA_ENABLED "

@@ -760,6 +760,30 @@ static const char PAGE_HTML[] PROGMEM = R"PAGE(<!doctype html>
               <span class="check-text"><strong>Mirror left and right</strong><span class="ct-hint">Which way the sensor counts +X is not known until somebody walks in one side of the room and is watched on the panel. If they come up on the wrong side, turn this on.</span></span>
             </label>
           </div>
+          <div class="card" data-need="ir">
+            <h2 class="card-title">Remote <span class="tag" id="irTag">--</span></h2>
+            <p class="field-hint" id="irNow">--</p>
+            <input type="hidden" name="irCard" value="1">
+            <label class="check-row standalone" style="margin-top:16px">
+              <input type="checkbox" name="irEnabled" id="irEnabled">
+              <span class="check-box" aria-hidden="true"></span>
+              <span class="check-text"><strong>Listen to the remote</strong><span class="ct-hint">The remote does what the knob does: turning browses, a press selects, a long press is the same as a press. Turn this off and the receiver is switched off with it.</span></span>
+            </label>
+            <p class="field-hint" style="margin-top:16px">Press these and the panel answers exactly as it would to the remote itself - the same path, so this tests the wiring of everything above the receiver.</p>
+            <div class="row" style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
+              <button type="button" class="btn" id="irCcwBtn">Turn left</button>
+              <button type="button" class="btn" id="irCwBtn">Turn right</button>
+              <button type="button" class="btn" id="irOkBtn">Press</button>
+              <button type="button" class="btn" id="irHoldBtn">Hold</button>
+            </div>
+            <p class="field-hint" style="margin-top:16px">Teaching a button: press Learn, then the button on the remote within 15 seconds. Codes are kept on the panel and survive a reflash, so a new remote is taught rather than flashed.</p>
+            <div class="row" style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
+              <button type="button" class="btn" id="irLearnCcwBtn">Learn turn left</button>
+              <button type="button" class="btn" id="irLearnCwBtn">Learn turn right</button>
+              <button type="button" class="btn" id="irLearnOkBtn">Learn press</button>
+              <button type="button" class="btn btn-danger" id="irForgetBtn">Forget all</button>
+            </div>
+          </div>
           <div id="colorsClock"></div>
         </section>
 
@@ -1971,6 +1995,35 @@ tag.textContent = c.state;
 if (typeof c.tempC === 'number') now.textContent = 'Now ' + c.tempC.toFixed(1) + ' \u00b0C and ' + Math.round(c.humidity) + ' %RH; the sensor itself reads ' + c.sensorTempC.toFixed(1) + ' \u00b0C and ' + Math.round(c.sensorHumidity) + ' %RH (' + c.ageS + ' s ago).';
 else now.textContent = c.state === 'absent' ? 'No SHTC3 answered on the I2C bus.' : c.state === 'off' ? 'Not reading.' : 'Looking for the sensor.';
 }
+function irCall(path) {
+fetch(path).then(function (r) { return r.json(); }).then(function () {
+fetch('/api/info').then(function (r) { return r.json(); }).then(function (d) { irStatus(d.ir); });
+});
+}
+function irBind() {
+var b = [['#irCcwBtn', '/api/ir/sim?slot=CCW'], ['#irCwBtn', '/api/ir/sim?slot=CW'],
+['#irOkBtn', '/api/ir/sim?slot=OK'], ['#irHoldBtn', '/api/ir/sim?slot=OK&hold=1200'],
+['#irLearnCcwBtn', '/api/ir/learn?slot=CCW'], ['#irLearnCwBtn', '/api/ir/learn?slot=CW'],
+['#irLearnOkBtn', '/api/ir/learn?slot=OK'], ['#irForgetBtn', '/api/ir/clear?slot=all']];
+for (var i = 0; i < b.length; i++) {
+(function (el, url) { if (el) el.addEventListener('click', function () { irCall(url); }); })($(b[i][0]), b[i][1]);
+}
+}
+function irStatus(p) {
+var tag = $('#irTag'), now = $('#irNow');
+if (!p || !tag || !now) return;
+tag.textContent = p.receiver;
+var learned = p.bound + ' of ' + p.slots + ' buttons taught';
+if (p.learning) {
+now.textContent = 'Learning ' + p.learning + ' - press its button on the remote (' + Math.round(p.learnMs / 1000) + ' s left).';
+return;
+}
+var last = p.lastCode ? ' Last code ' + p.lastProto + ' ' + p.lastCode + ', ' + Math.round(p.lastAgeMs / 1000) + ' s ago.' : '';
+now.textContent = p.receiver === 'not built'
+? 'No receiver in this firmware yet; the buttons below still drive the panel. ' + learned + '.'
+: 'On IO' + p.pin + ', ' + p.receiver + '. ' + learned + ', ' + p.frames + ' frames seen, ' + p.ignored + ' ignored.' + last;
+}
+irBind();
 function presenceStatus(p) {
 var tag = $('#presenceTag'), now = $('#presenceNow');
 if (!p || !tag || !now) return;
@@ -1985,6 +2038,7 @@ fetch('/api/info').then(function (r) { return r.json(); }).then(function (d) {
 updateDiagnostics(d);
 climateStatus(d.climate);
 presenceStatus(d.presence);
+irStatus(d.ir);
 if (d.ip) { var e = $('#srIp'); if (e) e.textContent = d.ip; }
 if (d.hostname) { var h = $('#srHost'); if (h) h.textContent = String(d.hostname).replace(/\.local$/, ''); }
 if (typeof d.uptime === 'number') { var u = $('#srUptime'); if (u) u.textContent = fmtUptime(d.uptime); }
