@@ -26,6 +26,16 @@ static const uint32_t kFreshMs = 5000;
 // No message at all for this long: the screen says so instead of drawing an
 // empty room it has no evidence for.
 static const uint32_t kLostMs = 30000;
+// A slot must be filled by this many messages in a row before it is drawn. The
+// LD2450 invents and drops weak targets: on the panel, 2026-09-16, a ghost held
+// slot 2 in 134 of 143 rows near a window, and slot 1 crossed twice a minute
+// between a person at 1.1 m and the window at 2.8 m.
+static const uint8_t  kConfirm = 2;
+// A sample further than this from the previous one is a different target
+// wearing the same slot, not a person who moved: measured steps are 40 mm
+// median and 537 mm at p95, while the ghost jumped over a metre 25 times and
+// up to 3 m. Such a sample restarts the slot instead of drawing a line to it.
+static const int32_t  kTeleportMm = 1500;
 // Targets are drawn this far behind the newest sample, so a drawn position
 // always falls between two samples that really arrived. At the feed's 1 Hz a
 // dot drawn at the newest sample teleports once a second; extrapolating past
@@ -125,14 +135,24 @@ class Model {
       Slot &s = s_[i];
       if (!r[i].present) {
         s.present = false;    // the history stays, and is dropped on the way back
+        s.seen = 0;           // and it has to prove itself again on the way back
         continue;
       }
       const int32_t x = mirror_ ? -r[i].x : r[i].x;
-      if (s.present && s.have) {          // still here: the previous sample is a real predecessor
+      const bool continues = s.present && s.have;
+      bool teleported = false;
+      if (continues) {
+        const int32_t dx = x - s.x1, dy = r[i].y - s.y1;
+        teleported = ((int64_t)dx * dx + (int64_t)dy * dy) >
+                     (int64_t)kTeleportMm * kTeleportMm;
+      }
+      if (continues && !teleported) {     // still here: the previous sample is a real predecessor
         s.t0 = s.t1; s.x0 = s.x1; s.y0 = s.y1;
         s.have0 = true;
+        if (s.seen < kConfirm) s.seen++;
       } else {
-        s.have0 = false;                  // first after an absence: nobody walked that line
+        s.have0 = false;                  // first after an absence, or after a jump: no line to draw
+        s.seen = 1;                       // and it starts proving itself again
       }
       s.t1 = nowMs; s.x1 = x; s.y1 = r[i].y; s.v1 = speedCms(r[i].v);
       s.have = true;
@@ -166,6 +186,7 @@ class Model {
     if (slot >= kSlots) return false;
     const Slot &s = s_[slot];
     if (!s.present || !s.have) return false;
+    if (s.seen < kConfirm) return false;   // one message is not yet a target: see kConfirm
     if (since(nowMs, s.t1) > (int32_t)kFreshMs) return false;   // the feed stopped
     const uint32_t at = nowMs - kLagMs;
     int32_t px = s.x1, py = s.y1;
@@ -219,6 +240,7 @@ class Model {
     bool     have = false;       // a sample has ever arrived for this slot
     bool     have0 = false;      // ... and the one before it is a real predecessor
     bool     present = false;    // the newest message filled this slot
+    uint8_t  seen = 0;           // messages in a row that filled it, capped; see kConfirm
     uint32_t t0 = 0, t1 = 0;
     int32_t  x0 = 0, y0 = 0, x1 = 0, y1 = 0;
     int16_t  v1 = 0;

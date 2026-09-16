@@ -135,7 +135,9 @@ static void freshness() {
   CHECK(m.source(1000) == presence::Source::Demo);        // nothing has arrived: the story runs
 
   fill(r, 0, 1000, 2000, 300);
-  m.onMessage(1000, r);
+  m.onMessage(0, r);            // first sighting: not drawn yet, see kConfirm
+  CHECK(!m.target(0, 0, nullptr, nullptr, nullptr));
+  m.onMessage(1000, r);         // confirmed by the next message
   CHECK(m.source(1000) == presence::Source::Live);
   CHECK(m.target(1000, 0, nullptr, nullptr, nullptr));
 
@@ -206,8 +208,12 @@ static void noGlideAcrossAnAbsence() {
   m.onMessage(2000, r);
   fill(r, 0, 4000, 1000, 0);
   m.onMessage(3000, r);
-  CHECK(m.target(3000, 0, &x, &y, nullptr) && x == 4000);   // where it came back, at once
-  CHECK(m.target(3500, 0, &x, &y, nullptr) && x == 4000);
+  // It comes back where it is, but one message is not a target: a slot the
+  // module reuses for a ghost would otherwise be drawn instantly (docs/23).
+  CHECK(!m.target(3000, 0, &x, &y, nullptr));
+  m.onMessage(4000, r);
+  CHECK(m.target(4000, 0, &x, &y, nullptr) && x == 4000);   // confirmed, and no line across the gap
+  CHECK(m.target(4500, 0, &x, &y, nullptr) && x == 4000);
 }
 
 static void mirror() {
@@ -217,6 +223,7 @@ static void mirror() {
   Report r[kSlots];
   int32_t x = 0, y = 0;
   fill(r, 0, 1234, 2000, 0);
+  m.onMessage(0, r);
   m.onMessage(1000, r);
   CHECK(m.target(1000, 0, &x, &y, nullptr) && x == -1234 && y == 2000);   // y is never flipped
 }
@@ -239,7 +246,8 @@ static void ring() {
   Report r[kSlots];
   uint32_t t = 1000;
   fill(r, 0, 0, 1000, 0);
-  m.onMessage(t, r);
+  m.onMessage(0, r);
+  m.onMessage(t, r);            // confirmed before the ring is filled
   for (int i = 0; i < 15; i++) {
     t += presence::kStepMs;
     m.tick(t);
@@ -277,11 +285,53 @@ static void clockWrap() {
   Report r[kSlots];
   const uint32_t late = 0xFFFFF000u;
   fill(r, 0, 1000, 2000, 0);
+  m.onMessage(late - 1000u, r);
   m.onMessage(late, r);
   // 0x1000 is 4096 ms: past the wrap, and still inside the freshness window.
   CHECK(m.target(late + 0x1000u, 0, nullptr, nullptr, nullptr));
   CHECK(m.source(late + 0x1000u) == presence::Source::Live);
   CHECK(!m.target(late + 6000u, 0, nullptr, nullptr, nullptr));    // ... and still ages out across it
+}
+
+// The two rules the panel added on 2026-09-16 after the radar put a ghost on a
+// window: a slot has to be filled twice in a row before it is drawn, and a
+// sample that jumps further than a person can move restarts the slot instead of
+// drawing a line to it.
+static void confirmAndTeleport() {
+  presence::Model m;
+  m.reset();
+  Report r[kSlots];
+  int32_t x = 0, y = 0;
+
+  fill(r, 0, 500, 1000, 0);
+  m.onMessage(1000, r);
+  CHECK(!m.target(1000, 0, nullptr, nullptr, nullptr));    // one message is not a target
+  CHECK(m.countNow(1000) == 0);
+  m.onMessage(2000, r);
+  CHECK(m.target(2000, 0, &x, &y, nullptr));               // two in a row is
+  CHECK(m.countNow(2000) == 1);
+
+  // A step a person can make keeps the slot: 500 mm is inside the measured p95.
+  fill(r, 0, 1000, 1000, 0);
+  m.onMessage(3000, r);
+  CHECK(m.target(3000, 0, &x, &y, nullptr));
+
+  // A jump past kTeleportMm is a different target wearing the slot. It is not
+  // drawn until the new place is confirmed, and no line is drawn across it.
+  fill(r, 0, 1000 + presence::kTeleportMm + 100, 1000, 0);
+  m.onMessage(4000, r);
+  CHECK(!m.target(4000, 0, nullptr, nullptr, nullptr));
+  m.onMessage(5000, r);
+  CHECK(m.target(5000, 0, &x, &y, nullptr) && x == 1000 + presence::kTeleportMm + 100);
+
+  // Absence resets the proof: coming back needs two messages again.
+  fill(r, -1, 0, 0, 0);
+  m.onMessage(6000, r);
+  fill(r, 0, 1000 + presence::kTeleportMm + 100, 1000, 0);
+  m.onMessage(7000, r);
+  CHECK(!m.target(7000, 0, nullptr, nullptr, nullptr));
+  m.onMessage(8000, r);
+  CHECK(m.target(8000, 0, nullptr, nullptr, nullptr));
 }
 
 int main() {
@@ -291,6 +341,7 @@ int main() {
   refusals();
   summaryWithoutTargets();
   hostileNumbers();
+  confirmAndTeleport();
   arenaFits();
   freshness();
   nullEmptiesAtOnce();
