@@ -142,6 +142,30 @@ void setupWebServer() {
    server.send(200, "application/json", String("{\"success\":true,\"pausedS\":") + s + "}");
  });
 #endif
+#if defined(PRESENCE_ENABLED)
+ // GET /api/presence/mirror?on=0|1 - flip the room radar left to right, or report
+ // it when asked without an argument. The portal has the same checkbox, but its
+ // save posts the whole form, so a one-setting route is what a script can use.
+ // Unlike the display routes above this one is persisted: it is a stored setting.
+ server.on("/api/presence/mirror", HTTP_GET, []() {
+   server.sendHeader("Access-Control-Allow-Origin", "*");
+   if (!server.hasArg("on")) {
+     server.send(200, "application/json",
+                 String("{\"success\":true,\"mirrorX\":") + (settings.presenceMirrorX ? "true" : "false") + "}");
+     return;
+   }
+   const String v = server.arg("on");
+   if (v != "0" && v != "1") {
+     server.send(400, "application/json", "{\"success\":false,\"error\":\"on must be 0 or 1\"}");
+     return;
+   }
+   settings.presenceMirrorX = (v == "1");
+   saveSettings();
+   presenceSettingsChanged();
+   server.send(200, "application/json",
+               String("{\"success\":true,\"mirrorX\":") + (settings.presenceMirrorX ? "true" : "false") + "}");
+ });
+#endif
  server.on("/api/anim/play", HTTP_GET, handleAnimPlay);
  server.on("/api/export", HTTP_GET, handleExportConfig);
  server.on("/api/import", HTTP_POST, handleImportConfig);
