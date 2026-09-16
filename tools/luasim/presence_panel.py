@@ -51,6 +51,12 @@ import presence_feed as feed          # load_window, render, write_gif, sub1
 
 FRESH_S = 5.0
 LOST_S = 30.0
+# The same two rules the firmware applies (src/presence/presence_model.h): a slot
+# is drawn only after two messages in a row, and a sample that would need more
+# than MAX_SPEED to reach restarts it instead of drawing a line across the jump.
+CONFIRM = 2
+MAX_SPEED_MMS = 2000.0
+MIN_GAP_S = 0.3
 LAG_S = 1.0
 
 DEMO, LIVE, LOST = 0, 1, 2
@@ -94,6 +100,21 @@ def simulate(rows, fps, story):
                 continue
             seen = [s for s in per_slot[i] if s[0] <= now]
             t1, x1, y1, v1, fresh = seen[-1]
+            # Count the messages in a row that filled this slot, and break the
+            # run where the target teleported: both as the firmware does.
+            run, prev = 1, None
+            for s_t, s_x, s_y, _sv, s_fresh in seen:
+                if prev is None or s_fresh:
+                    run, prev = 1, (s_t, s_x, s_y)
+                    continue
+                gap = max(s_t - prev[0], MIN_GAP_S)
+                reach = MAX_SPEED_MMS * gap
+                jumped = (s_x - prev[1]) ** 2 + (s_y - prev[2]) ** 2 > reach * reach
+                run = 1 if jumped else min(run + 1, CONFIRM)
+                prev = (s_t, s_x, s_y)
+            if run < CONFIRM:
+                shown.append(None)        # one message is not a target yet
+                continue
             t0, x0, y0 = (t1, x1, y1) if (fresh or len(seen) < 2) else seen[-2][:3]
             at = now - LAG_S
             if at <= t0 or t1 <= t0:

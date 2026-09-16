@@ -31,11 +31,19 @@ static const uint32_t kLostMs = 30000;
 // slot 2 in 134 of 143 rows near a window, and slot 1 crossed twice a minute
 // between a person at 1.1 m and the window at 2.8 m.
 static const uint8_t  kConfirm = 2;
-// A sample further than this from the previous one is a different target
-// wearing the same slot, not a person who moved: measured steps are 40 mm
-// median and 537 mm at p95, while the ghost jumped over a metre 25 times and
-// up to 3 m. Such a sample restarts the slot instead of drawing a line to it.
-static const int32_t  kTeleportMm = 1500;
+// A sample that would need more than this speed to reach is a different target
+// wearing the same slot, not a person who moved. Measured on the panel: a
+// person's step is 40 mm median and 537 mm at p95, the largest real one 1,421 mm
+// between samples about 1.07 s apart, i.e. 1.33 m/s; the ghost jumped over a
+// metre 25 times and as far as 3 m. 2 m/s leaves the fastest real step 40 % of
+// room and still catches a jump of 2.1 m at the feed's usual rate. A fixed
+// distance was tried first and rejected in the audit of 2026-09-16: without the
+// elapsed time in it, a fast walk and a long gap look the same, and a slot that
+// keeps jumping would never be drawn at all.
+static const int32_t  kMaxSpeedMmS = 2000;
+// Two messages can arrive milliseconds apart; without a floor their budget is
+// nearly zero and every one of them would read as a teleport.
+static const uint32_t kMinGapMs = 300;
 // Targets are drawn this far behind the newest sample, so a drawn position
 // always falls between two samples that really arrived. At the feed's 1 Hz a
 // dot drawn at the newest sample teleports once a second; extrapolating past
@@ -139,12 +147,17 @@ class Model {
         continue;
       }
       const int32_t x = mirror_ ? -r[i].x : r[i].x;
-      const bool continues = s.present && s.have;
+      // A predecessor older than the freshness window is not one: the slot went
+      // quiet and came back, and the span between them would otherwise stretch
+      // the interpolation in target() (and past ~142 s overflow it).
+      const int32_t sinceLast = since(nowMs, s.t1);
+      const bool continues = s.present && s.have && sinceLast <= (int32_t)kFreshMs;
       bool teleported = false;
       if (continues) {
         const int32_t dx = x - s.x1, dy = r[i].y - s.y1;
-        teleported = ((int64_t)dx * dx + (int64_t)dy * dy) >
-                     (int64_t)kTeleportMm * kTeleportMm;
+        const uint32_t gap = sinceLast > (int32_t)kMinGapMs ? (uint32_t)sinceLast : kMinGapMs;
+        const int64_t reach = (int64_t)kMaxSpeedMmS * gap / 1000;   // mm it could have covered
+        teleported = ((int64_t)dx * dx + (int64_t)dy * dy) > reach * reach;
       }
       if (continues && !teleported) {     // still here: the previous sample is a real predecessor
         s.t0 = s.t1; s.x0 = s.x1; s.y0 = s.y1;

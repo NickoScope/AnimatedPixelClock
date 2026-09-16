@@ -311,27 +311,56 @@ static void confirmAndTeleport() {
   CHECK(m.target(2000, 0, &x, &y, nullptr));               // two in a row is
   CHECK(m.countNow(2000) == 1);
 
-  // A step a person can make keeps the slot: 500 mm is inside the measured p95.
+  // A step a person can make keeps the slot: 500 mm is inside the measured p95,
+  // and so is the largest real step measured, 1,421 mm in about a second.
   fill(r, 0, 1000, 1000, 0);
   m.onMessage(3000, r);
   CHECK(m.target(3000, 0, &x, &y, nullptr));
 
-  // A jump past kTeleportMm is a different target wearing the slot. It is not
-  // drawn until the new place is confirmed, and no line is drawn across it.
-  fill(r, 0, 1000 + presence::kTeleportMm + 100, 1000, 0);
+  // The largest real step ever measured on this panel, 1,421 mm in about a
+  // second, must NOT read as a teleport: the audit of 2026-09-16 warned that a
+  // fixed distance would reject a fast walk and then never draw the slot again.
+  fill(r, 0, 2421, 1000, 0);
   m.onMessage(4000, r);
-  CHECK(!m.target(4000, 0, nullptr, nullptr, nullptr));
+  // Drawn, which is the point of this case. Where it is drawn follows kLagMs:
+  // the scene shows a second behind the newest sample, so at 4000 the dot is
+  // still at the older one and only reaches the new place a second later.
+  CHECK(m.target(4000, 0, &x, &y, nullptr) && x == 1000);
+  CHECK(m.target(4300, 0, &x, &y, nullptr) && x > 1000 && x < 2421);
+  CHECK(m.target(5000, 0, &x, &y, nullptr) && x == 2421);
+
+  // A jump needing more than kMaxSpeedMmS is a different target wearing the
+  // slot: 2,079 mm in a second here. It is not drawn until the new place is
+  // confirmed, and no line is drawn across it.
+  fill(r, 0, 4500, 1000, 0);
   m.onMessage(5000, r);
-  CHECK(m.target(5000, 0, &x, &y, nullptr) && x == 1000 + presence::kTeleportMm + 100);
+  CHECK(!m.target(5000, 0, nullptr, nullptr, nullptr));
+  m.onMessage(6000, r);
+  CHECK(m.target(6000, 0, &x, &y, nullptr) && x == 4500);
 
   // Absence resets the proof: coming back needs two messages again.
   fill(r, -1, 0, 0, 0);
-  m.onMessage(6000, r);
-  fill(r, 0, 1000 + presence::kTeleportMm + 100, 1000, 0);
   m.onMessage(7000, r);
-  CHECK(!m.target(7000, 0, nullptr, nullptr, nullptr));
+  fill(r, 0, 4500, 1000, 0);
   m.onMessage(8000, r);
-  CHECK(m.target(8000, 0, nullptr, nullptr, nullptr));
+  CHECK(!m.target(8000, 0, nullptr, nullptr, nullptr));
+  m.onMessage(9000, r);
+  CHECK(m.target(9000, 0, nullptr, nullptr, nullptr));
+
+  // A predecessor older than kFreshMs is not one: the slot went quiet and came
+  // back, and interpolating across that gap stretches - and past ~142 s
+  // overflows - the arithmetic in target() (audit of 2026-09-16).
+  presence::Model q;
+  q.reset();
+  fill(r, 0, 1000, 1000, 0);
+  q.onMessage(1000, r);
+  q.onMessage(2000, r);
+  CHECK(q.target(2000, 0, nullptr, nullptr, nullptr));
+  const uint32_t afterStall = 2000 + presence::kFreshMs + 60000;
+  q.onMessage(afterStall, r);                       // the same place, long after
+  CHECK(!q.target(afterStall, 0, nullptr, nullptr, nullptr));   // proof starts again
+  q.onMessage(afterStall + 1000, r);
+  CHECK(q.target(afterStall + 1000, 0, &x, &y, nullptr) && x == 1000);
 }
 
 int main() {
