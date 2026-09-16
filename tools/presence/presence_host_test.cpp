@@ -81,6 +81,41 @@ static void refusals() {
   CHECK(r[2].present && r[2].x == 7);     // a fourth entry cannot overrun three slots
 }
 
+// The retained summary carries no "t" by contract (KB docs/16). Parsed on the
+// summary topic it must be accepted and leave every slot absent; the same
+// payload on the targets topic is garbage and must still be refused. On the
+// panel at 2026-09-16 18:28 every summary counted as a parse failure instead:
+// summaries 0, parseFailures 6 of 13 messages.
+static void summaryWithoutTargets() {
+  Report r[kSlots];
+  presence::Summary s;
+  const char *m = "{\"p\":2,\"m\":1,\"s\":1,\"lux\":28,\"online\":true,\"ts\":1758045123}";
+  CHECK(presence::parse(g_pool, m, strlen(m), r, &s, false));
+  for (uint8_t i = 0; i < kSlots; i++) CHECK(!r[i].present);
+  CHECK(s.have && s.people == 2 && s.moving == 1 && s.still == 1);
+  CHECK(s.haveLux && s.lux == 28);
+  CHECK(s.haveOnline && s.online);
+  CHECK(!presence::parse(g_pool, m, strlen(m), r, &s, true));   // not a targets message
+  // A targets message still parses with the flag the summary path uses.
+  const char *t = "{\"t\":[[10,20,30],null,null],\"p\":1}";
+  CHECK(presence::parse(g_pool, t, strlen(t), r, &s, false));
+  CHECK(r[0].present && r[0].x == 10);
+}
+
+// The clamp the audit of 2026-09-16 asked to cover: hostile numbers are held to
+// the sensor's range, so -x in mirror() and the interpolation in target() stay
+// inside int32 instead of being undefined.
+static void hostileNumbers() {
+  Report r[kSlots];
+  const char *m = "{\"t\":[[-2147483648,2147483647,-2147483648],[99999,-99999,99999],null],\"p\":2}";
+  CHECK(presence::parse(g_pool, m, strlen(m), r, nullptr));
+  CHECK(r[0].present && r[0].x == -presence::kMaxXmm && r[0].y == presence::kMaxYmm);
+  CHECK(r[0].v == -presence::kMaxVmmps);
+  CHECK(r[1].present && r[1].x == presence::kMaxXmm && r[1].y == -presence::kMaxYmm);
+  CHECK(r[1].v == presence::kMaxVmmps);
+  CHECK(presence::speedCms(r[0].v) == presence::kMaxVmmps / 10);
+}
+
 static void arenaFits() {
   std::printf("  parse pool high-water %zu of %zu bytes\n", g_pool.peak(), g_pool.cap());
   CHECK(g_pool.peak() > 0);
@@ -254,6 +289,8 @@ int main() {
   contractPayload();
   threeTargetsAndTheSummary();
   refusals();
+  summaryWithoutTargets();
+  hostileNumbers();
   arenaFits();
   freshness();
   nullEmptiesAtOnce();

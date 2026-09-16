@@ -133,7 +133,13 @@ struct Summary {
 // Fills r[] for every slot - an absent slot comes back present = false - and
 // sum when it is not null. False means the payload was not the contract's, and
 // then nothing has been written that the caller should believe.
-inline bool parse(JsonPool &pool, const char *json, size_t len, Report r[kSlots], Summary *sum) {
+// needTargets: a message on the targets topic without a "t" array is garbage
+// and is refused; the retained summary carries no "t" by contract (KB docs/16),
+// so it is parsed with needTargets false and leaves every slot absent. Before
+// this, every summary counted as a parse failure and none was ever recorded
+// (panel, 2026-09-16 18:28: summaries 0, parseFailures 6 of 13 messages).
+inline bool parse(JsonPool &pool, const char *json, size_t len, Report r[kSlots], Summary *sum,
+                  bool needTargets = true) {
   for (uint8_t i = 0; i < kSlots; i++) r[i] = Report{false, 0, 0, 0};
   if (!json || !len) return false;
 
@@ -144,7 +150,7 @@ inline bool parse(JsonPool &pool, const char *json, size_t len, Report r[kSlots]
   if (!doc.is<ArduinoJson::JsonObjectConst>()) return false;
 
   ArduinoJson::JsonArrayConst t = doc["t"];
-  if (t.isNull()) return false;            // a message with no targets array is not ours
+  if (t.isNull() && needTargets) return false;   // garbage on the targets topic is not ours
 
   uint8_t i = 0;
   for (ArduinoJson::JsonVariantConst e : t) {

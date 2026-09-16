@@ -54,7 +54,7 @@ void onMqtt(const char *topic, const uint8_t *payload, uint16_t len) {
 
   presence::Report r[presence::kSlots];
   presence::Summary sum;
-  if (!presence::parse(s_pool, (const char *)payload, len, r, &sum)) {
+  if (!presence::parse(s_pool, (const char *)payload, len, r, &sum, targets)) {
     s_parseFails++;
     return;
   }
