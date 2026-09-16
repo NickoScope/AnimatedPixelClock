@@ -19,8 +19,12 @@
 #include "../viz/visualizer.h"
 #include "../weather/weather.h"
 #include "../climate/climate_model.h"
+#include "../presence/presence_model.h"   // the presence settings' bounds, in every build
 #if defined(CLIMATE_ENABLED)
 #include "../climate/climate.h"
+#endif
+#if defined(PRESENCE_ENABLED)
+#include "../presence/presence.h"
 #endif
 #include "web_assets.h"   // the portal as gzip: page, style, script, icon, Panel group
 #include "web_panel.h"
@@ -294,6 +298,9 @@ void handleDeviceInfo() {
  if (weather.valid) doc["weatherAgeSeconds"] = (millis() - weather.fetchedAt) / 1000;
 #if defined(CLIMATE_ENABLED)
  climateInfoJson(doc["climate"].to<JsonObject>());   // the board's SHTC3: src/climate
+#endif
+#if defined(PRESENCE_ENABLED)
+ presenceInfoJson(doc["presence"].to<JsonObject>());   // the room radar: src/presence
 #endif
 #if defined(AUDIO_MIC_ENABLED)
  audioInfoJson(doc.as<JsonObject>());   // audioSource, audioLevelDb, audioBpm, audioClipping, ...
@@ -841,6 +848,9 @@ void handlePortalValues() {
     features += " climateha";                                  // and its Home Assistant switch
 #endif
 #endif
+#if defined(PRESENCE_ENABLED)
+    features += features.length() ? " presence" : "presence";  // the Presence radar card
+#endif
     doc["features"] = features;
   }
   doc["scopeTrailMax"] = SCOPE_TRAIL_MAX;
@@ -961,6 +971,9 @@ void handlePortalValues() {
   form["climateRhFollowsT"] = settings.climateRhFollowsT;
   form["climateShow"] = settings.climateShow;
   form["climateHa"] = settings.climateHa;
+  form["presenceScaleM"] = settings.presenceScaleM;
+  form["presenceMirrorX"] = settings.presenceMirrorX;
+  form["presenceSource"] = settings.presenceSource;
   form["use24Hour"] = settings.use24Hour ? 1 : 0;
   form["dateFormat"] = settings.dateFormat;
 
@@ -1366,6 +1379,18 @@ void handleSave() {
 #endif
 #if defined(CLIMATE_ENABLED)
  climateSettingsChanged();
+#endif
+ }
+
+ // Save the presence radar's settings. Its card is dropped from builds without
+ // PRESENCE_ENABLED, so nothing is touched unless its fields came with the form.
+ if (server.hasArg("presenceScaleM")) {
+ settings.presenceScaleM = presence::clampScaleM(server.arg("presenceScaleM").toInt());
+ settings.presenceMirrorX = server.hasArg("presenceMirrorX");
+ if (server.hasArg("presenceSource"))
+ settings.presenceSource = presence::clampSource(server.arg("presenceSource").toInt());
+#if defined(PRESENCE_ENABLED)
+ presenceSettingsChanged();
 #endif
  }
 

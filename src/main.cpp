@@ -31,6 +31,9 @@
 #if defined(CLIMATE_ENABLED)
 #include "climate/climate.h"
 #endif
+#if defined(PRESENCE_ENABLED)
+#include "presence/presence.h"
+#endif
 #if defined(BOARD_WAVESHARE_RGB_MATRIX)
 #include "board/board_i2c.h"
 #endif
@@ -575,6 +578,10 @@ void setup() {
   climateBegin();   // the board's SHTC3 on I2C; found and read from loop(): src/climate
   MEMTRACE("climate");
 #endif
+#if defined(PRESENCE_ENABLED)
+  presenceBegin();  // subscribes for the MTR-1's targets on the shared bus: src/presence
+  MEMTRACE("presence");
+#endif
 
   // Show IP address for 5 seconds (configurable via web interface)
   if (displayAvailable && settings.showIPAtBoot) {
@@ -1014,6 +1021,10 @@ void loop() {
   climateHaLoop();           // its Home Assistant sensors: MQTT only, so "climate" above means I2C
   loopMark("climate ha");
 #endif
+#endif
+#if defined(PRESENCE_ENABLED)
+  presenceLoop();            // the room radar's trail ring, at 10 Hz. No I/O, no allocation.
+  loopMark("presence");
 #endif
 #if defined(MEDIAPLAYER_ENABLED)
   mediaLoop();               // the selection out, coalesced volume, the knob's timers

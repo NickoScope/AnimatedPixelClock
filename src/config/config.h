@@ -148,6 +148,13 @@ struct Settings {
   uint8_t climateShow;          // weather screen: 0 off, 1 the outside | inside split (default)
   bool climateHa;               // Home Assistant discovery sensors over the MQTT bus (default off)
 
+  // Presence radar (the Apollo MTR-1 over MQTT, src/presence). The fields exist
+  // in every build; only PRESENCE_ENABLED builds subscribe. Bounds and
+  // defaults: src/presence/presence_model.h.
+  uint8_t presenceScaleM;       // metres the fan covers: 2, 4 or 6 (default 4)
+  bool presenceMirrorX;         // flip X; which way +X points in the room is unconfirmed (default off)
+  uint8_t presenceSource;       // 0 the scripted story, 1 the radar (default 1)
+
   // Ambient screensaver (scheduled, replaces the clock)
   bool ambientEnabled;          // Enable the scheduled ambient window
   uint8_t ambientStyle;         // 0=Space Invaders, 1=Pac-Man chase, (2 reserved), 3=Starfield,

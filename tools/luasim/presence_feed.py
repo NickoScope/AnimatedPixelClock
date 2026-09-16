@@ -158,15 +158,20 @@ def patch_scene(story, range_m, ppm):
     labels = [2, 4, 6] if rings >= 6 else [2, 4] if rings >= 4 else list(range(1, rings + 1))
     s = sub1(s, r"local STORY  = 24\.0.*?\n", f"local STORY  = {story:g}"
              "            -- seconds of the recorded window; px.t() spans it\n", "STORY line")
-    s = sub1(s, r"local PPM    = 10 *", f"local PPM    = {ppm:g}" + " " * 14, "PPM line")
-    s = sub1(s, r"local RANGE, HALF = 6\.0, 60", f"local RANGE, HALF = {range_m:g}, 60", "RANGE line")
-    s = sub1(s, r"for k = 1, 6 do", f"for k = 1, {rings} do", "ring loop")
-    s = sub1(s, r"ipairs\(\{2, 4, 6\}\)", "ipairs({%s})" % ", ".join(map(str, labels)), "range labels")
+    # The scene derives its pixels-per-metre, its rings and its labels from
+    # RANGE now, so this sets RANGE and the rest follows. --ppm is reported but
+    # no longer forced: 60 px / range is what the panel itself uses.
+    del rings, labels, ppm
+    s = sub1(s, r"local RANGE, HALF = RAD and RAD\.scale\(\) or 6\.0, 60",
+             f"local RANGE, HALF = {range_m:g}, 60", "RANGE line")
     # the seam: three reads of the scripted people become three reads of the feed
     s = sub1(s, r"local function fake_targets\(s\).*?\nend\n", FEED_FUNCS % () + "", "fake_targets")
     s = sub1(s, r"local function count_targets\(s\).*?\nend\n", COUNT_FUNCS, "count_targets")
-    s = sub1(s, r"local x, y = pos\(person, S - k \* 0\.1\)",
-             "local x, y = feed_pos(t.slot, S - k * 0.1)", "trail lookup")
+    # The scene branches here now: the live binding's ring, or the scripted
+    # path. luasim binds no `presence`, so it always takes the scripted branch,
+    # and that is the line this replaces.
+    s = sub1(s, r"        x, y = pos\(person, S - k \* 0\.1\)",
+             "        x, y = feed_pos(t.slot, S - k * 0.1)", "trail lookup")
     return s
 
 

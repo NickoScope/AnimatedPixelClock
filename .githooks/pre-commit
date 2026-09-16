@@ -75,6 +75,20 @@ if git diff --cached --name-only | grep -qE '^(src/climate/|tools/climate/|src/c
   }
 fi
 
+# The presence radar's rules: the contract's payload, the age at which a target
+# stops being in the room, the signed mm/s the scene has to see as cm/s, and the
+# smoothing that must not outlive its data. These are the numbers
+# tools/luasim/presence_panel.py renders into the previews, so a change here
+# that the test does not like is a change the previews no longer show. Offline:
+# the host compiler and the ArduinoJson PlatformIO installed.
+if git diff --cached --name-only | grep -qE '^(src/presence/|tools/presence/)'; then
+  python3 tools/presence/check_presence.py || {
+    echo
+    echo "pre-commit: the presence host test failed (see above)."
+    exit 1
+  }
+fi
+
 # The Lua effects are embedded in the firmware from the scripts luasim runs.
 # Checked offline, like the world map: the generator needs only the scripts.
 if git diff --cached --name-only | grep -qE '^(tools/luasim/gen_effects\.py|tools/luasim/scripts/.*\.lua|src/lua/lua_effects_scripts\.h)$'; then

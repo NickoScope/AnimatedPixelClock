@@ -8,6 +8,7 @@
 #include "../config/config.h"
 #include "../timezones.h"
 #include "../climate/climate_model.h"
+#include "../presence/presence_model.h"   // the presence settings' bounds, in every build
 #include <Preferences.h>
 
 
@@ -176,6 +177,9 @@ void loadSettings() {
     settings.climateRhFollowsT = true;
     settings.climateShow = climate::kShowSplit;
     settings.climateHa = false;
+    settings.presenceScaleM = presence::kScaleDefaultM;
+    settings.presenceMirrorX = presence::kMirrorDefault;
+    settings.presenceSource = presence::kSourceLive;
     settings.ambientEnabled = false;
     settings.ambientStyle = 0;
     settings.ambientStartHour = 20;
@@ -417,6 +421,11 @@ void loadSettings() {
   settings.climateRhFollowsT = preferences.getBool("climRhT", true);
   settings.climateShow = climate::clampShow(preferences.getUChar("climShow", climate::kShowSplit));
   settings.climateHa = preferences.getBool("climHa", false); // Default: no entities until asked
+  settings.presenceScaleM =
+      presence::clampScaleM(preferences.getUChar("presScale", presence::kScaleDefaultM));
+  settings.presenceMirrorX = preferences.getBool("presMir", presence::kMirrorDefault);
+  settings.presenceSource =
+      presence::clampSource(preferences.getUChar("presSrc", presence::kSourceLive));
   settings.ambientEnabled =
       preferences.getBool("ambEn", false); // Default: Disabled
   settings.ambientStyle =
@@ -800,6 +809,9 @@ void saveSettings() {
   preferences.putBool("climRhT", settings.climateRhFollowsT);
   preferences.putUChar("climShow", settings.climateShow);
   preferences.putBool("climHa", settings.climateHa);
+  preferences.putUChar("presScale", settings.presenceScaleM);
+  preferences.putBool("presMir", settings.presenceMirrorX);
+  preferences.putUChar("presSrc", settings.presenceSource);
   preferences.putBool("ambEn", settings.ambientEnabled);
   preferences.putUChar("ambStyle", settings.ambientStyle);
   preferences.putUChar("ambStart", settings.ambientStartHour);
