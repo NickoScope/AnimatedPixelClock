@@ -38,7 +38,7 @@ without the module).
 | `ir_console.h` | the serial grammar: one line in, one command out. Tested on the host |
 | `ir.cpp` | the receiver, NVS, the serial console, `/api/info`, the portal's handlers |
 | `../control/control.cpp` | the seam: two places inside the 1 kHz sampling task |
-| `../../tools/ir/check_ir.py` | the host test - 119 checks over the rules and the grammar |
+| `../../tools/ir/check_ir.py` | the host test - 150 checks over the rules and the grammar |
 
 ## The hardware, and the one thing to check on the bench
 
@@ -127,7 +127,7 @@ The portal's Remote card does the same over HTTP: `/api/ir/sim?slot=OK&hold=1200
 | internal heap, module only | the decoder is one static object: the map, the counters and a 96-byte line buffer |
 | internal heap, with the receiver | ~1 KB: 256 raw samples of `uint16`, and `save_buffer` makes two such buffers. The library's default 1024 would cost ~4 KB, and internal heap is the scarce resource here (docs/22 §12.3) |
 | a hardware timer | IRremoteESP8266 captures on one (`timerBegin`). Nothing else in this firmware uses a hardware timer - the knob samples on an `esp_timer`, which is a software timer on the same counter group but allocated by the RTOS, so the two do not fight |
-| flash | the library compiles only into builds that define `IR_RX_ENABLED` |
+| flash | nothing. The library is listed in `lib_deps`, so PlatformIO *compiles* it into an archive, but with `IR_RX_ENABLED` off nothing references it and the linker keeps none of it. **Measured 2026-09-16:** `xtensa-esp32s3-elf-nm` finds 0 `IRrecv`/`IRsend`/`decodeNEC` symbols in `firmware.elf`, and the image grew only by the portal card |
 
 ## What is not done
 

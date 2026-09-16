@@ -23,8 +23,10 @@
 #if defined(CLIMATE_ENABLED)
 #include "../climate/climate.h"
 #endif
-#if defined(PRESENCE_ENABLED)
+#if defined(IR_ENABLED)
 #include "../ir/ir.h"
+#endif
+#if defined(PRESENCE_ENABLED)
 #include "../presence/presence.h"
 #endif
 #include "web_assets.h"   // the portal as gzip: page, style, script, icon, Panel group

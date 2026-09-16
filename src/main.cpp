@@ -31,8 +31,10 @@
 #if defined(CLIMATE_ENABLED)
 #include "climate/climate.h"
 #endif
-#if defined(PRESENCE_ENABLED)
+#if defined(IR_ENABLED)
 #include "ir/ir.h"
+#endif
+#if defined(PRESENCE_ENABLED)
 #include "presence/presence.h"
 #endif
 #if defined(BOARD_WAVESHARE_RGB_MATRIX)
