@@ -34,12 +34,15 @@ static const uint32_t MQTT_BUS_MDNS_MS = 2000;   // bound on one mDNS lookup
 static const uint8_t  MQTT_BUS_FAILS_BEFORE_RERESOLVE = 3;
 
 // In use with every page built in: cards 3 handlers and 3 subscriptions, the
-// flight board 1 and 1, the rail board 1 and 1, the media player 1 and 1 - six
-// of each, which was the whole table, so it is eight: room for one more page
-// without another round of this. Past these limits a register or subscribe
-// call is refused, and a refused one is a page that never updates.
-#define MQTT_MAX_SUBS     8
-#define MQTT_MAX_HANDLERS 8
+// flight board 1 and 1, the rail board 1 and 1, the media player 1 and 1, the
+// market 1 and 1, and the presence radar 1 handler with 2 subscriptions, its
+// summary topic being a prefix of its targets topic. That is 8 handlers and 9
+// subscriptions, so the subscription table is 10 and the handler table 10:
+// the audit of 2026-09-16 found the ninth subscription silently refused, which
+// cost the presence summary entirely. Past these limits a register or
+// subscribe call is refused, and a refused one is a page that never updates.
+#define MQTT_MAX_SUBS     10
+#define MQTT_MAX_HANDLERS 10
 #define MQTT_TOPIC_LEN    96
 
 static WiFiClient   s_net;

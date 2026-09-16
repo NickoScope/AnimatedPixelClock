@@ -52,6 +52,18 @@
 
 namespace presence {
 
+// The sensor's own limits, from the LD2450 datasheet through KB docs/16: the
+// zone numbers in Home Assistant run to +-4860 mm across and 7560 mm out.
+// Speed is bounded well under that; 20 m/s is already absurd for a room.
+constexpr int32_t kMaxXmm = 4860;
+constexpr int32_t kMaxYmm = 7560;
+constexpr int32_t kMaxVmmps = 20000;
+
+inline int32_t clampRange(int32_t v, int32_t lo, int32_t hi) {
+  return v < lo ? lo : (v > hi ? hi : v);
+}
+
+
 // A bump allocator over one fixed block. deallocate() does nothing; the whole
 // block is reclaimed by reset() before each parse, which is the only lifetime
 // a parse needs. No malloc, no free, no fragmentation, no heap.
@@ -141,10 +153,14 @@ inline bool parse(JsonPool &pool, const char *json, size_t len, Report r[kSlots]
     // null is an empty slot, and so is a triple that is not three numbers.
     if (!a.isNull() && a.size() >= 3 &&
         a[0].is<int32_t>() && a[1].is<int32_t>() && a[2].is<int32_t>()) {
+      // Held to what an LD2450 can report (KB docs/16: X +-4860 mm, Y 0..7560,
+      // and a speed no sane radar exceeds). The message comes off a broker any
+      // client can publish to: without this, INT32_MIN made -x undefined in
+      // mirror(), and the interpolation in target() overflowed (audit 2026-09-16).
       r[i].present = true;
-      r[i].x = a[0].as<int32_t>();
-      r[i].y = a[1].as<int32_t>();
-      r[i].v = a[2].as<int32_t>();
+      r[i].x = clampRange(a[0].as<int32_t>(), -kMaxXmm, kMaxXmm);
+      r[i].y = clampRange(a[1].as<int32_t>(), -kMaxYmm, kMaxYmm);
+      r[i].v = clampRange(a[2].as<int32_t>(), -kMaxVmmps, kMaxVmmps);
     }
     i++;
   }

@@ -4,10 +4,11 @@
 // room_radar Lua scene. docs/16-presence-radar.md in the knowledge base has
 // the sensor, the contract and the traps.
 //
-// Everything here runs on the loop task: presenceLoop(), the MQTT callback the
-// bus makes from inside mqttBusLoop(), the web handlers, and the Lua binding
-// during an effect's draw(). No lock of its own, because there is no second
-// task to lock against.
+// Two tasks reach this module. The loop task on core 1 writes: presenceLoop(),
+// the MQTT callback the bus makes from inside mqttBusLoop(), the web handlers.
+// The Lua effect task on core 0 reads, through the bindings, during an
+// effect's draw(). A spinlock in presence.cpp covers every entry point; the
+// model itself holds no lock, so the host tests still build it on the Mac.
 //
 // Cost: one Model and one parse arena, both static, both in this module. No
 // allocation on any path, and none at all per frame - the internal heap is the
