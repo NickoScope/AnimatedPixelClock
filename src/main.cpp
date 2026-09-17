@@ -24,6 +24,7 @@
 
 #include "config/config.h"
 #include "utils/utils.h"
+#include "utils/crash_report.h"
 #include "timezones.h"
 #if defined(CLIPS_SD_ENABLED)
 #include "clips/clip_sd.h"
@@ -393,7 +394,8 @@ void setup() {
   Serial.begin(115200);
   heap_caps_register_failed_alloc_callback(onAllocFailed);   // internal heap diagnostics: see loopMark()
   delay(1000);
-  healthBegin();   // confirms an OTA image only once it has run, and reports the last crash: src/health
+  crashReportBegin();   // the last crash from the core dump in flash: src/utils/crash_report.cpp
+  healthBegin();   // confirms an OTA image only once it has run: src/health
 #if defined(BOARD_WAVESHARE_RGB_MATRIX)
   boardI2cBegin();  // the board's shared I2C bus, once, before any module on it: src/board/board_i2c.h
 #endif
@@ -1319,6 +1321,7 @@ void loop() {
   loopMark("ambient prefetch");
 
   healthTick(!displayAvailable || isDisplayForcedOff());
+  crashReportLoop();   // stamps the crash report once the time is synced
   // WiFi reconnection handling
   handleWiFiReconnection();
   loopMark("wifi reconnect");

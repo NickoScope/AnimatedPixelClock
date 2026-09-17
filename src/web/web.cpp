@@ -10,6 +10,7 @@
 #include "../config/settings.h"
 #include "../network/network.h"
 #include "../utils/utils.h"
+#include "../utils/crash_report.h"
 #include "../clocks/clocks.h"
 #include "../display/display.h"
 #include "../ambient/ambient.h"
@@ -352,7 +353,8 @@ void handleDeviceInfo() {
  { extern const char *loopSlowPart(); extern uint32_t loopSlowPartMs();       // and the part of loop() that took longest
    doc["loopSlowPart"] = loopSlowPart(); doc["loopSlowPartMs"] = loopSlowPartMs(); }
  doc["resetReason"] = (int)esp_reset_reason();
- { extern void healthInfoJson(JsonObject out); healthInfoJson(doc.as<JsonObject>()); }   // OTA state, last crash
+ { extern void healthInfoJson(JsonObject out); healthInfoJson(doc.as<JsonObject>()); }   // OTA state
+ crashReportToJson(doc);   // "lastCrash", when the SDK saved a crash to flash
  doc["animationStorageBytes"] = (uint32_t)animFsTotal();
  doc["animationFreeBytes"] = (uint32_t)animFsFree();
  doc["animationsUsable"] = animFsUsable();
