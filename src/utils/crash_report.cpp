@@ -123,9 +123,9 @@ static uint8_t crashKind(const CrashRecord& record) {
 
 static const char* crashName() {
   switch (lastCrash.kind) {
-  case CRASH_KIND_ABORT:    return "abort()";
-  case CRASH_KIND_TASK_WDT: return "Task watchdog";
-  default:                  return causeName(lastCrash.cause);
+    case CRASH_KIND_ABORT:    return "abort()";
+    case CRASH_KIND_TASK_WDT: return "Task watchdog";
+    default:                  return causeName(lastCrash.cause);
   }
 }
 
