@@ -70,8 +70,11 @@ class PictureScene : public Scene {
     yawPh_ = pitchPh_ = wigglePh_ = drumPh_ = reliefPh_ = 0.0f;
     for (int k = 0; k < 3; k++) drum_[k].valid = false;
   }
-  // Each swing keeps its own phase, wrapped as it goes: no jump, however long it runs.
+  // Each swing keeps its own phase, wrapped as it goes: no jump, however long it
+  // runs. The page's codes become linear light once here, not at every read.
   void step(float dt, const Env &) {
+    if (codes)
+      for (int i = 0; i < kPixels * 3; i++) lin_[i] = kCie8[codes[i]];
     yawPh_ = wrapAngle(yawPh_ + kTwoPi * dt / 7.0f);
     pitchPh_ = wrapAngle(pitchPh_ + kTwoPi * dt / 9.3f);
     wigglePh_ = wrapAngle(wigglePh_ + kTwoPi * dt * 2.0f);
@@ -100,8 +103,9 @@ class PictureScene : public Scene {
     }
   }
   // The depth a pixel gets in the pixel-moving looks, 0..1 of the budget.
+  // px: three linear bytes of the page (kCie8 of its codes).
   float depthOf(int x, int y, const uint8_t *px) const {
-    const float r = (float)kCie8[px[0]], g = (float)kCie8[px[1]], b = (float)kCie8[px[2]];
+    const float r = (float)px[0], g = (float)px[1], b = (float)px[2];
     const float m = r > g ? (r > b ? r : b) : (g > b ? g : b);
     if (m < 2.0f) return 0.0f;   // black is the panel's own plane
     switch (look == LOOK_WIGGLE ? (uint8_t)LOOK_POP : look) {
@@ -132,63 +136,94 @@ class PictureScene : public Scene {
   static constexpr float kMiss = 100.0f;  // an angle no hit can have: the ray missed the drum
   float yawPh_, pitchPh_, wigglePh_, drumPh_, reliefPh_;
 
-  static float lin(uint8_t code) { return (float)kCie8[code] * (1.0f / 255.0f); }
+  uint8_t lin_[kPixels * 3];   // this frame's page in linear light, 0..255 (kCie8 of each code)
+  static float unit(uint8_t v) { return (float)v * (1.0f / 255.0f); }
 
   void flat(Ctx &c) {
-    for (int i = 0; i < kPixels; i++) c.pixel(i, lin(codes[3 * i]), lin(codes[3 * i + 1]), lin(codes[3 * i + 2]));
+    for (int i = 0; i < kPixels; i++) c.pixel(i, unit(lin_[3 * i]), unit(lin_[3 * i + 1]), unit(lin_[3 * i + 2]));
   }
 
   // Depth-image-based rendering, row by row. Each source pixel is a box one
   // pixel wide moved by -shift*depth; boxes of the same depth band tile and
   // add, and the bands are laid far to near, each over the ones behind it by
   // its own coverage. Uncovered pixels stay black.
+  //
+  // A row's pixels are sorted into their bands once (a stable counting sort,
+  // so each band still adds its pixels left to right) and each band then
+  // touches only its own pixels and the span they land on: the same sums in
+  // the same order as walking every band over the whole row, which the host
+  // test holds it to, byte for byte. That walk cost 30-44 ms a frame on the
+  // panel (the integration session's measurement, 2026-09-18).
   // Rows in the object, not on the stack: loopTask has 8 KB for all of loop().
+  static const int kLevels = 8;
   float band_[kW][4];   // r, g, b, coverage of the depth band being laid
   float out_[kW][3];
   float d_[kW];
+  uint8_t order_[kW];
+  int8_t level_[kW];
 
   void reproject(Ctx &c, float shift) {
-    const int kLevels = 8;
-    float(&band)[kW][4] = band_;
-    float(&out)[kW][3] = out_;
-    float(&d)[kW] = d_;
     for (int y = 0; y < kH; y++) {
-      memset(out, 0, sizeof out);
-      for (int x = 0; x < kW; x++) d[x] = depthOf(x, y, codes + 3 * (y * kW + x));
+      const uint8_t *row = lin_ + 3 * y * kW;
+      const uint8_t *crow = codes + 3 * y * kW;
+      int count[kLevels + 1] = {0};
+      for (int x = 0; x < kW; x++) {
+        const uint8_t *p = row + 3 * x, *q = crow + 3 * x;
+        level_[x] = -1;
+        if (!q[0] && !q[1] && !q[2]) continue;   // black: nothing to move
+        const float dd = depthOf(x, y, p);
+        d_[x] = dd;
+        int k = 0;   // the band, by the same comparisons as the walk over every band
+        while (k < kLevels - 1 && !(k == 0 ? dd <= 1.0f / kLevels : (dd > (float)k / kLevels && dd <= (float)(k + 1) / kLevels))) k++;
+        if (!(k == 0 ? dd <= 1.0f / kLevels : (dd > (float)k / kLevels && dd <= (float)(k + 1) / kLevels))) continue;
+        level_[x] = (int8_t)k;
+        count[k + 1]++;
+      }
+      for (int k = 0; k < kLevels; k++) count[k + 1] += count[k];
+      int fill[kLevels];
+      for (int k = 0; k < kLevels; k++) fill[k] = count[k];
+      for (int x = 0; x < kW; x++)
+        if (level_[x] >= 0) order_[fill[level_[x]]++] = (uint8_t)x;
+      for (int x = 0; x < kW; x++) out_[x][0] = out_[x][1] = out_[x][2] = 0.0f;
       for (int k = 0; k < kLevels; k++) {
-        const float lo = (float)k / kLevels, hi = (float)(k + 1) / kLevels;
-        bool any = false;
-        memset(band, 0, sizeof band);
-        for (int x = 0; x < kW; x++) {
-          const float dd = d[x];
-          if (!(k == 0 ? dd <= hi : (dd > lo && dd <= hi))) continue;
-          const uint8_t *p = codes + 3 * (y * kW + x);
-          if (!p[0] && !p[1] && !p[2]) continue;
-          const float xs = (float)x - shift * dd;
+        if (count[k] == count[k + 1]) continue;
+        int lo = kW, hi = -1;
+        for (int n = count[k]; n < count[k + 1]; n++) {
+          const int x = order_[n];
+          const float xs = (float)x - shift * d_[x];
+          const int i0 = (int)floorf(xs);
+          if (i0 < lo) lo = i0;
+          if (i0 + 1 > hi) hi = i0 + 1;
+        }
+        if (lo < 0) lo = 0;
+        if (hi > kW - 1) hi = kW - 1;
+        for (int x = lo; x <= hi; x++) band_[x][0] = band_[x][1] = band_[x][2] = band_[x][3] = 0.0f;
+        for (int n = count[k]; n < count[k + 1]; n++) {
+          const int x = order_[n];
+          const uint8_t *p = row + 3 * x;
+          const float xs = (float)x - shift * d_[x];
           const float fl = floorf(xs);
           const int i0 = (int)fl;
           const float fr = xs - fl;
-          const float col[3] = {lin(p[0]), lin(p[1]), lin(p[2])};
+          const float col[3] = {unit(p[0]), unit(p[1]), unit(p[2])};
           for (int j = 0; j < 2; j++) {
             const int xi = i0 + j;
             if (xi < 0 || xi >= kW) continue;
             const float w = j ? fr : 1.0f - fr;
-            band[xi][0] += col[0] * w;
-            band[xi][1] += col[1] * w;
-            band[xi][2] += col[2] * w;
-            band[xi][3] += w;
+            band_[xi][0] += col[0] * w;
+            band_[xi][1] += col[1] * w;
+            band_[xi][2] += col[2] * w;
+            band_[xi][3] += w;
           }
-          any = true;
         }
-        if (!any) continue;
-        for (int x = 0; x < kW; x++) {
-          const float a = band[x][3] > 1.0f ? 1.0f : band[x][3];
+        for (int x = lo; x <= hi; x++) {
+          const float a = band_[x][3] > 1.0f ? 1.0f : band_[x][3];
           if (a <= 0.0f) continue;
-          const float norm = band[x][3] > 1.0f ? 1.0f / band[x][3] : 1.0f;
-          for (int ch = 0; ch < 3; ch++) out[x][ch] = out[x][ch] * (1.0f - a) + band[x][ch] * norm;
+          const float norm = band_[x][3] > 1.0f ? 1.0f / band_[x][3] : 1.0f;
+          for (int ch = 0; ch < 3; ch++) out_[x][ch] = out_[x][ch] * (1.0f - a) + band_[x][ch] * norm;
         }
       }
-      for (int x = 0; x < kW; x++) c.pixel(y * kW + x, out[x][0], out[x][1], out[x][2]);
+      for (int x = 0; x < kW; x++) c.pixel(y * kW + x, out_[x][0], out_[x][1], out_[x][2]);
     }
   }
 
@@ -203,32 +238,40 @@ class PictureScene : public Scene {
         const int x = x0 + i, y = y0 + j;
         if ((unsigned)x >= (unsigned)kW || (unsigned)y >= (unsigned)kH) continue;
         const float w = (i ? ax : 1.0f - ax) * (j ? ay : 1.0f - ay);
-        const uint8_t *p = codes + 3 * (y * kW + x);
-        rgb[0] += w * lin(p[0]);
-        rgb[1] += w * lin(p[1]);
-        rgb[2] += w * lin(p[2]);
+        const uint8_t *p = lin_ + 3 * (y * kW + x);
+        rgb[0] += w * unit(p[0]);
+        rgb[1] += w * unit(p[1]);
+        rgb[2] += w * unit(p[2]);
       }
   }
 
-  // A card the size of most of the panel, swaying about its middle.
+  // A card the size of most of the panel, swaying about its middle. Along a
+  // row the ray is linear in x, so where it meets the card is a ratio of two
+  // linear functions of x: two additions and one division a pixel instead of
+  // a ray-plane intersection. The ray-plane walk cost 67.7 ms a frame on the
+  // panel (the integration session's measurement, 2026-09-18).
   void card(Ctx &c) {
     const M3 r = mul(rotY(kCardYaw * sinf(yawPh_)), rotX(kCardPitch * sinf(pitchPh_)));
     const V3 ctr = v3(0.0f, 0.0f, kZ0), n = apply(r, v3(0, 0, -1)), ux = apply(r, v3(1, 0, 0)), uy = apply(r, v3(0, 1, 0));
     const Light light;
     const float shade = 0.55f + 0.45f * clampf(dot(n, light.dir), 0.0f, 1.0f);
     float zMin = 1e9f, zMax = 0.0f;
-    for (int y = 0; y < kH; y++)
-      for (int x = 0; x < kW; x++) {
-        const Ray ray = eyeRay(c.view, c.eye, (float)x, (float)y);
-        const float den = dot(ray.d, n);
+    const Ray o = eyeRay(c.view, c.eye, 0.0f, 0.0f);   // the ray of pixel (0, 0); x adds dx, y adds dy
+    const V3 dx = v3(1.0f / c.view.f, 0.0f, 0.0f), dy = v3(0.0f, -1.0f / c.view.f, 0.0f);
+    const float K = dot(ctr - o.o, n);                  // t = K / (d . n)
+    const float a0 = dot(o.o - ctr, ux), b0 = dot(o.o - ctr, uy), z0 = o.o.z - ctr.z;
+    for (int y = 0; y < kH; y++) {
+      const V3 d0 = o.d + dy * (float)y;
+      float den = dot(d0, n), U = dot(d0, ux), V = dot(d0, uy), Z = d0.z;
+      const float dDen = dot(dx, n), dU = dot(dx, ux), dV = dot(dx, uy);
+      for (int x = 0; x < kW; x++, den += dDen, U += dU, V += dV) {
         const int i = y * kW + x;
         if (den > -1e-4f) {   // edge-on or its back: nothing
           c.pixel(i, 0.0f, 0.0f, 0.0f);
           continue;
         }
-        const float t = dot(ctr - ray.o, n) / den;
-        const V3 p = ray.o + ray.d * t;
-        const float a = dot(p - ctr, ux), b = dot(p - ctr, uy);
+        const float t = K / den;
+        const float a = a0 + t * U, b = b0 + t * V;
         if (fabsf(a) > kCardHalfW || fabsf(b) > kCardHalfH) {
           c.pixel(i, 0.0f, 0.0f, 0.0f);
           continue;
@@ -238,9 +281,11 @@ class PictureScene : public Scene {
         // A faint edge so the card reads as a card on a dark page.
         const float edge = (fabsf(a) > kCardHalfW - 0.05f || fabsf(b) > kCardHalfH - 0.05f) ? 0.08f : 0.0f;
         c.pixel(i, rgb[0] * shade + edge, rgb[1] * shade + edge, rgb[2] * shade + edge);
-        if (p.z < zMin) zMin = p.z;
-        if (p.z > zMax) zMax = p.z;
+        const float pz = ctr.z + z0 + t * Z;   // the hit's depth, for the stereo budget
+        if (pz < zMin) zMin = pz;
+        if (pz > zMax) zMax = pz;
       }
+    }
     if (zMin <= zMax) {
       c.note(zMin);
       c.note(zMax);
@@ -257,14 +302,14 @@ class PictureScene : public Scene {
     const float sway = sinf(reliefPh_);
     const float ex = 0.55f * sway + (c.stereo() ? 0.12f * (float)c.eye * c.st.depthPx : 0.0f);
     const float ey = -0.85f;   // up the panel, away from the viewer
-    for (int i = 0; i < kPixels; i++) c.pixel(i, 0.0f, 0.0f, 0.0f);
+    c.clear();
     // Far to near: top row first; along a row, from the side the blocks lean
     // towards.
     for (int y = 0; y < kH; y++)
       for (int k = 0; k < kW; k++) {
         const int x = ex >= 0.0f ? kW - 1 - k : k;
-        const uint8_t *p = codes + 3 * (y * kW + x);
-        const float r = lin(p[0]), g = lin(p[1]), b = lin(p[2]);
+        const uint8_t *p = lin_ + 3 * (y * kW + x);
+        const float r = unit(p[0]), g = unit(p[1]), b = unit(p[2]);
         const float m = r > g ? (r > b ? r : b) : (g > b ? g : b);
         if (m <= 0.004f) continue;
         const float h = kRise * smoothstepf(0.0f, 0.6f, m);

@@ -218,6 +218,12 @@ class Ctx {
     }
   }
 
+  // The current target (the colour frame, or this eye's plane) to black.
+  void clear() {
+    if (stereo()) memset(plane(), 0, (size_t)kPixels);
+    else memset(fb.rgb, 0, (size_t)kPixels * 3);
+  }
+
   // Screen-space pixel write for the scenes that shade every pixel
   // themselves (fly-throughs, raymarching). Overwrites, linear 0..1.
   void pixel(int i, float r, float g, float b) {

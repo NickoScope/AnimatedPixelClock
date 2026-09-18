@@ -746,6 +746,114 @@ static void landscape() {
   v->~VoxelScene();
 }
 
+
+// ── the faster reprojection gives exactly what the plain walk gave ───────────
+// The walk as it was: every band over the whole row. The sorted version must
+// match it byte for byte, for every glasses look in both eyes and for wiggle.
+static void oldReproject(const PictureScene &pic, const uint8_t *codes, float shift, bool stereo, uint8_t *out) {
+  const int kLevels = 8;
+  std::vector<uint8_t> lin(kPixels * 3);
+  for (int i = 0; i < kPixels * 3; i++) lin[i] = kCie8[codes[i]];
+  for (int y = 0; y < kH; y++) {
+    float band[kW][4], acc[kW][3], d[kW];
+    std::memset(acc, 0, sizeof acc);
+    for (int x = 0; x < kW; x++) d[x] = pic.depthOf(x, y, &lin[3 * (y * kW + x)]);
+    for (int k = 0; k < kLevels; k++) {
+      const float lo = (float)k / kLevels, hi = (float)(k + 1) / kLevels;
+      bool any = false;
+      std::memset(band, 0, sizeof band);
+      for (int x = 0; x < kW; x++) {
+        const float dd = d[x];
+        if (!(k == 0 ? dd <= hi : (dd > lo && dd <= hi))) continue;
+        const uint8_t *q = codes + 3 * (y * kW + x);
+        if (!q[0] && !q[1] && !q[2]) continue;
+        const uint8_t *p = &lin[3 * (y * kW + x)];
+        const float xs = (float)x - shift * dd;
+        const float fl = std::floor(xs);
+        const int i0 = (int)fl;
+        const float fr = xs - fl;
+        const float col[3] = {p[0] * (1.0f / 255.0f), p[1] * (1.0f / 255.0f), p[2] * (1.0f / 255.0f)};
+        for (int j = 0; j < 2; j++) {
+          const int xi = i0 + j;
+          if (xi < 0 || xi >= kW) continue;
+          const float w = j ? fr : 1.0f - fr;
+          band[xi][0] += col[0] * w;
+          band[xi][1] += col[1] * w;
+          band[xi][2] += col[2] * w;
+          band[xi][3] += w;
+        }
+        any = true;
+      }
+      if (!any) continue;
+      for (int x = 0; x < kW; x++) {
+        const float a = band[x][3] > 1.0f ? 1.0f : band[x][3];
+        if (a <= 0.0f) continue;
+        const float norm = band[x][3] > 1.0f ? 1.0f / band[x][3] : 1.0f;
+        for (int ch = 0; ch < 3; ch++) acc[x][ch] = acc[x][ch] * (1.0f - a) + band[x][ch] * norm;
+      }
+    }
+    for (int x = 0; x < kW; x++) {   // Ctx::pixel's arithmetic
+      const int i = y * kW + x;
+      if (stereo) {
+        const float m = acc[x][0] > acc[x][1] ? (acc[x][0] > acc[x][2] ? acc[x][0] : acc[x][2]) : (acc[x][1] > acc[x][2] ? acc[x][1] : acc[x][2]);
+        out[i] = (uint8_t)(clampf(m, 0.0f, 1.0f) * 255.0f + 0.5f);
+      } else {
+        for (int ch = 0; ch < 3; ch++) out[3 * i + ch] = (uint8_t)(clampf(acc[x][ch], 0.0f, 1.0f) * 255.0f + 0.5f);
+      }
+    }
+  }
+}
+
+static void reprojectMatches() {
+  Rng rng(33);
+  std::vector<std::vector<uint8_t>> pages;
+  pages.push_back(testPage());
+  for (int k = 0; k < 3; k++) {   // noisy pages with black gaps
+    std::vector<uint8_t> pg(kPixels * 3);
+    for (int i = 0; i < kPixels; i++) {
+      const bool dark = rng.next() % 3 == 0;
+      for (int ch = 0; ch < 3; ch++) pg[3 * i + ch] = dark ? 0 : (uint8_t)(rng.next() & 0xff);
+    }
+    pages.push_back(pg);
+  }
+  const float depths[] = {2.0f, 3.7f};
+  for (const std::vector<uint8_t> &pg : pages)
+    for (float depth : depths) {
+      for (int look = LOOK_POP; look <= LOOK_DOME; look++) {
+        Bufs b;
+        Ctx c;
+        b.bind(c);
+        c.st.mode = MODE_RED_BLUE;
+        c.st.depthPx = depth;
+        PictureScene pic;
+        pic.codes = pg.data();
+        pic.look = (uint8_t)look;
+        Env w;
+        renderFrame(pic, c, 0.0f, w);
+        std::vector<uint8_t> l(kPixels), r(kPixels);
+        oldReproject(pic, pg.data(), 0.5f * -1.0f * depth, true, l.data());
+        oldReproject(pic, pg.data(), 0.5f * 1.0f * depth, true, r.data());
+        CHECK(b.left == l && b.right == r);
+      }
+      // Wiggle, mono: the eye swung by sin of its phase after one 0.1 s step.
+      Bufs b;
+      Ctx c;
+      b.bind(c);
+      c.st.mode = MODE_MONO;
+      c.st.depthPx = depth;
+      PictureScene pic;
+      pic.codes = pg.data();
+      pic.look = LOOK_WIGGLE;
+      pic.reset(1);
+      Env w;
+      renderFrame(pic, c, 0.1f, w);
+      std::vector<uint8_t> want(kPixels * 3);
+      const float ph = wrapAngle(0.0f + kTwoPi * 0.1f * 2.0f);
+      oldReproject(pic, pg.data(), 0.5f * depth * std::sin(ph), false, want.data());
+      CHECK(b.rgb == want);
+    }
+}
+
 int main(int argc, char **argv) {
   projection();
   baselineBudget();
@@ -761,6 +869,7 @@ int main(int argc, char **argv) {
   continuity();
   runs();
   landscape();
+  reprojectMatches();
   std::printf("%d checks, %d failed\n", g_checks, g_fail);
   return g_fail ? 1 : 0;
 }
