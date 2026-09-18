@@ -491,6 +491,24 @@ struct Encoder {
     }
   }
 };
+// A row of codes cut into runs of one colour: emit(x, length, code) for each,
+// maximal, left to right. The panel writes a run with one line of the
+// library's hlineDMA, which looks its colour up once and then only touches
+// each pixel's words, where drawPixelRGB888 pays the whole way for every
+// pixel: measured 14.2-14.9 ms for 8192 single pixels on the panel
+// (the integration session, 2026-09-18).
+template <class F>
+void forEachRun(const uint8_t *row, const F &emit) {
+  int x = 0;
+  while (x < kW) {
+    const uint8_t *c = row + 3 * x;
+    int e = x + 1;
+    while (e < kW && row[3 * e] == c[0] && row[3 * e + 1] == c[1] && row[3 * e + 2] == c[2]) e++;
+    emit(x, e - x, c);
+    x = e;
+  }
+}
+
 // A code (what the rest of the firmware uses for a colour) as linear light.
 inline float linearOf(uint8_t code) { return (float)kCie8[code] * (1.0f / 255.0f); }
 

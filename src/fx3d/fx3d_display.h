@@ -37,6 +37,9 @@ class Fx3dDisplay : public MatrixDisplay {
   void panelPixelRGB888(int16_t x, int16_t y, uint8_t r, uint8_t g, uint8_t b) {
     MatrixPanel_I2S_DMA::drawPixelRGB888(x, y, r, g, b);
   }
+  void panelHLineRGB888(int16_t x, int16_t y, int16_t w, uint8_t r, uint8_t g, uint8_t b) {
+    MatrixPanel_I2S_DMA::drawFastHLine(x, y, w, r, g, b);
+  }
 
   // Adafruit GFX's virtual entry points, as the library overrides them.
   void drawPixel(int16_t x, int16_t y, uint16_t c) override {

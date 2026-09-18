@@ -58,6 +58,7 @@ class VoxelScene : public Scene {
     zf = kZFar;
   }
   bool fills() const { return true; }
+  uint8_t mapHeight(int x, int y) const { return h_[(y & (kN - 1)) * kN + (x & (kN - 1))]; }   // for the host test
   void reset(uint32_t seed) {
     generate(seed);
     x_ = 40.0f;
@@ -151,29 +152,46 @@ class VoxelScene : public Scene {
   float heightAt(float x, float y) const {
     return (float)h_[((int)floorf(y) & (kN - 1)) * kN + ((int)floorf(x) & (kN - 1))];
   }
-  // Value noise on a tiling lattice, six octaves.
-  static float noise(int x, int y, uint32_t seed) {
+  // Value noise on a tiling lattice, six octaves. Every octave's lattice is
+  // hashed once (4 x 4 up to 128 x 128 values, 21,840 in all) and each texel
+  // reads it: hashing all four corners per texel per octave, 1.57 million
+  // hashes, made the map take 1.08 s to build on the panel (the integration
+  // session's measurement, 2026-09-18). Same lattice values, same landscape.
+  static const int kLattice = 4 * 4 + 8 * 8 + 16 * 16 + 32 * 32 + 64 * 64 + 128 * 128;
+  float lat_[kLattice];
+  void buildLattices(uint32_t seed) {
+    int off = 0;
+    for (int o = 0; o < 6; o++) {
+      const int per = kN / (64 >> o);
+      for (int gy = 0; gy < per; gy++)
+        for (int gx = 0; gx < per; gx++)
+          lat_[off + gy * per + gx] = (float)(hash3((uint32_t)gx, (uint32_t)gy, seed + (uint32_t)o) & 0xFFFF) / 65535.0f;
+      off += per * per;
+    }
+  }
+  float noise(int x, int y) const {
     float sum = 0.0f, amp = 0.5f, norm = 0.0f;
+    int off = 0;
     for (int o = 0; o < 6; o++) {
       const int cell = 64 >> o, per = kN / cell;
-      const int gx = x / cell, gy = y / cell;
+      const int gx = x / cell, gy = y / cell, gx1 = (gx + 1) % per, gy1 = (gy + 1) % per;
       const float fx = (float)(x % cell) / cell, fy = (float)(y % cell) / cell;
       const float sx = fx * fx * (3.0f - 2.0f * fx), sy = fy * fy * (3.0f - 2.0f * fy);
-      const float a = (float)(hash3(gx % per, gy % per, seed + o) & 0xFFFF) / 65535.0f;
-      const float b = (float)(hash3((gx + 1) % per, gy % per, seed + o) & 0xFFFF) / 65535.0f;
-      const float c = (float)(hash3(gx % per, (gy + 1) % per, seed + o) & 0xFFFF) / 65535.0f;
-      const float d = (float)(hash3((gx + 1) % per, (gy + 1) % per, seed + o) & 0xFFFF) / 65535.0f;
+      const float *l = lat_ + off;
+      const float a = l[gy * per + gx], b = l[gy * per + gx1], c = l[gy1 * per + gx], d = l[gy1 * per + gx1];
       sum += amp * mixf(mixf(a, b, sx), mixf(c, d, sx), sy);
       norm += amp;
       amp *= 0.5f;
+      off += per * per;
     }
     return sum / norm;
   }
   void generate(uint32_t seed) {
     const float water = 34.0f;
+    buildLattices(seed);
     for (int y = 0; y < kN; y++)
       for (int x = 0; x < kN; x++) {
-        float n = noise(x, y, seed);
+        float n = noise(x, y);
         n = clampf((n - 0.28f) / 0.5f, 0.0f, 1.0f);
         float h = n * n * 150.0f + 12.0f;
         h_[y * kN + x] = (uint8_t)(h < water ? water : clampf(h, 0.0f, 255.0f));
@@ -342,76 +360,99 @@ class BlobsScene : public Scene {
       pos_[i] = v3(1.05f * sinf(ph_[i][0]), 0.5f * sinf(ph_[i][1]), 0.6f * sinf(ph_[i][2])) + v3(0.0f, 0.0f, kZ);
     }
   }
+  // One ray per 2 x 2 block, 64 x 32 of them, and the panel filled by
+  // bilinear interpolation between them. At a ray per pixel the panel took
+  // 111.8 ms a frame in mono and 217.8 ms in red-blue (the integration
+  // session's measurement, 2026-09-18); the blobs are smooth enough for this.
   void draw(Ctx &c) {
-    const V3 centre = v3(0.0f, 0.0f, kZ);
-    const Light light;
-    const Col tint[kBalls] = {{1.0f, 0.25f, 0.2f}, {0.2f, 0.55f, 1.0f}, {0.25f, 1.0f, 0.45f}, {1.0f, 0.8f, 0.2f}};
     float zMin = 1.0e9f, zMax = 0.0f;
-    for (int y = 0; y < kH; y++)
+    for (int j = 0; j < kHalfH; j++)
+      for (int i = 0; i < kHalfW; i++) shadeAt(c, 2.0f * (float)i + 0.5f, 2.0f * (float)j + 0.5f, half_[j][i], zMin, zMax);
+    for (int y = 0; y < kH; y++) {
+      const float v = ((float)y - 0.5f) * 0.5f;
+      int j0 = (int)floorf(v);
+      float b = v - (float)j0;
+      if (j0 < 0) { j0 = 0; b = 0.0f; }
+      if (j0 > kHalfH - 2) { j0 = kHalfH - 2; b = 1.0f; }
       for (int x = 0; x < kW; x++) {
-        const int i = y * kW + x;
-        Ray r = eyeRay(c.view, c.eye, (float)x, (float)y);
-        const float len = length(r.d);
-        const V3 d = r.d * (1.0f / len);
-        // The bounding sphere: enter and leave.
-        const V3 oc = r.o - centre;
-        const float bb = dot(oc, d), cc = dot(oc, oc) - kBound * kBound, disc = bb * bb - cc;
-        const float bg = c.stereo() ? 0.0f : 0.004f + 0.012f * (float)y / kH;
-        if (disc <= 0.0f) {
-          c.pixel(i, bg * 0.4f, bg * 0.5f, bg);
-          continue;
-        }
-        const float sq = sqrtf(disc);
-        float t = -bb - sq;
-        const float tEnd = -bb + sq;
-        bool hit = false;
-        V3 p = r.o;
-        for (int s = 0; s < 40 && t < tEnd; s++) {
-          p = r.o + d * t;
-          const float dist = sdf(p);
-          if (dist < 0.004f) {
-            hit = true;
-            break;
-          }
-          t += dist;
-        }
-        if (!hit) {
-          c.pixel(i, bg * 0.4f, bg * 0.5f, bg);
-          continue;
-        }
-        const V3 n = normal(p);
-        if (p.z < zMin) zMin = p.z;
-        if (p.z > zMax) zMax = p.z;
-        // Colour: each ball's tint weighted by how close it is.
-        float wr = 0.0f, wg = 0.0f, wb = 0.0f, wsum = 0.0f;
-        for (int k = 0; k < kBalls; k++) {
-          float dd = length(p - pos_[k]) - radius(k);
-          float w = 1.0f / (0.02f + dd * dd);
-          wr += w * tint[k].r;
-          wg += w * tint[k].g;
-          wb += w * tint[k].b;
-          wsum += w;
-        }
-        const float s = light.shade(n, 0.1f, 0.0f);
-        const float h = dot(n, light.half);
-        float spec = 0.0f;
-        if (h > 0.0f) {
-          float h2 = h * h, h4 = h2 * h2, h8 = h4 * h4, h16 = h8 * h8;
-          spec = 0.8f * h16 * h16;
-        }
-        const float rim = 1.0f + dot(n, d);   // grazing: 1, facing: 0
-        const float rim3 = 0.35f * rim * rim * rim;
-        c.pixel(i, s * wr / wsum + spec + rim3 * 0.3f, s * wg / wsum + spec + rim3 * 0.5f,
-                s * wb / wsum + spec + rim3);
+        const float u = ((float)x - 0.5f) * 0.5f;
+        int i0 = (int)floorf(u);
+        float a = u - (float)i0;
+        if (i0 < 0) { i0 = 0; a = 0.0f; }
+        if (i0 > kHalfW - 2) { i0 = kHalfW - 2; a = 1.0f; }
+        float rgb[3];
+        for (int ch = 0; ch < 3; ch++)
+          rgb[ch] = mixf(mixf(half_[j0][i0][ch], half_[j0][i0 + 1][ch], a), mixf(half_[j0 + 1][i0][ch], half_[j0 + 1][i0 + 1][ch], a), b);
+        c.pixel(y * kW + x, rgb[0], rgb[1], rgb[2]);
       }
+    }
     if (zMin <= zMax) {
       c.note(zMin);
       c.note(zMax);
     }
   }
+
  private:
   static constexpr float kZ = 6.0f, kBound = 2.2f, kK = 0.45f;
+  static const int kHalfW = kW / 2, kHalfH = kH / 2;
+  float half_[kHalfH][kHalfW][3];   // the marched samples, one per 2 x 2 block
   static float radius(int k) { return 0.62f - 0.057f * (float)k; }
+
+  // One ray: the bounding sphere, then sphere tracing (at most 28 steps), then
+  // the light. Writes linear rgb.
+  void shadeAt(const Ctx &c, float sx, float sy, float *out, float &zMin, float &zMax) const {
+    const V3 centre = v3(0.0f, 0.0f, kZ);
+    const Light light;
+    const Col tint[kBalls] = {{1.0f, 0.25f, 0.2f}, {0.2f, 0.55f, 1.0f}, {0.25f, 1.0f, 0.45f}, {1.0f, 0.8f, 0.2f}};
+    const Ray r = eyeRay(c.view, c.eye, sx, sy);
+    const V3 d = normalize(r.d);
+    const float bg = c.stereo() ? 0.0f : 0.004f + 0.012f * sy / kH;
+    out[0] = bg * 0.4f;
+    out[1] = bg * 0.5f;
+    out[2] = bg;
+    const V3 oc = r.o - centre;
+    const float bb = dot(oc, d), cc = dot(oc, oc) - kBound * kBound, disc = bb * bb - cc;
+    if (disc <= 0.0f) return;
+    const float sq = sqrtf(disc);
+    float t = -bb - sq;
+    const float tEnd = -bb + sq;
+    bool hit = false;
+    V3 p = r.o;
+    for (int s = 0; s < 28 && t < tEnd; s++) {
+      p = r.o + d * t;
+      const float dist = sdf(p);
+      if (dist < 0.006f) {
+        hit = true;
+        break;
+      }
+      t += dist;
+    }
+    if (!hit) return;
+    const V3 n = normal(p);
+    if (p.z < zMin) zMin = p.z;
+    if (p.z > zMax) zMax = p.z;
+    float wr = 0.0f, wg = 0.0f, wb = 0.0f, wsum = 0.0f;
+    for (int k = 0; k < kBalls; k++) {
+      const float dd = length(p - pos_[k]) - radius(k);
+      const float w = 1.0f / (0.02f + dd * dd);
+      wr += w * tint[k].r;
+      wg += w * tint[k].g;
+      wb += w * tint[k].b;
+      wsum += w;
+    }
+    const float sh = light.shade(n, 0.1f, 0.0f);
+    const float h = dot(n, light.half);
+    float spec = 0.0f;
+    if (h > 0.0f) {
+      const float h2 = h * h, h4 = h2 * h2, h8 = h4 * h4, h16 = h8 * h8;
+      spec = 0.8f * h16 * h16;
+    }
+    const float rim = 1.0f + dot(n, d);   // grazing: 1, facing: 0
+    const float rim3 = 0.35f * rim * rim * rim;
+    out[0] = sh * wr / wsum + spec + rim3 * 0.3f;
+    out[1] = sh * wg / wsum + spec + rim3 * 0.5f;
+    out[2] = sh * wb / wsum + spec + rim3;
+  }
   float ph_[kBalls][3];
   V3 pos_[kBalls];
   static float smin(float a, float b, float k) {

@@ -61,12 +61,20 @@ Measured with `platformio run`, against the same env without the flag:
 | Static RAM | 103,376 B | 103,592 B (**+216 B**) |
 | Flash | 2,270,697 B | 2,328,181 B (**+57,484 B**), the page 6.4 KB of it |
 
-At run time: **no internal heap**. PSRAM: 73,984 B of frame buffers from boot (colour, two
-eye planes, depth, the encoder); the scene on screen (from 0.1 KB to 320 KB for the
+At run time: **no internal heap**. PSRAM: 74,368 B of frame buffers from boot (colour, two
+eye planes, depth, the encoder, one row for the blit); the scene on screen (from 0.1 KB to 320 KB for the
 landscape); while a look is on, 24,576 B for the captured frame plus the look (225,352 B
 on the host, most of it the drum's per-eye tables). Every one is freed when it stops.
 
-**Not measured yet: the time.** The frame time of every scene and look, and of the blit of
+**Measured on the panel, 2026-09-18 (the integration session, over the network, `264d6f1`):**
+a blit of 8192 single pixels cost 14.2-14.9 ms in every scene; eight scenes held 30 Hz in mono
+and red-blue (calib, cube, layers, stars, dial, helix, rings, vclock); torus, terrain, voxel,
+tunnel, globe and blobs did not (blobs 111.8 / 217.8 ms a frame); voxel took 1.08 s to open;
+under a look pages ran at 10-20 fps. Answered since: the blit writes runs of one colour with the
+library's hlineDMA; blobs march one ray per 2 x 2 block (3.1 times cheaper on the Mac); the
+landscape hashes each noise lattice once. Their panel figures are not measured yet.
+
+**Still to measure: the time.** The frame time of every scene and look, and of the blit of
 8192 pixels, is what the bench is for (`/api/fx3d?bench=1`, the page's button, or the bench
 env 20 s after boot): one line per run, `[fx3d] scene=... frame_us=... blit_us=... fps=...
 heap_internal_min=... stack_min_free=...`, then `[fx3d] bench done`. The bench keeps the owner's

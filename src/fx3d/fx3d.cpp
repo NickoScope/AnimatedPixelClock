@@ -53,8 +53,10 @@ uint32_t g_seen = 0;
 
 void *psram(size_t bytes) { return heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT); }
 
+uint8_t *g_row = nullptr;   // one row of codes for the blit, in the block below
+
 bool allocBlock() {
-  g_block = (uint8_t *)psram(kFrameBytes + sizeof(Encoder));
+  g_block = (uint8_t *)psram(kFrameBytes + sizeof(Encoder) + kW * 3);
   if (!g_block) return false;
   uint8_t *p = g_block;
   g_ctx.fb.rgb = p;
@@ -66,6 +68,8 @@ bool allocBlock() {
   g_ctx.fb.z = reinterpret_cast<float *>(p);   // offset 40960: four-byte aligned
   p += sizeof(float) * kPixels;
   g_enc = new (p) Encoder();
+  p += sizeof(Encoder);
+  g_row = p;
   return true;
 }
 
@@ -103,12 +107,20 @@ void fillEnv(Env &w) {
   w.utcHours = (float)ut.tm_hour + (float)ut.tm_min / 60.0f + (float)ut.tm_sec / 3600.0f;
 }
 
-// Linear light to the library's CIE codes, every pixel, past any capture.
+// Linear light to the library's CIE codes, past any capture, a run of one
+// colour at a time (forEachRun in fx3d_model.h says why). Every pixel of the
+// frame is written, as before.
 void blit() {
   const uint8_t *px = g_ctx.fb.rgb;
   const uint8_t *code = g_enc->code;
-  for (int y = 0; y < kH; y++)
-    for (int x = 0; x < kW; x++, px += 3) display.panelPixelRGB888(x, y, code[px[0]], code[px[1]], code[px[2]]);
+  for (int y = 0; y < kH; y++) {
+    for (int i = 0; i < kW * 3; i++) g_row[i] = code[px[i]];
+    px += kW * 3;
+    forEachRun(g_row, [y](int x, int n, const uint8_t *c) {
+      if (n == 1) display.panelPixelRGB888((int16_t)x, (int16_t)y, c[0], c[1], c[2]);
+      else display.panelHLineRGB888((int16_t)x, (int16_t)y, (int16_t)n, c[0], c[1], c[2]);
+    });
+  }
 }
 
 void note(uint32_t renderUs, uint32_t blitUs) {
@@ -227,6 +239,7 @@ int modeByName(const String &s) {
   return -1;
 }
 int lookByName(const String &s) {
+  if (s == "off") return LOOK_FLAT;   // what a script tries first
   for (int l = 0; l < LOOK_COUNT; l++)
     if (s == lookName((uint8_t)l)) return l;
   return -1;
@@ -365,7 +378,7 @@ bool argLong(const char *name, long lo, long hi, long &out) {
 }
 
 // GET /api/fx3d                                   - what is on, every look and scene
-// GET /api/fx3d?look=pop&mode=redblue&depth=2     - any page in 3D; look=flat turns it off
+// GET /api/fx3d?look=pop&mode=redblue&depth=2     - any page in 3D; look=flat (or off) turns it off
 // GET /api/fx3d?scene=cube&mode=mono              - a scene covers the screen; scene=off gives it back
 // GET /api/fx3d?scene=calib&page=3                - the calibration's six pages, 0..5
 // GET /api/fx3d?bench=1 (or 0)                    - measure everything now, or stop
@@ -434,7 +447,7 @@ void fx3dBegin() {
   server.on("/api/fx3d", HTTP_GET, handleApi);
   server.on("/fx3d", HTTP_GET, []() { server.send_P(200, "text/html; charset=utf-8", kFx3dPage); });
   Serial.printf("[fx3d] %d scenes, %d looks, %u B of frame buffers in PSRAM, internal free %u -> %u B\n",
-                kCatalogCount, LOOK_COUNT - 1, (unsigned)(kFrameBytes + sizeof(Encoder)), (unsigned)before,
+                kCatalogCount, LOOK_COUNT - 1, (unsigned)(kFrameBytes + sizeof(Encoder) + kW * 3), (unsigned)before,
                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
 #if defined(FX3D_BENCH)
   g_bench = BENCH_ARMED;

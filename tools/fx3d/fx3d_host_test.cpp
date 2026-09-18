@@ -674,6 +674,78 @@ static void continuity() {
   }
 }
 
+
+// ── the blit's runs, and the landscape's cached lattices ─────────────────────
+static void runs() {
+  Rng rng(21);
+  std::vector<uint8_t> row(kW * 3), back(kW * 3);
+  for (int trial = 0; trial < 2000; trial++) {
+    // Rows with long runs, short runs and single pixels.
+    for (int x = 0; x < kW;) {
+      const int n = 1 + (int)(rng.next() % (trial % 3 == 0 ? 40 : 4));
+      const uint8_t r = (uint8_t)(rng.next() % 3 * 100), g = (uint8_t)(rng.next() % 2 * 200), b = (uint8_t)(rng.next() % 2);
+      for (int k = 0; k < n && x < kW; k++, x++) {
+        row[3 * x] = r;
+        row[3 * x + 1] = g;
+        row[3 * x + 2] = b;
+      }
+    }
+    std::fill(back.begin(), back.end(), 7);
+    int next = 0;
+    bool tiles = true, maximal = true;
+    const uint8_t *prev = nullptr;
+    forEachRun(row.data(), [&](int x, int n, const uint8_t *c) {
+      tiles = tiles && x == next && n >= 1;
+      if (prev && prev[0] == c[0] && prev[1] == c[1] && prev[2] == c[2]) maximal = false;
+      for (int k = 0; k < n; k++)
+        for (int ch = 0; ch < 3; ch++) back[3 * (x + k) + ch] = c[ch];
+      next = x + n;
+      prev = c;
+    });
+    CHECK(tiles && next == kW);   // every pixel once, left to right
+    CHECK(maximal);               // no two neighbouring runs of one colour
+    CHECK(back == row);           // the runs give back the row exactly
+  }
+}
+
+// The old way: every corner hashed per texel. The cached lattices must give the
+// same landscape, bit for bit.
+static float oldNoise(int x, int y, uint32_t seed) {
+  float sum = 0.0f, amp = 0.5f, norm = 0.0f;
+  for (int o = 0; o < 6; o++) {
+    const int cell = 64 >> o, per = 256 / cell;
+    const int gx = x / cell, gy = y / cell;
+    const float fx = (float)(x % cell) / cell, fy = (float)(y % cell) / cell;
+    const float sx = fx * fx * (3.0f - 2.0f * fx), sy = fy * fy * (3.0f - 2.0f * fy);
+    const float a = (float)(hash3(gx % per, gy % per, seed + o) & 0xFFFF) / 65535.0f;
+    const float b = (float)(hash3((gx + 1) % per, gy % per, seed + o) & 0xFFFF) / 65535.0f;
+    const float c = (float)(hash3(gx % per, (gy + 1) % per, seed + o) & 0xFFFF) / 65535.0f;
+    const float d = (float)(hash3((gx + 1) % per, (gy + 1) % per, seed + o) & 0xFFFF) / 65535.0f;
+    sum += amp * mixf(mixf(a, b, sx), mixf(c, d, sx), sy);
+    norm += amp;
+    amp *= 0.5f;
+  }
+  return sum / norm;
+}
+static void landscape() {
+  const int idx = catalogFind("voxel");
+  std::vector<unsigned char> mem(kCatalog[idx].bytes);
+  VoxelScene *v = static_cast<VoxelScene *>(kCatalog[idx].make(mem.data()));
+  const uint32_t seed = 20260918u;
+  v->reset(seed);
+  bool same = true;
+  for (int y = 0; y < 256 && same; y++)
+    for (int x = 0; x < 256 && same; x++) {
+      float n = oldNoise(x, y, seed);
+      n = clampf((n - 0.28f) / 0.5f, 0.0f, 1.0f);
+      const float h = n * n * 150.0f + 12.0f;
+      const uint8_t want = (uint8_t)(h < 34.0f ? 34.0f : clampf(h, 0.0f, 255.0f));
+      same = v->mapHeight(x, y) == want;
+    }
+  CHECK(same);
+  v->~VoxelScene();
+}
+
 int main(int argc, char **argv) {
   projection();
   baselineBudget();
@@ -687,6 +759,8 @@ int main(int argc, char **argv) {
   scenes();
   looks();
   continuity();
+  runs();
+  landscape();
   std::printf("%d checks, %d failed\n", g_checks, g_fail);
   return g_fail ? 1 : 0;
 }
