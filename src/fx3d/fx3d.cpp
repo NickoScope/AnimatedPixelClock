@@ -14,6 +14,7 @@
 #include "../display/display.h"
 #include "../web/web.h"
 #include "fx3d_catalog.h"
+#include "fx3d_page.h"
 #include "fx3d_present.h"
 
 using namespace fx3d;
@@ -249,16 +250,24 @@ void report(const char *what) {
                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
 }
 
-#if defined(FX3D_BENCH)
-// Every scene in mono and then in red-blue, then every look the same way over
-// whatever page is up (the clock, after boot): kRunMs each, starting kWaitMs
-// after boot so the network has settled. One line per run, then "bench done".
+// The bench: every scene in mono and then in red-blue, then every look the
+// same way over whatever page is up, kRunMs each. One line per run, then
+// "bench done". The bench build starts it kWaitMs after boot, when the
+// network has settled; any build with the flag starts it from /api/fx3d?bench=1.
 const uint32_t kWaitMs = 20000, kRunMs = 5000;
 const int kSceneRuns = 2 * kCatalogCount, kLookRuns = 2 * (LOOK_COUNT - 1);
-bool g_benchDone = false;
-int g_benchRun = -1;
-uint32_t g_bootMs = 0, g_runStartMs = 0;
+enum BenchState : uint8_t { BENCH_IDLE, BENCH_ARMED, BENCH_RUNNING };
+BenchState g_bench = BENCH_IDLE;
+int g_benchRun = 0;
+uint32_t g_armedMs = 0, g_runStartMs = 0;
 char g_benchWhat[24];
+
+void benchEnd(const char *why) {
+  closeScene();
+  setLook(LOOK_FLAT);
+  g_bench = BENCH_IDLE;
+  Serial.printf("[fx3d] bench %s runs=%d\n", why, g_benchRun);
+}
 
 void benchStart(int run) {
   g_ctx.st.mode = (run % 2) ? MODE_RED_BLUE : MODE_MONO;
@@ -273,15 +282,12 @@ void benchStart(int run) {
     snprintf(g_benchWhat, sizeof g_benchWhat, "look:%s", lookName(look));
   }
   if (!ok) {
-    Serial.printf("[fx3d] bench stopped: no PSRAM for %s\n", g_benchWhat);
-    closeScene();
-    setLook(LOOK_FLAT);
-    g_benchDone = true;
+    Serial.printf("[fx3d] no PSRAM for %s\n", g_benchWhat);
+    benchEnd("stopped");
     return;
   }
   g_runStartMs = millis();
 }
-#endif
 
 void sendError(const char *what) {
   char buf[128];
@@ -293,9 +299,12 @@ void sendState() {
   char buf[768];
   const unsigned depth100 = (unsigned)(g_ctx.st.depthPx * 100.0f + 0.5f);
   int n = snprintf(buf, sizeof buf,
-                   "{\"scene\":\"%s\",\"look\":\"%s\",\"mode\":\"%s\",\"depthPx\":%u.%02u,\"swap\":%s,\"gainL\":%u,"
-                   "\"gainR\":%u,\"frameUs\":%u,\"blitUs\":%u,\"fps\":%u.%u,\"openUs\":%u,\"looks\":[",
-                   g_sceneIdx >= 0 ? kCatalog[g_sceneIdx].id : "", lookName(g_look), modeName(g_ctx.st.mode),
+                   "{\"scene\":\"%s\",\"page\":%d,\"bench\":%s,\"look\":\"%s\",\"mode\":\"%s\",\"depthPx\":%u.%02u,"
+                   "\"swap\":%s,\"gainL\":%u,\"gainR\":%u,\"frameUs\":%u,\"blitUs\":%u,\"fps\":%u.%u,\"openUs\":%u,"
+                   "\"looks\":[",
+                   g_sceneIdx >= 0 ? kCatalog[g_sceneIdx].id : "",
+                   (g_sceneIdx >= 0 && !strcmp(kCatalog[g_sceneIdx].id, "calib")) ? static_cast<CalibScene *>(g_scene)->page : -1,
+                   g_bench != BENCH_IDLE ? "true" : "false", lookName(g_look), modeName(g_ctx.st.mode),
                    depth100 / 100, depth100 % 100, g_ctx.st.swapEyes ? "true" : "false",
                    (unsigned)(g_ctx.st.gainL * 100.0f + 0.5f), (unsigned)(g_ctx.st.gainR * 100.0f + 0.5f),
                    (unsigned)(g_run.frames ? g_run.renderSum / g_run.frames : 0),
@@ -318,9 +327,29 @@ void sendState() {
 // GET /api/fx3d?look=pop&mode=redblue&depth=2     - any page in 3D; look=flat turns it off
 // GET /api/fx3d?scene=cube&mode=mono              - a scene covers the screen; scene=off gives it back
 // GET /api/fx3d?scene=calib&page=3                - the calibration's six pages, 0..5
+// GET /api/fx3d?bench=1 (or 0)                    - measure everything now, or stop
 // Also swap=0|1, gl= and gr= 0..100 (the eyes' gains, %). Every argument is
 // checked before anything changes: a bad request changes nothing.
 void handleApi() {
+  if (server.hasArg("bench")) {
+    const String b = server.arg("bench");
+    if (b != "0" && b != "1") return sendError("bench: 0 or 1");
+    if (!g_block) return sendError("no PSRAM: 3D is off");
+    if (b == "1" && g_bench == BENCH_IDLE) {
+      g_bench = BENCH_RUNNING;
+      g_benchRun = 0;
+      Serial.printf("[fx3d] bench started: %d runs of %u ms (scenes, then looks); ends with \"[fx3d] bench done\"\n",
+                    kSceneRuns + kLookRuns, (unsigned)kRunMs);
+      benchStart(0);
+    } else if (b == "0" && g_bench != BENCH_IDLE) {
+      benchEnd("stopped");
+    }
+    return sendState();
+  }
+  if (g_bench != BENCH_IDLE && server.args() > 0) {
+    server.send(409, "application/json", "{\"error\":\"the bench is running; bench=0 stops it\"}");
+    return;
+  }
   int idx = -2;   // -2 not asked, -1 off
   if (server.hasArg("scene")) {
     const String s = server.arg("scene");
@@ -349,12 +378,6 @@ void handleApi() {
   if (server.hasArg("gr") && ((gr = server.arg("gr").toInt()) < 0 || gr > 100)) return sendError("gr: 0 to 100");
   if (server.hasArg("page") && ((page = server.arg("page").toInt()) < 0 || page >= CalibScene::kPages))
     return sendError("page: 0 to 5");
-#if defined(FX3D_BENCH)
-  if (server.args() > 0) {
-    server.send(409, "application/json", "{\"error\":\"the bench owns the screen in this build\"}");
-    return;
-  }
-#endif
   if (!g_block) return sendError("no PSRAM: 3D is off");
   if (mode >= 0) g_ctx.st.mode = (uint8_t)mode;
   if (depth >= 0.0f) g_ctx.st.depthPx = depth;
@@ -381,11 +404,13 @@ void fx3dBegin() {
     return;
   }
   server.on("/api/fx3d", HTTP_GET, handleApi);
+  server.on("/fx3d", HTTP_GET, []() { server.send_P(200, "text/html; charset=utf-8", kFx3dPage); });
   Serial.printf("[fx3d] %d scenes, %d looks, %u B of frame buffers in PSRAM, internal free %u -> %u B\n",
                 kCatalogCount, LOOK_COUNT - 1, (unsigned)(kFrameBytes + sizeof(Encoder)), (unsigned)before,
                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
 #if defined(FX3D_BENCH)
-  g_bootMs = millis();
+  g_bench = BENCH_ARMED;
+  g_armedMs = millis();
   Serial.printf("[fx3d] bench armed: %d runs of %u ms (scenes, then looks), starting in %u ms; "
                 "ends with \"[fx3d] bench done\"\n",
                 kSceneRuns + kLookRuns, (unsigned)kRunMs, (unsigned)kWaitMs);
@@ -393,10 +418,10 @@ void fx3dBegin() {
 }
 
 void fx3dLoop() {
-#if defined(FX3D_BENCH)
-  if (g_benchDone || !g_block) return;
-  if (g_benchRun < 0) {
-    if (millis() - g_bootMs < kWaitMs) return;
+  if (g_bench == BENCH_IDLE || !g_block) return;
+  if (g_bench == BENCH_ARMED) {
+    if (millis() - g_armedMs < kWaitMs) return;
+    g_bench = BENCH_RUNNING;
     g_benchRun = 0;
     benchStart(0);
     return;
@@ -404,14 +429,10 @@ void fx3dLoop() {
   if (millis() - g_runStartMs < kRunMs) return;
   report(g_benchWhat);
   if (++g_benchRun >= kSceneRuns + kLookRuns) {
-    closeScene();
-    setLook(LOOK_FLAT);
-    g_benchDone = true;
-    Serial.printf("[fx3d] bench done runs=%d\n", kSceneRuns + kLookRuns);
+    benchEnd("done");
     return;
   }
   benchStart(g_benchRun);
-#endif
 }
 
 bool fx3dOwnsScreen() { return g_scene != nullptr; }
@@ -438,13 +459,10 @@ void fx3dRender() {
 
 void fx3dStop() {
   if (!g_scene) return;
-#if defined(FX3D_BENCH)
-  if (!g_benchDone) {
-    Serial.println("[fx3d] bench stopped by the knob");
-    g_benchDone = true;
-    setLook(LOOK_FLAT);
+  if (g_bench == BENCH_RUNNING) {
+    benchEnd("stopped by the knob");
+    return;
   }
-#endif
   closeScene();
 }
 

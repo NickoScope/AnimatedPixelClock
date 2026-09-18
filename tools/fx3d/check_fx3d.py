@@ -21,6 +21,7 @@ double in software, so no float may silently become one.
 """
 import glob
 import pathlib
+import re
 import subprocess
 import sys
 import tempfile
@@ -35,6 +36,34 @@ def library_table():
     return hits[0] if hits else "-"
 
 
+JSC = pathlib.Path("/System/Library/Frameworks/JavaScriptCore.framework/Versions/Current/Helpers/jsc")
+
+
+def page_script(tmp):
+    """The /fx3d page's script must parse: JavaScriptCore's checkSyntax, which
+    reads without running. A broken snippet is checked first, so a checker that
+    accepts everything cannot pass."""
+    if not JSC.exists():
+        print("page script NOT checked: no JavaScriptCore here")
+        return True
+    src = (ROOT / "src/fx3d/fx3d_page.h").read_text()
+    page = re.search(r'R"FX3D\((.*)\)FX3D"', src, re.S).group(1)
+    js = re.search(r"<script>(.*)</script>", page, re.S).group(1)
+    (tmp / "bad.js").write_text("const a = {;\n")
+    (tmp / "page.js").write_text(js)
+    def parses(f):
+        r = subprocess.run([str(JSC), "-e", f"try {{ checkSyntax('{f}'); print('ok'); }} catch (e) {{ print(e); }}"],
+                           capture_output=True, text=True)
+        return r.stdout.strip() == "ok", r.stdout.strip()
+    bad, _ = parses(tmp / "bad.js")
+    good, why = parses(tmp / "page.js")
+    if bad or not good:
+        print(f"page script: FAIL ({'the checker accepts anything' if bad else why})")
+        return False
+    print(f"page script parses ({len(page.encode())} B page)")
+    return True
+
+
 def main():
     ok = True
     with tempfile.TemporaryDirectory() as tmp:
@@ -46,6 +75,7 @@ def main():
         subprocess.run(["c++", "-std=c++11", "-fsyntax-only", "-Wall", "-Wextra", "-Werror", "-Wshadow",
                         "-Wdouble-promotion", *INC, str(probe)], check=True)
         print("float only: no double promotion in src/fx3d")
+        ok = page_script(tmp) and ok
         lib = library_table()
         for std in ("c++11", "c++17"):
             exe = tmp / f"fx3d_host_test_{std}"
