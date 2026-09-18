@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "fx3d_catalog.h"
+#include "synth_sound.h"
 
 using namespace fx3d;
 
@@ -61,7 +62,7 @@ int main(int argc, char **argv) {
   std::fwrite(hdr, 1, sizeof hdr, f);
 
   // The previews' clock: an invented time, running in step with the frames.
-  Wall w;
+  Env w;
   w.valid = true;
   float clock = 10 * 3600.0f + 8 * 60.0f + 30.0f;
   const Encoder enc;
@@ -76,6 +77,7 @@ int main(int argc, char **argv) {
     w.sub = clock - (float)secs;
     w.yday = 260;
     w.utcHours = std::fmod(clock / 3600.0f, 24.0f);
+    synthSound((float)n / fps, w);
     auto t0 = std::chrono::steady_clock::now();
     renderFrame(*s, c, n == 0 ? 0.0f : dt, w);
     for (int i = 0; i < kPixels * 3; i++) codes[i] = enc.code[rgb[i]];

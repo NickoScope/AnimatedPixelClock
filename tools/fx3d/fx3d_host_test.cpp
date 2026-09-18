@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "fx3d_catalog.h"
+#include "synth_sound.h"
 
 using namespace fx3d;
 
@@ -425,7 +426,7 @@ static void scenes() {
       Scene *s2 = e.make(mem2.data());
       s1->reset(42);
       s2->reset(42);
-      Wall w;
+      Env w;
       w.valid = true;
       w.hour = 23;
       w.minute = 59;
@@ -434,6 +435,7 @@ static void scenes() {
       bool light = false, noGreen = true, inRange = true;
       float zn = 0, zf = 0;
       for (int f = 0; f < 90; f++) {
+        synthSound((float)f / 30.0f, w);
         c1.stats.clear();
         renderFrame(*s1, c1, 1.0f / 30.0f, w);
         renderFrame(*s2, c2, 1.0f / 30.0f, w);

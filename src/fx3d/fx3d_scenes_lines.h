@@ -49,7 +49,7 @@ class CalibScene : public Scene {
     zf = 5.0f;
   }
   void reset(uint32_t) { t_ = 0.0f; }
-  void step(float dt, const Wall &) {
+  void step(float dt, const Env &) {
     t_ += dt;
     if (autoAdvance && t_ >= 3.0f) {
       t_ = 0.0f;
@@ -140,7 +140,7 @@ class CubeScene : public Scene {
     yaw_ = 0.6f;
     pitch_ = 0.45f;
   }
-  void step(float dt, const Wall &) {
+  void step(float dt, const Env &) {
     yaw_ = wrapAngle(yaw_ + 0.42f * dt);
     pitch_ = wrapAngle(pitch_ + 0.27f * dt);
   }
@@ -190,7 +190,7 @@ class LayersScene : public Scene {
     zf = kFar;
   }
   void reset(uint32_t) { t_ = 0.0f; }
-  void step(float dt, const Wall &) { t_ = fmodf(t_ + dt, 60.0f); }
+  void step(float dt, const Env &) { t_ = fmodf(t_ + dt, 60.0f); }
   void draw(Ctx &c) {
     const float z0 = c.view.z0;
     use(c, kBlueGrey);   // the panel's plane: a frame just inside the edges
@@ -257,7 +257,7 @@ class StarsScene : public Scene {
       s_[i].z = rng_.range(kZMin, kZMax);
     }
   }
-  void step(float dt, const Wall &) {
+  void step(float dt, const Env &) {
     for (int i = 0; i < kCount; i++) {
       s_[i].z -= kSpeed * dt;
       if (s_[i].z < kZMin) spawn(s_[i]);
@@ -313,7 +313,7 @@ class HelixScene : public Scene {
     zf = kZ + kR;
   }
   void reset(uint32_t) { phase_ = 0.0f; }
-  void step(float dt, const Wall &) { phase_ = wrapAngle(phase_ + 0.9f * dt); }
+  void step(float dt, const Env &) { phase_ = wrapAngle(phase_ + 0.9f * dt); }
   void draw(Ctx &c) {
     const int n = 72;
     V3 pa = at(0, 0.0f), pb = at(0, kPi);
@@ -364,7 +364,7 @@ class RingsScene : public Scene {
     zf = kZMin + kRings * kGap;
   }
   void reset(uint32_t) { travel_ = 0.0f; }
-  void step(float dt, const Wall &) { travel_ = fmodf(travel_ + kSpeed * dt, 1000.0f * kGap); }
+  void step(float dt, const Env &) { travel_ = fmodf(travel_ + kSpeed * dt, 1000.0f * kGap); }
   void draw(Ctx &c) {
     const float off = fmodf(travel_, kGap);
     const int first = (int)(travel_ / kGap);
@@ -373,7 +373,7 @@ class RingsScene : public Scene {
       if (z > kZMin + kRings * kGap) z -= kRings * kGap;
       const int id = first + i;
       const float along = travel_ + z;
-      V3 ctr = v3(0.9f * sinf(along * 0.23f), 0.45f * sinf(along * 0.31f + 1.0f), z);
+      V3 ctr = v3(0.45f * sinf(along * 0.23f), 0.3f * sinf(along * 0.31f + 1.0f), z);
       float fade = clampf((kZMin + kRings * kGap - z) / (1.5f * kGap), 0.0f, 1.0f);
       float v = fade * mixf(1.0f, 0.35f, (z - kZMin) / (kRings * kGap));
       const Col &k = (id % 3 == 0) ? kMagenta : ((id % 3 == 1) ? kCyan : kAmber);
@@ -411,7 +411,7 @@ class DialScene : public Scene {
     zf = kZDigits;
   }
   void reset(uint32_t) {}
-  void step(float, const Wall &w) {
+  void step(float, const Env &w) {
     if (!w.valid) return;
     sec_ = (float)w.second + w.sub;
     min_ = (float)w.minute + sec_ / 60.0f;

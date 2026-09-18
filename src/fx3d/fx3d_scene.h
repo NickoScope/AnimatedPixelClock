@@ -18,14 +18,22 @@ struct Frame {
 };
 const size_t kFrameBytes = (size_t)kPixels * 3 + 2 * (size_t)kPixels + sizeof(float) * (size_t)kPixels;
 
-// Wall-clock time for the scenes that show it. valid is false before NTP.
-struct Wall {
+// What the panel tells a scene each frame: the wall clock for the scenes that
+// show it (valid is false before NTP), and the audio visualizer's latest
+// frame for the ones that move to music (sound is false when none is coming).
+const int kBands = 32;   // VIZ_BANDS, src/viz/wow/viz_frame.h
+struct Env {
   bool valid;
   int hour, minute, second;  // local
   float sub;                 // fraction of the current second
   int yday;                  // 0-based day of the year, UTC
   float utcHours;            // UTC time of day, 0..24
-  Wall() : valid(false), hour(0), minute(0), second(0), sub(0.0f), yday(0), utcHours(0.0f) {}
+  bool sound;
+  float band[kBands];        // 0..1, bass first
+  float beat;                // 0..1 on a beat frame, else 0
+  Env() : valid(false), hour(0), minute(0), second(0), sub(0.0f), yday(0), utcHours(0.0f), sound(false), beat(0.0f) {
+    for (int i = 0; i < kBands; i++) band[i] = 0.0f;
+  }
 };
 
 // Seven segments on a 4 x 6 grid (y down), plus the few letters the
@@ -168,7 +176,7 @@ class Ctx {
   }
 
   // Opaque triangle with a depth test, camera space, clipped at nearZ.
-  // Shades are 0..1 and scale the current colour.
+  // Shades 0..1 scale the current colour; 1..2 lead it on to white.
   void tri(V3 a, V3 b, V3 c, float sa, float sb, float sc, bool cullBack) {
     V3 in[3] = {a, b, c};
     float sh[3] = {sa, sb, sc};
@@ -256,19 +264,22 @@ class Ctx {
     PlotRgb p = {fb.rgb, 255.0f * cr_, 255.0f * cg_, 255.0f * cb_};
     return p;
   }
+  // A shade 0..1 scales the colour; 1..2 carries it on towards white, which
+  // is how a specular highlight stays white on a coloured surface.
+  static float toward(float c, float s) { return s <= 1.0f ? c * s : c + (255.0f - c) * (s - 1.0f); }
   struct FragGray {
     uint8_t *px;
     float k;
-    void operator()(int i, float s) const { px[i] = (uint8_t)(clampf(s, 0.0f, 1.0f) * k + 0.5f); }
+    void operator()(int i, float s) const { px[i] = (uint8_t)(toward(k, clampf(s, 0.0f, 2.0f)) + 0.5f); }
   };
   struct FragRgb {
     uint8_t *px;
     float r, g, b;
     void operator()(int i, float s) const {
-      float t = clampf(s, 0.0f, 1.0f);
-      px[3 * i + 0] = (uint8_t)(t * r + 0.5f);
-      px[3 * i + 1] = (uint8_t)(t * g + 0.5f);
-      px[3 * i + 2] = (uint8_t)(t * b + 0.5f);
+      float t = clampf(s, 0.0f, 2.0f);
+      px[3 * i + 0] = (uint8_t)(toward(r, t) + 0.5f);
+      px[3 * i + 1] = (uint8_t)(toward(g, t) + 0.5f);
+      px[3 * i + 2] = (uint8_t)(toward(b, t) + 0.5f);
     }
   };
 };
@@ -283,7 +294,7 @@ class Scene {
   // disparity of both inside Stereo::depthPx.
   virtual void depthRange(float &zNear, float &zFar) const = 0;
   virtual void reset(uint32_t seed) = 0;
-  virtual void step(float dt, const Wall &w) = 0;
+  virtual void step(float dt, const Env &w) = 0;
   virtual void draw(Ctx &c) = 0;
   // True when draw() writes every pixel, so the frame need not clear first.
   virtual bool fills() const { return false; }
@@ -294,7 +305,7 @@ class Scene {
 
 // One frame: the scene is stepped once, drawn once in mono or once per eye in
 // stereo, and the result left in c.fb.rgb as linear light.
-inline void renderFrame(Scene &s, Ctx &c, float dt, const Wall &w) {
+inline void renderFrame(Scene &s, Ctx &c, float dt, const Env &w) {
   s.step(dt, w);
   s.setup(c.view);
   float zn = 1.0f, zf = 1.0f;

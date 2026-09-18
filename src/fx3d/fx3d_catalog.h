@@ -5,7 +5,7 @@
 
 #include <new>
 
-#include "fx3d_scenes_lines.h"
+#include "fx3d_scenes_music.h"
 
 namespace fx3d {
 
@@ -30,6 +30,13 @@ static const CatalogEntry kCatalog[] = {
     {"helix", "3D HELIX", sizeof(HelixScene), &makeScene<HelixScene>, MODE_RED_BLUE},
     {"rings", "3D RINGS", sizeof(RingsScene), &makeScene<RingsScene>, MODE_RED_BLUE},
     {"dial", "3D DIAL", sizeof(DialScene), &makeScene<DialScene>, MODE_RED_BLUE},
+    {"torus", "3D TORUS", sizeof(TorusScene), &makeScene<TorusScene>, MODE_MONO},
+    {"vclock", "3D VOXEL CLOCK", sizeof(VoxelClockScene), &makeScene<VoxelClockScene>, MODE_MONO},
+    {"voxel", "3D FLY", sizeof(VoxelScene), &makeScene<VoxelScene>, MODE_MONO},
+    {"tunnel", "3D TUNNEL", sizeof(TunnelScene), &makeScene<TunnelScene>, MODE_MONO},
+    {"blobs", "3D BLOBS", sizeof(BlobsScene), &makeScene<BlobsScene>, MODE_MONO},
+    {"globe", "3D GLOBE", sizeof(GlobeScene), &makeScene<GlobeScene>, MODE_MONO},
+    {"terrain", "3D SOUND HILLS", sizeof(TerrainScene), &makeScene<TerrainScene>, MODE_MONO},
 };
 const int kCatalogCount = (int)(sizeof(kCatalog) / sizeof(kCatalog[0]));
 
