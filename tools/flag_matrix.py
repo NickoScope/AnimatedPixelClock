@@ -26,6 +26,7 @@ COMMON = ("-DBOARD_HAS_PSRAM -DBOARD_WAVESHARE_RGB_MATRIX "
 # #error: a build that succeeds there would mean the guard is not doing its job.
 COMBOS = [
     ("nothing enabled",        "", True),
+    ("fx3d only",                  "-DFX3D_ENABLED", True),
     ("bus only",               "-DMQTT_BUS_ENABLED", True),
     ("bus + cards",            "-DMQTT_BUS_ENABLED -DCARDS_ENABLED", True),
     ("bus + cards + encoder",  "-DCONTROL_ENCODER_ENABLED -DMQTT_BUS_ENABLED -DCARDS_ENABLED", True),
