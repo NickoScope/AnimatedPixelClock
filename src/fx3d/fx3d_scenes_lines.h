@@ -36,7 +36,7 @@ class CalibScene : public Scene {
  public:
   static const int kPages = 6;
   int page;
-  bool autoAdvance;   // the previews walk the pages; the panel steps them by knob
+  bool autoAdvance;   // the previews walk the pages; on the panel /fx3d picks them
   CalibScene() : page(0), autoAdvance(false), t_(0.0f) {}
   const char *id() const { return "calib"; }
   void setup(View &v) const {
@@ -352,7 +352,7 @@ class HelixScene : public Scene {
 class RingsScene : public Scene {
  public:
   static const int kRings = 8;
-  RingsScene() : travel_(0.0f) {}
+  RingsScene() : travel_(0.0f), wobX_(0.0f), wobY_(0.0f) {}
   const char *id() const { return "rings"; }
   void setup(View &v) const {
     v.f = 80.0f;
@@ -363,8 +363,14 @@ class RingsScene : public Scene {
     zn = kZMin;
     zf = kZMin + kRings * kGap;
   }
-  void reset(uint32_t) { travel_ = 0.0f; }
-  void step(float dt, const Env &) { travel_ = fmodf(travel_ + kSpeed * dt, 1000.0f * kGap); }
+  void reset(uint32_t) { travel_ = wobX_ = wobY_ = 0.0f; }
+  // Travel wraps after 999 rings, a multiple of the three colours; the tube's
+  // wobble keeps phases of its own. Nothing jumps, however long it runs.
+  void step(float dt, const Env &) {
+    travel_ = fmodf(travel_ + kSpeed * dt, 999.0f * kGap);
+    wobX_ = wrapAngle(wobX_ + 0.23f * kSpeed * dt);
+    wobY_ = wrapAngle(wobY_ + 0.31f * kSpeed * dt);
+  }
   void draw(Ctx &c) {
     const float off = fmodf(travel_, kGap);
     const int first = (int)(travel_ / kGap);
@@ -372,8 +378,7 @@ class RingsScene : public Scene {
       float z = kZMin + i * kGap + (kGap - off);
       if (z > kZMin + kRings * kGap) z -= kRings * kGap;
       const int id = first + i;
-      const float along = travel_ + z;
-      V3 ctr = v3(0.45f * sinf(along * 0.23f), 0.3f * sinf(along * 0.31f + 1.0f), z);
+      V3 ctr = v3(0.45f * sinf(wobX_ + 0.23f * z), 0.3f * sinf(wobY_ + 0.31f * z + 1.0f), z);
       float fade = clampf((kZMin + kRings * kGap - z) / (1.5f * kGap), 0.0f, 1.0f);
       float v = fade * mixf(1.0f, 0.35f, (z - kZMin) / (kRings * kGap));
       const Col &k = (id % 3 == 0) ? kMagenta : ((id % 3 == 1) ? kCyan : kAmber);
@@ -390,7 +395,7 @@ class RingsScene : public Scene {
 
  private:
   static constexpr float kZMin = 3.2f, kGap = 1.4f, kR = 1.05f, kSpeed = 1.6f;
-  float travel_;
+  float travel_, wobX_, wobY_;
 };
 
 // ------------------------------------------------------------------ dial ----

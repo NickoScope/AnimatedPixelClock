@@ -19,6 +19,9 @@
 
 using namespace fx3d;
 
+static_assert(HUB75_PANEL_W * HUB75_CHAIN == kW && HUB75_PANEL_H == kH,
+              "fx3d draws 128 x 64: the capture and the model must match the panel's chain");
+
 namespace {
 
 // Everything sizeable is in PSRAM: the frame (colour, two eye planes, depth)
@@ -190,6 +193,7 @@ void closeScene() {
     g_sceneMem = nullptr;
   }
   g_sceneIdx = -1;
+  resetRun();
   updateCapture();
 }
 
@@ -240,14 +244,14 @@ void report(const char *what) {
   const uint32_t n = g_run.frames ? g_run.frames : 1;
   const uint32_t fps = fpsX10();
   Serial.printf("[fx3d] scene=%s mode=%s frames=%u open_us=%u frame_us=%u frame_us_max=%u blit_us=%u blit_us_max=%u "
-                "fps=%u.%u heap_internal=%u heap_internal_min=%u largest_block=%u psram_free=%u\n",
+                "fps=%u.%u heap_internal=%u heap_internal_min=%u largest_block=%u psram_free=%u stack_free=%u\n",
                 what, modeName(g_ctx.st.mode), (unsigned)g_run.frames, (unsigned)g_run.openUs,
                 (unsigned)(g_run.renderSum / n), (unsigned)g_run.renderMax, (unsigned)(g_run.blitSum / n),
                 (unsigned)g_run.blitMax, (unsigned)(fps / 10), (unsigned)(fps % 10),
                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
                 (unsigned)(g_run.heapMin == UINT32_MAX ? 0 : g_run.heapMin),
                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
-                (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+                (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM), (unsigned)uxTaskGetStackHighWaterMark(nullptr));
 }
 
 // The bench: every scene in mono and then in red-blue, then every look the
@@ -261,11 +265,27 @@ BenchState g_bench = BENCH_IDLE;
 int g_benchRun = 0;
 uint32_t g_armedMs = 0, g_runStartMs = 0;
 char g_benchWhat[24];
+Stereo g_savedProfile;          // the owner's, while the bench borrows the frame
+uint8_t g_savedLook = LOOK_FLAT;
+
+void benchStart(int run);
+
+void benchBegin() {
+  g_savedProfile = g_ctx.st;
+  g_savedLook = g_look;
+  g_bench = BENCH_RUNNING;
+  g_benchRun = 0;
+  Serial.printf("[fx3d] bench started: %d runs of %u ms (scenes, then looks); ends with \"[fx3d] bench done\"\n",
+                kSceneRuns + kLookRuns, (unsigned)kRunMs);
+  benchStart(0);
+}
 
 void benchEnd(const char *why) {
   closeScene();
   setLook(LOOK_FLAT);
   g_bench = BENCH_IDLE;
+  g_ctx.st = g_savedProfile;
+  if (g_savedLook != LOOK_FLAT) setLook(g_savedLook);
   Serial.printf("[fx3d] bench %s runs=%d\n", why, g_benchRun);
 }
 
@@ -323,38 +343,53 @@ void sendState() {
   server.send(200, "application/json", buf);
 }
 
+// Strict numbers: the whole argument must be the number, inside the range.
+// toFloat() and toInt() read "abc" as 0, which would black out an eye.
+bool argFloat(const char *name, float lo, float hi, float &out) {
+  const String a = server.arg(name);
+  char *end = nullptr;
+  const float v = strtof(a.c_str(), &end);
+  if (!a.length() || end == a.c_str() || *end || !(v >= lo && v <= hi)) return false;
+  out = v;
+  return true;
+}
+bool argLong(const char *name, long lo, long hi, long &out) {
+  const String a = server.arg(name);
+  char *end = nullptr;
+  const long v = strtol(a.c_str(), &end, 10);
+  if (!a.length() || end == a.c_str() || *end || v < lo || v > hi) return false;
+  out = v;
+  return true;
+}
+
 // GET /api/fx3d                                   - what is on, every look and scene
 // GET /api/fx3d?look=pop&mode=redblue&depth=2     - any page in 3D; look=flat turns it off
 // GET /api/fx3d?scene=cube&mode=mono              - a scene covers the screen; scene=off gives it back
 // GET /api/fx3d?scene=calib&page=3                - the calibration's six pages, 0..5
 // GET /api/fx3d?bench=1 (or 0)                    - measure everything now, or stop
 // Also swap=0|1, gl= and gr= 0..100 (the eyes' gains, %). Every argument is
-// checked before anything changes: a bad request changes nothing.
+// checked before anything changes: a bad request changes nothing. A request
+// PSRAM cannot serve may already have closed the scene it replaces.
 void handleApi() {
   if (server.hasArg("bench")) {
     const String b = server.arg("bench");
     if (b != "0" && b != "1") return sendError("bench: 0 or 1");
     if (!g_block) return sendError("no PSRAM: 3D is off");
-    if (b == "1" && g_bench == BENCH_IDLE) {
-      g_bench = BENCH_RUNNING;
-      g_benchRun = 0;
-      Serial.printf("[fx3d] bench started: %d runs of %u ms (scenes, then looks); ends with \"[fx3d] bench done\"\n",
-                    kSceneRuns + kLookRuns, (unsigned)kRunMs);
-      benchStart(0);
-    } else if (b == "0" && g_bench != BENCH_IDLE) {
-      benchEnd("stopped");
-    }
+    if (b == "1" && g_bench != BENCH_RUNNING) benchBegin();   // armed or idle: now
+    else if (b == "0" && g_bench == BENCH_RUNNING) benchEnd("stopped");
+    else if (b == "0") g_bench = BENCH_IDLE;                  // disarm
     return sendState();
   }
-  if (g_bench != BENCH_IDLE && server.args() > 0) {
+  if (g_bench == BENCH_RUNNING && server.args() > 0) {
     server.send(409, "application/json", "{\"error\":\"the bench is running; bench=0 stops it\"}");
     return;
   }
+  // Every argument is read and checked first.
   int idx = -2;   // -2 not asked, -1 off
   if (server.hasArg("scene")) {
-    const String s = server.arg("scene");
-    idx = s == "off" ? -1 : catalogFind(s.c_str());
-    if (idx < 0 && s != "off") return sendError("no such scene");
+    const String sc = server.arg("scene");
+    idx = sc == "off" ? -1 : catalogFind(sc.c_str());
+    if (idx < 0 && sc != "off") return sendError("no such scene");
   }
   int look = -1;
   if (server.hasArg("look") && (look = lookByName(server.arg("look"))) < 0) return sendError("no such look");
@@ -362,34 +397,24 @@ void handleApi() {
   if (server.hasArg("mode") && (mode = modeByName(server.arg("mode"))) < 0)
     return sendError("mode: mono, redblue, redcyan or redgreen");
   float depth = -1.0f;
-  if (server.hasArg("depth")) {
-    depth = server.arg("depth").toFloat();
-    // A guard on the input, not a comfort limit: the brief starts at 1-2 px.
-    if (!(depth >= 0.0f && depth <= 16.0f)) return sendError("depth: 0 to 16 pixels");
-  }
-  int swap = -1;
-  if (server.hasArg("swap")) {
-    const String s = server.arg("swap");
-    if (s != "0" && s != "1") return sendError("swap: 0 or 1");
-    swap = s == "1";
-  }
-  long gl = -1, gr = -1, page = -1;
-  if (server.hasArg("gl") && ((gl = server.arg("gl").toInt()) < 0 || gl > 100)) return sendError("gl: 0 to 100");
-  if (server.hasArg("gr") && ((gr = server.arg("gr").toInt()) < 0 || gr > 100)) return sendError("gr: 0 to 100");
-  if (server.hasArg("page") && ((page = server.arg("page").toInt()) < 0 || page >= CalibScene::kPages))
-    return sendError("page: 0 to 5");
+  // A guard on the input, not a comfort limit: the brief starts at 1-2 px.
+  if (server.hasArg("depth") && !argFloat("depth", 0.0f, 16.0f, depth)) return sendError("depth: 0 to 16 pixels");
+  long swap = -1, gl = -1, gr = -1, page = -1;
+  if (server.hasArg("swap") && !argLong("swap", 0, 1, swap)) return sendError("swap: 0 or 1");
+  if (server.hasArg("gl") && !argLong("gl", 0, 100, gl)) return sendError("gl: 0 to 100");
+  if (server.hasArg("gr") && !argLong("gr", 0, 100, gr)) return sendError("gr: 0 to 100");
+  if (server.hasArg("page") && !argLong("page", 0, CalibScene::kPages - 1, page)) return sendError("page: 0 to 5");
   if (!g_block) return sendError("no PSRAM: 3D is off");
+  // Then what can fail for memory; the profile changes only once it has not.
+  // One mode for everything the owner looks at: a scene does not bring its own.
+  if (idx == -1) closeScene();
+  if (idx >= 0 && idx != g_sceneIdx && !openScene(idx)) return sendError("no PSRAM for the scene");
+  if (look >= 0 && !setLook((uint8_t)look)) return sendError("no PSRAM for the look");
   if (mode >= 0) g_ctx.st.mode = (uint8_t)mode;
   if (depth >= 0.0f) g_ctx.st.depthPx = depth;
   if (swap >= 0) g_ctx.st.swapEyes = swap != 0;
   if (gl >= 0) g_ctx.st.gainL = (float)gl / 100.0f;
   if (gr >= 0) g_ctx.st.gainR = (float)gr / 100.0f;
-  if (idx == -1) closeScene();
-  if (idx >= 0 && idx != g_sceneIdx) {
-    if (mode < 0) g_ctx.st.mode = kCatalog[idx].mode;
-    if (!openScene(idx)) return sendError("no PSRAM for the scene");
-  }
-  if (look >= 0 && !setLook((uint8_t)look)) return sendError("no PSRAM for the look");
   if (page >= 0 && g_sceneIdx >= 0 && !strcmp(kCatalog[g_sceneIdx].id, "calib"))
     static_cast<CalibScene *>(g_scene)->page = (int)page;
   sendState();
@@ -421,9 +446,7 @@ void fx3dLoop() {
   if (g_bench == BENCH_IDLE || !g_block) return;
   if (g_bench == BENCH_ARMED) {
     if (millis() - g_armedMs < kWaitMs) return;
-    g_bench = BENCH_RUNNING;
-    g_benchRun = 0;
-    benchStart(0);
+    benchBegin();
     return;
   }
   if (millis() - g_runStartMs < kRunMs) return;
@@ -439,10 +462,13 @@ bool fx3dOwnsScreen() { return g_scene != nullptr; }
 
 int fx3dRefreshHz(int pageHz) {
   if (g_scene) return kSceneHz;
-  // The looks that move need frames of their own; the ones for the glasses
-  // only follow the page.
+  if (!display.capturing()) return pageHz;
+  // A look renders and blits the whole frame at every flip, so it caps the
+  // rate at 30 Hz even on a page that wants 60. The looks that move need
+  // frames of their own; the ones for the glasses only follow the page.
   const bool moving = g_look == LOOK_WIGGLE || g_look == LOOK_CARD || g_look == LOOK_RELIEF || g_look == LOOK_DRUM;
-  return (moving && pageHz < kSceneHz) ? kSceneHz : pageHz;
+  const int hz = (moving && pageHz < kSceneHz) ? kSceneHz : pageHz;
+  return hz > kSceneHz ? kSceneHz : hz;
 }
 
 void fx3dRender() {

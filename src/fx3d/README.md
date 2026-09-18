@@ -39,9 +39,15 @@ tests them on the Mac, and `tools/fx3d/render.py` and `looks.py` render the prev
   `Fx3dDisplay` catches the page's drawing calls in a PSRAM copy of the frame, and at
   `display()` the look puts its 3D picture on the panel. The looks that move raise the
   render tick to at least 30 Hz. While a scene shows, the look waits.
-- `/api/fx3d` also takes `mode=mono|redblue|redcyan|redgreen`, `depth` (pixels of the
-  largest disparity, 0-16, starting at 2), `swap=0|1`, `gl`/`gr` (the eyes' gains, %) and,
-  for `calib`, `page=0..5`. Every argument is checked before anything changes.
+- `/api/fx3d` also takes `mode=mono|redblue|redcyan|redgreen` (one mode for everything
+  shown), `depth` (pixels of the largest disparity, 0-16, starting at 2), `swap=0|1`,
+  `gl`/`gr` (the eyes' gains, %), `page=0..5` for `calib`, and `bench=1|0`. Every argument
+  is parsed strictly and checked before anything changes.
+- **`/fx3d`** is the owner's remote for the glasses: the calibration's six steps with what
+  to look for at each, every scene, every look, the mode, depth, swap, the eyes' gains, and
+  the bench's button. It only calls `/api/fx3d`, and polls only while its tab is visible.
+- While a look is on, the render tick runs at **most 30 Hz**, even on a page that wants 60:
+  the look renders and blits the whole frame at every flip.
 
 ## What it costs
 
@@ -49,8 +55,8 @@ Measured with `platformio run`, against the same env without the flag:
 
 | | Without | With `FX3D_ENABLED` |
 |---|---|---|
-| Static RAM | 103,376 B | 103,536 B (**+160 B**) |
-| Flash | 2,270,697 B | 2,319,565 B (**+48,868 B**) |
+| Static RAM | 103,376 B | 103,568 B (**+192 B**) |
+| Flash | 2,270,697 B | 2,327,313 B (**+56,616 B**), the page 6.4 KB of it |
 
 At run time: **no internal heap**. PSRAM: 73,984 B of frame buffers from boot (colour, two
 eye planes, depth, the encoder); the scene on screen (from 0.1 KB to 320 KB for the
@@ -58,13 +64,18 @@ landscape); while a look is on, 24,576 B for the captured frame plus the look (2
 on the host, most of it the drum's per-eye tables). Every one is freed when it stops.
 
 **Not measured yet: the time.** The frame time of every scene and look, and of the blit of
-8192 pixels, is what the bench is for: one line per run, `[fx3d] scene=... frame_us=...
-blit_us=... fps=... heap_internal_min=...`, then `[fx3d] bench done`.
+8192 pixels, is what the bench is for (`/api/fx3d?bench=1`, the page's button, or the bench
+env 20 s after boot): one line per run, `[fx3d] scene=... frame_us=... blit_us=... fps=...
+heap_internal_min=... stack_free=...`, then `[fx3d] bench done`. The bench keeps the owner's
+mode and look and gives them back.
 
 ## What it refuses to do
 
 - No `double`, no allocation in a frame, no big arrays on `loopTask`'s 8 KB stack.
 - No serial console: the IR console reads every byte of `Serial`.
+- Known, not fixed: `3D SOUND HILLS` gets no sound yet (the visualizer's bands are not
+  wired in); the globe's home city does not pulse (`setHome()` has no caller); a page that
+  flips twice in one tick (`displayErrorStatus()`) makes a look render twice.
 - No writes past the capture into the DMA buffer while a look is on, except its own frame.
 - No rotation: the capture assumes `setRotation()` is never called (it is not, in `src/`).
 

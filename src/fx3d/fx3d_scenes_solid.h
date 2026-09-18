@@ -128,7 +128,7 @@ inline uint8_t digitRow(int d, int row) {
 
 class VoxelClockScene : public Scene {
  public:
-  VoxelClockScene() : t_(0.0f), sub_(0.0f) {
+  VoxelClockScene() : yawPh_(0.0f), pitchPh_(0.0f), sub_(0.0f) {
     for (int i = 0; i < 4; i++) {
       shown_[i] = 0;
       next_[i] = 0;
@@ -146,12 +146,13 @@ class VoxelClockScene : public Scene {
     zf = kZ + 1.6f;
   }
   void reset(uint32_t) {
-    t_ = 0.0f;
+    yawPh_ = pitchPh_ = 0.0f;
     for (int i = 0; i < 4; i++) flip_[i] = -1.0f;
     started_ = false;
   }
   void step(float dt, const Env &w) {
-    t_ = fmodf(t_ + dt, 3600.0f);
+    yawPh_ = wrapAngle(yawPh_ + kTwoPi * dt / 9.0f);
+    pitchPh_ = wrapAngle(pitchPh_ + kTwoPi * dt / 7.0f);
     int want[4] = {1, 0, 0, 8};
     if (w.valid) {
       want[0] = w.hour / 10;
@@ -180,7 +181,7 @@ class VoxelClockScene : public Scene {
     started_ = true;
   }
   void draw(Ctx &c) {
-    const M3 sway = mul(rotY(0.38f * sinf(kTwoPi * t_ / 9.0f)), rotX(0.16f * sinf(kTwoPi * t_ / 7.0f)));
+    const M3 sway = mul(rotY(0.38f * sinf(yawPh_)), rotX(0.16f * sinf(pitchPh_)));
     const Light light;
     const float col0[4] = {0.0f, 6.0f, 14.0f, 20.0f};   // first column of each digit
     const Col hours = {0.2f, 0.72f, 1.0f}, minutes = {1.0f, 0.5f, 0.1f};
@@ -223,7 +224,7 @@ class VoxelClockScene : public Scene {
 
  private:
   static constexpr float kZ = 7.0f, kU = 0.25f, kFlipSeconds = 0.7f;
-  float t_, sub_;
+  float yawPh_, pitchPh_, sub_;
   int shown_[4], next_[4];
   float flip_[4];
   bool started_ = false;

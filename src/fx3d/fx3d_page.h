@@ -36,11 +36,11 @@ input[type=range]{flex:1;min-width:160px}.hint{color:var(--dim);font-size:13px;m
 <section><h2>Замер</h2><div class="g"><button id="bench">Замерить всё (≈4 мин)</button></div><p class="hint">Каждая сцена и режим по 5 секунд, результаты — в журнал панели. Пока идёт замер, остальное не переключается.</p></section>
 </main><script>
 const M={mono:"Без очков",redblue:"Красный–синий",redcyan:"Красный–голубой",redgreen:"Красный–зелёный"};
-const S={calib:"Калибровка",cube:"Куб",layers:"Слои",stars:"Звёзды",helix:"Спираль",rings:"Кольца",dial:"Часы в слоях",torus:"Тор",vclock:"Воксельные часы",voxel:"Полёт",tunnel:"Туннель",blobs:"Метаболы",globe:"Глобус",terrain:"Холмы звука"};
+const S={calib:"Калибровка",cube:"Куб",layers:"Слои",stars:"Звёзды",helix:"Спираль",rings:"Кольца",dial:"Часы в слоях",torus:"Тор",vclock:"Воксельные часы",voxel:"Полёт",tunnel:"Туннель",blobs:"Метаболы",globe:"Глобус",terrain:"Холмы звука (звук ещё не подключён)"};
 const L={flat:"Как есть",pop:"Выпуклость",layers:"Слои по цвету",float:"Парение",dome:"Купол",wiggle:"Покачивание",card:"Карточка",relief:"Рельеф",drum:"Барабан"};
 const C=["Красный: каким глазом видно, каким гаснет?","Зелёный: то же самое","Синий: то же самое","Глаза: левому — черта и L, правому — черта и R. Чужая фигура видна — это утечка; L справа — поменяйте глаза","Плоскость панели: рамка и крест лежат на панели, пунктир — стык","Глубина: левый квадрат перед панелью, средний на ней, правый за ней"];
 let s={};const $=i=>document.getElementById(i);
-function q(p){return fetch("/api/fx3d"+(p?"?"+p:"")).then(r=>r.json().then(j=>({ok:r.ok,j}))).then(({ok,j})=>{if(!ok){$("st").innerHTML='<span class="err">'+(j.error||"ошибка")+"</span>";return}s=j;draw()}).catch(()=>{$("st").textContent="панель не отвечает"})}
+function q(p){return fetch("/api/fx3d"+(p?"?"+p:"")).then(r=>r.json().then(j=>({ok:r.ok,j}))).then(({ok,j})=>{if(!ok){$("st").textContent=j.error||"ошибка";$("st").className="st err";return}$("st").className="st";s=j;draw()}).catch(()=>{$("st").textContent="панель не отвечает"})}
 function btns(id,items,cur,cb){const g=$(id);g.innerHTML="";for(const[k,t]of items){const b=document.createElement("button");b.textContent=t;if(k===cur)b.className="on";b.onclick=()=>cb(k);g.appendChild(b)}}
 function draw(){btns("modes",Object.entries(M),s.mode,k=>q("mode="+k));
 btns("scenes",[["off","Выключить"]].concat((s.scenes||[]).map(k=>[k,S[k]||k])),s.scene||"off",k=>q("scene="+k));
@@ -52,7 +52,8 @@ $("bench").className=s.bench?"on":"";$("bench").textContent=s.bench?"Замер 
 $("st").textContent=(s.scene?"сцена «"+(S[s.scene]||s.scene)+"»":"страница панели")+" · "+(L[s.look]||s.look)+" · "+(M[s.mode]||s.mode)+(s.fps>0?" · "+s.fps+" кадр/с, кадр "+s.frameUs+" мкс":"")}
 $("swap").onclick=()=>q("swap="+(s.swap?0:1));$("depth").onchange=e=>q("depth="+e.target.value);
 $("gl").onchange=e=>q("gl="+e.target.value);$("gr").onchange=e=>q("gr="+e.target.value);
-$("bench").onclick=()=>q("bench="+(s.bench?0:1));q("");setInterval(()=>q(""),3000);
+$("bench").onclick=()=>q("bench="+(s.bench?0:1));q("");
+setInterval(()=>{if(document.visibilityState==="visible")q("")},3000);
 </script></body></html>)FX3D";
 
 #endif  // FX3D_ENABLED

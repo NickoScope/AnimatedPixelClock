@@ -1050,7 +1050,8 @@ void loop() {
   loopMark("presence");
 #endif
 #if defined(FX3D_ENABLED)
-  fx3dLoop();                // the bench's schedule in the bench build, nothing otherwise
+  fx3dLoop();                // the 3D bench's schedule while one runs; nothing otherwise
+  loopMark("fx3d");
 #endif
 #if defined(IR_ENABLED)
   irLoop();                  // decoded frames and the serial console; the detents go to the knob's task

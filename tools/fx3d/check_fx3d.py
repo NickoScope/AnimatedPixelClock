@@ -44,8 +44,8 @@ def page_script(tmp):
     reads without running. A broken snippet is checked first, so a checker that
     accepts everything cannot pass."""
     if not JSC.exists():
-        print("page script NOT checked: no JavaScriptCore here")
-        return True
+        print("page script: FAIL (no JavaScriptCore here to check it with)")
+        return False
     src = (ROOT / "src/fx3d/fx3d_page.h").read_text()
     page = re.search(r'R"FX3D\((.*)\)FX3D"', src, re.S).group(1)
     js = re.search(r"<script>(.*)</script>", page, re.S).group(1)

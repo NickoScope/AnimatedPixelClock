@@ -114,16 +114,11 @@ class Fx3dDisplay : public MatrixDisplay {
     p[1] = g;
     p[2] = b;
   }
+  // What the library shows for a size below one is nothing, so nothing is
+  // caught for it either.
   void rect(int16_t x, int16_t y, int16_t w, int16_t h, uint8_t r, uint8_t g, uint8_t b) {
+    if (w < 1 || h < 1) return;
     int x0 = x, y0 = y, x1 = x + w, y1 = y + h;   // [x0, x1) x [y0, y1)
-    if (w < 0) {
-      x0 = x + w + 1;
-      x1 = x + 1;
-    }
-    if (h < 0) {
-      y0 = y + h + 1;
-      y1 = y + 1;
-    }
     if (x0 < 0) x0 = 0;
     if (y0 < 0) y0 = 0;
     if (x1 > kW) x1 = kW;

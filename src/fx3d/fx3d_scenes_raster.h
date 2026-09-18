@@ -310,7 +310,9 @@ class TunnelScene : public Scene {
 class BlobsScene : public Scene {
  public:
   static const int kBalls = 4;
-  BlobsScene() : t_(0.0f) {}
+  BlobsScene() {
+    for (int i = 0; i < kBalls; i++) ph_[i][0] = ph_[i][1] = ph_[i][2] = 0.0f;
+  }
   const char *id() const { return "blobs"; }
   void setup(View &v) const {
     v.f = 96.0f;
@@ -322,13 +324,22 @@ class BlobsScene : public Scene {
     zf = kZ + kBound;
   }
   bool fills() const { return true; }
-  void reset(uint32_t) { t_ = 0.0f; }
-  void step(float dt, const Env &) {
-    t_ = fmodf(t_ + dt, 600.0f);
+  void reset(uint32_t) {
     for (int i = 0; i < kBalls; i++) {
-      const float a = 0.5f + 0.13f * i, b = 0.37f + 0.11f * i, g = 0.29f + 0.07f * i;
-      pos_[i] = v3(1.05f * sinf(a * t_ + 1.7f * i), 0.5f * sinf(b * t_ + 0.9f * i), 0.6f * sinf(g * t_ + 2.3f * i)) +
-                v3(0.0f, 0.0f, kZ);
+      ph_[i][0] = 1.7f * i;
+      ph_[i][1] = 0.9f * i;
+      ph_[i][2] = 2.3f * i;
+    }
+    step(0.0f, Env());
+  }
+  // Each orbit keeps its own wrapped phase: the frequencies share no period,
+  // so a wrapped time would jump.
+  void step(float dt, const Env &) {
+    for (int i = 0; i < kBalls; i++) {
+      ph_[i][0] = wrapAngle(ph_[i][0] + (0.5f + 0.13f * i) * dt);
+      ph_[i][1] = wrapAngle(ph_[i][1] + (0.37f + 0.11f * i) * dt);
+      ph_[i][2] = wrapAngle(ph_[i][2] + (0.29f + 0.07f * i) * dt);
+      pos_[i] = v3(1.05f * sinf(ph_[i][0]), 0.5f * sinf(ph_[i][1]), 0.6f * sinf(ph_[i][2])) + v3(0.0f, 0.0f, kZ);
     }
   }
   void draw(Ctx &c) {
@@ -401,7 +412,7 @@ class BlobsScene : public Scene {
  private:
   static constexpr float kZ = 6.0f, kBound = 2.2f, kK = 0.45f;
   static float radius(int k) { return 0.62f - 0.057f * (float)k; }
-  float t_;
+  float ph_[kBalls][3];
   V3 pos_[kBalls];
   static float smin(float a, float b, float k) {
     const float h = clampf(0.5f + 0.5f * (b - a) / k, 0.0f, 1.0f);

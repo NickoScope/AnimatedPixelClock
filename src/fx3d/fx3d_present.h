@@ -40,7 +40,8 @@ class PictureScene : public Scene {
  public:
   const uint8_t *codes;   // kPixels * 3, what the page drew; set before each frame
   uint8_t look;
-  PictureScene() : codes(nullptr), look(LOOK_FLAT), t_(0.0f) {
+  PictureScene()
+      : codes(nullptr), look(LOOK_FLAT), yawPh_(0.0f), pitchPh_(0.0f), wigglePh_(0.0f), drumPh_(0.0f), reliefPh_(0.0f) {
     for (int k = 0; k < 3; k++) drum_[k].valid = false;
   }
   const char *id() const { return "picture"; }
@@ -66,10 +67,17 @@ class PictureScene : public Scene {
   }
   bool fills() const { return true; }
   void reset(uint32_t) {
-    t_ = 0.0f;
+    yawPh_ = pitchPh_ = wigglePh_ = drumPh_ = reliefPh_ = 0.0f;
     for (int k = 0; k < 3; k++) drum_[k].valid = false;
   }
-  void step(float dt, const Env &) { t_ = fmodf(t_ + dt, 3600.0f); }
+  // Each swing keeps its own phase, wrapped as it goes: no jump, however long it runs.
+  void step(float dt, const Env &) {
+    yawPh_ = wrapAngle(yawPh_ + kTwoPi * dt / 7.0f);
+    pitchPh_ = wrapAngle(pitchPh_ + kTwoPi * dt / 9.3f);
+    wigglePh_ = wrapAngle(wigglePh_ + kTwoPi * dt * 2.0f);
+    drumPh_ = wrapAngle(drumPh_ + kTwoPi * dt / 10.0f);
+    reliefPh_ = wrapAngle(reliefPh_ + kTwoPi * dt / 8.0f);
+  }
   void draw(Ctx &c) {
     if (!codes) return;
     switch (look) {
@@ -83,7 +91,7 @@ class PictureScene : public Scene {
       case LOOK_WIGGLE:
         // Wiggle stereoscopy: one eye, moving. About twice a second, sideways
         // by up to the depth budget.
-        reproject(c, 0.5f * c.st.depthPx * (c.stereo() ? (float)c.eye : sinf(kTwoPi * 2.0f * t_)));
+        reproject(c, 0.5f * c.st.depthPx * (c.stereo() ? (float)c.eye : sinf(wigglePh_)));
         break;
       case LOOK_CARD: card(c); break;
       case LOOK_RELIEF: relief(c); break;
@@ -96,7 +104,7 @@ class PictureScene : public Scene {
     const float r = (float)kCie8[px[0]], g = (float)kCie8[px[1]], b = (float)kCie8[px[2]];
     const float m = r > g ? (r > b ? r : b) : (g > b ? g : b);
     if (m < 2.0f) return 0.0f;   // black is the panel's own plane
-    switch (look == LOOK_WIGGLE ? LOOK_POP : look) {
+    switch (look == LOOK_WIGGLE ? (uint8_t)LOOK_POP : look) {
       case LOOK_POP:
         return smoothstepf(0.0f, 160.0f, m);
       case LOOK_LAYERS: {
@@ -122,7 +130,7 @@ class PictureScene : public Scene {
   static constexpr float kArc = 1.25f;    // radians of drum the picture covers
   static constexpr float kCardYaw = 0.36f, kCardPitch = 0.16f;   // the card's swings, radians
   static constexpr float kMiss = 100.0f;  // an angle no hit can have: the ray missed the drum
-  float t_;
+  float yawPh_, pitchPh_, wigglePh_, drumPh_, reliefPh_;
 
   static float lin(uint8_t code) { return (float)kCie8[code] * (1.0f / 255.0f); }
 
@@ -204,7 +212,7 @@ class PictureScene : public Scene {
 
   // A card the size of most of the panel, swaying about its middle.
   void card(Ctx &c) {
-    const M3 r = mul(rotY(kCardYaw * sinf(kTwoPi * t_ / 7.0f)), rotX(kCardPitch * sinf(kTwoPi * t_ / 9.3f)));
+    const M3 r = mul(rotY(kCardYaw * sinf(yawPh_)), rotX(kCardPitch * sinf(pitchPh_)));
     const V3 ctr = v3(0.0f, 0.0f, kZ0), n = apply(r, v3(0, 0, -1)), ux = apply(r, v3(1, 0, 0)), uy = apply(r, v3(0, 1, 0));
     const Light light;
     const float shade = 0.55f + 0.45f * clampf(dot(n, light.dir), 0.0f, 1.0f);
@@ -246,7 +254,7 @@ class PictureScene : public Scene {
   // tall blocks come forward.
   void relief(Ctx &c) {
     const float kRise = 3.5f;
-    const float sway = sinf(kTwoPi * t_ / 8.0f);
+    const float sway = sinf(reliefPh_);
     const float ex = 0.55f * sway + (c.stereo() ? 0.12f * (float)c.eye * c.st.depthPx : 0.0f);
     const float ey = -0.85f;   // up the panel, away from the viewer
     for (int i = 0; i < kPixels; i++) c.pixel(i, 0.0f, 0.0f, 0.0f);
@@ -286,7 +294,7 @@ class PictureScene : public Scene {
   void drum(Ctx &c) {
     DrumTab &t = drum_[c.eye + 1];
     if (!t.valid || t.f != c.view.f || t.b != c.view.b || t.z0 != c.view.z0) buildDrum(t, c.view, c.eye);
-    const float turn = 0.25f * sinf(kTwoPi * t_ / 10.0f);   // to and fro, never past a third of the picture
+    const float turn = 0.25f * sinf(drumPh_);   // to and fro, never past a third of the picture
     for (int i = 0; i < kPixels; i++) {
       const float a = t.ang[i];
       if (a >= kMiss) {

@@ -71,8 +71,10 @@ class TerrainScene : public Scene {
     return v3((u * 2.0f - 1.0f) * kHalfWidth, y * cp + dz * sp, kZ0 - y * sp + dz * cp);
   }
   static float height(float level) { return kAmp * level * (2.0f - level) * 0.5f; }   // eases the tops
+  V3 top_[kBands], foot_[kBands];   // one ridge's points: here, not on loopTask's 8 KB stack
+
   void ridge(Ctx &c, const float *band, float z, float bright, float flash) {
-    V3 top[kBands], foot[kBands];
+    V3 *top = top_, *foot = foot_;
     for (int b = 0; b < kBands; b++) {
       const float u = (float)b / (kBands - 1);
       top[b] = at(u, height(band[b]), z);
