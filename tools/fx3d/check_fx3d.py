@@ -41,7 +41,8 @@ def main():
         tmp = pathlib.Path(tmp)
         # Float only: the model and every scene, with double promotion an error.
         probe = tmp / "probe.cpp"
-        probe.write_text('#include "fx3d_catalog.h"\nint main() { return fx3d::kCatalogCount > 0 ? 0 : 1; }\n')
+        probe.write_text('#include "fx3d_catalog.h"\n#include "fx3d_present.h"\n'
+                         'int main() { return fx3d::kCatalogCount > 0 ? 0 : 1; }\n')
         subprocess.run(["c++", "-std=c++11", "-fsyntax-only", "-Wall", "-Wextra", "-Werror", "-Wshadow",
                         "-Wdouble-promotion", *INC, str(probe)], check=True)
         print("float only: no double promotion in src/fx3d")

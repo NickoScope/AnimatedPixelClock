@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "fx3d_catalog.h"
+#include "fx3d_present.h"
 #include "synth_sound.h"
 
 using namespace fx3d;
@@ -463,6 +464,129 @@ static void scenes() {
   }
 }
 
+
+// ── 3D as a look for any screen ──────────────────────────────────────────────
+// A made-up page: black, a white bar, a dim red block, a bright blue one, and
+// a sweep of greys, as codes.
+static std::vector<uint8_t> testPage() {
+  std::vector<uint8_t> p(kPixels * 3, 0);
+  for (int y = 10; y < 20; y++)
+    for (int x = 10; x < 60; x++) p[3 * (y * kW + x)] = p[3 * (y * kW + x) + 1] = p[3 * (y * kW + x) + 2] = 255;
+  for (int y = 30; y < 50; y++)
+    for (int x = 20; x < 40; x++) p[3 * (y * kW + x)] = 90;
+  for (int y = 30; y < 50; y++)
+    for (int x = 70; x < 100; x++) p[3 * (y * kW + x) + 2] = 255;
+  for (int x = 0; x < kW; x++) p[3 * (60 * kW + x)] = p[3 * (60 * kW + x) + 1] = p[3 * (60 * kW + x) + 2] = (uint8_t)(2 * x);
+  return p;
+}
+
+static double centroidX(const std::vector<uint8_t> &plane) {
+  double s = 0, sx = 0;
+  for (int i = 0; i < kPixels; i++) {
+    s += plane[i];
+    sx += (double)plane[i] * (i % kW);
+  }
+  return s > 0 ? sx / s : -1;
+}
+
+static void looks() {
+  const std::vector<uint8_t> page = testPage();
+  for (int look = 0; look < LOOK_COUNT; look++)
+    for (int mode = MODE_MONO; mode <= MODE_RED_CYAN; mode++) {
+      Bufs b1, b2;
+      Ctx c1, c2;
+      b1.bind(c1);
+      b2.bind(c2);
+      c1.st.mode = c2.st.mode = (uint8_t)mode;
+      std::vector<unsigned char> m1(sizeof(PictureScene)), m2(sizeof(PictureScene));
+      PictureScene *s1 = new (m1.data()) PictureScene(), *s2 = new (m2.data()) PictureScene();
+      s1->look = s2->look = (uint8_t)look;
+      s1->codes = s2->codes = page.data();
+      s1->reset(1);
+      s2->reset(1);
+      Env w;
+      const long news = g_news;
+      bool light = false, inRange = true;
+      for (int f = 0; f < 60; f++) {
+        c1.stats.clear();
+        renderFrame(*s1, c1, 1.0f / 30.0f, w);
+        renderFrame(*s2, c2, 1.0f / 30.0f, w);
+        light = light || anyLight(b1.rgb);
+        float zn, zf;
+        s1->depthRange(zn, zf);
+        if (mode != MODE_MONO && c1.stats.zMin <= c1.stats.zMax)
+          inRange = inRange && c1.stats.zMin >= zn - 1e-3f && c1.stats.zMax <= zf + 1e-3f;
+      }
+      CHECK(g_news == news);
+      CHECK(light);
+      CHECK(inRange);
+      CHECK(b1.rgb == b2.rgb);
+      if (!light || !inRange) std::printf("  look %s mode %d\n", lookName((uint8_t)look), mode);
+      s1->~PictureScene();
+      s2->~PictureScene();
+    }
+
+  // Flat, mono: the page's own light, exactly (codes -> linear, the library's table).
+  {
+    Bufs b;
+    Ctx c;
+    b.bind(c);
+    c.st.mode = MODE_MONO;
+    PictureScene s;
+    s.codes = page.data();
+    s.look = LOOK_FLAT;
+    Env w;
+    renderFrame(s, c, 0.0f, w);
+    bool same = true;
+    for (int i = 0; i < kPixels * 3; i++) same = same && b.rgb[i] == kCie8[page[i]];
+    CHECK(same);
+  }
+  // Float: one bright pixel moves by +d/2 for the left eye and -d/2 for the
+  // right, to a hundredth of a pixel, for a fractional d.
+  {
+    std::vector<uint8_t> dot(kPixels * 3, 0);
+    const int x0 = 60, y0 = 30;
+    for (int k = 0; k < 3; k++) dot[3 * (y0 * kW + x0) + k] = 200;
+    for (int trial = 0; trial < 5; trial++) {
+      const float d = 0.7f + 0.9f * (float)trial;
+      Bufs b;
+      Ctx c;
+      b.bind(c);
+      c.st.mode = MODE_RED_BLUE;
+      c.st.depthPx = d;
+      PictureScene s;
+      s.codes = dot.data();
+      s.look = LOOK_FLOAT;
+      Env w;
+      renderFrame(s, c, 0.0f, w);
+      CHECK(std::fabs(centroidX(b.left) - (x0 + 0.5 * d)) < 0.01);
+      CHECK(std::fabs(centroidX(b.right) - (x0 - 0.5 * d)) < 0.01);
+    }
+  }
+  // No budget: every look for the glasses shows both eyes the page as it is.
+  for (int look = LOOK_POP; look <= LOOK_DOME; look++) {
+    Bufs b;
+    Ctx c;
+    b.bind(c);
+    c.st.mode = MODE_RED_BLUE;
+    c.st.depthPx = 0.0f;
+    PictureScene s;
+    s.codes = page.data();
+    s.look = (uint8_t)look;
+    Env w;
+    renderFrame(s, c, 0.0f, w);
+    bool same = b.left == b.right;
+    for (int i = 0; i < kPixels && same; i++) {
+      const uint8_t *p = &page[3 * i];
+      uint8_t m = kCie8[p[0]];
+      if (kCie8[p[1]] > m) m = kCie8[p[1]];
+      if (kCie8[p[2]] > m) m = kCie8[p[2]];
+      same = std::abs((int)b.left[i] - (int)m) <= 1;
+    }
+    CHECK(same);
+  }
+}
+
 int main(int argc, char **argv) {
   projection();
   baselineBudget();
@@ -474,6 +598,7 @@ int main(int argc, char **argv) {
   triangleCoverage();
   triangleDepthAndCull();
   scenes();
+  looks();
   std::printf("%d checks, %d failed\n", g_checks, g_fail);
   return g_fail ? 1 : 0;
 }
