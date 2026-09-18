@@ -53,10 +53,13 @@ uint32_t g_seen = 0;
 
 void *psram(size_t bytes) { return heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT); }
 
-uint8_t *g_row = nullptr;   // one row of codes for the blit, in the block below
+// One row of codes for the blit. In internal RAM, not PSRAM: it is written and
+// read for every row of every frame (384 B, the integration session's call,
+// so the blit is not measured with 48 KB of PSRAM traffic a frame on top).
+uint8_t g_row[kW * 3];
 
 bool allocBlock() {
-  g_block = (uint8_t *)psram(kFrameBytes + sizeof(Encoder) + kW * 3);
+  g_block = (uint8_t *)psram(kFrameBytes + sizeof(Encoder));
   if (!g_block) return false;
   uint8_t *p = g_block;
   g_ctx.fb.rgb = p;
@@ -68,8 +71,6 @@ bool allocBlock() {
   g_ctx.fb.z = reinterpret_cast<float *>(p);   // offset 40960: four-byte aligned
   p += sizeof(float) * kPixels;
   g_enc = new (p) Encoder();
-  p += sizeof(Encoder);
-  g_row = p;
   return true;
 }
 
@@ -447,7 +448,7 @@ void fx3dBegin() {
   server.on("/api/fx3d", HTTP_GET, handleApi);
   server.on("/fx3d", HTTP_GET, []() { server.send_P(200, "text/html; charset=utf-8", kFx3dPage); });
   Serial.printf("[fx3d] %d scenes, %d looks, %u B of frame buffers in PSRAM, internal free %u -> %u B\n",
-                kCatalogCount, LOOK_COUNT - 1, (unsigned)(kFrameBytes + sizeof(Encoder) + kW * 3), (unsigned)before,
+                kCatalogCount, LOOK_COUNT - 1, (unsigned)(kFrameBytes + sizeof(Encoder)), (unsigned)before,
                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
 #if defined(FX3D_BENCH)
   g_bench = BENCH_ARMED;

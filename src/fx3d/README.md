@@ -58,12 +58,13 @@ Measured with `platformio run`, against the same env without the flag:
 
 | | Without | With `FX3D_ENABLED` |
 |---|---|---|
-| Static RAM | 103,376 B | 103,592 B (**+216 B**) |
+| Static RAM | 103,376 B | 103,976 B (**+600 B**, of it the blit's 384 B row) |
 | Flash | 2,270,697 B | 2,328,181 B (**+57,484 B**), the page 6.4 KB of it |
 
-At run time: **no internal heap**. PSRAM: 74,368 B of frame buffers from boot (colour, two
-eye planes, depth, the encoder, one row for the blit); the scene on screen (from 0.1 KB to 320 KB for the
-landscape); while a look is on, 24,576 B for the captured frame plus the look (225,352 B
+At run time: **no internal heap**. PSRAM: 73,984 B of frame buffers from boot (colour, two
+eye planes, depth, the encoder); the scene on screen (from 16 B to 415,072 B for the landscape,
+87,360 B of which are its noise lattices, dead once the map is built and kept only because 87 KB
+of 16 MB is not worth a second allocation); while a look is on, 24,576 B for the captured frame plus the look (225,352 B
 on the host, most of it the drum's per-eye tables). Every one is freed when it stops.
 
 **Measured on the panel, 2026-09-18 (the integration session, over the network, `264d6f1`):**
@@ -73,6 +74,14 @@ tunnel, globe and blobs did not (blobs 111.8 / 217.8 ms a frame); voxel took 1.0
 under a look pages ran at 10-20 fps. Answered since: the blit writes runs of one colour with the
 library's hlineDMA; blobs march one ray per 2 x 2 block (3.1 times cheaper on the Mac); the
 landscape hashes each noise lattice once. Their panel figures are not measured yet.
+The blobs changed more than their resolution: the march also stops at 28 steps instead of 40
+and calls a hit at 0.006 instead of 0.004, which moves their surface more than the halved
+resolution does.
+
+**The blit by runs and PSRAM DMA buffers do not mix.** `hlineDMA` does not write the cache
+back (`Cache_WriteBack_Addr`) the way the per-pixel path does under `SPIRAM_DMA_BUFFER`. That
+flag is not set here (the buffers stay internal, docs/03 in the knowledge base), so it is
+harmless today; if it is ever set, the blit by runs goes wrong where single pixels would not.
 
 **Still to measure: the time.** The frame time of every scene and look, and of the blit of
 8192 pixels, is what the bench is for (`/api/fx3d?bench=1`, the page's button, or the bench
