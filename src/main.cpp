@@ -1157,7 +1157,7 @@ void loop() {
   // Display update with adaptive refresh rate
   int targetHz = getOptimalRefreshRate();
 #if defined(FX3D_ENABLED)
-  targetHz = fx3dRefreshHz(targetHz);   // a scene's rate, or at least 30 Hz for a moving 3D look
+  targetHz = fx3dRefreshHz(targetHz);   // 30 Hz for a 3D scene; under a 3D look, at most 30 Hz
 #endif
   unsigned long frameInterval = 1000 / targetHz;
 

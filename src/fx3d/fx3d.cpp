@@ -239,12 +239,14 @@ uint32_t fpsX10() {
   return span ? (uint32_t)((uint64_t)(g_run.frames - 1) * 10000u / span) : 0;
 }
 
-// One parseable line: what showed, and what it cost.
+// One parseable line: what showed, and what it cost. stack_min_free is
+// loopTask's least free stack since boot, in bytes (ESP-IDF's
+// uxTaskGetStackHighWaterMark counts bytes, not words), not this run's.
 void report(const char *what) {
   const uint32_t n = g_run.frames ? g_run.frames : 1;
   const uint32_t fps = fpsX10();
   Serial.printf("[fx3d] scene=%s mode=%s frames=%u open_us=%u frame_us=%u frame_us_max=%u blit_us=%u blit_us_max=%u "
-                "fps=%u.%u heap_internal=%u heap_internal_min=%u largest_block=%u psram_free=%u stack_free=%u\n",
+                "fps=%u.%u heap_internal=%u heap_internal_min=%u largest_block=%u psram_free=%u stack_min_free=%u\n",
                 what, modeName(g_ctx.st.mode), (unsigned)g_run.frames, (unsigned)g_run.openUs,
                 (unsigned)(g_run.renderSum / n), (unsigned)g_run.renderMax, (unsigned)(g_run.blitSum / n),
                 (unsigned)g_run.blitMax, (unsigned)(fps / 10), (unsigned)(fps % 10),
@@ -369,7 +371,8 @@ bool argLong(const char *name, long lo, long hi, long &out) {
 // GET /api/fx3d?bench=1 (or 0)                    - measure everything now, or stop
 // Also swap=0|1, gl= and gr= 0..100 (the eyes' gains, %). Every argument is
 // checked before anything changes: a bad request changes nothing. A request
-// PSRAM cannot serve may already have closed the scene it replaces.
+// PSRAM cannot serve may already have closed the scene it replaces, and with
+// both scene= and look=, the new scene can be up when the look then fails.
 void handleApi() {
   if (server.hasArg("bench")) {
     const String b = server.arg("bench");

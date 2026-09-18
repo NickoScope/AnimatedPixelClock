@@ -587,6 +587,93 @@ static void looks() {
   }
 }
 
+
+// ── no jump however long it runs ─────────────────────────────────────────────
+// Where a wrapped time used to wrap (blobs 600 s, rings 875 s, the voxel clock
+// and the looks 3600 s), the change from one frame to the next must be like the
+// change at any other moment. The yardstick is the scene's own motion over five
+// seconds of ordinary running, not a number from outside; a jump of the kind
+// that was there (the card turning 20 degrees in one frame) is many times it.
+static long frameDiff(const std::vector<uint8_t> &a, const std::vector<uint8_t> &b) {
+  long d = 0;
+  for (size_t i = 0; i < a.size(); i++) d += std::abs((int)a[i] - (int)b[i]);
+  return d;
+}
+static long worstStep(Scene &s, Ctx &c, Bufs &b, int frames) {
+  Env w;
+  std::vector<uint8_t> prev;
+  long worst = 0;
+  for (int f = 0; f < frames; f++) {
+    renderFrame(s, c, 1.0f / 30.0f, w);
+    if (!prev.empty()) {
+      const long d = frameDiff(prev, b.rgb);
+      if (d > worst) worst = d;
+    }
+    prev = b.rgb;
+  }
+  return worst;
+}
+static void continuity() {
+  struct Case {
+    const char *id;   // a scene id, or a look's name after "look:"
+    float wrapAt;
+  };
+  const Case cases[] = {{"blobs", 600.0f}, {"rings", 875.0f}, {"vclock", 3600.0f}, {"look:card", 3600.0f},
+                        {"look:relief", 3600.0f}, {"look:drum", 3600.0f}, {"look:wiggle", 3600.0f}};
+  const std::vector<uint8_t> page = testPage();
+  for (const Case &k : cases) {
+    Bufs b;
+    Ctx c;
+    b.bind(c);
+    c.st.mode = MODE_MONO;
+    std::vector<unsigned char> mem;
+    Scene *s = nullptr;
+    PictureScene *pic = nullptr;
+    if (!std::strncmp(k.id, "look:", 5)) {
+      mem.resize(sizeof(PictureScene));
+      pic = new (mem.data()) PictureScene();
+      for (int l = 0; l < LOOK_COUNT; l++)
+        if (!std::strcmp(k.id + 5, lookName((uint8_t)l))) pic->look = (uint8_t)l;
+      pic->codes = page.data();
+      s = pic;
+    } else {
+      const int idx = catalogFind(k.id);
+      mem.resize(kCatalog[idx].bytes);
+      s = kCatalog[idx].make(mem.data());
+    }
+    s->reset(3);
+    Env w;
+    for (int t = 0; t < 10; t++) s->step(1.0f, w);
+    const long normal = worstStep(*s, c, b, 150);
+    for (float t = 15.0f; t < k.wrapAt - 1.0f; t += 1.0f) s->step(1.0f, w);
+    const long atWrap = worstStep(*s, c, b, 60);   // two seconds across the old wrap
+    CHECK(atWrap <= 2 * normal + kPixels / 4);
+    if (atWrap > 2 * normal + kPixels / 4) std::printf("  %s: %ld across %.0f s, %ld normally\n", k.id, atWrap, k.wrapAt, normal);
+    s->~Scene();
+  }
+  // The check can see a jump: the card at its widest swing (1.75 s: sin = 1,
+  // 20 degrees) snapped back to square in one frame must fail it.
+  {
+    Bufs b;
+    Ctx c;
+    b.bind(c);
+    c.st.mode = MODE_MONO;
+    PictureScene pic;
+    pic.look = LOOK_CARD;
+    pic.codes = page.data();
+    pic.reset(3);
+    Env w;
+    const long normal = worstStep(pic, c, b, 150);
+    pic.reset(3);
+    for (int f = 0; f < 52; f++) pic.step(1.0f / 30.0f, w);   // to 1.75 s
+    renderFrame(pic, c, 1.0f / 30.0f, w);
+    const std::vector<uint8_t> before = b.rgb;
+    pic.reset(3);
+    renderFrame(pic, c, 0.0f, w);
+    CHECK(frameDiff(before, b.rgb) > 2 * normal + kPixels / 4);
+  }
+}
+
 int main(int argc, char **argv) {
   projection();
   baselineBudget();
@@ -599,6 +686,7 @@ int main(int argc, char **argv) {
   triangleDepthAndCull();
   scenes();
   looks();
+  continuity();
   std::printf("%d checks, %d failed\n", g_checks, g_fail);
   return g_fail ? 1 : 0;
 }

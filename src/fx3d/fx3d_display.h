@@ -61,25 +61,28 @@ class Fx3dDisplay : public MatrixDisplay {
     if (!cap_) return MatrixPanel_I2S_DMA::fillRect(x, y, w, h, r, g, b);
     rect(x, y, w, h, r, g, b);
   }
+  // A line shorter than one is one pixel, as the library draws it: its
+  // drawFastVLine and drawFastHLine (3.0.14, the .h, lines 517-567) fall back
+  // to a line of length 1 when the other side is not longer.
   void drawFastVLine(int16_t x, int16_t y, int16_t h, uint16_t c) override {
     if (!cap_) return MatrixPanel_I2S_DMA::drawFastVLine(x, y, h, c);
     uint8_t r, g, b;
     color565to888(c, r, g, b);
-    rect(x, y, 1, h, r, g, b);
+    rect(x, y, 1, h < 1 ? 1 : h, r, g, b);
   }
   void drawFastVLine(int16_t x, int16_t y, int16_t h, uint8_t r, uint8_t g, uint8_t b) override {
     if (!cap_) return MatrixPanel_I2S_DMA::drawFastVLine(x, y, h, r, g, b);
-    rect(x, y, 1, h, r, g, b);
+    rect(x, y, 1, h < 1 ? 1 : h, r, g, b);
   }
   void drawFastHLine(int16_t x, int16_t y, int16_t w, uint16_t c) override {
     if (!cap_) return MatrixPanel_I2S_DMA::drawFastHLine(x, y, w, c);
     uint8_t r, g, b;
     color565to888(c, r, g, b);
-    rect(x, y, w, 1, r, g, b);
+    rect(x, y, w < 1 ? 1 : w, 1, r, g, b);
   }
   void drawFastHLine(int16_t x, int16_t y, int16_t w, uint8_t r, uint8_t g, uint8_t b) override {
     if (!cap_) return MatrixPanel_I2S_DMA::drawFastHLine(x, y, w, r, g, b);
-    rect(x, y, w, 1, r, g, b);
+    rect(x, y, w < 1 ? 1 : w, 1, r, g, b);
   }
 
   // The library's non-virtual ones, hidden by name.
@@ -114,8 +117,10 @@ class Fx3dDisplay : public MatrixDisplay {
     p[1] = g;
     p[2] = b;
   }
-  // What the library shows for a size below one is nothing, so nothing is
-  // caught for it either.
+  // A fillRect with a side below one is caught as nothing. The library does
+  // not draw nothing there: its fillRectDMA (3.0.14, the .cpp, lines
+  // 986-1010) counts the side down in a do/while, wraps int16_t and paints a
+  // band across the whole panel. That is a fault, not a look to copy.
   void rect(int16_t x, int16_t y, int16_t w, int16_t h, uint8_t r, uint8_t g, uint8_t b) {
     if (w < 1 || h < 1) return;
     int x0 = x, y0 = y, x1 = x + w, y1 = y + h;   // [x0, x1) x [y0, y1)

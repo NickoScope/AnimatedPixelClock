@@ -47,7 +47,10 @@ tests them on the Mac, and `tools/fx3d/render.py` and `looks.py` render the prev
   to look for at each, every scene, every look, the mode, depth, swap, the eyes' gains, and
   the bench's button. It only calls `/api/fx3d`, and polls only while its tab is visible.
 - While a look is on, the render tick runs at **most 30 Hz**, even on a page that wants 60:
-  the look renders and blits the whole frame at every flip.
+  the look renders and blits the whole frame at every flip. The price, until the bench says
+  whether 60 fits: the clock animations that take one step per tick (Mario, Pong, Pac-Man)
+  run at about half speed under a look, and the classic equaliser's smoothing, set per
+  frame, reacts about half as fast.
 
 ## What it costs
 
@@ -55,8 +58,8 @@ Measured with `platformio run`, against the same env without the flag:
 
 | | Without | With `FX3D_ENABLED` |
 |---|---|---|
-| Static RAM | 103,376 B | 103,568 B (**+192 B**) |
-| Flash | 2,270,697 B | 2,327,313 B (**+56,616 B**), the page 6.4 KB of it |
+| Static RAM | 103,376 B | 103,592 B (**+216 B**) |
+| Flash | 2,270,697 B | 2,328,181 B (**+57,484 B**), the page 6.4 KB of it |
 
 At run time: **no internal heap**. PSRAM: 73,984 B of frame buffers from boot (colour, two
 eye planes, depth, the encoder); the scene on screen (from 0.1 KB to 320 KB for the
@@ -66,7 +69,7 @@ on the host, most of it the drum's per-eye tables). Every one is freed when it s
 **Not measured yet: the time.** The frame time of every scene and look, and of the blit of
 8192 pixels, is what the bench is for (`/api/fx3d?bench=1`, the page's button, or the bench
 env 20 s after boot): one line per run, `[fx3d] scene=... frame_us=... blit_us=... fps=...
-heap_internal_min=... stack_free=...`, then `[fx3d] bench done`. The bench keeps the owner's
+heap_internal_min=... stack_min_free=...`, then `[fx3d] bench done`. The bench keeps the owner's
 mode and look and gives them back.
 
 ## What it refuses to do
@@ -78,6 +81,8 @@ mode and look and gives them back.
   flips twice in one tick (`displayErrorStatus()`) makes a look render twice.
 - No writes past the capture into the DMA buffer while a look is on, except its own frame.
 - No rotation: the capture assumes `setRotation()` is never called (it is not, in `src/`).
+- A `fillRect` with a side below one is caught as nothing; the library itself paints a band
+  across the panel there (a counting fault in `fillRectDMA`), which the capture does not copy.
 
 ## Sources
 
