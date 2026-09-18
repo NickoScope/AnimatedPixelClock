@@ -259,17 +259,23 @@ class TunnelScene : public Scene {
     if (!t.valid || t.f != c.view.f || t.b != c.view.b || t.z0 != c.view.z0) build(t, c.view, c.eye);
     const int du = (int)(twist_ * 256.0f), dv = (int)(travel_ * 16.0f);
     const float base = c.stereo() ? 0.0f : 0.06f;   // the glasses want black between the lines
+    // What a pixel can be is known before the loop: eight bands' colours and
+    // five glows. palette() is three cosf, newlib's software cosine, and a
+    // division is a call into ROM on the S3 (README, "What floats cost on the
+    // S3"), so they are worked out here once a frame instead of per pixel.
+    Col band[8];
+    for (int b = 0; b < 8; b++) band[b] = palette(hue_ + (float)b / 8.0f);
+    static const float kRing[3] = {1.0f - 0.0f / 3.0f, 1.0f - 1.0f / 3.0f, 1.0f - 2.0f / 3.0f};
+    static const float kStripe[2] = {0.55f * (1.0f - 0.0f / 2.0f), 0.55f * (1.0f - 1.0f / 2.0f)};
     for (int i = 0; i < kPixels; i++) {
       const int u = (t.u[i] + du) & 255, v = (t.v[i] + dv) & 1023;
       // Rings every 64 texels along, eight stripes around; a glow falls off
       // from both.
       const int ru = u & 31, rv = v & 63;
       const int eu = ru < 16 ? ru : 32 - ru, ev = rv < 32 ? rv : 64 - rv;
-      const float ring = ev < 3 ? 1.0f - ev / 3.0f : 0.0f;
-      const float stripe = eu < 2 ? 0.55f * (1.0f - eu / 2.0f) : 0.0f;
-      const float glow = base + ring + stripe;
-      const Col k = palette(hue_ + (float)((v >> 6) & 7) / 8.0f);
-      const float s = glow * (float)t.shade[i] / 255.0f;
+      const float glow = base + (ev < 3 ? kRing[ev] : 0.0f) + (eu < 2 ? kStripe[eu] : 0.0f);
+      const Col &k = band[(v >> 6) & 7];
+      const float s = glow * (float)t.shade[i] * (1.0f / 255.0f);
       c.pixel(i, k.r * s, k.g * s, k.b * s);
     }
     c.note(t.zMin);
@@ -330,6 +336,7 @@ class BlobsScene : public Scene {
   static const int kBalls = 4;
   BlobsScene() {
     for (int i = 0; i < kBalls; i++) ph_[i][0] = ph_[i][1] = ph_[i][2] = 0.0f;
+    tables();
   }
   const char *id() const { return "blobs"; }
   void setup(View &v) const {
@@ -364,22 +371,18 @@ class BlobsScene : public Scene {
   // bilinear interpolation between them. At a ray per pixel the panel took
   // 111.8 ms a frame in mono and 217.8 ms in red-blue (the integration
   // session's measurement, 2026-09-18); the blobs are smooth enough for this.
+  // Where each pixel falls between the rays is the same every frame, so it
+  // is a table (floorf is newlib's, 53 instructions of bit work, on the S3).
   void draw(Ctx &c) {
     float zMin = 1.0e9f, zMax = 0.0f;
     for (int j = 0; j < kHalfH; j++)
       for (int i = 0; i < kHalfW; i++) shadeAt(c, 2.0f * (float)i + 0.5f, 2.0f * (float)j + 0.5f, half_[j][i], zMin, zMax);
     for (int y = 0; y < kH; y++) {
-      const float v = ((float)y - 0.5f) * 0.5f;
-      int j0 = (int)floorf(v);
-      float b = v - (float)j0;
-      if (j0 < 0) { j0 = 0; b = 0.0f; }
-      if (j0 > kHalfH - 2) { j0 = kHalfH - 2; b = 1.0f; }
+      const int j0 = row0_[y];
+      const float b = rowT_[y];
       for (int x = 0; x < kW; x++) {
-        const float u = ((float)x - 0.5f) * 0.5f;
-        int i0 = (int)floorf(u);
-        float a = u - (float)i0;
-        if (i0 < 0) { i0 = 0; a = 0.0f; }
-        if (i0 > kHalfW - 2) { i0 = kHalfW - 2; a = 1.0f; }
+        const int i0 = col0_[x];
+        const float a = colT_[x];
         float rgb[3];
         for (int ch = 0; ch < 3; ch++)
           rgb[ch] = mixf(mixf(half_[j0][i0][ch], half_[j0][i0 + 1][ch], a), mixf(half_[j0 + 1][i0][ch], half_[j0 + 1][i0 + 1][ch], a), b);
@@ -393,9 +396,32 @@ class BlobsScene : public Scene {
   }
 
  private:
-  static constexpr float kZ = 6.0f, kBound = 2.2f, kK = 0.45f;
+  static constexpr float kZ = 6.0f, kBound = 2.2f, kK = 0.45f, kInvK = 1.0f / kK;
   static const int kHalfW = kW / 2, kHalfH = kH / 2;
   float half_[kHalfH][kHalfW][3];   // the marched samples, one per 2 x 2 block
+  // For each panel column and row: the ray before it and how far past it.
+  uint8_t col0_[kW], row0_[kH];
+  float colT_[kW], rowT_[kH];
+  void tables() {
+    for (int x = 0; x < kW; x++) {
+      const float u = ((float)x - 0.5f) * 0.5f;
+      int i0 = (int)floorf(u);
+      float a = u - (float)i0;
+      if (i0 < 0) { i0 = 0; a = 0.0f; }
+      if (i0 > kHalfW - 2) { i0 = kHalfW - 2; a = 1.0f; }
+      col0_[x] = (uint8_t)i0;
+      colT_[x] = a;
+    }
+    for (int y = 0; y < kH; y++) {
+      const float v = ((float)y - 0.5f) * 0.5f;
+      int j0 = (int)floorf(v);
+      float b = v - (float)j0;
+      if (j0 < 0) { j0 = 0; b = 0.0f; }
+      if (j0 > kHalfH - 2) { j0 = kHalfH - 2; b = 1.0f; }
+      row0_[y] = (uint8_t)j0;
+      rowT_[y] = b;
+    }
+  }
   static float radius(int k) { return 0.62f - 0.057f * (float)k; }
 
   // One ray: the bounding sphere, then sphere tracing (at most 28 steps), then
@@ -405,7 +431,7 @@ class BlobsScene : public Scene {
     const Light light;
     const Col tint[kBalls] = {{1.0f, 0.25f, 0.2f}, {0.2f, 0.55f, 1.0f}, {0.25f, 1.0f, 0.45f}, {1.0f, 0.8f, 0.2f}};
     const Ray r = eyeRay(c.view, c.eye, sx, sy);
-    const V3 d = normalize(r.d);
+    const V3 d = normalizeFast(r.d);
     const float bg = c.stereo() ? 0.0f : 0.004f + 0.012f * sy / kH;
     out[0] = bg * 0.4f;
     out[1] = bg * 0.5f;
@@ -433,7 +459,7 @@ class BlobsScene : public Scene {
     if (p.z > zMax) zMax = p.z;
     float wr = 0.0f, wg = 0.0f, wb = 0.0f, wsum = 0.0f;
     for (int k = 0; k < kBalls; k++) {
-      const float dd = length(p - pos_[k]) - radius(k);
+      const float dd = lengthFast(p - pos_[k]) - radius(k);
       const float w = 1.0f / (0.02f + dd * dd);
       wr += w * tint[k].r;
       wg += w * tint[k].g;
@@ -449,25 +475,28 @@ class BlobsScene : public Scene {
     }
     const float rim = 1.0f + dot(n, d);   // grazing: 1, facing: 0
     const float rim3 = 0.35f * rim * rim * rim;
-    out[0] = sh * wr / wsum + spec + rim3 * 0.3f;
-    out[1] = sh * wg / wsum + spec + rim3 * 0.5f;
-    out[2] = sh * wb / wsum + spec + rim3;
+    const float iw = sh / wsum;
+    out[0] = wr * iw + spec + rim3 * 0.3f;
+    out[1] = wg * iw + spec + rim3 * 0.5f;
+    out[2] = wb * iw + spec + rim3;
   }
   float ph_[kBalls][3];
   V3 pos_[kBalls];
-  static float smin(float a, float b, float k) {
-    const float h = clampf(0.5f + 0.5f * (b - a) / k, 0.0f, 1.0f);
-    return mixf(b, a, h) - k * h * (1.0f - h);
+  // Up to 32 of these a ray (the march and the normal): each a square root
+  // for every ball and a blend between them, so no sqrtf and no division here.
+  static float smin(float a, float b) {
+    const float h = clampf(0.5f + 0.5f * (b - a) * kInvK, 0.0f, 1.0f);
+    return mixf(b, a, h) - kK * h * (1.0f - h);
   }
   float sdf(V3 p) const {
-    float d = length(p - pos_[0]) - radius(0);
-    for (int k = 1; k < kBalls; k++) d = smin(d, length(p - pos_[k]) - radius(k), kK);
+    float d = lengthFast(p - pos_[0]) - radius(0);
+    for (int k = 1; k < kBalls; k++) d = smin(d, lengthFast(p - pos_[k]) - radius(k));
     return d;
   }
   V3 normal(V3 p) const {
     const float h = 0.002f;
     const V3 k1 = v3(1, -1, -1), k2 = v3(-1, -1, 1), k3 = v3(-1, 1, -1), k4 = v3(1, 1, 1);
-    return normalize(k1 * sdf(p + k1 * h) + k2 * sdf(p + k2 * h) + k3 * sdf(p + k3 * h) + k4 * sdf(p + k4 * h));
+    return normalizeFast(k1 * sdf(p + k1 * h) + k2 * sdf(p + k2 * h) + k3 * sdf(p + k3 * h) + k4 * sdf(p + k4 * h));
   }
 };
 

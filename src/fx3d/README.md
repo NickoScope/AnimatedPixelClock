@@ -124,7 +124,7 @@ Measured with `platformio run`, against the same env without the flag:
 | | Without | With `FX3D_ENABLED` |
 |---|---|---|
 | Static RAM | 103,376 B | 104,000 B (**+624 B**, of it the blit's 384 B row) |
-| Flash | 2,270,665 B | 2,334,317 B (**+63,652 B**), the page 8.2 KB of it |
+| Flash | 2,270,665 B | 2,334,717 B (**+64,052 B**), the page 8.2 KB of it |
 
 At run time: **no internal heap per frame**. Saving or resetting the glasses profile opens NVS
 for a moment: ESP-IDF allocates the handle then (`nvs_api.cpp`), and a write that adds an entry
@@ -152,10 +152,28 @@ Every one is freed when it stops.
 - Answered since: card and drum sample the picture in integers and write bytes straight into
   the target; the drum keeps its table per column instead of per pixel (the rays of a column
   meet a vertical drum at one angle); the card carries its reciprocal along the row instead of
-  dividing - on the S3 `/` on floats is a call to the ROM's soft-float `__divsf3`, where the
-  old card divided three times a pixel and the old drum twice. On the Mac, which divides in
-  hardware, the drum is 3.6 times cheaper and the card about the same. Their panel figures are
-  not measured yet.
+  dividing - on the S3 `/` on floats is a call into ROM (below), where the old card divided
+  three times a pixel and the old drum twice. On the Mac, which divides in hardware, the drum
+  is 3.6 times cheaper and the card about the same. Their panel figures are not measured yet.
+
+**What floats cost on the S3.** The FPU adds, multiplies (with fused multiply-add), compares
+and converts inline. Everything else is a call, read from this firmware's disassembly
+(`xtensa-esp32s3-elf-objdump` of `firmware.elf`, `.pio/build/<env>/`) and from Espressif's ROM
+image (`tool-esp-rom-elfs/esp32s3_rev0_rom.elf`), arduino-esp32 2.0.17:
+
+| In C | What runs | Size |
+|---|---|---|
+| `a / b` | `__divsf3` in ROM, through a trampoline at 0x40002274 (`esp32s3.rom.libgcc.ld`) | about 28 FPU instructions around the `div0.s` estimate and `divn.s` |
+| `sqrtf` | newlib's wrapper (errno) calling `__ieee754_sqrtf` | about 30 FPU instructions around `sqrt0.s`, two calls deep |
+| `floorf`, `lrintf` | newlib | 53 and 49 instructions, bit work in integers |
+| `sinf`, `cosf` | newlib: argument reduction, then polynomial kernels | about 40 instructions of wrapper, and the kernels |
+| `atan2f`, `asinf` | newlib wrappers around `__ieee754_atan2f`, `__ieee754_asinf` | software |
+
+A division by a constant that is not a power of two is not turned into a multiplication (no
+`-ffast-math`): `x / 255.0f` is a call too. The instruction counts are counts, not cycles;
+what they cost in time is the panel bench's to say. The hot loops of the scenes and looks keep
+these out: `sqrtFast()`/`normalizeFast()` in `fx3d_model.h`, reciprocals worked out once,
+tables where the geometry does not change.
 The blobs changed more than their resolution: the march also stops at 28 steps instead of 40
 and calls a hit at 0.006 instead of 0.004, which moves their surface more than the halved
 resolution does.

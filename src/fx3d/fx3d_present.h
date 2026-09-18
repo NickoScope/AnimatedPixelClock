@@ -282,9 +282,11 @@ class PictureScene : public Scene {
   // panel (the integration session's measurement, 2026-09-18). The picture is
   // sampled and written in integers, straight into the target.
   //
-  // And no division a pixel: `/` on floats compiles to a call of the ROM's
-  // soft-float __divsf3 on the S3 (fx3d.cpp.o called it at 222 sites at
-  // 6200dc7 and 216 at 42a69d7; the symbol sits at 0x40002274, in ROM). The reciprocal of den is carried along the
+  // And no division a pixel: on the S3 `/` on floats is not inline but a
+  // call, through a ROM trampoline at 0x40002274, to __divsf3 in ROM, about
+  // 28 FPU instructions around the div0.s estimate (fx3d.cpp.o called it at
+  // 222 sites at 6200dc7 and 216 at 42a69d7; README, "What floats cost on the
+  // S3"). The reciprocal of den is carried along the
   // row by one Newton step from the last pixel's, r' = r (2 - den r), whose
   // relative error is the square of the step's: den moves by at most
   // sin(kCardYaw) / f = 0.3 % of 1 a pixel, and wherever |den| < 0.25 the

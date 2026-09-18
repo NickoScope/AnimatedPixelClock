@@ -50,6 +50,35 @@ inline V3 normalize(V3 a) {
   float l = length(a);
   return l > 0.0f ? a * (1.0f / l) : a;
 }
+
+// Square roots for the hot loops, without sqrtf or a division. On the S3
+// neither is inline: sqrtf is newlib's errno wrapper calling __ieee754_sqrtf,
+// about 30 FPU instructions around the sqrt0.s estimate, and a division calls
+// __divsf3 in ROM, about 28 around div0.s (the firmware's and the ROM's
+// disassembly; src/fx3d/README.md, "What floats cost on the S3"). This is a
+// dozen inline adds and multiplies: the bit-level first guess with Lomont's
+// constant 0x5f375a86 (Chris Lomont, "Fast Inverse Square Root", 2003) and
+// two Newton steps. Its worst
+// relative error, measured by the host test over the floats from 1e-6 to
+// 1e6, is printed there and held under 5e-6. The shared length() and
+// normalize() keep sqrtf, so nothing that was exact moves.
+inline float rsqrtFast(float x) {   // x > 0
+  uint32_t i;
+  memcpy(&i, &x, sizeof i);
+  i = 0x5f375a86u - (i >> 1);
+  float y;
+  memcpy(&y, &i, sizeof y);
+  const float hx = 0.5f * x;
+  y = y * (1.5f - hx * y * y);
+  y = y * (1.5f - hx * y * y);
+  return y;
+}
+inline float sqrtFast(float x) { return x > 0.0f ? x * rsqrtFast(x) : 0.0f; }
+inline float lengthFast(V3 a) { return sqrtFast(dot(a, a)); }
+inline V3 normalizeFast(V3 a) {
+  const float d = dot(a, a);
+  return d > 0.0f ? a * rsqrtFast(d) : a;
+}
 inline V3 lerp(V3 a, V3 b, float t) { return a + (b - a) * t; }
 
 inline float clampf(float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); }

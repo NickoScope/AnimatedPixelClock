@@ -1342,7 +1342,317 @@ static void drum(Ctx &c, const uint8_t *codes, float drumPh) {
       c.pixel(i, rgb[0] * sh, rgb[1] * sh, rgb[2] * sh);
     }
 }
+// The tunnel as it was at 0f3b2c7: the palette and the glows worked out for
+// every pixel.
+struct TunnelTab {
+  uint8_t u[kPixels];
+  uint16_t v[kPixels];
+  uint8_t shade[kPixels];
+};
+static void tunnelBuild(TunnelTab &t, const View &view, int eye) {
+  const float kZNear = 0.3f, kZFar = 48.0f;
+  for (int y = 0; y < kH; y++)
+    for (int x = 0; x < kW; x++) {
+      const Ray r = eyeRay(view, eye, (float)x, (float)y);
+      const float a = r.d.x * r.d.x + r.d.y * r.d.y;
+      const float b = 2.0f * (r.o.x * r.d.x + r.o.y * r.d.y);
+      const float cc = r.o.x * r.o.x + r.o.y * r.o.y - 1.0f;
+      float z = kZFar;
+      if (a > 1.0e-6f) {
+        const float disc = b * b - 4.0f * a * cc;
+        z = (-b + sqrtf(disc > 0.0f ? disc : 0.0f)) / (2.0f * a);
+        if (z > kZFar) z = kZFar;
+        if (z < kZNear) z = kZNear;
+      }
+      const float px = r.o.x + r.d.x * z, py = r.o.y + r.d.y * z;
+      const int i = y * kW + x;
+      t.u[i] = (uint8_t)((int)((atan2f(py, px) / kTwoPi + 0.5f) * 256.0f) & 255);
+      t.v[i] = (uint16_t)((int)(z * 16.0f) & 1023);
+      t.shade[i] = (uint8_t)(clampf(2.4f / (z + 0.6f), 0.0f, 1.0f) * 255.0f);
+    }
+}
+static void tunnel(Ctx &c, const TunnelTab &t, float travel, float twist, float hue) {
+  const int du = (int)(twist * 256.0f), dv = (int)(travel * 16.0f);
+  const float base = c.stereo() ? 0.0f : 0.06f;
+  for (int i = 0; i < kPixels; i++) {
+    const int u = (t.u[i] + du) & 255, v = (t.v[i] + dv) & 1023;
+    const int ru = u & 31, rv = v & 63;
+    const int eu = ru < 16 ? ru : 32 - ru, ev = rv < 32 ? rv : 64 - rv;
+    const float ring = ev < 3 ? 1.0f - ev / 3.0f : 0.0f;
+    const float stripe = eu < 2 ? 0.55f * (1.0f - eu / 2.0f) : 0.0f;
+    const float glow = base + ring + stripe;
+    const Col k = palette(hue + (float)((v >> 6) & 7) / 8.0f);
+    const float s = glow * (float)t.shade[i] / 255.0f;
+    c.pixel(i, k.r * s, k.g * s, k.b * s);
+  }
+}
+// The blobs as they were at 0f3b2c7: sqrtf and three divisions in every
+// step of the march, floorf twice a pixel in the upscale.
+class BlobsOld : public Scene {
+ public:
+  static const int kBalls = 4;
+  BlobsOld() {
+    for (int i = 0; i < kBalls; i++) ph_[i][0] = ph_[i][1] = ph_[i][2] = 0.0f;
+  }
+  const char *id() const { return "blobs"; }
+  void setup(View &v) const {
+    v.f = 96.0f;
+    v.z0 = kZ;
+    v.nearZ = 0.5f;
+  }
+  void depthRange(float &zn, float &zf) const {
+    zn = kZ - kBound;
+    zf = kZ + kBound;
+  }
+  bool fills() const { return true; }
+  void reset(uint32_t) {
+    for (int i = 0; i < kBalls; i++) {
+      ph_[i][0] = 1.7f * i;
+      ph_[i][1] = 0.9f * i;
+      ph_[i][2] = 2.3f * i;
+    }
+    step(0.0f, Env());
+  }
+  // Each orbit keeps its own wrapped phase: the frequencies share no period,
+  // so a wrapped time would jump.
+  void step(float dt, const Env &) {
+    for (int i = 0; i < kBalls; i++) {
+      ph_[i][0] = wrapAngle(ph_[i][0] + (0.5f + 0.13f * i) * dt);
+      ph_[i][1] = wrapAngle(ph_[i][1] + (0.37f + 0.11f * i) * dt);
+      ph_[i][2] = wrapAngle(ph_[i][2] + (0.29f + 0.07f * i) * dt);
+      pos_[i] = v3(1.05f * sinf(ph_[i][0]), 0.5f * sinf(ph_[i][1]), 0.6f * sinf(ph_[i][2])) + v3(0.0f, 0.0f, kZ);
+    }
+  }
+  // One ray per 2 x 2 block, 64 x 32 of them, and the panel filled by
+  // bilinear interpolation between them. At a ray per pixel the panel took
+  // 111.8 ms a frame in mono and 217.8 ms in red-blue (the integration
+  // session's measurement, 2026-09-18); the blobs are smooth enough for this.
+  void draw(Ctx &c) {
+    float zMin = 1.0e9f, zMax = 0.0f;
+    for (int j = 0; j < kHalfH; j++)
+      for (int i = 0; i < kHalfW; i++) shadeAt(c, 2.0f * (float)i + 0.5f, 2.0f * (float)j + 0.5f, half_[j][i], zMin, zMax);
+    for (int y = 0; y < kH; y++) {
+      const float v = ((float)y - 0.5f) * 0.5f;
+      int j0 = (int)floorf(v);
+      float b = v - (float)j0;
+      if (j0 < 0) { j0 = 0; b = 0.0f; }
+      if (j0 > kHalfH - 2) { j0 = kHalfH - 2; b = 1.0f; }
+      for (int x = 0; x < kW; x++) {
+        const float u = ((float)x - 0.5f) * 0.5f;
+        int i0 = (int)floorf(u);
+        float a = u - (float)i0;
+        if (i0 < 0) { i0 = 0; a = 0.0f; }
+        if (i0 > kHalfW - 2) { i0 = kHalfW - 2; a = 1.0f; }
+        float rgb[3];
+        for (int ch = 0; ch < 3; ch++)
+          rgb[ch] = mixf(mixf(half_[j0][i0][ch], half_[j0][i0 + 1][ch], a), mixf(half_[j0 + 1][i0][ch], half_[j0 + 1][i0 + 1][ch], a), b);
+        c.pixel(y * kW + x, rgb[0], rgb[1], rgb[2]);
+      }
+    }
+    if (zMin <= zMax) {
+      c.note(zMin);
+      c.note(zMax);
+    }
+  }
+
+ private:
+  static constexpr float kZ = 6.0f, kBound = 2.2f, kK = 0.45f;
+  static const int kHalfW = kW / 2, kHalfH = kH / 2;
+  float half_[kHalfH][kHalfW][3];   // the marched samples, one per 2 x 2 block
+  static float radius(int k) { return 0.62f - 0.057f * (float)k; }
+
+  // One ray: the bounding sphere, then sphere tracing (at most 28 steps), then
+  // the light. Writes linear rgb.
+  void shadeAt(const Ctx &c, float sx, float sy, float *out, float &zMin, float &zMax) const {
+    const V3 centre = v3(0.0f, 0.0f, kZ);
+    const Light light;
+    const Col tint[kBalls] = {{1.0f, 0.25f, 0.2f}, {0.2f, 0.55f, 1.0f}, {0.25f, 1.0f, 0.45f}, {1.0f, 0.8f, 0.2f}};
+    const Ray r = eyeRay(c.view, c.eye, sx, sy);
+    const V3 d = normalize(r.d);
+    const float bg = c.stereo() ? 0.0f : 0.004f + 0.012f * sy / kH;
+    out[0] = bg * 0.4f;
+    out[1] = bg * 0.5f;
+    out[2] = bg;
+    const V3 oc = r.o - centre;
+    const float bb = dot(oc, d), cc = dot(oc, oc) - kBound * kBound, disc = bb * bb - cc;
+    if (disc <= 0.0f) return;
+    const float sq = sqrtf(disc);
+    float t = -bb - sq;
+    const float tEnd = -bb + sq;
+    bool hit = false;
+    V3 p = r.o;
+    for (int s = 0; s < 28 && t < tEnd; s++) {
+      p = r.o + d * t;
+      const float dist = sdf(p);
+      if (dist < 0.006f) {
+        hit = true;
+        break;
+      }
+      t += dist;
+    }
+    if (!hit) return;
+    const V3 n = normal(p);
+    if (p.z < zMin) zMin = p.z;
+    if (p.z > zMax) zMax = p.z;
+    float wr = 0.0f, wg = 0.0f, wb = 0.0f, wsum = 0.0f;
+    for (int k = 0; k < kBalls; k++) {
+      const float dd = length(p - pos_[k]) - radius(k);
+      const float w = 1.0f / (0.02f + dd * dd);
+      wr += w * tint[k].r;
+      wg += w * tint[k].g;
+      wb += w * tint[k].b;
+      wsum += w;
+    }
+    const float sh = light.shade(n, 0.1f, 0.0f);
+    const float h = dot(n, light.half);
+    float spec = 0.0f;
+    if (h > 0.0f) {
+      const float h2 = h * h, h4 = h2 * h2, h8 = h4 * h4, h16 = h8 * h8;
+      spec = 0.8f * h16 * h16;
+    }
+    const float rim = 1.0f + dot(n, d);   // grazing: 1, facing: 0
+    const float rim3 = 0.35f * rim * rim * rim;
+    out[0] = sh * wr / wsum + spec + rim3 * 0.3f;
+    out[1] = sh * wg / wsum + spec + rim3 * 0.5f;
+    out[2] = sh * wb / wsum + spec + rim3;
+  }
+  float ph_[kBalls][3];
+  V3 pos_[kBalls];
+  static float smin(float a, float b, float k) {
+    const float h = clampf(0.5f + 0.5f * (b - a) / k, 0.0f, 1.0f);
+    return mixf(b, a, h) - k * h * (1.0f - h);
+  }
+  float sdf(V3 p) const {
+    float d = length(p - pos_[0]) - radius(0);
+    for (int k = 1; k < kBalls; k++) d = smin(d, length(p - pos_[k]) - radius(k), kK);
+    return d;
+  }
+  V3 normal(V3 p) const {
+    const float h = 0.002f;
+    const V3 k1 = v3(1, -1, -1), k2 = v3(-1, -1, 1), k3 = v3(-1, 1, -1), k4 = v3(1, 1, 1);
+    return normalize(k1 * sdf(p + k1 * h) + k2 * sdf(p + k2 * h) + k3 * sdf(p + k3 * h) + k4 * sdf(p + k4 * h));
+  }
+};
 }  // namespace ref
+
+// How far one frame is from another: the frame for this eye (the eye's plane
+// in stereo, RGB in mono).
+struct FrameDiff {
+  int worst = 0;
+  long over = 0, bytes = 0, lit = 0;
+};
+static void diffFrame(const Bufs &a, const Bufs &b, int eye, int tol, FrameDiff &d) {
+  const uint8_t *na = eye ? (eye < 0 ? a.left.data() : a.right.data()) : a.rgb.data();
+  const uint8_t *nb = eye ? (eye < 0 ? b.left.data() : b.right.data()) : b.rgb.data();
+  const int n = eye ? kPixels : kPixels * 3;
+  for (int i = 0; i < n; i++) {
+    const int x = na[i] > nb[i] ? na[i] - nb[i] : nb[i] - na[i];
+    if (x > d.worst) d.worst = x;
+    if (x > tol) d.over++;
+    if (nb[i]) d.lit++;
+    d.bytes++;
+  }
+}
+
+// The heavy scenes, reworked for the S3 (no division, no cosf, no sqrtf where
+// a table or a constant does), held to what they drew before.
+static void heavyScenesMatch() {
+  const float dts[] = {0.0f, 0.4f, 1.3f, 2.9f, 7.7f, 19.0f};
+  {
+    FrameDiff d;
+    static ref::TunnelTab tabs[3];
+    for (int eye = -1; eye <= 1; eye++) {
+      View v;
+      TunnelScene probe;
+      probe.setup(v);
+      v.b = eye ? 0.12f : 0.0f;
+      ref::tunnelBuild(tabs[eye + 1], v, eye);
+    }
+    for (float dt : dts)
+      for (int eye = -1; eye <= 1; eye++) {
+        TunnelScene sc;
+        sc.reset(1);
+        Env w;
+        sc.step(dt, w);
+        Bufs a, b;
+        Ctx ca, cb;
+        a.bind(ca);
+        b.bind(cb);
+        sc.setup(ca.view);
+        sc.setup(cb.view);
+        ca.eye = cb.eye = eye;
+        ca.view.b = cb.view.b = eye ? 0.12f : 0.0f;
+        sc.draw(ca);
+        ref::tunnel(cb, tabs[eye + 1], fmodf(0.0f + 7.0f * dt, 1024.0f), fmodf(0.0f + 0.05f * dt, 1.0f),
+                    fmodf(0.0f + 0.03f * dt, 1.0f));
+        diffFrame(a, b, eye, 1, d);
+      }
+    std::printf("  tunnel against 0f3b2c7: worst %d over %ld bytes (%ld lit), %ld over 1\n", d.worst, d.bytes, d.lit, d.over);
+    CHECK(d.worst <= 1 && d.lit > 20000);
+  }
+  // The blobs: the fast square root moves a march's steps by parts in a
+  // million, so a ray that ended a step early or late can shade differently;
+  // held on the whole frame instead of every byte.
+  {
+    FrameDiff d;
+    double sum = 0.0;
+    for (float dt : dts)
+      for (int eye = -1; eye <= 1; eye++) {
+        static BlobsScene sc;
+        static ref::BlobsOld old;
+        sc.reset(1);
+        old.reset(1);
+        Env w;
+        sc.step(dt, w);
+        old.step(dt, w);
+        Bufs a, b;
+        Ctx ca, cb;
+        a.bind(ca);
+        b.bind(cb);
+        sc.setup(ca.view);
+        old.setup(cb.view);
+        ca.eye = cb.eye = eye;
+        ca.view.b = cb.view.b = eye ? 0.2f : 0.0f;
+        sc.draw(ca);
+        old.draw(cb);
+        const long before = d.bytes;
+        FrameDiff one;
+        diffFrame(a, b, eye, 2, one);
+        const uint8_t *na = eye ? (eye < 0 ? a.left.data() : a.right.data()) : a.rgb.data();
+        const uint8_t *nb = eye ? (eye < 0 ? b.left.data() : b.right.data()) : b.rgb.data();
+        for (long i = 0; i < one.bytes; i++) sum += na[i] > nb[i] ? na[i] - nb[i] : nb[i] - na[i];
+        d.bytes = before + one.bytes;
+        d.over += one.over;
+        d.lit += one.lit;
+        if (one.worst > d.worst) d.worst = one.worst;
+      }
+    std::printf("  blobs against 0f3b2c7: mean %.4f, worst %d, %ld of %ld bytes over 2 (%ld lit)\n", sum / (double)d.bytes,
+                d.worst, d.over, d.bytes, d.lit);
+    CHECK(sum / (double)d.bytes < 0.05 && d.over * 1000 < d.bytes && d.lit > 20000);
+  }
+}
+
+// The fast square root against the library's, over the floats from 1e-6 to
+// 1e6: the worst relative error is what the model's comment promises.
+static void fastRoots() {
+  double worst = 0.0;
+  uint32_t lo, hi;
+  const float flo = 1e-6f, fhi = 1e6f;
+  memcpy(&lo, &flo, 4);
+  memcpy(&hi, &fhi, 4);
+  for (uint32_t i = lo; i <= hi; i += 97) {
+    float x;
+    memcpy(&x, &i, 4);
+    const double want = std::sqrt((double)x);
+    const double e = std::fabs((double)sqrtFast(x) - want) / want;
+    if (e > worst) worst = e;
+  }
+  std::printf("  sqrtFast: worst relative error %.3g over [1e-6, 1e6]\n", worst);
+  CHECK(worst < 5e-6);
+  CHECK(sqrtFast(0.0f) == 0.0f && sqrtFast(-1.0f) == 0.0f && sqrtFast(NAN) == 0.0f);
+  const V3 n = normalizeFast(v3(3.0f, -4.0f, 12.0f));
+  CHECK(std::fabs(length(n) - 1.0f) < 1e-5f);
+}
 
 // Every byte within 2 of the float version, in mono and in each eye, at
 // several points of the swing, over the test page and noisy pages. The card
@@ -1490,6 +1800,8 @@ int main(int argc, char **argv) {
   landscape();
   reprojectMatches();
   looksInIntegers();
+  fastRoots();
+  heavyScenesMatch();
   std::printf("%d checks, %d failed\n", g_checks, g_fail);
   return g_fail ? 1 : 0;
 }
