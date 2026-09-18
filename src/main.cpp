@@ -38,6 +38,10 @@
 #if defined(PRESENCE_ENABLED)
 #include "presence/presence.h"
 #endif
+#if defined(FX3D_ENABLED)
+#include "fx3d/fx3d.h"
+#include "fx3d/fx3d_display.h"   // the type of `display` below
+#endif
 #if defined(BOARD_WAVESHARE_RGB_MATRIX)
 #include "board/board_i2c.h"
 #endif
@@ -51,7 +55,11 @@ extern Preferences preferences;  // Defined in settings.cpp
 // HUB75 RGB matrix (128x64). The shim adds the OLED-era clearDisplay()/
 // display() frame methods so the animation code runs unchanged.
 // DISPLAY_WHITE/DISPLAY_BLACK come from display.h (centralized).
+#if defined(FX3D_ENABLED)
+Fx3dDisplay display(makeMatrixConfig());     // the same panel with a place for 3D: src/fx3d
+#else
 MatrixDisplay display(makeMatrixConfig());
+#endif
 
 // ========== Global State ==========
 Settings settings;
@@ -591,6 +599,9 @@ void setup() {
   irBegin();        // the remote's learned map, and its serial console: src/ir
   MEMTRACE("ir");
 #endif
+#if defined(FX3D_ENABLED)
+  fx3dBegin();      // 3D scenes and looks, PSRAM only, and /api/fx3d: src/fx3d
+#endif
 
   // Show IP address for 5 seconds (configurable via web interface)
   if (displayAvailable && settings.showIPAtBoot) {
@@ -897,6 +908,9 @@ void loop() {
     carouselNote();            // somebody is here; stop advancing on our own
 #endif
     ctrlLastEventMs = millis();
+#if defined(FX3D_ENABLED)
+    if (fx3dOwnsScreen()) { fx3dStop(); continue; }   // the first touch gives the panel back
+#endif
     // One meaning for the switch: held a little too long, it is still a click.
     if (e == CTRL_LONG) e = CTRL_PRESS;
 #if defined(CARDS_ENABLED)
@@ -1035,6 +1049,9 @@ void loop() {
   presenceLoop();            // the room radar's trail ring, at 10 Hz. No I/O, no allocation.
   loopMark("presence");
 #endif
+#if defined(FX3D_ENABLED)
+  fx3dLoop();                // the bench's schedule in the bench build, nothing otherwise
+#endif
 #if defined(IR_ENABLED)
   irLoop();                  // decoded frames and the serial console; the detents go to the knob's task
   loopMark("ir");
@@ -1138,6 +1155,9 @@ void loop() {
 
   // Display update with adaptive refresh rate
   int targetHz = getOptimalRefreshRate();
+#if defined(FX3D_ENABLED)
+  targetHz = fx3dRefreshHz(targetHz);   // a scene's rate, or at least 30 Hz for a moving 3D look
+#endif
   unsigned long frameInterval = 1000 / targetHz;
 
   if (millis() >= nextDisplayUpdate && displayAvailable && !isDisplayForcedOff()) {
@@ -1171,11 +1191,19 @@ void loop() {
     // An effect's blit writes all 8192 pixels; a clear first would only flash black.
     if (luaEffectCurrent() >= 0) animFullRepaint = true;
 #endif
+#if defined(FX3D_ENABLED)
+    if (fx3dOwnsScreen()) animFullRepaint = true;   // a 3D scene writes every pixel
+#endif
     // Bright starfield details make partial scans visible. Do not clear/reuse
     // the previous front buffer until the queued flip has settled.
     if (showViz && settings.vizStyle == 5) display.waitForScanCompletion();
     if (!animFullRepaint) display.clearDisplay();
 
+#if defined(FX3D_ENABLED)
+    if (fx3dOwnsScreen()) {
+      fx3dRender();
+    } else
+#endif
 #if defined(CARDS_ENABLED) && defined(CONTROL_ENCODER_ENABLED)
     // Requires the knob: a card is only ever reached by walking the pages, so
     // without an encoder there is no way to select one and nothing to render.

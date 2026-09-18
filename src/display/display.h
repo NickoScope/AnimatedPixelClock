@@ -11,7 +11,12 @@
 #include "../config/user_config.h"
 
 #include "matrix_display.h"
+#if defined(FX3D_ENABLED)
+#include "../fx3d/fx3d_display.h"   // the same panel with a place for 3D: src/fx3d
+extern Fx3dDisplay display;
+#else
 extern MatrixDisplay display;
+#endif
 #ifndef DISPLAY_WHITE
   #define DISPLAY_WHITE 0xFFFF
 #endif
