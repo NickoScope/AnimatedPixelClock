@@ -130,4 +130,5 @@ def main():
     print(f"\n{total - bad}/{total} behaved as intended")
     sys.exit(1 if bad else 0)
 
-main()
+if __name__ == "__main__":   # importing this file should not build 54 images
+    main()
