@@ -134,8 +134,8 @@ arduino-esp32 2.0.17's S3 sdkconfig). PSRAM: 73,984 B of frame buffers from boot
 eye planes, depth, the encoder); the scene on screen (from 16 B to 415,072 B for the landscape,
 87,360 B of which are its noise lattices, dead once the map is built and kept only because 87 KB
 of 16 MB is not worth a second allocation); while a look is on, 24,576 B for the captured frame plus the look (8,432 B
-on the host; 225,352 B until the drum's tables went from per pixel to per column). Every one is
-freed when it stops.
+on the host; 225,624 B at `6200dc7`, before the drum's tables went from per pixel to per column).
+Every one is freed when it stops.
 
 **Measured on the panel, 2026-09-18 (the integration session, over the network):**
 - At `264d6f1`: a blit of 8192 single pixels cost 14.2-14.9 ms in every scene; eight scenes held
@@ -145,7 +145,8 @@ freed when it stops.
   colour with the library's hlineDMA; blobs march one ray per 2 x 2 block; the landscape hashes
   each noise lattice once; the looks sort a row's pixels into their depth bands once.
 - At `80eb788` (`docs/drafts/27-fx3d-panel-measurements-80eb788.md` in the knowledge base): the
-  blit 6.3-9.7 ms; six of eight looks at 30 Hz, card 46.0 ms a frame and drum 31.5 ms; blobs
+  blit 6.3-9.7 ms; six of eight looks at 30 Hz, card 46.0 ms a frame and drum 31.5 ms (about
+  38 and 25 ms of it their own work beyond the blit); blobs
   41.7 / 82.2 ms (mono / red-blue); globe, tunnel and voxel 18-22 fps in mono and 10-13 in
   red-blue; voxel opens in 0.45 s.
 - Answered since: card and drum sample the picture in integers and write bytes straight into

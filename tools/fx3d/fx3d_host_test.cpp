@@ -1412,6 +1412,57 @@ static void looksInIntegers() {
             bytes[li]++;
           }
         }
+  // The drum's tables are kept per eye and rebuilt when the view changes:
+  // one scene drawn at one baseline and then another, eyes alternating, must
+  // give what a fresh scene gives. The baseline moves with the glasses'
+  // depth, so a table kept past it would show the wrong drum.
+  {
+    PictureScene kept;
+    kept.codes = pages[0].data();
+    kept.look = LOOK_DRUM;
+    kept.reset(1);
+    const float bs[] = {0.3f, 0.2f, 0.3f, 0.0f};
+    bool same = true;
+    for (float bl : bs)
+      for (int eye = -1; eye <= 1; eye += 2) {
+        PictureScene fresh;
+        fresh.codes = pages[0].data();
+        fresh.look = LOOK_DRUM;
+        fresh.reset(1);
+        Bufs a, b;
+        Ctx ca, cb;
+        a.bind(ca);
+        b.bind(cb);
+        kept.setup(ca.view);
+        fresh.setup(cb.view);
+        ca.eye = cb.eye = eye;
+        ca.view.b = cb.view.b = bl;
+        kept.draw(ca);
+        fresh.draw(cb);
+        same = same && (eye < 0 ? a.left == b.left : a.right == b.right);
+      }
+    CHECK(same);
+  }
+  // A NaN phase (a NaN step) draws nothing wrong and casts no NaN to int:
+  // UBSan, which the host test runs under, would stop on the cast.
+  for (int li = 0; li < 2; li++)
+    for (int eye = -1; eye <= 1; eye++) {
+      PictureScene pic;
+      pic.codes = pages[0].data();
+      pic.look = (uint8_t)looksToTry[li];
+      pic.reset(1);
+      Env w;
+      pic.step(NAN, w);
+      Bufs a;
+      Ctx c;
+      a.bind(c);
+      pic.setup(c.view);
+      c.eye = eye;
+      c.view.b = eye ? 0.3f : 0.0f;
+      pic.draw(c);
+      CHECK(true);
+    }
+
   for (int li = 0; li < 2; li++) {
     std::printf("  look %s in integers: worst %d, mean %.3f over %ld bytes (%ld lit); %d lit/dark disagreements; "
                 "%ld bytes across the rim\n",

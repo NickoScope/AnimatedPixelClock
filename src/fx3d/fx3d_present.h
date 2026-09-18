@@ -228,10 +228,12 @@ class PictureScene : public Scene {
 
   // The picture sampled bilinearly at (tx, ty), in 1/256 of a pixel with the
   // pixel centres on whole pixels, as linear light 0..255 a channel; a tap off
-  // the picture counts as black. Integers only: the float version, with a
-  // lin() for every tap and channel, was most of card's and drum's cost on the
-  // panel (46.0 and 31.5 ms a frame at 80eb788, the integration session's
-  // measurement). tx and ty must be above -kBias pixels.
+  // the picture counts as black. Integers only, in place of a float version
+  // with a lin() for every tap and channel. At 80eb788 card and drum took
+  // 46.0 and 31.5 ms a frame on the panel, about 38 and 25 ms of it their own
+  // work beyond the blit (the integration session's measurement); how much of
+  // that was the sampler was not measured. tx and ty must be above -kBias
+  // pixels.
   static const int kBias = 64;
   void sample8(int32_t tx, int32_t ty, int32_t *rgb) const {
     // Biased, so no shift sees a negative number (implementation-defined in C++11).
@@ -281,8 +283,8 @@ class PictureScene : public Scene {
   // sampled and written in integers, straight into the target.
   //
   // And no division a pixel: `/` on floats compiles to a call of the ROM's
-  // soft-float __divsf3 on the S3 (fx3d.cpp.o calls it 222 times; the symbol
-  // sits at 0x40002274, in ROM). The reciprocal of den is carried along the
+  // soft-float __divsf3 on the S3 (fx3d.cpp.o called it at 222 sites at
+  // 6200dc7 and 216 at 42a69d7; the symbol sits at 0x40002274, in ROM). The reciprocal of den is carried along the
   // row by one Newton step from the last pixel's, r' = r (2 - den r), whose
   // relative error is the square of the step's: den moves by at most
   // sin(kCardYaw) / f = 0.3 % of 1 a pixel, and wherever |den| < 0.25 the
@@ -291,7 +293,10 @@ class PictureScene : public Scene {
     const M3 r = mul(rotY(kCardYaw * sinf(yawPh_)), rotX(kCardPitch * sinf(pitchPh_)));
     const V3 ctr = v3(0.0f, 0.0f, kZ0), n = apply(r, v3(0, 0, -1)), ux = apply(r, v3(1, 0, 0)), uy = apply(r, v3(0, 1, 0));
     const Light light;
-    const int32_t shade = (int32_t)((0.55f + 0.45f * clampf(dot(n, light.dir), 0.0f, 1.0f)) * 256.0f + 0.5f);
+    // Every test below is written so a NaN (from a NaN phase) fails it and
+    // never reaches a cast to int.
+    const float lit = dot(n, light.dir);
+    const int32_t shade = (int32_t)((0.55f + 0.45f * (lit > 0.0f ? (lit < 1.0f ? lit : 1.0f) : 0.0f)) * 256.0f + 0.5f);
 #if defined(FX3D_STATS)
     float zMin = 1e9f, zMax = 0.0f;
 #endif
@@ -332,7 +337,7 @@ class PictureScene : public Scene {
         }
         const float t = K * inv;
         const float a = a0 + t * U, b = b0 + t * V;
-        if (fabsf(a) > kCardHalfW || fabsf(b) > kCardHalfH) {
+        if (!(fabsf(a) <= kCardHalfW && fabsf(b) <= kCardHalfH)) {
           dark(d, stereo);
           continue;
         }
@@ -410,8 +415,10 @@ class PictureScene : public Scene {
   // x and z of the direction the same all down the column), and the axis is
   // vertical, so they all meet the drum at one angle and one distance: the
   // table is per column, and the height on the drum runs linearly down the
-  // column. A table per pixel (72 KB an eye, read from PSRAM every frame)
-  // cost 31.5 ms a frame on the panel at 80eb788 (the integration session).
+  // column. With a table per pixel (72 KB an eye, read from PSRAM every
+  // frame) the drum took 31.5 ms a frame on the panel at 80eb788, about 25 ms
+  // of it beyond the blit (the integration session's measurement); the
+  // table's own share was not measured.
   struct DrumTab {
     bool valid;
     float f, b, z0, cx, cy;
@@ -431,7 +438,7 @@ class PictureScene : public Scene {
     const float turn = 0.25f * sinf(drumPh_);   // to and fro, never past a third of the picture
     for (int x = 0; x < kW; x++) {
       const float u = (t.ang[x] - turn) / kArc;   // -0.5..0.5 across the picture
-      drumTx_[x] = (t.ang[x] >= kMiss || fabsf(u) > 0.5f) ? kOff : fix8((u + 0.5f) * kW - 0.5f);
+      drumTx_[x] = (t.ang[x] < kMiss && fabsf(u) <= 0.5f) ? fix8((u + 0.5f) * kW - 0.5f) : kOff;   // NaN: off
     }
     const bool stereo = c.stereo();
     const int step = stereo ? 1 : 3;
@@ -440,7 +447,7 @@ class PictureScene : public Scene {
       const float below = (float)y - c.view.cy;
       for (int x = 0; x < kW; x++, d += step) {
         const float ht = t.hk[x] * below;
-        if (drumTx_[x] == kOff || fabsf(ht) > 1.0f) {
+        if (drumTx_[x] == kOff || !(fabsf(ht) <= 1.0f)) {
           dark(d, stereo);
           continue;
         }
