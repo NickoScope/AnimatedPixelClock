@@ -757,7 +757,7 @@ static void oldReproject(const PictureScene &pic, const uint8_t *codes, float sh
   for (int y = 0; y < kH; y++) {
     float band[kW][4], acc[kW][3], d[kW];
     std::memset(acc, 0, sizeof acc);
-    for (int x = 0; x < kW; x++) d[x] = pic.depthOf(x, y, &lin[3 * (y * kW + x)]);
+    for (int x = 0; x < kW; x++) d[x] = pic.depthOf(x, y, codes + 3 * (y * kW + x));
     for (int k = 0; k < kLevels; k++) {
       const float lo = (float)k / kLevels, hi = (float)(k + 1) / kLevels;
       bool any = false;

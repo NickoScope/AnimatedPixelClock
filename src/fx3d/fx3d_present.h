@@ -70,11 +70,8 @@ class PictureScene : public Scene {
     yawPh_ = pitchPh_ = wigglePh_ = drumPh_ = reliefPh_ = 0.0f;
     for (int k = 0; k < 3; k++) drum_[k].valid = false;
   }
-  // Each swing keeps its own phase, wrapped as it goes: no jump, however long it
-  // runs. The page's codes become linear light once here, not at every read.
+  // Each swing keeps its own phase, wrapped as it goes: no jump, however long it runs.
   void step(float dt, const Env &) {
-    if (codes)
-      for (int i = 0; i < kPixels * 3; i++) lin_[i] = kCie8[codes[i]];
     yawPh_ = wrapAngle(yawPh_ + kTwoPi * dt / 7.0f);
     pitchPh_ = wrapAngle(pitchPh_ + kTwoPi * dt / 9.3f);
     wigglePh_ = wrapAngle(wigglePh_ + kTwoPi * dt * 2.0f);
@@ -103,9 +100,9 @@ class PictureScene : public Scene {
     }
   }
   // The depth a pixel gets in the pixel-moving looks, 0..1 of the budget.
-  // px: three linear bytes of the page (kCie8 of its codes).
+  // px: the page's three codes for the pixel.
   float depthOf(int x, int y, const uint8_t *px) const {
-    const float r = (float)px[0], g = (float)px[1], b = (float)px[2];
+    const float r = (float)kCie8[px[0]], g = (float)kCie8[px[1]], b = (float)kCie8[px[2]];
     const float m = r > g ? (r > b ? r : b) : (g > b ? g : b);
     if (m < 2.0f) return 0.0f;   // black is the panel's own plane
     switch (look == LOOK_WIGGLE ? (uint8_t)LOOK_POP : look) {
@@ -136,11 +133,14 @@ class PictureScene : public Scene {
   static constexpr float kMiss = 100.0f;  // an angle no hit can have: the ray missed the drum
   float yawPh_, pitchPh_, wigglePh_, drumPh_, reliefPh_;
 
-  uint8_t lin_[kPixels * 3];   // this frame's page in linear light, 0..255 (kCie8 of each code)
-  static float unit(uint8_t v) { return (float)v * (1.0f / 255.0f); }
+  // A code as linear light, 0..1, from the library's own 256-byte table. Read
+  // on the fly: a per-frame linear copy of the page (24.6 KB of PSRAM written
+  // and read every frame) made drum and wiggle slower on the panel, not faster
+  // (the integration session's measurement of 3d2a1c5, 2026-09-18).
+  static float lin(uint8_t code) { return (float)kCie8[code] * (1.0f / 255.0f); }
 
   void flat(Ctx &c) {
-    for (int i = 0; i < kPixels; i++) c.pixel(i, unit(lin_[3 * i]), unit(lin_[3 * i + 1]), unit(lin_[3 * i + 2]));
+    for (int i = 0; i < kPixels; i++) c.pixel(i, lin(codes[3 * i]), lin(codes[3 * i + 1]), lin(codes[3 * i + 2]));
   }
 
   // Depth-image-based rendering, row by row. Each source pixel is a box one
@@ -164,14 +164,13 @@ class PictureScene : public Scene {
 
   void reproject(Ctx &c, float shift) {
     for (int y = 0; y < kH; y++) {
-      const uint8_t *row = lin_ + 3 * y * kW;
       const uint8_t *crow = codes + 3 * y * kW;
       int count[kLevels + 1] = {0};
       for (int x = 0; x < kW; x++) {
-        const uint8_t *p = row + 3 * x, *q = crow + 3 * x;
+        const uint8_t *q = crow + 3 * x;
         level_[x] = -1;
         if (!q[0] && !q[1] && !q[2]) continue;   // black: nothing to move
-        const float dd = depthOf(x, y, p);
+        const float dd = depthOf(x, y, q);
         d_[x] = dd;
         int k = 0;   // the band, by the same comparisons as the walk over every band
         while (k < kLevels - 1 && !(k == 0 ? dd <= 1.0f / kLevels : (dd > (float)k / kLevels && dd <= (float)(k + 1) / kLevels))) k++;
@@ -200,12 +199,12 @@ class PictureScene : public Scene {
         for (int x = lo; x <= hi; x++) band_[x][0] = band_[x][1] = band_[x][2] = band_[x][3] = 0.0f;
         for (int n = count[k]; n < count[k + 1]; n++) {
           const int x = order_[n];
-          const uint8_t *p = row + 3 * x;
+          const uint8_t *p = crow + 3 * x;
           const float xs = (float)x - shift * d_[x];
           const float fl = floorf(xs);
           const int i0 = (int)fl;
           const float fr = xs - fl;
-          const float col[3] = {unit(p[0]), unit(p[1]), unit(p[2])};
+          const float col[3] = {lin(p[0]), lin(p[1]), lin(p[2])};
           for (int j = 0; j < 2; j++) {
             const int xi = i0 + j;
             if (xi < 0 || xi >= kW) continue;
@@ -238,10 +237,10 @@ class PictureScene : public Scene {
         const int x = x0 + i, y = y0 + j;
         if ((unsigned)x >= (unsigned)kW || (unsigned)y >= (unsigned)kH) continue;
         const float w = (i ? ax : 1.0f - ax) * (j ? ay : 1.0f - ay);
-        const uint8_t *p = lin_ + 3 * (y * kW + x);
-        rgb[0] += w * unit(p[0]);
-        rgb[1] += w * unit(p[1]);
-        rgb[2] += w * unit(p[2]);
+        const uint8_t *p = codes + 3 * (y * kW + x);
+        rgb[0] += w * lin(p[0]);
+        rgb[1] += w * lin(p[1]);
+        rgb[2] += w * lin(p[2]);
       }
   }
 
@@ -297,29 +296,45 @@ class PictureScene : public Scene {
   // shade. Laid far to near, so a nearer block hides what is behind it. The
   // direction sways; each eye sees it a little differently, so in stereo the
   // tall blocks come forward.
+  //
+  // Bytes straight into the target, positions in 1/256 pixel: a float path
+  // through Ctx::pixel for every side pixel cost 79-81 ms a frame on the panel
+  // (the integration session's measurement, 2026-09-18).
   void relief(Ctx &c) {
     const float kRise = 3.5f;
     const float sway = sinf(reliefPh_);
     const float ex = 0.55f * sway + (c.stereo() ? 0.12f * (float)c.eye * c.st.depthPx : 0.0f);
     const float ey = -0.85f;   // up the panel, away from the viewer
+    const bool stereo = c.stereo();
+    uint8_t *dst = stereo ? c.plane() : c.fb.rgb;
     c.clear();
     // Far to near: top row first; along a row, from the side the blocks lean
     // towards.
     for (int y = 0; y < kH; y++)
       for (int k = 0; k < kW; k++) {
         const int x = ex >= 0.0f ? kW - 1 - k : k;
-        const uint8_t *p = lin_ + 3 * (y * kW + x);
-        const float r = unit(p[0]), g = unit(p[1]), b = unit(p[2]);
-        const float m = r > g ? (r > b ? r : b) : (g > b ? g : b);
-        if (m <= 0.004f) continue;
-        const float h = kRise * smoothstepf(0.0f, 0.6f, m);
+        const uint8_t *p = codes + 3 * (y * kW + x);
+        const uint8_t r = kCie8[p[0]], g = kCie8[p[1]], b = kCie8[p[2]];
+        const uint8_t m = r > g ? (r > b ? r : b) : (g > b ? g : b);
+        if (m <= 1) continue;   // 0.004 of full light and below: nothing stands up
+        const float h = kRise * smoothstepf(0.0f, 0.6f, (float)m * (1.0f / 255.0f));
         const int steps = (int)ceilf(h * 1.5f);
+        // The side's end in 1/256 pixel, then each step's position from integers.
+        const int32_t fx = (int32_t)lrintf(ex * h * 256.0f), fy = (int32_t)lrintf(ey * h * 256.0f);
         for (int s = 0; s <= steps; s++) {   // the side, darker the lower it is
-          const float f = steps ? (float)s / steps : 1.0f;
-          const int px = (int)lrintf((float)x + ex * h * f), py = (int)lrintf((float)y + ey * h * f);
+          const int32_t ox = steps ? fx * s / steps : fx, oy = steps ? fy * s / steps : fy;
+          const int px = x + (int)((ox + (ox >= 0 ? 128 : -128)) / 256), py = y + (int)((oy + (oy >= 0 ? 128 : -128)) / 256);
           if ((unsigned)px >= (unsigned)kW || (unsigned)py >= (unsigned)kH) continue;
-          const float k2 = s == steps ? 1.0f : 0.25f + 0.25f * f;
-          c.pixel(py * kW + px, r * k2, g * k2, b * k2);
+          // 1 for the top, else 0.25 + 0.25 of the way up, in 1/256.
+          const int k2 = s == steps ? 256 : 64 + (steps ? 64 * s / steps : 64);
+          const int i = py * kW + px;
+          if (stereo) {
+            dst[i] = (uint8_t)((m * k2 + 128) >> 8);
+          } else {
+            dst[3 * i] = (uint8_t)((r * k2 + 128) >> 8);
+            dst[3 * i + 1] = (uint8_t)((g * k2 + 128) >> 8);
+            dst[3 * i + 2] = (uint8_t)((b * k2 + 128) >> 8);
+          }
         }
       }
   }
