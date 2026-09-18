@@ -23,6 +23,7 @@
 
 #include "fx3d_catalog.h"
 #include "fx3d_present.h"
+#include "fx3d_profile.h"
 #include "synth_sound.h"
 
 using namespace fx3d;
@@ -854,7 +855,403 @@ static void reprojectMatches() {
     }
 }
 
+// A stand-in for NVS behind Preferences: typed entries, gets that give the
+// default for a missing key or another type, puts that can be made to fail.
+// A put under a name held with another type either replaces that entry, or
+// (legacy, ESP-IDF 4.4.7 - fx3d_profile.h says where) adds one more entry
+// behind it, every time, and reads keep stopping at the old one until it is
+// erased.
+struct FakeNvs {
+  enum Type { T_U8, T_U16, T_I32 };
+  struct Entry {
+    std::string key;
+    Type type;
+    uint32_t value;
+  };
+  std::vector<Entry> e;   // reads take the first entry of a name
+  bool legacy = false, clearFails = false;
+  int putsLeft = 1000, puts = 0, clears = 0;
+  std::vector<std::string> order;
+
+  const Entry *first(const char *k) const {
+    for (const Entry &x : e)
+      if (x.key == k) return &x;
+    return nullptr;
+  }
+  uint8_t getUChar(const char *k, uint8_t def) const {
+    const Entry *x = first(k);
+    return (x && x->type == T_U8) ? (uint8_t)x->value : def;
+  }
+  uint16_t getUShort(const char *k, uint16_t def) const {
+    const Entry *x = first(k);
+    return (x && x->type == T_U16) ? (uint16_t)x->value : def;
+  }
+  bool isKey(const char *k) const { return first(k) != nullptr; }
+  bool put(const char *k, Type t, uint32_t v) {
+    if (putsLeft <= 0) return false;
+    putsLeft--;
+    puts++;
+    order.push_back(k);
+    const Entry *head = first(k);
+    if (!(legacy && head && head->type != t))
+      for (Entry &x : e)
+        if (x.key == k && x.type == t) {
+          x.value = v;
+          return true;
+        }
+    if (!legacy)
+      for (size_t i = e.size(); i-- > 0;)
+        if (e[i].key == k) e.erase(e.begin() + (long)i);
+    Entry n;
+    n.key = k;
+    n.type = t;
+    n.value = v;
+    e.push_back(n);
+    return true;
+  }
+  size_t putUChar(const char *k, uint8_t v) { return put(k, T_U8, v) ? 1 : 0; }     // Preferences returns the bytes
+  size_t putUShort(const char *k, uint16_t v) { return put(k, T_U16, v) ? 2 : 0; }
+  bool clear() {
+    if (clearFails) return false;
+    clears++;
+    e.clear();
+    return true;
+  }
+};
+
+static bool sameStereo(const Stereo &a, const Stereo &b) {
+  return a.mode == b.mode && a.swapEyes == b.swapEyes && a.depthPx == b.depthPx && a.gainL == b.gainL &&
+         a.gainR == b.gainR;
+}
+
+// A whole record of this layout, with one key left out, out of its range, or
+// of another type (kind 0, 1, 2; -1 keeps every key).
+static void putRecord(FakeNvs &n, int skip, int kind) {
+  const uint32_t good[PK_COUNT] = {MODE_RED_GREEN, 1, 350, 80, 60, kProfileVersion};
+  const uint32_t bad[PK_COUNT] = {MODE_COUNT, 2, kDepthMax100 + 1u, 101, 200, 2};
+  for (int k = 0; k < PK_COUNT; k++) {
+    const char *name = profileKeyName(k);
+    const bool odd = k == skip;
+    if (odd && kind == 0) continue;
+    if (odd && kind == 2) {
+      n.put(name, FakeNvs::T_I32, 7);
+      continue;
+    }
+    const uint32_t v = odd ? bad[k] : good[k];
+    if (profileKeyWide(k)) n.putUShort(name, (uint16_t)v);
+    else n.putUChar(name, (uint8_t)v);
+  }
+  n.puts = 0;
+  n.order.clear();
+}
+
+static void profile() {
+  const Stereo def;
+
+  // Every value the API can set comes back the same after a reboot. The page
+  // and the API give gains in whole per cent and depths in 1/100 px, so the
+  // round trip is exact, float for float.
+  for (int m = 0; m < MODE_COUNT; m++)
+    for (int sw = 0; sw < 2; sw++) {
+      Stereo st;
+      st.mode = (uint8_t)m;
+      st.swapEyes = sw == 1;
+      CHECK(sameStereo(profileFrom(profileTo(st)), st));
+    }
+  for (int d = 0; d <= kDepthMax100; d++) {
+    Stereo st;
+    st.depthPx = (float)d / 100.0f;
+    CHECK(profileTo(st).v[PK_DEPTH] == d && profileFrom(profileTo(st)).depthPx == st.depthPx);
+  }
+  for (int g = 0; g <= 100; g++) {
+    Stereo st;
+    st.gainL = (float)g / 100.0f;
+    st.gainR = (float)(100 - g) / 100.0f;
+    const StoredProfile p = profileTo(st);
+    CHECK(p.v[PK_GL] == g && p.v[PK_GR] == 100 - g && sameStereo(profileFrom(p), st));
+  }
+  {
+    Stereo st;   // what cannot be stored is clamped, and NaN is not cast
+    st.mode = 17;
+    st.depthPx = 99.0f;
+    st.gainL = 7.0f;
+    st.gainR = -1.0f;
+    const StoredProfile p = profileTo(st);
+    CHECK(p.v[PK_MODE] == MODE_RED_BLUE && p.v[PK_DEPTH] == kDepthMax100 && p.v[PK_GL] == 100 && p.v[PK_GR] == 0);
+    st.depthPx = -3.0f;
+    st.gainL = NAN;
+    CHECK(profileTo(st).v[PK_DEPTH] == 0 && profileTo(st).v[PK_GL] == 0);
+    CHECK(profileTo(def).v[PK_VER] == kProfileVersion);
+  }
+
+  // Reading. Nothing stored: the defaults.
+  {
+    FakeNvs n;
+    const ProfileStore s = profileRead(n);
+    CHECK(profileStoreEmpty(s) && sameStereo(profileFrom(s.rec), def) && profileUsed(s.rec) == 0);
+  }
+  // A whole record: every value.
+  {
+    FakeNvs n;
+    putRecord(n, -1, 0);
+    const ProfileStore s = profileRead(n);
+    const Stereo st = profileFrom(s.rec);
+    CHECK(s.clean && profileUsed(s.rec) == 5);
+    CHECK(st.mode == MODE_RED_GREEN && st.swapEyes && st.depthPx == 3.5f && st.gainL == 0.8f && st.gainR == 0.6f);
+  }
+  // No `ver`, another one, or one of another type: every default.
+  for (int kind = 0; kind < 3; kind++) {
+    FakeNvs n;
+    putRecord(n, PK_VER, kind);
+    const ProfileStore s = profileRead(n);
+    CHECK(sameStereo(profileFrom(s.rec), def) && profileUsed(s.rec) == 0);
+    CHECK(s.clean == (kind != 2));
+  }
+  // One value missing, out of its range, or of another type: that value's
+  // default, the rest from the record.
+  for (int k = 0; k < PK_VER; k++)
+    for (int kind = 0; kind < 3; kind++) {
+      FakeNvs whole, n;
+      putRecord(whole, -1, 0);
+      putRecord(n, k, kind);
+      const ProfileStore s = profileRead(n);
+      const Stereo got = profileFrom(s.rec), all = profileFrom(profileRead(whole).rec);
+      Stereo want = all;
+      if (k == PK_MODE) want.mode = def.mode;
+      if (k == PK_SWAP) want.swapEyes = def.swapEyes;
+      if (k == PK_DEPTH) want.depthPx = def.depthPx;
+      if (k == PK_GL) want.gainL = def.gainL;
+      if (k == PK_GR) want.gainR = def.gainR;
+      CHECK(sameStereo(got, want) && profileUsed(s.rec) == 4);
+      CHECK(s.clean == (kind != 2));
+    }
+
+  // Writing. The first write puts every key, `ver` last, and reads back.
+  {
+    FakeNvs n;
+    ProfileStore s = profileRead(n);
+    Stereo st;
+    st.mode = MODE_RED_CYAN;
+    st.depthPx = 1.5f;
+    st.gainR = 0.7f;
+    CHECK(profileWrite(n, s, profileTo(st)) == PK_COUNT && n.clears == 0 && n.order.back() == "ver");
+    const ProfileStore back = profileRead(n);
+    CHECK(back.clean && sameRecord(back.rec, s.rec) && sameStereo(profileFrom(back.rec), st));
+    n.puts = 0;   // the same again: nothing written
+    CHECK(profileWrite(n, s, profileTo(st)) == 0 && n.puts == 0);
+    st.depthPx = 2.5f;   // one value: one key
+    CHECK(profileWrite(n, s, profileTo(st)) == 1 && n.puts == 1 && n.order.back() == "depth");
+    CHECK(sameStereo(profileFrom(profileRead(n).rec), st));
+  }
+  // A record of another layout in our types: the keys that already agree stay.
+  {
+    FakeNvs n;
+    putRecord(n, PK_VER, 1);   // ver 2
+    ProfileStore s = profileRead(n);
+    Stereo st = profileFrom(s.rec);
+    CHECK(s.clean && sameStereo(st, def));
+    st.mode = MODE_RED_GREEN;
+    st.swapEyes = true;
+    st.depthPx = 3.5f;
+    st.gainL = 0.8f;
+    st.gainR = 0.6f;   // the record's own values
+    CHECK(profileWrite(n, s, profileTo(st)) == 1 && n.order.back() == "ver" && n.clears == 0);
+    CHECK(sameStereo(profileFrom(profileRead(n).rec), st));
+  }
+  // A key of ours with another type, under both behaviours: the write erases
+  // first, and the profile reads back.
+  for (int legacy = 0; legacy < 2; legacy++) {
+    FakeNvs n;
+    n.legacy = legacy == 1;
+    putRecord(n, PK_DEPTH, 2);
+    ProfileStore s = profileRead(n);
+    CHECK(!s.clean);
+    Stereo st;
+    st.depthPx = 3.0f;
+    CHECK(profileWrite(n, s, profileTo(st)) == PK_COUNT && n.clears == 1 && s.clean);
+    const ProfileStore back = profileRead(n);
+    CHECK(back.clean && sameStereo(profileFrom(back.rec), st));
+  }
+  // The negative control: without the erase, the legacy behaviour keeps the
+  // old entry in front and the new depth never reads back.
+  {
+    FakeNvs n;
+    n.legacy = true;
+    putRecord(n, PK_DEPTH, 2);
+    ProfileStore s = profileRead(n);
+    s.clean = true;
+    Stereo st;
+    st.depthPx = 3.0f;
+    CHECK(profileWrite(n, s, profileTo(st)) > 0 && n.clears == 0);
+    CHECK(profileFrom(profileRead(n).rec).depthPx == def.depthPx);
+  }
+  // A write refused half way: -1, and the next one starts over, whole.
+  {
+    FakeNvs n;
+    ProfileStore s;
+    Stereo st;
+    st.depthPx = 4.0f;
+    st.gainL = 0.5f;
+    n.putsLeft = 2;
+    CHECK(profileWrite(n, s, profileTo(st)) == -1 && !s.clean);
+    CHECK(!n.isKey("ver") && sameStereo(profileFrom(profileRead(n).rec), def));   // no ver: nothing half-used
+    n.putsLeft = 1000;
+    CHECK(profileWrite(n, s, profileTo(st)) == PK_COUNT && n.clears == 1 && s.clean);
+    CHECK(sameStereo(profileFrom(profileRead(n).rec), st));
+  }
+  {
+    FakeNvs n;   // an erase refused: nothing is put over the old record
+    ProfileStore s;
+    s.clean = false;
+    n.clearFails = true;
+    CHECK(profileWrite(n, s, profileTo(def)) == -1 && !s.clean && n.puts == 0);
+  }
+  // The reset: nothing stored, so the defaults; the next write is whole again.
+  {
+    FakeNvs n;
+    ProfileStore s;
+    Stereo st;
+    st.mode = MODE_MONO;
+    CHECK(profileWrite(n, s, profileTo(st)) == PK_COUNT);
+    CHECK(profileErase(n, s) && profileStoreEmpty(s) && n.e.empty());
+    const ProfileStore back = profileRead(n);
+    CHECK(profileStoreEmpty(back) && sameStereo(profileFrom(back.rec), def));
+    CHECK(profileWrite(n, s, profileTo(st)) == PK_COUNT);
+    n.clearFails = true;
+    CHECK(!profileErase(n, s) && !s.clean);
+  }
+
+  // The deferred write: not before the settle, then due, across the wrap; a
+  // second change starts the wait again.
+  {
+    ProfileTimer idle;
+    CHECK(!idle.due(0) && !idle.due(123456u));
+    const uint32_t starts[] = {0u, 1000u, 0xFFFFFFFFu - 1000u, 0xFFFFFFFFu};
+    for (uint32_t t0 : starts) {
+      ProfileTimer t;
+      t.touch(t0);
+      CHECK(!t.due(t0) && !t.due(t0 + kProfileSettleMs - 1u));
+      CHECK(t.due(t0 + kProfileSettleMs) && t.due(t0 + kProfileSettleMs + 60000u));
+      t.touch(t0 + 2000u);
+      CHECK(!t.due(t0 + kProfileSettleMs) && t.due(t0 + 2000u + kProfileSettleMs));
+    }
+  }
+
+  // Keys of ours of another type and nothing else: not empty, and a reset erases them.
+  {
+    FakeNvs n;
+    n.put("depth", FakeNvs::T_I32, 7);
+    ProfileKeeper k;
+    k.nvs = profileRead(n);
+    CHECK(k.resetNeedsNvs());
+    Stereo st;
+    ProfileArgs r;
+    r.reset = true;
+    k.apply(r, st, &n, 0);
+    CHECK(n.e.empty() && n.clears == 1 && std::strcmp(k.state(), "kept") == 0);
+  }
+
+  // The keeper: the firmware's glue. A change waits for the settle.
+  const FakeNvs *none = nullptr;
+  {
+    FakeNvs n;
+    ProfileKeeper k;
+    Stereo st;
+    CHECK(std::strcmp(k.state(), "kept") == 0 && !k.due(0, false));
+    ProfileArgs a;
+    a.depth = 3.0f;
+    k.apply(a, st, const_cast<FakeNvs *>(none), 1000);
+    CHECK(st.depthPx == 3.0f && std::strcmp(k.state(), "pending") == 0);
+    CHECK(!k.due(1000 + kProfileSettleMs - 1, false) && k.due(1000 + kProfileSettleMs, false));
+    // The bench borrows the profile: nothing is written while it runs, and
+    // what is written after is the owner's, which benchEnd put back.
+    const Stereo owner = st;
+    st.mode = MODE_MONO;
+    CHECK(!k.due(1000 + kProfileSettleMs, true) && !k.due(60000, true));
+    st = owner;
+    CHECK(k.due(60000, false) && k.save(st, &n, 60000) == PK_COUNT && std::strcmp(k.state(), "kept") == 0);
+    CHECK(sameStereo(profileFrom(profileRead(n).rec), owner) && !k.due(120000, false));
+    // A request that changes nothing NVS would hold starts no wait.
+    ProfileArgs same;
+    same.depth = 3.001f;
+    same.mode = MODE_RED_BLUE;
+    k.apply(same, st, const_cast<FakeNvs *>(none), 61000);
+    k.apply(ProfileArgs(), st, const_cast<FakeNvs *>(none), 61000);
+    CHECK(!k.timer.pending && std::strcmp(k.state(), "kept") == 0);
+    // Depth as NVS keeps it: 2.345 shows as 2.35 at once, not after a reboot.
+    ProfileArgs d;
+    d.depth = 2.345f;
+    k.apply(d, st, const_cast<FakeNvs *>(none), 62000);
+    CHECK(st.depthPx == 2.35f);
+    CHECK(k.save(st, &n, 70000) == 1 && profileFrom(profileRead(n).rec).depthPx == st.depthPx);
+    // Reset first, then the rest: profile=reset&depth=3 is the defaults with depth 3.
+    ProfileArgs r;
+    r.reset = true;
+    r.depth = 3.0f;
+    CHECK(k.resetNeedsNvs());
+    k.apply(r, st, &n, 80000);
+    Stereo want;
+    want.depthPx = 3.0f;
+    CHECK(sameStereo(st, want) && n.e.empty() && std::strcmp(k.state(), "pending") == 0);
+    CHECK(k.save(st, &n, 90000) == PK_COUNT && sameStereo(profileFrom(profileRead(n).rec), want));
+    // A reset alone: the defaults, nothing stored, nothing waiting.
+    ProfileArgs r2;
+    r2.reset = true;
+    k.apply(r2, st, &n, 100000);
+    CHECK(sameStereo(st, def) && n.e.empty() && std::strcmp(k.state(), "kept") == 0 && !k.resetNeedsNvs());
+    const int clears = n.clears;   // and with nothing stored, a reset touches nothing
+    k.apply(r2, st, &n, 110000);
+    CHECK(n.clears == clears && std::strcmp(k.state(), "kept") == 0);
+  }
+  // Refusals: tried again after each settle, kProfileRetries times, then failed
+  // until the next change; a working NVS then writes the record whole.
+  {
+    FakeNvs n;
+    ProfileKeeper k;
+    Stereo st;
+    ProfileArgs a;
+    a.gl = 50;
+    k.apply(a, st, const_cast<FakeNvs *>(none), 0);
+    n.putsLeft = 0;
+    uint32_t t = kProfileSettleMs;
+    for (int i = 0; i < kProfileRetries; i++, t += kProfileSettleMs)
+      CHECK(k.due(t, false) && k.save(st, &n, t) == -1 && std::strcmp(k.state(), "pending") == 0);
+    CHECK(k.due(t, false) && k.save(st, &n, t) == -1 && std::strcmp(k.state(), "failed") == 0);
+    CHECK(!k.due(t + 3600000u, false));
+    CHECK(k.save(st, const_cast<FakeNvs *>(none), t) == -1);   // a namespace that will not open counts the same
+    n.putsLeft = 1000;
+    ProfileArgs b;
+    b.gr = 40;
+    k.apply(b, st, const_cast<FakeNvs *>(none), t + 1000);
+    CHECK(std::strcmp(k.state(), "pending") == 0);
+    CHECK(k.save(st, &n, t + 1000 + kProfileSettleMs) == PK_COUNT && std::strcmp(k.state(), "kept") == 0);
+    CHECK(sameStereo(profileFrom(profileRead(n).rec), st) && sameStereo(k.afterReboot(), st));
+  }
+  // A refused erase: the defaults at once, and the erase tried again as a
+  // write of the defaults.
+  {
+    FakeNvs n;
+    ProfileKeeper k;
+    Stereo st;
+    st.mode = MODE_MONO;
+    CHECK(k.save(st, &n, 0) == PK_COUNT);
+    n.clearFails = true;
+    ProfileArgs r;
+    r.reset = true;
+    k.apply(r, st, &n, 1000);
+    CHECK(sameStereo(st, def) && std::strcmp(k.state(), "pending") == 0 && k.failed);
+    CHECK(k.afterReboot().mode == MODE_MONO);   // until the retry lands
+    uint32_t t = 1000 + kProfileSettleMs;
+    CHECK(k.due(t, false) && k.save(st, &n, t) == -1 && std::strcmp(k.state(), "pending") == 0);   // refused again: again later
+    n.clearFails = false;
+    t += kProfileSettleMs;
+    CHECK(k.due(t, false) && k.save(st, &n, t) == PK_COUNT);
+    CHECK(sameStereo(profileFrom(profileRead(n).rec), def) && std::strcmp(k.state(), "kept") == 0);
+  }
+}
+
 int main(int argc, char **argv) {
+  profile();
   projection();
   baselineBudget();
   nearClip();

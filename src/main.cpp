@@ -1050,7 +1050,7 @@ void loop() {
   loopMark("presence");
 #endif
 #if defined(FX3D_ENABLED)
-  fx3dLoop();                // the 3D bench's schedule while one runs; nothing otherwise
+  fx3dLoop();                // the glasses profile's deferred NVS write; the 3D bench's schedule
   loopMark("fx3d");
 #endif
 #if defined(IR_ENABLED)

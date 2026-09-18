@@ -26,6 +26,7 @@ knowledge base.
 | `fx3d_present.h` | the looks: a page's frame in, 3D out |
 | `fx3d_catalog.h` | every scene, built in memory the caller hands in |
 | `fx3d_display.h` | `Fx3dDisplay`: the global `display` under the flag, which can capture a page's frame |
+| `fx3d_profile.h` | the glasses profile in NVS: the keys, reading that never refuses, writing only what changed, the deferred write |
 | `fx3d.cpp` | the panel: PSRAM buffers, the blit, the hooks, `/api/fx3d`, the bench |
 
 All headers but `fx3d_display.h` are plain C++11 with no Arduino: `tools/fx3d/check_fx3d.py`
@@ -41,16 +42,77 @@ tests them on the Mac, and `tools/fx3d/render.py` and `looks.py` render the prev
   render tick to at least 30 Hz. While a scene shows, the look waits.
 - `/api/fx3d` also takes `mode=mono|redblue|redcyan|redgreen` (one mode for everything
   shown), `depth` (pixels of the largest disparity, 0-16, starting at 2), `swap=0|1`,
-  `gl`/`gr` (the eyes' gains, %), `page=0..5` for `calib`, and `bench=1|0`. Every argument
-  is parsed strictly and checked before anything changes.
+  `gl`/`gr` (the eyes' gains, %), `page=0..5` for `calib`, `bench=1|0`, and
+  `profile=reset`. Every argument is parsed strictly and checked before anything changes.
+  Mode, depth, swap and the gains are the **glasses profile**, which NVS keeps (below).
 - **`/fx3d`** is the owner's remote for the glasses: the calibration's six steps with what
-  to look for at each, every scene, every look, the mode, depth, swap, the eyes' gains, and
-  the bench's button. It only calls `/api/fx3d`, and polls only while its tab is visible.
+  to look for at each, every scene, every look, the mode, depth, swap, the eyes' gains,
+  whether the profile is saved, a button back to the defaults, and the bench's button. It
+  only calls `/api/fx3d`, **one request at a time**, and polls only while its tab is
+  visible. Overlapping requests are what drained the panel's internal heap in the
+  integration session's measurement (`docs/drafts/27-heap-block-experiment-2026-09-18.md`
+  in the knowledge base). A control's request waits under the control's name, so a second
+  touch replaces the first one still waiting; a toggle's query is built when it goes, from
+  the panel's last answer; a poll is dropped while anything is out or waiting; a request
+  that hangs is dropped after 8 s, longer than the server's own 5 s waits
+  (`HTTP_MAX_DATA_WAIT`, `HTTP_MAX_SEND_WAIT` in `WebServer.h`). `tools/fx3d/page_queue_test.js`
+  runs the queue in JavaScriptCore, with a broken queue as the negative control.
 - While a look is on, the render tick runs at **most 30 Hz**, even on a page that wants 60:
   the look renders and blits the whole frame at every flip. The price, until the bench says
   whether 60 fits: the clock animations that take one step per tick (Mario, Pong, Pac-Man)
   run at about half speed under a look, and the classic equaliser's smoothing, set per
   frame, reacts about half as fast.
+
+## The glasses profile in NVS
+
+What the owner sets with the calibration survives a reboot. Namespace **`fx3d`**, one typed
+key per value, so any NVS dump shows them (`fx3d_profile.h` holds the same table):
+
+| key | type | meaning | range |
+|---|---|---|---|
+| `mode` | u8 | 0 mono, 1 red-blue, 2 red-cyan, 3 red-green | 0..3 |
+| `swap` | u8 | 1: the red channel shows the right eye's picture | 0..1 |
+| `depth` | u16 | the largest disparity, in 1/100 of a pixel | 0..1600 |
+| `gl` | u8 | the left eye's gain, per cent | 0..100 |
+| `gr` | u8 | the right eye's gain, per cent | 0..100 |
+| `ver` | u8 | this layout, written last | 1 |
+
+- **Nothing stored** means the defaults: red-blue, the eyes as they are, 2 px, both eyes at
+  100 %. The reset (`profile=reset`, the page's button) erases the namespace, so a later
+  firmware's defaults apply too.
+- **Reading never refuses.** A key that is missing, of another type, or out of its range
+  gives that value's default; a `ver` other than 1, or none, gives every default. A
+  missing namespace is the first boot, not an error, though `Preferences::begin()` reports
+  it through `log_e` (arduino-esp32 2.0.17, `Preferences.cpp`), as it does for `irmap`.
+- **Writing** waits 2.5 s after the last change (the clock styles' `SETTLE_MS`, chosen there
+  for flash wear), and not while the bench runs, which borrows the profile and gives it back
+  when it ends. It puts only the keys whose value changed, `ver` last. Depth is rounded to
+  the 1/100 px NVS keeps as soon as it is set, so what shows is what a reboot brings back.
+- **A key of ours with another type**, or a write that failed half way, makes the next write
+  erase the namespace and put every key. In ESP-IDF 4.4.7, which arduino-esp32 2.0.17 is
+  built on, a put of another type does not replace the old entry: `Page::findItem` stops at
+  it with a type mismatch, `Storage::findItem` moves on, so `Storage::writeItem` adds the new
+  entry and erases nothing, and since the index hash leaves the type out
+  (`Item::calculateCrc32WithoutValue`), reads on that page keep stopping at the old one
+  (`nvs_page.cpp`, `nvs_storage.cpp`, `nvs_types.cpp` at v4.4.7; IDF's own tests call it the
+  legacy behaviour, `CONFIG_NVS_LEGACY_DUP_KEYS_COMPATIBILITY`).
+- **A refusal** is tried again after each settle, three times (our choice, not a measured
+  figure; `src/railboard/railboard.cpp` retries a refused open without a limit), then waits
+  for the next change. A refused reset leaves the defaults on and retries as a write of them.
+- **What it says:** `/api/fx3d` answers `"profile":"kept"` (a reboot brings back what is on),
+  `"pending"` (a change or a retry waits for its 2.5 s) or `"failed"` (the retries are spent).
+  The log: `[fx3d] glasses from NVS, 5 of 5 values: redblue swap=0 depth=2.00 gl=100 gr=100`
+  at boot, `[fx3d] glasses saved, 1 keys in N ms` per write, and on a refusal what a reboot
+  would bring back.
+- **Not kept:** the look and the scene. A reboot brings the panel back flat, on its page.
+- **The portal's factory reset** (`src/web/web.cpp`) clears the `pcmonitor` namespace only:
+  the glasses profile survives it, as the IR map and the other modules' namespaces do.
+
+The rules and the glue the firmware runs (`ProfileKeeper`: the bench, reset before the other
+arguments, retries, what the API says) are tested on the Mac against a stand-in for NVS that
+holds typed keys, refuses writes and erases on demand, and behaves either way for a key
+rewritten with another type (`tools/fx3d/fx3d_host_test.cpp`, `profile()`), with a negative
+control: without the erase, the legacy behaviour leaves the new depth unread.
 
 ## What it costs
 
@@ -58,10 +120,14 @@ Measured with `platformio run`, against the same env without the flag:
 
 | | Without | With `FX3D_ENABLED` |
 |---|---|---|
-| Static RAM | 103,376 B | 103,976 B (**+600 B**, of it the blit's 384 B row) |
-| Flash | 2,270,697 B | 2,328,181 B (**+57,484 B**), the page 6.4 KB of it |
+| Static RAM | 103,376 B | 104,000 B (**+624 B**, of it the blit's 384 B row) |
+| Flash | 2,270,665 B | 2,333,737 B (**+63,072 B**), the page 8.1 KB of it |
 
-At run time: **no internal heap**. PSRAM: 73,984 B of frame buffers from boot (colour, two
+At run time: **no internal heap per frame**. Saving or resetting the glasses profile opens NVS
+for a moment: ESP-IDF allocates the handle then (`nvs_api.cpp`), and a write that adds an entry
+to a page can grow NVS's index by a 128-byte block (`nvs_item_hash_list.hpp`/`.cpp`, v4.4.7);
+blocks that small come from internal RAM (`CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL` = 4096 in
+arduino-esp32 2.0.17's S3 sdkconfig). PSRAM: 73,984 B of frame buffers from boot (colour, two
 eye planes, depth, the encoder); the scene on screen (from 16 B to 415,072 B for the landscape,
 87,360 B of which are its noise lattices, dead once the map is built and kept only because 87 KB
 of 16 MB is not worth a second allocation); while a look is on, 24,576 B for the captured frame plus the look (225,352 B

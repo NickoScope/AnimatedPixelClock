@@ -7,6 +7,7 @@
 #if defined(FX3D_ENABLED)
 
 #include <Arduino.h>
+#include <Preferences.h>
 #include <esp_heap_caps.h>
 #include <sys/time.h>
 #include <time.h>
@@ -16,6 +17,7 @@
 #include "fx3d_catalog.h"
 #include "fx3d_page.h"
 #include "fx3d_present.h"
+#include "fx3d_profile.h"
 
 using namespace fx3d;
 
@@ -325,6 +327,59 @@ void benchStart(int run) {
   g_runStartMs = millis();
 }
 
+// ---- the glasses profile, kept in NVS (fx3d_profile.h has the keys and the rules) ----
+
+const char *const kProfileNs = "fx3d";
+ProfileKeeper g_keep;
+
+void logProfile(const char *what, const Stereo &st) {
+  const StoredProfile r = profileTo(st);
+  Serial.printf("[fx3d] glasses %s: %s swap=%u depth=%u.%02u gl=%u gr=%u\n", what, modeName(st.mode),
+                (unsigned)r.v[PK_SWAP], (unsigned)(r.v[PK_DEPTH] / 100), (unsigned)(r.v[PK_DEPTH] % 100),
+                (unsigned)r.v[PK_GL], (unsigned)r.v[PK_GR]);
+}
+
+void profileLoad() {
+  Preferences p;
+  if (p.begin(kProfileNs, true)) {   // false: no namespace yet, nothing stored, which is not an error
+    g_keep.nvs = profileRead(p);
+    p.end();
+  }
+  g_ctx.st = profileFrom(g_keep.nvs.rec);
+  char what[96];
+  snprintf(what, sizeof what, "from NVS, %d of %d values%s", profileUsed(g_keep.nvs.rec), (int)PK_VER,
+           g_keep.nvs.clean ? "" : ", a key of another type (the next save rewrites them all)");
+  logProfile(what, g_ctx.st);
+}
+
+// Every loop() pass: the write, once the owner has stopped and the bench is not running.
+void profileTick() {
+  const uint32_t t0 = millis();
+  if (!g_keep.due(t0, g_bench == BENCH_RUNNING)) return;
+  Preferences p;
+  const bool open = p.begin(kProfileNs, false);
+  const int n = g_keep.save(g_ctx.st, open ? &p : static_cast<Preferences *>(nullptr), t0);
+  p.end();
+  char what[96];
+  if (n >= 0) {
+    snprintf(what, sizeof what, "saved, %d keys in %u ms", n, (unsigned)(millis() - t0));
+    logProfile(what, g_ctx.st);
+  } else {
+    snprintf(what, sizeof what, "NOT saved, NVS refused (%u ms%s); a reboot would bring back",
+             (unsigned)(millis() - t0), g_keep.timer.pending ? ", will retry" : ", waits for the next change");
+    logProfile(what, g_keep.afterReboot());
+  }
+}
+
+// One request's profile arguments, after everything else in it has worked.
+void profileApply(const ProfileArgs &a) {
+  Preferences p;
+  const bool open = a.reset && g_keep.resetNeedsNvs() && p.begin(kProfileNs, false);
+  g_keep.apply(a, g_ctx.st, open ? &p : static_cast<Preferences *>(nullptr), millis());
+  p.end();
+  if (a.reset) logProfile(g_keep.failed ? "reset; NVS refused the erase, retrying as a write" : "reset", g_ctx.st);
+}
+
 void sendError(const char *what) {
   char buf[128];
   snprintf(buf, sizeof buf, "{\"error\":\"%s\"}", what);
@@ -336,13 +391,13 @@ void sendState() {
   const unsigned depth100 = (unsigned)(g_ctx.st.depthPx * 100.0f + 0.5f);
   int n = snprintf(buf, sizeof buf,
                    "{\"scene\":\"%s\",\"page\":%d,\"bench\":%s,\"look\":\"%s\",\"mode\":\"%s\",\"depthPx\":%u.%02u,"
-                   "\"swap\":%s,\"gainL\":%u,\"gainR\":%u,\"frameUs\":%u,\"blitUs\":%u,\"fps\":%u.%u,\"openUs\":%u,"
+                   "\"swap\":%s,\"gainL\":%u,\"gainR\":%u,\"profile\":\"%s\",\"frameUs\":%u,\"blitUs\":%u,\"fps\":%u.%u,\"openUs\":%u,"
                    "\"looks\":[",
                    g_sceneIdx >= 0 ? kCatalog[g_sceneIdx].id : "",
                    (g_sceneIdx >= 0 && !strcmp(kCatalog[g_sceneIdx].id, "calib")) ? static_cast<CalibScene *>(g_scene)->page : -1,
                    g_bench != BENCH_IDLE ? "true" : "false", lookName(g_look), modeName(g_ctx.st.mode),
                    depth100 / 100, depth100 % 100, g_ctx.st.swapEyes ? "true" : "false",
-                   (unsigned)(g_ctx.st.gainL * 100.0f + 0.5f), (unsigned)(g_ctx.st.gainR * 100.0f + 0.5f),
+                   (unsigned)(g_ctx.st.gainL * 100.0f + 0.5f), (unsigned)(g_ctx.st.gainR * 100.0f + 0.5f), g_keep.state(),
                    (unsigned)(g_run.frames ? g_run.renderSum / g_run.frames : 0),
                    (unsigned)(g_run.frames ? g_run.blitSum / g_run.frames : 0), (unsigned)(fpsX10() / 10),
                    (unsigned)(fpsX10() % 10), (unsigned)g_run.openUs);
@@ -383,7 +438,10 @@ bool argLong(const char *name, long lo, long hi, long &out) {
 // GET /api/fx3d?scene=cube&mode=mono              - a scene covers the screen; scene=off gives it back
 // GET /api/fx3d?scene=calib&page=3                - the calibration's six pages, 0..5
 // GET /api/fx3d?bench=1 (or 0)                    - measure everything now, or stop
-// Also swap=0|1, gl= and gr= 0..100 (the eyes' gains, %). Every argument is
+// GET /api/fx3d?profile=reset                     - the glasses back to the defaults; NVS keeps nothing
+// Also swap=0|1, gl= and gr= 0..100 (the eyes' gains, %). mode, depth, swap,
+// gl and gr are the glasses profile: NVS keeps it kProfileSettleMs after the
+// last change, and "profile" in the reply says kept, pending or failed. Every argument is
 // checked before anything changes: a bad request changes nothing. A request
 // PSRAM cannot serve may already have closed the scene it replaces, and with
 // both scene= and look=, the new scene can be up when the look then fails.
@@ -421,17 +479,22 @@ void handleApi() {
   if (server.hasArg("gl") && !argLong("gl", 0, 100, gl)) return sendError("gl: 0 to 100");
   if (server.hasArg("gr") && !argLong("gr", 0, 100, gr)) return sendError("gr: 0 to 100");
   if (server.hasArg("page") && !argLong("page", 0, CalibScene::kPages - 1, page)) return sendError("page: 0 to 5");
+  const bool reset = server.hasArg("profile");
+  if (reset && server.arg("profile") != "reset") return sendError("profile: reset");
   if (!g_block) return sendError("no PSRAM: 3D is off");
   // Then what can fail for memory; the profile changes only once it has not.
   // One mode for everything the owner looks at: a scene does not bring its own.
   if (idx == -1) closeScene();
   if (idx >= 0 && idx != g_sceneIdx && !openScene(idx)) return sendError("no PSRAM for the scene");
   if (look >= 0 && !setLook((uint8_t)look)) return sendError("no PSRAM for the look");
-  if (mode >= 0) g_ctx.st.mode = (uint8_t)mode;
-  if (depth >= 0.0f) g_ctx.st.depthPx = depth;
-  if (swap >= 0) g_ctx.st.swapEyes = swap != 0;
-  if (gl >= 0) g_ctx.st.gainL = (float)gl / 100.0f;
-  if (gr >= 0) g_ctx.st.gainR = (float)gr / 100.0f;
+  ProfileArgs pa;
+  pa.reset = reset;
+  pa.mode = mode;
+  pa.depth = depth;
+  pa.swap = (int)swap;
+  pa.gl = (int)gl;
+  pa.gr = (int)gr;
+  profileApply(pa);
   if (page >= 0 && g_sceneIdx >= 0 && !strcmp(kCatalog[g_sceneIdx].id, "calib"))
     static_cast<CalibScene *>(g_scene)->page = (int)page;
   sendState();
@@ -445,6 +508,7 @@ void fx3dBegin() {
     Serial.println("[fx3d] no PSRAM for the frame buffers: 3D is off");
     return;
   }
+  profileLoad();
   server.on("/api/fx3d", HTTP_GET, handleApi);
   server.on("/fx3d", HTTP_GET, []() { server.send_P(200, "text/html; charset=utf-8", kFx3dPage); });
   Serial.printf("[fx3d] %d scenes, %d looks, %u B of frame buffers in PSRAM, internal free %u -> %u B\n",
@@ -460,6 +524,7 @@ void fx3dBegin() {
 }
 
 void fx3dLoop() {
+  profileTick();
   if (g_bench == BENCH_IDLE || !g_block) return;
   if (g_bench == BENCH_ARMED) {
     if (millis() - g_armedMs < kWaitMs) return;

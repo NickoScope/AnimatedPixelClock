@@ -39,6 +39,12 @@ def library_table():
 JSC = pathlib.Path("/System/Library/Frameworks/JavaScriptCore.framework/Versions/Current/Helpers/jsc")
 
 
+def page_source():
+    src = (ROOT / "src/fx3d/fx3d_page.h").read_text()
+    page = re.search(r'R"FX3D\((.*)\)FX3D"', src, re.S).group(1)
+    return page, re.search(r"<script>(.*)</script>", page, re.S).group(1)
+
+
 def page_script(tmp):
     """The /fx3d page's script must parse: JavaScriptCore's checkSyntax, which
     reads without running. A broken snippet is checked first, so a checker that
@@ -46,9 +52,7 @@ def page_script(tmp):
     if not JSC.exists():
         print("page script: FAIL (no JavaScriptCore here to check it with)")
         return False
-    src = (ROOT / "src/fx3d/fx3d_page.h").read_text()
-    page = re.search(r'R"FX3D\((.*)\)FX3D"', src, re.S).group(1)
-    js = re.search(r"<script>(.*)</script>", page, re.S).group(1)
+    page, js = page_source()
     (tmp / "bad.js").write_text("const a = {;\n")
     (tmp / "page.js").write_text(js)
     def parses(f):
@@ -64,18 +68,55 @@ def page_script(tmp):
     return True
 
 
+def run_queue(tmp, js):
+    stubs, checks = (HERE / "page_queue_test.js").read_text().split("// ---CHECKS---")
+    (tmp / "queue.js").write_text(stubs + "\n" + js + "\n" + checks)
+    r = subprocess.run([str(JSC), str(tmp / "queue.js")], capture_output=True, text=True)
+    lines = r.stdout.strip().splitlines()
+    return r.returncode == 0 and bool(lines) and lines[-1].endswith(" 0 failed"), r.stdout + r.stderr
+
+
+def page_queue(tmp):
+    """The page's request queue, run in JavaScriptCore with the browser stubbed
+    (page_queue_test.js). The negative control: a queue that keeps a control's
+    first waiting request instead of its last must fail it."""
+    if not JSC.exists():
+        return False
+    _, js = page_source()
+    good, why = run_queue(tmp, js)
+    broken = js.replace("if(k)next.set(k,f);", "if(k&&!next.has(k))next.set(k,f);")
+    bad, _ = run_queue(tmp, broken) if broken != js else (True, "")
+    if not good or bad:
+        print(f"page queue: FAIL ({'the test passes a broken queue' if bad else why.strip()})")
+        return False
+    print(why.strip().splitlines()[-1] + " (a broken queue fails it)")
+    return True
+
+
 def main():
     ok = True
     with tempfile.TemporaryDirectory() as tmp:
         tmp = pathlib.Path(tmp)
         # Float only: the model and every scene, with double promotion an error.
         probe = tmp / "probe.cpp"
-        probe.write_text('#include "fx3d_catalog.h"\n#include "fx3d_present.h"\n'
-                         'int main() { return fx3d::kCatalogCount > 0 ? 0 : 1; }\n')
+        # The profile's templates are instantiated here, or their bodies would
+        # go unchecked: a stand-in with Preferences' calls.
+        probe.write_text('#include "fx3d_catalog.h"\n#include "fx3d_present.h"\n#include "fx3d_profile.h"\n'
+                         'struct Nvs { uint8_t getUChar(const char *, uint8_t d) { return d; }\n'
+                         '  uint16_t getUShort(const char *, uint16_t d) { return d; }\n'
+                         '  bool isKey(const char *) { return false; } bool clear() { return true; }\n'
+                         '  size_t putUChar(const char *, uint8_t) { return 1; }\n'
+                         '  size_t putUShort(const char *, uint16_t) { return 2; } };\n'
+                         'int main() { Nvs n; fx3d::ProfileStore s = fx3d::profileRead(n);\n'
+                         '  fx3d::profileWrite(n, s, fx3d::profileTo(fx3d::profileFrom(s.rec)));\n'
+                         '  fx3d::profileErase(n, s); fx3d::ProfileKeeper k; fx3d::Stereo st;\n'
+                         '  k.apply(fx3d::ProfileArgs(), st, &n, 0); k.save(st, &n, 0);\n'
+                         '  return fx3d::kCatalogCount > 0 ? 0 : 1; }\n')
         subprocess.run(["c++", "-std=c++11", "-fsyntax-only", "-Wall", "-Wextra", "-Werror", "-Wshadow",
                         "-Wdouble-promotion", *INC, str(probe)], check=True)
         print("float only: no double promotion in src/fx3d")
         ok = page_script(tmp) and ok
+        ok = page_queue(tmp) and ok
         lib = library_table()
         for std in ("c++11", "c++17"):
             exe = tmp / f"fx3d_host_test_{std}"
