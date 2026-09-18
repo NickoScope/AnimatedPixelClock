@@ -84,11 +84,12 @@ check(el("kept").textContent.indexOf("через пару секунд") >= 0, "
 answer({ profile: "pending" });
 
 // A slider let go three times while a request is out: one request, the last
-// value, even though an answer in between redraws the slider.
+// value, even though an answer in between redraws the slider itself.
 tick();
-el("depth").onchange({ target: { value: "3" } });
-el("depth").onchange({ target: { value: "3.5" } });
-el("depth").onchange({ target: { value: "4" } });
+for (const v of ["3", "3.5", "4"]) {
+  el("depth").value = v;
+  el("depth").onchange({ target: el("depth") });
+}
 tick();
 check(out.length === 1, "still one request out, and the poll dropped");
 answer({ depthPx: 2 });
@@ -97,16 +98,28 @@ check(out.length === 1 && out[0].url === "/api/fx3d?depth=4", "one depth request
 answer({ depthPx: 4 });
 check(out.length === 0, "nothing more");
 
+// A hidden tab does not poll.
+document.visibilityState = "hidden";
+tick();
+check(out.length === 0, "no poll while the tab is hidden");
+document.visibilityState = "visible";
+
 // Two controls: in the order they were touched.
 tick();
-el("gl").onchange({ target: { value: "80" } });
+el("gl").value = "80";
+el("gl").onchange({ target: el("gl") });
 el("bench").onclick();
 answer({});
 check(out.length === 1 && out[0].url === "/api/fx3d?gl=80", "the first control first");
 answer({ gainL: 80 });
 check(out.length === 1 && out[0].url === "/api/fx3d?bench=1", "then the second");
+el("bench").onclick();   // stop it again before the panel has answered
+answer({ bench: true });
+check(out.length === 1 && out[0].url === "/api/fx3d?bench=0", "the bench button, built from the answer, stops it");
+answer({});
 
 // A refusal shows its reason as an error; the queue goes on.
+tick();   // a poll out, for the click to wait behind
 const mono = el("modes").kids.filter(b => b.textContent === "Без очков");
 check(mono.length === 1, "the mode buttons are drawn once, not piled up");
 mono[0].onclick();
@@ -115,12 +128,20 @@ check(el("st").className === "st err" && el("st").textContent === "no PSRAM for 
 check(out.length === 1 && out[0].url === "/api/fx3d?mode=mono", "the next request goes after a refusal");
 answer({ mode: "mono" });
 
-// A request that hangs is dropped after 8 s, as an error, and the one waiting goes.
+// The reset asks first; a no sends nothing.
+globalThis.confirm = () => false;
+el("reset").onclick();
+drainMicrotasks();
+check(out.length === 0, "a reset the owner declines sends nothing");
+globalThis.confirm = () => true;
+
+// A request that hangs is dropped after 12 s, as an error, and the one waiting goes.
 el("reset").onclick();
 drainMicrotasks();
 check(out.length === 1 && out[0].url === "/api/fx3d?profile=reset", "the reset goes");
-el("gr").onchange({ target: { value: "70" } });
-const armed = timers.filter(t => t.ms === 8000);
+el("gr").value = "70";
+el("gr").onchange({ target: el("gr") });
+const armed = timers.filter(t => t.ms === 12000);
 check(armed.length === 1, "one timeout armed, for the request out");
 armed[0].fn();
 drainMicrotasks();

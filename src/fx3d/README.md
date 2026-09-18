@@ -54,9 +54,11 @@ tests them on the Mac, and `tools/fx3d/render.py` and `looks.py` render the prev
   in the knowledge base). A control's request waits under the control's name, so a second
   touch replaces the first one still waiting; a toggle's query is built when it goes, from
   the panel's last answer; a poll is dropped while anything is out or waiting; a request
-  that hangs is dropped after 8 s, longer than the server's own 5 s waits
-  (`HTTP_MAX_DATA_WAIT`, `HTTP_MAX_SEND_WAIT` in `WebServer.h`). `tools/fx3d/page_queue_test.js`
-  runs the queue in JavaScriptCore, with a broken queue as the negative control.
+  that hangs is dropped after 12 s (our choice: longer than a stalled reply can wait on the
+  server, where `WiFiClient::write` tries a 1 s `select` up to 10 times; a reply still
+  trickling out is dropped all the same, and the next poll puts the page right).
+  `tools/fx3d/page_queue_test.js` runs the queue in JavaScriptCore; five broken queues are its
+  negative controls.
 - While a look is on, the render tick runs at **most 30 Hz**, even on a page that wants 60:
   the look renders and blits the whole frame at every flip. The price, until the bench says
   whether 60 fits: the clock animations that take one step per tick (Mario, Pong, Pac-Man)
@@ -94,8 +96,9 @@ key per value, so any NVS dump shows them (`fx3d_profile.h` holds the same table
   it with a type mismatch, `Storage::findItem` moves on, so `Storage::writeItem` adds the new
   entry and erases nothing, and since the index hash leaves the type out
   (`Item::calculateCrc32WithoutValue`), reads on that page keep stopping at the old one
-  (`nvs_page.cpp`, `nvs_storage.cpp`, `nvs_types.cpp` at v4.4.7; IDF's own tests call it the
-  legacy behaviour, `CONFIG_NVS_LEGACY_DUP_KEYS_COMPATIBILITY`).
+  (`nvs_page.cpp`, `nvs_storage.cpp`, `nvs_types.cpp` at v4.4.7). IDF v5.2 and later call it
+  the legacy behaviour, keep it behind `CONFIG_NVS_LEGACY_DUP_KEYS_COMPATIBILITY`, and test
+  both (`host_test/nvs_host_test/main/test_nvs.cpp`).
 - **A refusal** is tried again after each settle, three times (our choice, not a measured
   figure; `src/railboard/railboard.cpp` retries a refused open without a limit), then waits
   for the next change. A refused reset leaves the defaults on and retries as a write of them.
@@ -121,7 +124,7 @@ Measured with `platformio run`, against the same env without the flag:
 | | Without | With `FX3D_ENABLED` |
 |---|---|---|
 | Static RAM | 103,376 B | 104,000 B (**+624 B**, of it the blit's 384 B row) |
-| Flash | 2,270,665 B | 2,333,737 B (**+63,072 B**), the page 8.1 KB of it |
+| Flash | 2,270,665 B | 2,333,941 B (**+63,276 B**), the page 8.2 KB of it |
 
 At run time: **no internal heap per frame**. Saving or resetting the glasses profile opens NVS
 for a moment: ESP-IDF allocates the handle then (`nvs_api.cpp`), and a write that adds an entry
@@ -152,8 +155,9 @@ harmless today; if it is ever set, the blit by runs goes wrong where single pixe
 **Still to measure: the time.** The frame time of every scene and look, and of the blit of
 8192 pixels, is what the bench is for (`/api/fx3d?bench=1`, the page's button, or the bench
 env 20 s after boot): one line per run, `[fx3d] scene=... frame_us=... blit_us=... fps=...
-heap_internal_min=... stack_min_free=...`, then `[fx3d] bench done`. The bench keeps the owner's
-mode and look and gives them back.
+heap_internal_min=... stack_min_free=... depth=... swap=... gl=... gr=...`, then `[fx3d] bench done`.
+The bench sets only the mode for each run; depth, swap and the gains are the owner's profile,
+printed on every line. It keeps the owner's mode and look and gives them back.
 
 ## What it refuses to do
 

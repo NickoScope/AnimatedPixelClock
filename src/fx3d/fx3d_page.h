@@ -6,15 +6,20 @@
 // 2026-09-18.md in the knowledge base):
 // - a control's request waits under the control's name, so touching it again
 //   replaces the one still waiting, and a toggle's query is built when it
-//   goes, from what the panel last answered (two quick clicks: on, then off);
+//   goes, from what the panel last answered: two quick clicks give on, then
+//   off, and every further quick click while one is out counts as one more;
 //   a slider's value is taken when it is let go, since an answer in between
 //   redraws the slider;
 // - a poll is dropped while anything is out or waiting;
-// - a request that hangs is dropped after 8 s, longer than the server's own
-//   5 s waits for a request and for each chunk it sends (HTTP_MAX_DATA_WAIT,
-//   HTTP_MAX_SEND_WAIT, WebServer.h in arduino-esp32 2.0.17): our choice,
-//   so the page never gives up on a reply the server may still finish. After
-//   a drop the next request can overlap the dropped one's connection.
+// - a request that hangs is dropped after 12 s, our choice: longer than a
+//   stalled reply can wait on the server, where WiFiClient::write tries a 1 s
+//   select up to 10 times (WIFI_CLIENT_MAX_WRITE_RETRY and
+//   WIFI_CLIENT_SELECT_TIMEOUT_US, WiFiClient.cpp in arduino-esp32 2.0.17;
+//   HTTP_MAX_SEND_WAIT only sets the stream's read timeout, WebServer.cpp).
+//   That count starts again after every partial send, so a reply still
+//   trickling out at 12 s is dropped all the same; the next poll puts the
+//   page right. After a drop the next request can overlap the dropped one's
+//   connection. A browser without AbortController waits for the reply.
 // tools/fx3d/page_queue_test.js runs this queue in JavaScriptCore.
 //
 // Served straight from flash with WebServer::send_P, which writes it out
@@ -58,9 +63,9 @@ const L={flat:"Как есть",pop:"Выпуклость",layers:"Слои по
 const C=["Красный: каким глазом видно, каким гаснет?","Зелёный: то же самое","Синий: то же самое","Глаза: левому — черта и L, правому — черта и R. Чужая фигура видна — это утечка; L справа — поменяйте глаза","Плоскость панели: рамка и крест лежат на панели, пунктир — стык","Глубина: левый квадрат перед панелью, средний на ней, правый за ней"];
 let s={},busy=false;const next=new Map(),$=i=>document.getElementById(i);
 function q(k,f){if(k)next.set(k,f);else if(busy||next.size)return;else next.set("",()=>"");go()}
-function go(){if(busy||!next.size)return;const[k,f]=next.entries().next().value;next.delete(k);const p=f();busy=true;
-const c=new AbortController(),t=setTimeout(()=>c.abort(),8000);
-fetch("/api/fx3d"+(p?"?"+p:""),{signal:c.signal}).then(r=>r.json().then(j=>({ok:r.ok,j}))).then(({ok,j})=>{if(!ok){$("st").textContent=j.error||"ошибка";$("st").className="st err";return}$("st").className="st";s=j;draw()}).catch(()=>{$("st").textContent="панель не отвечает";$("st").className="st err"}).then(()=>{clearTimeout(t);busy=false;go()})}
+function go(){if(busy||!next.size)return;const[k,f]=next.entries().next().value;next.delete(k);const p=f();
+const c=typeof AbortController!=="undefined"?new AbortController():null,t=c?setTimeout(()=>c.abort(),12000):0;busy=true;
+fetch("/api/fx3d"+(p?"?"+p:""),c?{signal:c.signal}:{}).then(r=>r.json().then(j=>({ok:r.ok,j}))).then(({ok,j})=>{if(!ok){$("st").textContent=j.error||"ошибка";$("st").className="st err";return}$("st").className="st";s=j;draw()}).catch(()=>{$("st").textContent="панель не отвечает";$("st").className="st err"}).then(()=>{clearTimeout(t);busy=false;go()})}
 function btns(id,items,cur,cb){const g=$(id);g.innerHTML="";for(const[k,t]of items){const b=document.createElement("button");b.textContent=t;if(k===cur)b.className="on";b.onclick=()=>cb(k);g.appendChild(b)}}
 function draw(){btns("modes",Object.entries(M),s.mode,k=>q("mode",()=>"mode="+k));
 btns("scenes",[["off","Выключить"]].concat((s.scenes||[]).map(k=>[k,S[k]||k])),s.scene||"off",k=>q("scene",()=>"scene="+k));

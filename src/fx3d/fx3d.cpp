@@ -255,21 +255,27 @@ uint32_t fpsX10() {
   return span ? (uint32_t)((uint64_t)(g_run.frames - 1) * 10000u / span) : 0;
 }
 
-// One parseable line: what showed, and what it cost. stack_min_free is
-// loopTask's least free stack since boot, in bytes (ESP-IDF's
-// uxTaskGetStackHighWaterMark counts bytes, not words), not this run's.
+// One parseable line: what showed, what it cost, and the glasses profile it
+// ran with (the bench sets only the mode; depth, swap and the gains are the
+// owner's, from NVS). stack_min_free is loopTask's least free stack since
+// boot, in bytes (ESP-IDF's uxTaskGetStackHighWaterMark counts bytes, not
+// words), not this run's.
 void report(const char *what) {
   const uint32_t n = g_run.frames ? g_run.frames : 1;
   const uint32_t fps = fpsX10();
+  const StoredProfile pr = profileTo(g_ctx.st);
   Serial.printf("[fx3d] scene=%s mode=%s frames=%u open_us=%u frame_us=%u frame_us_max=%u blit_us=%u blit_us_max=%u "
-                "fps=%u.%u heap_internal=%u heap_internal_min=%u largest_block=%u psram_free=%u stack_min_free=%u\n",
+                "fps=%u.%u heap_internal=%u heap_internal_min=%u largest_block=%u psram_free=%u stack_min_free=%u "
+                "depth=%u.%02u swap=%u gl=%u gr=%u\n",
                 what, modeName(g_ctx.st.mode), (unsigned)g_run.frames, (unsigned)g_run.openUs,
                 (unsigned)(g_run.renderSum / n), (unsigned)g_run.renderMax, (unsigned)(g_run.blitSum / n),
                 (unsigned)g_run.blitMax, (unsigned)(fps / 10), (unsigned)(fps % 10),
                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
                 (unsigned)(g_run.heapMin == UINT32_MAX ? 0 : g_run.heapMin),
                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
-                (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM), (unsigned)uxTaskGetStackHighWaterMark(nullptr));
+                (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM), (unsigned)uxTaskGetStackHighWaterMark(nullptr),
+                (unsigned)(pr.v[PK_DEPTH] / 100), (unsigned)(pr.v[PK_DEPTH] % 100), (unsigned)pr.v[PK_SWAP],
+                (unsigned)pr.v[PK_GL], (unsigned)pr.v[PK_GR]);
 }
 
 // The bench: every scene in mono and then in red-blue, then every look the

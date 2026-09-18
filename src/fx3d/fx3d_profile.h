@@ -31,11 +31,11 @@
 // erases nothing; and since the index hash covers the namespace, key and
 // chunk but not the type (Item::calculateCrc32WithoutValue), reads on that
 // page keep stopping at the old one (nvs_page.cpp, nvs_storage.cpp,
-// nvs_types.cpp at v4.4.7). IDF's own tests call this the legacy behaviour
-// (host_test/nvs_host_test/main/test_nvs.cpp,
-// CONFIG_NVS_LEGACY_DUP_KEYS_COMPATIBILITY). So such a record is erased first
-// ("erase all key-value pairs in a namespace", nvs_erase_all) and written
-// whole.
+// nvs_types.cpp at v4.4.7). IDF v5.2 and later call this the legacy
+// behaviour, keep it behind CONFIG_NVS_LEGACY_DUP_KEYS_COMPATIBILITY and test
+// both (host_test/nvs_host_test/main/test_nvs.cpp). So such a record is erased
+// first ("erase all key-value pairs in a namespace", nvs_erase_all) and
+// written whole.
 
 #include "fx3d_model.h"
 

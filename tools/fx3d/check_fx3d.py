@@ -76,20 +76,42 @@ def run_queue(tmp, js):
     return r.returncode == 0 and bool(lines) and lines[-1].endswith(" 0 failed"), r.stdout + r.stderr
 
 
+# Broken queues the test must fail: each one is a mistake the page could make.
+BROKEN_QUEUES = [
+    ("keeps a control's first waiting request, not its last",
+     "if(k)next.set(k,f);", "if(k&&!next.has(k))next.set(k,f);"),
+    ("reads a slider when the request goes, after an answer has redrawn it",
+     "$(k).onchange=e=>{const v=e.target.value;q(k,()=>k+\"=\"+v)};",
+     "$(k).onchange=e=>{q(k,()=>k+\"=\"+e.target.value)};"),
+    ("polls from a hidden tab",
+     "if(document.visibilityState===\"visible\")q()", "q()"),
+    ("builds the bench's query at the click",
+     "$(\"bench\").onclick=()=>q(\"bench\",()=>\"bench=\"+(s.bench?0:1));",
+     "$(\"bench\").onclick=()=>{const b=\"bench=\"+(s.bench?0:1);q(\"bench\",()=>b)};"),
+    ("resets without asking",
+     "if(confirm(", "if(true||confirm("),
+]
+
+
 def page_queue(tmp):
     """The page's request queue, run in JavaScriptCore with the browser stubbed
-    (page_queue_test.js). The negative control: a queue that keeps a control's
-    first waiting request instead of its last must fail it."""
+    (page_queue_test.js). Its negative controls: every queue in BROKEN_QUEUES
+    must fail it, and each must really differ from the page."""
     if not JSC.exists():
         return False
     _, js = page_source()
     good, why = run_queue(tmp, js)
-    broken = js.replace("if(k)next.set(k,f);", "if(k&&!next.has(k))next.set(k,f);")
-    bad, _ = run_queue(tmp, broken) if broken != js else (True, "")
-    if not good or bad:
-        print(f"page queue: FAIL ({'the test passes a broken queue' if bad else why.strip()})")
+    if not good:
+        print(f"page queue: FAIL ({why.strip()})")
         return False
-    print(why.strip().splitlines()[-1] + " (a broken queue fails it)")
+    for what, old, new in BROKEN_QUEUES:
+        if js.count(old) != 1:
+            print(f"page queue: FAIL (the broken queue that {what} no longer matches the page)")
+            return False
+        if run_queue(tmp, js.replace(old, new))[0]:
+            print(f"page queue: FAIL (the test passes a queue that {what})")
+            return False
+    print(why.strip().splitlines()[-1] + f" ({len(BROKEN_QUEUES)} broken queues fail it)")
     return True
 
 
