@@ -226,69 +226,134 @@ class PictureScene : public Scene {
     }
   }
 
-  // The picture sampled bilinearly at (tx, ty), pixel centres at integers.
-  void sample(float tx, float ty, float *rgb) const {
-    const float fx = floorf(tx), fy = floorf(ty);
-    const int x0 = (int)fx, y0 = (int)fy;
-    const float ax = tx - fx, ay = ty - fy;
-    for (int ch = 0; ch < 3; ch++) rgb[ch] = 0.0f;
-    for (int j = 0; j < 2; j++)
-      for (int i = 0; i < 2; i++) {
-        const int x = x0 + i, y = y0 + j;
-        if ((unsigned)x >= (unsigned)kW || (unsigned)y >= (unsigned)kH) continue;
-        const float w = (i ? ax : 1.0f - ax) * (j ? ay : 1.0f - ay);
-        const uint8_t *p = codes + 3 * (y * kW + x);
-        rgb[0] += w * lin(p[0]);
-        rgb[1] += w * lin(p[1]);
-        rgb[2] += w * lin(p[2]);
-      }
+  // The picture sampled bilinearly at (tx, ty), in 1/256 of a pixel with the
+  // pixel centres on whole pixels, as linear light 0..255 a channel; a tap off
+  // the picture counts as black. Integers only: the float version, with a
+  // lin() for every tap and channel, was most of card's and drum's cost on the
+  // panel (46.0 and 31.5 ms a frame at 80eb788, the integration session's
+  // measurement). tx and ty must be above -kBias pixels.
+  static const int kBias = 64;
+  void sample8(int32_t tx, int32_t ty, int32_t *rgb) const {
+    // Biased, so no shift sees a negative number (implementation-defined in C++11).
+    const int32_t bx = tx + kBias * 256, by = ty + kBias * 256;
+    const int x0 = (int)(bx >> 8) - kBias, y0 = (int)(by >> 8) - kBias;
+    const int32_t fx = bx & 255, fy = by & 255;
+    const int32_t w[4] = {(256 - fx) * (256 - fy), fx * (256 - fy), (256 - fx) * fy, fx * fy};
+    int32_t r = 0, g = 0, b = 0;
+    for (int k = 0; k < 4; k++) {
+      const int x = x0 + (k & 1), y = y0 + (k >> 1);
+      if ((unsigned)x >= (unsigned)kW || (unsigned)y >= (unsigned)kH) continue;
+      const uint8_t *p = codes + 3 * (y * kW + x);
+      r += w[k] * kCie8[p[0]];
+      g += w[k] * kCie8[p[1]];
+      b += w[k] * kCie8[p[2]];
+    }
+    rgb[0] = (r + 32768) >> 16;
+    rgb[1] = (g + 32768) >> 16;
+    rgb[2] = (b + 32768) >> 16;
+  }
+  // A position in pixels as 1/256 pixel, rounded; above -kBias pixels.
+  static int32_t fix8(float v) { return (int32_t)(v * 256.0f + (float)(kBias * 256) + 0.5f) - kBias * 256; }
+  // A lit pixel of a look: linear bytes times shade/256 plus a lift, at most
+  // full light. In stereo the eye sees the brightest channel, as Ctx::pixel.
+  static void put8(uint8_t *d, bool stereo, const int32_t *rgb, int32_t shade, int32_t lift) {
+    if (stereo) {
+      const int32_t m = rgb[0] > rgb[1] ? (rgb[0] > rgb[2] ? rgb[0] : rgb[2]) : (rgb[1] > rgb[2] ? rgb[1] : rgb[2]);
+      const int32_t v = ((m * shade + 128) >> 8) + lift;
+      *d = (uint8_t)(v > 255 ? 255 : v);
+      return;
+    }
+    for (int ch = 0; ch < 3; ch++) {
+      const int32_t v = ((rgb[ch] * shade + 128) >> 8) + lift;
+      d[ch] = (uint8_t)(v > 255 ? 255 : v);
+    }
+  }
+  static void dark(uint8_t *d, bool stereo) {
+    d[0] = 0;
+    if (!stereo) d[1] = d[2] = 0;
   }
 
   // A card the size of most of the panel, swaying about its middle. Along a
   // row the ray is linear in x, so where it meets the card is a ratio of two
   // linear functions of x: two additions and one division a pixel instead of
   // a ray-plane intersection. The ray-plane walk cost 67.7 ms a frame on the
-  // panel (the integration session's measurement, 2026-09-18).
+  // panel (the integration session's measurement, 2026-09-18). The picture is
+  // sampled and written in integers, straight into the target.
+  //
+  // And no division a pixel: `/` on floats compiles to a call of the ROM's
+  // soft-float __divsf3 on the S3 (fx3d.cpp.o calls it 222 times; the symbol
+  // sits at 0x40002274, in ROM). The reciprocal of den is carried along the
+  // row by one Newton step from the last pixel's, r' = r (2 - den r), whose
+  // relative error is the square of the step's: den moves by at most
+  // sin(kCardYaw) / f = 0.3 % of 1 a pixel, and wherever |den| < 0.25 the
+  // division is done outright.
   void card(Ctx &c) {
     const M3 r = mul(rotY(kCardYaw * sinf(yawPh_)), rotX(kCardPitch * sinf(pitchPh_)));
     const V3 ctr = v3(0.0f, 0.0f, kZ0), n = apply(r, v3(0, 0, -1)), ux = apply(r, v3(1, 0, 0)), uy = apply(r, v3(0, 1, 0));
     const Light light;
-    const float shade = 0.55f + 0.45f * clampf(dot(n, light.dir), 0.0f, 1.0f);
+    const int32_t shade = (int32_t)((0.55f + 0.45f * clampf(dot(n, light.dir), 0.0f, 1.0f)) * 256.0f + 0.5f);
+#if defined(FX3D_STATS)
     float zMin = 1e9f, zMax = 0.0f;
+#endif
     const Ray o = eyeRay(c.view, c.eye, 0.0f, 0.0f);   // the ray of pixel (0, 0); x adds dx, y adds dy
     const V3 dx = v3(1.0f / c.view.f, 0.0f, 0.0f), dy = v3(0.0f, -1.0f / c.view.f, 0.0f);
     const float K = dot(ctr - o.o, n);                  // t = K / (d . n)
-    const float a0 = dot(o.o - ctr, ux), b0 = dot(o.o - ctr, uy), z0 = o.o.z - ctr.z;
+    const float a0 = dot(o.o - ctr, ux), b0 = dot(o.o - ctr, uy);
+#if defined(FX3D_STATS)
+    const float z0 = o.o.z - ctr.z;
+#endif
+    // The card's (a, b) to the picture's pixels: (a / kCardHalfW * 0.5 + 0.5) * kW - 0.5, b upside down.
+    const float sa = 0.5f * (float)kW / kCardHalfW, oa = 0.5f * (float)kW - 0.5f;
+    const float sb = -0.5f * (float)kH / kCardHalfH, ob = 0.5f * (float)kH - 0.5f;
+    const bool stereo = c.stereo();
+    const int step = stereo ? 1 : 3;
+    uint8_t *dst = stereo ? c.plane() : c.fb.rgb;
     for (int y = 0; y < kH; y++) {
       const V3 d0 = o.d + dy * (float)y;
-      float den = dot(d0, n), U = dot(d0, ux), V = dot(d0, uy), Z = d0.z;
+      float den = dot(d0, n), U = dot(d0, ux), V = dot(d0, uy);
       const float dDen = dot(dx, n), dU = dot(dx, ux), dV = dot(dx, uy);
-      for (int x = 0; x < kW; x++, den += dDen, U += dU, V += dV) {
-        const int i = y * kW + x;
+#if defined(FX3D_STATS)
+      const float Z = d0.z;
+#endif
+      uint8_t *d = dst + step * y * kW;
+      float inv = 0.0f;
+      bool haveInv = false;
+      for (int x = 0; x < kW; x++, den += dDen, U += dU, V += dV, d += step) {
         if (den > -1e-4f) {   // edge-on or its back: nothing
-          c.pixel(i, 0.0f, 0.0f, 0.0f);
+          haveInv = false;
+          dark(d, stereo);
           continue;
         }
-        const float t = K / den;
+        if (haveInv && den < -0.25f) {
+          inv = inv * (2.0f - den * inv);
+        } else {
+          inv = 1.0f / den;
+          haveInv = true;
+        }
+        const float t = K * inv;
         const float a = a0 + t * U, b = b0 + t * V;
         if (fabsf(a) > kCardHalfW || fabsf(b) > kCardHalfH) {
-          c.pixel(i, 0.0f, 0.0f, 0.0f);
+          dark(d, stereo);
           continue;
         }
-        float rgb[3];
-        sample((a / kCardHalfW * 0.5f + 0.5f) * kW - 0.5f, (0.5f - b / kCardHalfH * 0.5f) * kH - 0.5f, rgb);
-        // A faint edge so the card reads as a card on a dark page.
-        const float edge = (fabsf(a) > kCardHalfW - 0.05f || fabsf(b) > kCardHalfH - 0.05f) ? 0.08f : 0.0f;
-        c.pixel(i, rgb[0] * shade + edge, rgb[1] * shade + edge, rgb[2] * shade + edge);
-        const float pz = ctr.z + z0 + t * Z;   // the hit's depth, for the stereo budget
+        int32_t rgb[3];
+        sample8(fix8(a * sa + oa), fix8(b * sb + ob), rgb);
+        // A faint edge so the card reads as a card on a dark page: 0.08 of full light.
+        const int32_t edge = (fabsf(a) > kCardHalfW - 0.05f || fabsf(b) > kCardHalfH - 0.05f) ? 20 : 0;
+        put8(d, stereo, rgb, shade, edge);
+#if defined(FX3D_STATS)
+        const float pz = ctr.z + z0 + t * Z;   // the hit's depth, for the host test's stats
         if (pz < zMin) zMin = pz;
         if (pz > zMax) zMax = pz;
+#endif
       }
     }
+#if defined(FX3D_STATS)
     if (zMin <= zMax) {
       c.note(zMin);
       c.note(zMax);
     }
+#endif
   }
 
   // Raised blocks in an oblique projection: every lit pixel stands up to
@@ -340,36 +405,49 @@ class PictureScene : public Scene {
   }
 
   // A drum with a vertical axis behind the panel's plane, the picture on its
-  // front half, turning to and fro. Where each pixel's ray meets the drum is
-  // fixed geometry, worked out once per eye; the turn only slides the picture.
+  // front half, turning to and fro; the turn only slides the picture. The
+  // rays of one column differ only in height (eyeRay: the origin at y = 0,
+  // x and z of the direction the same all down the column), and the axis is
+  // vertical, so they all meet the drum at one angle and one distance: the
+  // table is per column, and the height on the drum runs linearly down the
+  // column. A table per pixel (72 KB an eye, read from PSRAM every frame)
+  // cost 31.5 ms a frame on the panel at 80eb788 (the integration session).
   struct DrumTab {
     bool valid;
-    float f, b, z0;
-    float ang[kPixels];     // angle round the drum, radians; kMiss where the ray misses
-    float ht[kPixels];      // height on the drum, -1..1 of the picture
-    uint8_t shade[kPixels];
+    float f, b, z0, cx, cy;
+    float ang[kW];       // angle round the drum, radians; kMiss where the column misses
+    float hk[kW];        // the height on the drum, -1..1 of the picture, per pixel below the view's centre
+    uint8_t shade[kW];
   };
   DrumTab drum_[3];
+  static const int32_t kOff = -1 - 0x7FFFFFFF;   // a column showing nothing this frame
+  int32_t drumTx_[kW];   // this frame: where across the picture each column samples, 1/256 px
 
   void drum(Ctx &c) {
     DrumTab &t = drum_[c.eye + 1];
-    if (!t.valid || t.f != c.view.f || t.b != c.view.b || t.z0 != c.view.z0) buildDrum(t, c.view, c.eye);
+    if (!t.valid || t.f != c.view.f || t.b != c.view.b || t.z0 != c.view.z0 || t.cx != c.view.cx ||
+        t.cy != c.view.cy)
+      buildDrum(t, c.view, c.eye);
     const float turn = 0.25f * sinf(drumPh_);   // to and fro, never past a third of the picture
-    for (int i = 0; i < kPixels; i++) {
-      const float a = t.ang[i];
-      if (a >= kMiss) {
-        c.pixel(i, 0.0f, 0.0f, 0.0f);
-        continue;
+    for (int x = 0; x < kW; x++) {
+      const float u = (t.ang[x] - turn) / kArc;   // -0.5..0.5 across the picture
+      drumTx_[x] = (t.ang[x] >= kMiss || fabsf(u) > 0.5f) ? kOff : fix8((u + 0.5f) * kW - 0.5f);
+    }
+    const bool stereo = c.stereo();
+    const int step = stereo ? 1 : 3;
+    uint8_t *d = stereo ? c.plane() : c.fb.rgb;
+    for (int y = 0; y < kH; y++) {
+      const float below = (float)y - c.view.cy;
+      for (int x = 0; x < kW; x++, d += step) {
+        const float ht = t.hk[x] * below;
+        if (drumTx_[x] == kOff || fabsf(ht) > 1.0f) {
+          dark(d, stereo);
+          continue;
+        }
+        int32_t rgb[3];
+        sample8(drumTx_[x], fix8((0.5f - 0.5f * ht) * kH - 0.5f), rgb);
+        put8(d, stereo, rgb, (t.shade[x] * 257 + 128) >> 8, 0);   // 0..255 to 0..256
       }
-      const float u = (a - turn) / kArc;   // -0.5..0.5 across the picture
-      if (fabsf(u) > 0.5f || fabsf(t.ht[i]) > 1.0f) {
-        c.pixel(i, 0.0f, 0.0f, 0.0f);
-        continue;
-      }
-      float rgb[3];
-      sample((u + 0.5f) * kW - 0.5f, (0.5f - 0.5f * t.ht[i]) * kH - 0.5f, rgb);
-      const float s = (float)t.shade[i] / 255.0f;
-      c.pixel(i, rgb[0] * s, rgb[1] * s, rgb[2] * s);
     }
     c.note(kZ0 - kDrumR);
     c.note(kZ0);
@@ -377,29 +455,32 @@ class PictureScene : public Scene {
   static void buildDrum(DrumTab &t, const View &view, int eye) {
     const float zc = kZ0;   // the axis; the drum's front is at kZ0 - R
     const float halfH = kDrumR * kArc / 4.0f;   // the picture keeps its 2:1 on the drum
-    for (int y = 0; y < kH; y++)
-      for (int x = 0; x < kW; x++) {
-        const int i = y * kW + x;
-        const Ray r = eyeRay(view, eye, (float)x, (float)y);
-        // (o.x + t d.x)^2 + (o.z + t d.z - zc)^2 = R^2, nearest root.
-        const float ox = r.o.x, oz = r.o.z - zc;
-        const float a = r.d.x * r.d.x + r.d.z * r.d.z, b = 2.0f * (ox * r.d.x + oz * r.d.z),
-                    cc = ox * ox + oz * oz - kDrumR * kDrumR;
-        const float disc = b * b - 4.0f * a * cc;
-        if (disc < 0.0f) {
-          t.ang[i] = kMiss;
-          continue;
-        }
-        const float tt = (-b - sqrtf(disc)) / (2.0f * a);
-        const V3 p = r.o + r.d * tt;
-        t.ang[i] = atan2f(p.x, zc - p.z);   // 0 facing the viewer
-        t.ht[i] = p.y / halfH;
-        const float facing = (zc - p.z) / kDrumR;   // cos of the angle: 1 facing us
-        t.shade[i] = (uint8_t)(clampf(0.25f + 0.75f * facing, 0.0f, 1.0f) * 255.0f);
+    for (int x = 0; x < kW; x++) {
+      const Ray r = eyeRay(view, eye, (float)x, view.cy);   // any row: only the height differs
+      // (o.x + t d.x)^2 + (o.z + t d.z - zc)^2 = R^2, nearest root.
+      const float ox = r.o.x, oz = r.o.z - zc;
+      const float a = r.d.x * r.d.x + r.d.z * r.d.z, b = 2.0f * (ox * r.d.x + oz * r.d.z),
+                  cc = ox * ox + oz * oz - kDrumR * kDrumR;
+      const float disc = b * b - 4.0f * a * cc;
+      if (disc < 0.0f) {
+        t.ang[x] = kMiss;
+        t.hk[x] = 0.0f;
+        t.shade[x] = 0;
+        continue;
       }
+      const float tt = (-b - sqrtf(disc)) / (2.0f * a);
+      const float px = r.o.x + r.d.x * tt, pz = r.o.z + r.d.z * tt;
+      t.ang[x] = atan2f(px, zc - pz);   // 0 facing the viewer
+      // Down the column the direction's y is -(y - cy) / f, and the hit is tt along it.
+      t.hk[x] = -tt / (view.f * halfH);
+      const float facing = (zc - pz) / kDrumR;   // cos of the angle: 1 facing us
+      t.shade[x] = (uint8_t)(clampf(0.25f + 0.75f * facing, 0.0f, 1.0f) * 255.0f);
+    }
     t.f = view.f;
     t.b = view.b;
     t.z0 = view.z0;
+    t.cx = view.cx;
+    t.cy = view.cy;
     t.valid = true;
   }
 };

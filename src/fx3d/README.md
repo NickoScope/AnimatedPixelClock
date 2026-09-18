@@ -124,7 +124,7 @@ Measured with `platformio run`, against the same env without the flag:
 | | Without | With `FX3D_ENABLED` |
 |---|---|---|
 | Static RAM | 103,376 B | 104,000 B (**+624 B**, of it the blit's 384 B row) |
-| Flash | 2,270,665 B | 2,333,941 B (**+63,276 B**), the page 8.2 KB of it |
+| Flash | 2,270,665 B | 2,334,317 B (**+63,652 B**), the page 8.2 KB of it |
 
 At run time: **no internal heap per frame**. Saving or resetting the glasses profile opens NVS
 for a moment: ESP-IDF allocates the handle then (`nvs_api.cpp`), and a write that adds an entry
@@ -133,16 +133,28 @@ blocks that small come from internal RAM (`CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL` 
 arduino-esp32 2.0.17's S3 sdkconfig). PSRAM: 73,984 B of frame buffers from boot (colour, two
 eye planes, depth, the encoder); the scene on screen (from 16 B to 415,072 B for the landscape,
 87,360 B of which are its noise lattices, dead once the map is built and kept only because 87 KB
-of 16 MB is not worth a second allocation); while a look is on, 24,576 B for the captured frame plus the look (225,352 B
-on the host, most of it the drum's per-eye tables). Every one is freed when it stops.
+of 16 MB is not worth a second allocation); while a look is on, 24,576 B for the captured frame plus the look (8,432 B
+on the host; 225,352 B until the drum's tables went from per pixel to per column). Every one is
+freed when it stops.
 
-**Measured on the panel, 2026-09-18 (the integration session, over the network, `264d6f1`):**
-a blit of 8192 single pixels cost 14.2-14.9 ms in every scene; eight scenes held 30 Hz in mono
-and red-blue (calib, cube, layers, stars, dial, helix, rings, vclock); torus, terrain, voxel,
-tunnel, globe and blobs did not (blobs 111.8 / 217.8 ms a frame); voxel took 1.08 s to open;
-under a look pages ran at 10-20 fps. Answered since: the blit writes runs of one colour with the
-library's hlineDMA; blobs march one ray per 2 x 2 block (3.1 times cheaper on the Mac); the
-landscape hashes each noise lattice once. Their panel figures are not measured yet.
+**Measured on the panel, 2026-09-18 (the integration session, over the network):**
+- At `264d6f1`: a blit of 8192 single pixels cost 14.2-14.9 ms in every scene; eight scenes held
+  30 Hz in mono and red-blue (calib, cube, layers, stars, dial, helix, rings, vclock); torus,
+  terrain, voxel, tunnel, globe and blobs did not (blobs 111.8 / 217.8 ms a frame); voxel took
+  1.08 s to open; under a look pages ran at 10-20 fps. Answered by: the blit writes runs of one
+  colour with the library's hlineDMA; blobs march one ray per 2 x 2 block; the landscape hashes
+  each noise lattice once; the looks sort a row's pixels into their depth bands once.
+- At `80eb788` (`docs/drafts/27-fx3d-panel-measurements-80eb788.md` in the knowledge base): the
+  blit 6.3-9.7 ms; six of eight looks at 30 Hz, card 46.0 ms a frame and drum 31.5 ms; blobs
+  41.7 / 82.2 ms (mono / red-blue); globe, tunnel and voxel 18-22 fps in mono and 10-13 in
+  red-blue; voxel opens in 0.45 s.
+- Answered since: card and drum sample the picture in integers and write bytes straight into
+  the target; the drum keeps its table per column instead of per pixel (the rays of a column
+  meet a vertical drum at one angle); the card carries its reciprocal along the row instead of
+  dividing - on the S3 `/` on floats is a call to the ROM's soft-float `__divsf3`, where the
+  old card divided three times a pixel and the old drum twice. On the Mac, which divides in
+  hardware, the drum is 3.6 times cheaper and the card about the same. Their panel figures are
+  not measured yet.
 The blobs changed more than their resolution: the march also stops at 28 steps instead of 40
 and calls a hit at 0.006 instead of 0.004, which moves their surface more than the halved
 resolution does.

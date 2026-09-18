@@ -1250,6 +1250,177 @@ static void profile() {
   }
 }
 
+// card and drum used to sample the picture in floats through Ctx::pixel, and
+// the drum kept a table per pixel; they are integers and a table per column
+// now. The float versions they replaced are kept here, as they were at
+// 5bdc8e0, and the new ones are held to them.
+namespace ref {
+const float kZ0 = 6.0f, kCardHalfW = 2.75f, kCardHalfH = 1.375f, kDrumR = 2.4f, kArc = 1.25f;
+const float kCardYaw = 0.36f, kCardPitch = 0.16f;
+static float lin(uint8_t code) { return (float)kCie8[code] * (1.0f / 255.0f); }
+static void sample(const uint8_t *codes, float tx, float ty, float *rgb) {
+  const float fx = floorf(tx), fy = floorf(ty);
+  const int x0 = (int)fx, y0 = (int)fy;
+  const float ax = tx - fx, ay = ty - fy;
+  for (int ch = 0; ch < 3; ch++) rgb[ch] = 0.0f;
+  for (int j = 0; j < 2; j++)
+    for (int i = 0; i < 2; i++) {
+      const int x = x0 + i, y = y0 + j;
+      if ((unsigned)x >= (unsigned)kW || (unsigned)y >= (unsigned)kH) continue;
+      const float w = (i ? ax : 1.0f - ax) * (j ? ay : 1.0f - ay);
+      const uint8_t *p = codes + 3 * (y * kW + x);
+      rgb[0] += w * lin(p[0]);
+      rgb[1] += w * lin(p[1]);
+      rgb[2] += w * lin(p[2]);
+    }
+}
+// margin: for each pixel, how far (card units) its hit lies from the nearest
+// line the card decides on - its rim, or its faint edge.
+static void card(Ctx &c, const uint8_t *codes, float yawPh, float pitchPh, float *margin) {
+  const M3 r = mul(rotY(kCardYaw * sinf(yawPh)), rotX(kCardPitch * sinf(pitchPh)));
+  const V3 ctr = v3(0.0f, 0.0f, kZ0), n = apply(r, v3(0, 0, -1)), ux = apply(r, v3(1, 0, 0)), uy = apply(r, v3(0, 1, 0));
+  const Light light;
+  const float shade = 0.55f + 0.45f * clampf(dot(n, light.dir), 0.0f, 1.0f);
+  const Ray o = eyeRay(c.view, c.eye, 0.0f, 0.0f);
+  const V3 dx = v3(1.0f / c.view.f, 0.0f, 0.0f), dy = v3(0.0f, -1.0f / c.view.f, 0.0f);
+  const float K = dot(ctr - o.o, n);
+  const float a0 = dot(o.o - ctr, ux), b0 = dot(o.o - ctr, uy);
+  for (int y = 0; y < kH; y++) {
+    const V3 d0 = o.d + dy * (float)y;
+    float den = dot(d0, n), U = dot(d0, ux), V = dot(d0, uy);
+    const float dDen = dot(dx, n), dU = dot(dx, ux), dV = dot(dx, uy);
+    for (int x = 0; x < kW; x++, den += dDen, U += dU, V += dV) {
+      const int i = y * kW + x;
+      margin[i] = 1e9f;
+      if (den > -1e-4f) {
+        c.pixel(i, 0.0f, 0.0f, 0.0f);
+        continue;
+      }
+      const float t = K / den;
+      const float a = a0 + t * U, b = b0 + t * V;
+      const float ma = fabsf(fabsf(a) - kCardHalfW), mb = fabsf(fabsf(b) - kCardHalfH);
+      const float ea = fabsf(fabsf(a) - (kCardHalfW - 0.05f)), eb = fabsf(fabsf(b) - (kCardHalfH - 0.05f));
+      margin[i] = fminf(fminf(ma, mb), fminf(ea, eb));
+      if (fabsf(a) > kCardHalfW || fabsf(b) > kCardHalfH) {
+        c.pixel(i, 0.0f, 0.0f, 0.0f);
+        continue;
+      }
+      float rgb[3];
+      sample(codes, (a / kCardHalfW * 0.5f + 0.5f) * kW - 0.5f, (0.5f - b / kCardHalfH * 0.5f) * kH - 0.5f, rgb);
+      const float edge = (fabsf(a) > kCardHalfW - 0.05f || fabsf(b) > kCardHalfH - 0.05f) ? 0.08f : 0.0f;
+      c.pixel(i, rgb[0] * shade + edge, rgb[1] * shade + edge, rgb[2] * shade + edge);
+    }
+  }
+}
+static void drum(Ctx &c, const uint8_t *codes, float drumPh) {
+  const float turn = 0.25f * sinf(drumPh);
+  const float zc = kZ0, halfH = kDrumR * kArc / 4.0f;
+  for (int y = 0; y < kH; y++)
+    for (int x = 0; x < kW; x++) {
+      const int i = y * kW + x;
+      const Ray r = eyeRay(c.view, c.eye, (float)x, (float)y);
+      const float ox = r.o.x, oz = r.o.z - zc;
+      const float a = r.d.x * r.d.x + r.d.z * r.d.z, b = 2.0f * (ox * r.d.x + oz * r.d.z),
+                  cc = ox * ox + oz * oz - kDrumR * kDrumR;
+      const float disc = b * b - 4.0f * a * cc;
+      if (disc < 0.0f) {
+        c.pixel(i, 0.0f, 0.0f, 0.0f);
+        continue;
+      }
+      const float tt = (-b - sqrtf(disc)) / (2.0f * a);
+      const V3 p = r.o + r.d * tt;
+      const float ang = atan2f(p.x, zc - p.z), ht = p.y / halfH;
+      const uint8_t shade = (uint8_t)(clampf(0.25f + 0.75f * (zc - p.z) / kDrumR, 0.0f, 1.0f) * 255.0f);
+      const float u = (ang - turn) / kArc;
+      if (fabsf(u) > 0.5f || fabsf(ht) > 1.0f) {
+        c.pixel(i, 0.0f, 0.0f, 0.0f);
+        continue;
+      }
+      float rgb[3];
+      sample(codes, (u + 0.5f) * kW - 0.5f, (0.5f - 0.5f * ht) * kH - 0.5f, rgb);
+      const float sh = (float)shade / 255.0f;
+      c.pixel(i, rgb[0] * sh, rgb[1] * sh, rgb[2] * sh);
+    }
+}
+}  // namespace ref
+
+// Every byte within 2 of the float version, in mono and in each eye, at
+// several points of the swing, over the test page and noisy pages. The card
+// carries its reciprocal by a Newton step, relative error under 2e-5 where
+// |den| >= 0.75 as here, so its hits move by under 1e-4 card units: a pixel
+// whose hit lies closer than 1e-3 to the rim or the faint edge may land on
+// the other side. Those are counted, and must stay rare; the drum has no
+// such freedom.
+static void looksInIntegers() {
+  Rng rng(44);
+  std::vector<std::vector<uint8_t>> pages;
+  pages.push_back(testPage());
+  for (int k = 0; k < 2; k++) {
+    std::vector<uint8_t> pg(kPixels * 3);
+    for (int i = 0; i < kPixels; i++) {
+      const bool dark = rng.next() % 3 == 0;
+      for (int ch = 0; ch < 3; ch++) pg[3 * i + ch] = dark ? 0 : (uint8_t)(rng.next() & 0xff);
+    }
+    pages.push_back(pg);
+  }
+  const float dts[] = {0.0f, 0.9f, 1.75f, 2.6f, 4.4f, 6.1f, 8.3f};
+  const int looksToTry[] = {LOOK_CARD, LOOK_DRUM};
+  int worst[2] = {0, 0}, edges[2] = {0, 0};
+  long bytes[2] = {0, 0}, off[2] = {0, 0}, lit[2] = {0, 0}, rim[2] = {0, 0};
+  std::vector<float> margin(kPixels);
+  double sum[2] = {0.0, 0.0};
+  for (const std::vector<uint8_t> &pg : pages)
+    for (float dt : dts)
+      for (int li = 0; li < 2; li++)
+        for (int eye = -1; eye <= 1; eye++) {
+          PictureScene pic;
+          pic.codes = pg.data();
+          pic.look = (uint8_t)looksToTry[li];
+          pic.reset(1);
+          Env w;
+          pic.step(dt, w);
+          Bufs a, b;
+          Ctx ca, cb;
+          a.bind(ca);
+          b.bind(cb);
+          pic.setup(ca.view);
+          pic.setup(cb.view);
+          ca.eye = cb.eye = eye;
+          ca.view.b = cb.view.b = eye ? 0.3f : 0.0f;
+          pic.draw(ca);
+          if (li == 0)
+            ref::card(cb, pg.data(), wrapAngle(0.0f + kTwoPi * dt / 7.0f), wrapAngle(0.0f + kTwoPi * dt / 9.3f), margin.data());
+          else
+            ref::drum(cb, pg.data(), wrapAngle(0.0f + kTwoPi * dt / 10.0f));
+          const uint8_t *na = eye ? (eye < 0 ? a.left.data() : a.right.data()) : a.rgb.data();
+          const uint8_t *nb = eye ? (eye < 0 ? b.left.data() : b.right.data()) : b.rgb.data();
+          const int n = eye ? kPixels : kPixels * 3;
+          for (int i = 0; i < n; i++) {
+            const int d = na[i] > nb[i] ? na[i] - nb[i] : nb[i] - na[i];
+            if (li == 0 && margin[eye ? i : i / 3] < 1e-3f) {
+              if (d > 2) rim[li]++;   // on the rim's other side: allowed, counted
+              continue;
+            }
+            if ((na[i] == 0) != (nb[i] == 0) && d > 3) {
+              edges[li]++;   // lit in one, dark in the other
+              continue;
+            }
+            if (d > worst[li]) worst[li] = d;
+            if (d > 2) off[li]++;
+            if (nb[i]) lit[li]++;
+            sum[li] += d;
+            bytes[li]++;
+          }
+        }
+  for (int li = 0; li < 2; li++) {
+    std::printf("  look %s in integers: worst %d, mean %.3f over %ld bytes (%ld lit); %d lit/dark disagreements; "
+                "%ld bytes across the rim\n",
+                lookName((uint8_t)looksToTry[li]), worst[li], sum[li] / (double)bytes[li], bytes[li], lit[li], edges[li],
+                rim[li]);
+    CHECK(worst[li] <= 2 && off[li] == 0 && edges[li] == 0 && rim[li] * 10000 < lit[li]);
+  }
+}
+
 int main(int argc, char **argv) {
   profile();
   projection();
@@ -1267,6 +1438,7 @@ int main(int argc, char **argv) {
   runs();
   landscape();
   reprojectMatches();
+  looksInIntegers();
   std::printf("%d checks, %d failed\n", g_checks, g_fail);
   return g_fail ? 1 : 0;
 }
