@@ -26,6 +26,7 @@
 #include <esp_heap_caps.h>
 #include "../network/net_turns.h"
 #include "../network/network.h"
+#include "../net/net_broker.h"
 #include "../util/psram_json.h"
 
 
@@ -91,11 +92,12 @@ static void extractClockTime(const char* iso, char out[6]) {
   }
 }
 
-static bool fetchWeather() {
-  char url[320];
+// The URL, built the same way whoever does the fetching. Kept apart from the
+// fetch so the broker path and the old task path cannot drift.
+static void weatherBuildUrl(char *url, size_t cap) {
   bool hasKey = settings.weatherApiKey[0] != '\0';
   // The commercial tier uses the same API on a customer- host with an apikey.
-  snprintf(url, sizeof(url),
+  snprintf(url, cap,
            "https://%s/v1/forecast?latitude=%.4f&longitude=%.4f"
            "&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m"
            "&daily=temperature_2m_max,temperature_2m_min,sunrise,sunset"
@@ -103,24 +105,14 @@ static bool fetchWeather() {
            hasKey ? "customer-api.open-meteo.com" : "api.open-meteo.com",
            settings.weatherLat, settings.weatherLon,
            hasKey ? "&apikey=" : "", hasKey ? settings.weatherApiKey : "");
+}
 
-  WiFiClientSecure client;
-  client.setInsecure();  // public, non-sensitive data; saves a cert bundle
-  HTTPClient http;
-  http.setTimeout(10000);
-  http.useHTTP10(true);
-  if (!http.begin(client, url)) return false;
-
-  int code = http.GET();
-  if (code != HTTP_CODE_OK) {
-    Serial.printf("Weather fetch failed: HTTP %d\n", code);
-    http.end();
-    return false;
-  }
-
+// The response, read straight off the socket into a PSRAM document, again in
+// one place for both paths. It runs on whichever task did the fetching, and
+// touches nothing but `published`, under `published`'s own spinlock.
+static bool weatherParse(Stream &body) {
   JsonDocument doc(psramJson());   // the forecast
-  DeserializationError err = deserializeJson(doc, http.getStream());
-  http.end();
+  DeserializationError err = deserializeJson(doc, body);
   if (err) {
     Serial.printf("Weather JSON error: %s\n", err.c_str());
     return false;
@@ -152,6 +144,43 @@ static bool fetchWeather() {
   return true;
 }
 
+#if defined(NET_BROKER_ENABLED)
+// What the broker calls, on the broker task, while the body is still open.
+static bool weatherNbParse(const NbReply &r) {
+  if (r.code != HTTP_CODE_OK || !r.body) {
+    Serial.printf("Weather fetch failed: HTTP %d\n", r.code);
+    return false;
+  }
+  return weatherParse(*r.body);
+}
+#endif
+
+#if !defined(NET_BROKER_ENABLED)
+static bool fetchWeather() {
+  char url[320];
+  weatherBuildUrl(url, sizeof url);
+
+  WiFiClientSecure client;
+  client.setInsecure();  // public, non-sensitive data; saves a cert bundle
+  HTTPClient http;
+  http.setTimeout(10000);
+  http.useHTTP10(true);
+  if (!http.begin(client, url)) return false;
+
+  int code = http.GET();
+  if (code != HTTP_CODE_OK) {
+    Serial.printf("Weather fetch failed: HTTP %d\n", code);
+    http.end();
+    return false;
+  }
+
+  const bool ok = weatherParse(http.getStream());
+  http.end();
+  return ok;
+}
+#endif
+
+#if !defined(NET_BROKER_ENABLED)
 static void weatherFetchTask(void*) {
   bool ok = false;
   {
@@ -162,6 +191,7 @@ static void weatherFetchTask(void*) {
   fetchBusy = false;
   vTaskDelete(nullptr);
 }
+#endif
 
 // When this starter first stood aside for someone at the portal, 0 if it is not
 // waiting. File scope so the early returns above can clear it: the deadline
@@ -171,6 +201,16 @@ static void weatherFetchTask(void*) {
 static uint32_t s_weatherYieldingSince = 0;
 
 void weatherLoop() {
+#if defined(NET_BROKER_ENABLED)
+  // Collect first, and unconditionally: the answer has to be taken even if the
+  // page has since left the screen, or fetchBusy would never clear and this
+  // module would go quiet until a reboot.
+  { bool ok = false;
+    if (nbTake(NB_WEATHER, &ok)) {
+      nextFetchMs = millis() + (ok ? WEATHER_FETCH_INTERVAL_MS : WEATHER_RETRY_INTERVAL_MS);
+      fetchBusy = false;
+    } }
+#endif
   if (fetchBusy) return;
   const unsigned long now = millis();
   static unsigned long lastCheckMs = 0;
@@ -190,6 +230,27 @@ void weatherLoop() {
       return;
     }
     s_weatherYieldingSince = 0; }
+#if defined(NET_BROKER_ENABLED)
+  // Neither of the two checks below is needed here, and that is the point of
+  // the broker: there is no task to create, so there is no 9 KB contiguous
+  // internal block to find first, and no reason to stand down because someone
+  // else is on the wire - the queue is what handles that, without losing the
+  // request. A settings change is interactive: the owner is looking at the
+  // panel waiting for the new place's weather.
+  char url[320];
+  weatherBuildUrl(url, sizeof url);
+  NbRequest req = {};
+  req.url = url;
+  req.timeoutMs = 10000;   // as this module has always used
+  req.parse = weatherNbParse;
+  const bool interactive = fetchKick;
+  fetchKick = false;
+  fetchBusy = true;
+  if (!nbSubmitRequest(NB_WEATHER, req, interactive)) {
+    fetchBusy = false;
+    nextFetchMs = now + WEATHER_RETRY_INTERVAL_MS;
+  }
+#else
   if (netLockBusy()) return;   // another fetch holds the network; check again in a second
   if (heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) < WEATHER_TASK_STACK + 1024) {
     nextFetchMs = now + WEATHER_RETRY_INTERVAL_MS;
@@ -205,6 +266,7 @@ void weatherLoop() {
     fetchBusy = false;
     nextFetchMs = now + WEATHER_RETRY_INTERVAL_MS;
   }
+#endif
 }
 
 void weatherSettingsChanged() {

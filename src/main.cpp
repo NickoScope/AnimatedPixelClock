@@ -217,6 +217,7 @@ static inline uint8_t ctrlPageCount() {
 #include "control/clock_style.h"
 #include "lua/nslua.h"
 #include "lua/nslua_bindings.h"
+#include "net/net_broker.h"
 #include "network/network.h"
 #include "notify/notify.h"
 #include "viz/visualizer.h"
@@ -408,6 +409,10 @@ void setup() {
   heap_caps_register_failed_alloc_callback(onAllocFailed);   // internal heap diagnostics: see loopMark()
   netReserveTake();
   dbgLogBegin();   // restores the remote log's switch from NVS; off costs nothing   // while the heap is still whole: net_reserve.h says why
+  // The one owner of the outbound socket, created here and not later: its task
+  // stack is .bss, but the PSRAM request buffers and the TLS client are taken
+  // now, while nothing transient has touched the heap. src/net/net_broker.h.
+  nbBegin();
   delay(1000);
   crashReportBegin();   // the last crash from the core dump in flash: src/utils/crash_report.cpp
   healthBegin();   // confirms an OTA image only once it has run: src/health
