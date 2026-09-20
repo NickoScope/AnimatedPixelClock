@@ -340,6 +340,11 @@ void netMarkOutboundOk() { netMarkAlive(); }
 
 uint32_t netHttpServed() { return netHttpCount; }
 uint32_t netSecsSinceHttp() { return netLastHttpMs ? (millis() - netLastHttpMs) / 1000 : 0; }
+
+// The same in milliseconds, which is the scale a fetch has to decide on: the
+// starters use it to stand aside for a browser that is mid-page. NET_HTTP_NEVER
+// when nothing has asked yet, so "never" always reads as quiet.
+uint32_t netMsSinceHttp() { return netLastHttpMs ? millis() - netLastHttpMs : NET_HTTP_NEVER; }
 uint32_t netSecsSinceTraffic() { return (millis() - netLastTrafficMs) / 1000; }
 uint32_t netRecoveryCount() { return netRecoverCount; }
 const char* netLastRecoveryReason() { return netRecoverReason; }

@@ -5,6 +5,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 SRC = r'''
 #include "web/web_heap_backoff.h"
 #include "net/net_reserve.h"
+#include "network/net_turns.h"
 #include <cstdio>
 static int failed = 0, checks = 0;
 static void is(bool got, bool want, const char *what) {
@@ -88,6 +89,19 @@ int main() {
   // A negative control: a reserve released on the same signal the portal keeps
   // sending on would be pointless, so the two must agree that fresh is fresh.
   is(!netReserveWanted(0) && webHeapBackoffActive(0, 0), true, "both react to the same fresh failure");
+  // Taking turns: a fetch stands aside for someone at the portal, but not for ever.
+  is(netTurnYield(0, 0), true, "a request just now: stand aside");
+  is(netTurnYield(NET_TURN_QUIET_MS - 1, 0), true, "still inside the quiet window");
+  is(netTurnYield(NET_TURN_QUIET_MS, 0), false, "quiet long enough: go");
+  is(netTurnYield(NET_HTTP_NEVER, 0), false, "nobody has ever asked: go");
+  is(netTurnYield(0, NET_TURN_MAX_YIELDS - 1), true, "one short of the limit, still yielding");
+  is(netTurnYield(0, NET_TURN_MAX_YIELDS), false, "at the limit the data wins");
+  is(netTurnYield(0, NET_TURN_MAX_YIELDS + 500), false, "and past it");
+  // The two guards are independent: quiet alone is enough, and so is the count.
+  is(netTurnYield(NET_TURN_QUIET_MS, NET_TURN_MAX_YIELDS), false, "both clear");
+  // A negative control: without the limit an open portal would starve the fetch
+  // for ever, which is the failure this counter exists to prevent.
+  is(NET_TURN_MAX_YIELDS > 0 && NET_TURN_QUIET_MS > 0, true, "neither guard is disabled");
   printf("%d checks, %d failed\n", checks, failed);
   return failed ? 1 : 0;
 }

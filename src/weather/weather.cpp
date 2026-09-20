@@ -24,6 +24,8 @@
 #include "../network/net_lock.h"
 
 #include <esp_heap_caps.h>
+#include "../network/net_turns.h"
+#include "../network/network.h"
 
 // The document's blocks go to PSRAM. Under CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL
 // (4096) in this build every block ArduinoJson asks for lands in the internal
@@ -190,6 +192,11 @@ void weatherLoop() {
   if (!weatherConfigured() || !weatherOnScreen() || WiFi.status() != WL_CONNECTED) return;
   // A settings change (new location, toggle) fetches now instead of waiting.
   if (!fetchKick && nextFetchMs && (long)(now - nextFetchMs) < 0) return;
+  // A person at the portal beats a refresh that can wait (net_turns.h). The
+  // count stops a browser left open from starving this for ever.
+  { static uint32_t yields = 0;
+    if (netTurnYield(netMsSinceHttp(), yields)) { yields++; return; }
+    yields = 0; }
   if (netLockBusy()) return;   // another fetch holds the network; check again in a second
   if (heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) < WEATHER_TASK_STACK + 1024) {
     nextFetchMs = now + WEATHER_RETRY_INTERVAL_MS;

@@ -15,6 +15,8 @@
 
 #include "rtt_roots.h"
 #include "../network/net_lock.h"
+#include "../network/net_turns.h"
+#include "../network/network.h"
 
 namespace {
 
@@ -566,6 +568,11 @@ bool rttDirectLoop(const char *crs, rtt::Lists *out, int64_t *fetchedAt) {
   if ((int32_t)(nowMs - s_nextAtMs) < 0) return handed;
   if (WiFi.status() != WL_CONNECTED) { s_blocked = ST_NOWIFI; return handed; }
   if (time(nullptr) < 1700000000) { s_blocked = ST_NOCLOCK; return handed; }   // certificates need the date
+  // A person at the portal beats a refresh that can wait (net_turns.h). The
+  // count stops a browser left open from starving this for ever.
+  { static uint32_t yields = 0;
+    if (netTurnYield(netMsSinceHttp(), yields)) { yields++; return handed; }
+    yields = 0; }
   if (netLockBusy()) { s_nextAtMs = nowMs + 2000UL; return handed; }         // another fetch is on the network
   if (heap_caps_get_free_size(MALLOC_CAP_INTERNAL) < kMinInternalFree ||
       heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) < kStackBytes + 1024) {

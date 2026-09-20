@@ -52,6 +52,8 @@ void netMarkInbound();
 void netMarkOutboundOk();
 uint32_t netHttpServed();
 uint32_t netSecsSinceHttp();
+#include "net_turns.h"   // NET_HTTP_NEVER
+uint32_t netMsSinceHttp();   // milliseconds since the last HTTP request we served
 uint32_t netSecsSinceTraffic();
 uint32_t netRecoveryCount();
 const char* netLastRecoveryReason();

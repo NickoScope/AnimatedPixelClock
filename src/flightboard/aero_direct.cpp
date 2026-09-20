@@ -15,6 +15,8 @@
 
 #include "aero_roots.h"
 #include "../network/net_lock.h"
+#include "../network/net_turns.h"
+#include "../network/network.h"
 
 namespace {
 
@@ -616,6 +618,11 @@ void aeroDirectLoop(const AeroWant &w) {
   if (held(s_holdUntilMs, nowMs)) return;
   if (WiFi.status() != WL_CONNECTED) { s_blocked = ST_NOWIFI; return; }
   if (!clockSet()) { s_blocked = ST_NOCLOCK; return; }        // certificates, windows and caps need the date
+  // A person at the portal beats a refresh that can wait (net_turns.h). The
+  // count stops a browser left open from starving this for ever.
+  { static uint32_t yields = 0;
+    if (netTurnYield(netMsSinceHttp(), yields)) { yields++; return; }
+    yields = 0; }
   if (netLockBusy()) { s_holdUntilMs = (nowMs + 2000UL) | 1; return; }   // another fetch is on the network; nothing counted
 
   Job j;

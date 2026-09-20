@@ -49,6 +49,8 @@ static void handlePanelJs();
 #include <esp_heap_caps.h>
 #include "../clocks/cycle_config.h"
 #include "web_heap_backoff.h"
+#include "../network/net_lock.h"
+#include "../network/net_turns.h"
 #include "../debug/dbg_log.h"
 static String lastAnimationError;
 static bool writeAllGuarded(int sock, const char* data, size_t len, uint32_t totalDeadline);
@@ -1316,6 +1318,21 @@ uint32_t webRefusedCount() { return s_webRefused; }
 // saved against the blob it replaces.
 static bool webRefuseBig() {
   extern uint32_t allocFailWifiAgeMs();
+  // A background fetch is on the network: it is holding 12-16 KB of internal
+  // RAM and this response would want 9-15 KB more. Refuse now, cheaply, and let
+  // the browser come back in a second - the fetch is over in seconds and ends
+  // itself, so the refusal streak that guards against a starving radio must NOT
+  // apply here: its eighth refusal would let 38 KB through in the middle of a
+  // TLS handshake, which is the one moment this exists to prevent.
+  if (netLockBusy()) {
+    s_webRefused++;
+    netMarkHttp();
+    server.sendHeader("Retry-After", "1");
+    server.sendHeader("Cache-Control", "no-store");
+    server.setContentLength(0);
+    server.send(503, "text/plain", "");
+    return true;
+  }
   // A streak left over from an earlier episode is dropped first
   // (web_heap_backoff.h says why it is keyed on time, not on a sampled flag).
   s_webRefusedInARow = webHeapStreakNow(s_webRefusedInARow, millis() - s_webLastRefuseMs);

@@ -18,6 +18,8 @@
 #include "worldclock.h"
 
 #include <esp_heap_caps.h>
+#include "../network/net_turns.h"
+#include "../network/network.h"
 
 // The document's blocks go to PSRAM. Under CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL
 // (4096) in this build every block ArduinoJson asks for lands in the internal
@@ -64,6 +66,9 @@ static volatile uint8_t s_ipState = IP_IDLE;
 static WcCity           s_ipCity;
 
 static const char *s_source   = "zone";
+// Times this lookup stood aside for someone at the portal (net_turns.h). It
+// runs once per boot, so it only has to survive a page load, not a day.
+static uint32_t s_wcYields = 0;
 static bool        s_dirty    = true;
 static bool        s_wasChosen = false;
 static float       s_lat = NAN, s_lon = NAN;
@@ -255,7 +260,7 @@ void wcHomeTick() {
   // One lookup per boot, once NTP has proved the way out works, and only when
   // nothing better will ever answer.
   if (s_ipState == IP_IDLE && !locationSet() && WiFi.status() == WL_CONNECTED && time(nullptr) > 1700000000 &&
-      !netLockBusy()) {
+      !netLockBusy() && !netTurnYield(netMsSinceHttp(), s_wcYields)) {
     s_ipState = IP_RUNNING;
     // Core 0 and 8 KB, as the weather task that does the same HTTPS and JSON work.
     if (xTaskCreatePinnedToCore(ipTask, "wcHomeIp", 8192, nullptr, 0, nullptr, 0) != pdPASS) s_ipState = IP_FAILED;
