@@ -62,7 +62,10 @@ inline V3 normalize(V3 a) {
 // relative error, measured by the host test over the floats from 1e-6 to
 // 1e6, is printed there and held under 5e-6. The shared length() and
 // normalize() keep sqrtf, so nothing that was exact moves.
-inline float rsqrtFast(float x) {   // x > 0
+// x > 0 and a normal number: on denormals the two steps do not converge
+// (rsqrtFast(1e-40f) is 71 % out). Every caller here is geometry of the order
+// of 1e-5 to 1e2; the host test measures the error over [1e-6, 1e6].
+inline float rsqrtFast(float x) {
   uint32_t i;
   memcpy(&i, &x, sizeof i);
   i = 0x5f375a86u - (i >> 1);

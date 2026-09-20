@@ -82,6 +82,21 @@ class VoxelScene : public Scene {
     float want = top + kClearance;
     alt_ += (want - alt_) * clampf(dt * 1.5f, 0.0f, 1.0f);
   }
+  // The march's steps, and the only place that knows them: where each one
+  // is, f / z there, and the fog. With no arrays it only counts them, which
+  // is how the host test holds the count inside kSteps; a march longer than
+  // that would stop at the table's end and cut the horizon short.
+  static int march(float f, float *z, float *fz, float *fog) {
+    int n = 0;
+    for (float t = kZNear, dz = 0.2f; t < kZFar; t += dz, dz *= 1.02f, n++)
+      if (z && n < kSteps) {
+        z[n] = t;
+        fz[n] = f / t;
+        fog[n] = smoothstepf(kZFar * 0.35f, kZFar, t);
+      }
+    return n < kSteps ? n : kSteps;
+  }
+
   void draw(Ctx &c) {
     const View &v = c.view;
     const float e = (float)c.eye;
@@ -102,12 +117,7 @@ class VoxelScene : public Scene {
     // steps of 128 columns an eye. f / z instead of dividing (alt - h) * f by
     // z moves a slice's edge by a millionth of a pixel, so a slice can end a
     // row sooner or later where its edge sits on a pixel's.
-    int steps = 0;
-    for (float z = kZNear, dz = 0.2f; z < kZFar && steps < kSteps; z += dz, dz *= 1.02f, steps++) {
-      stepZ_[steps] = z;
-      stepFz_[steps] = v.f / z;
-      stepFog_[steps] = smoothstepf(kZFar * 0.35f, kZFar, z);
-    }
+    const int steps = march(v.f, stepZ_, stepFz_, stepFog_);
     // The sky by rows, once a frame; each slice's colour once, as bytes.
     uint8_t *rgb = c.fb.rgb, *plane = stereo ? c.plane() : nullptr;
     for (int yy = 0; yy < kH; yy++) {
@@ -151,9 +161,11 @@ class VoxelScene : public Scene {
  private:
   static constexpr float kZ0 = 24.0f, kZNear = 2.0f, kZFar = 180.0f;
   static constexpr float kHorizon = 22.0f, kSpeed = 16.0f, kClearance = 16.0f;
-  // The march's steps (about 150 from kZNear to kZFar, dz growing 2 % a
-  // step), and a margin; the host test holds the count under it.
+ public:
+  // The march's room: about 150 steps from kZNear to kZFar with dz growing
+  // 2 % a step, and a margin. march(f, 0, 0, 0) counts what it really takes.
   static const int kSteps = 200;
+ private:
   float stepZ_[kSteps], stepFz_[kSteps], stepFog_[kSteps];
   uint8_t skyRow_[kH][3];
   // Ctx::pixel's bytes, worked out once for a run of pixels of one colour.
@@ -161,6 +173,7 @@ class VoxelScene : public Scene {
     if (stereo) {
       const float m = r > g ? (r > b ? r : b) : (g > b ? g : b);
       px[0] = (uint8_t)(clampf(m, 0.0f, 1.0f) * 255.0f + 0.5f);
+      px[1] = px[2] = px[0];   // one byte is read in stereo; none is left unset
     } else {
       px[0] = (uint8_t)(clampf(r, 0.0f, 1.0f) * 255.0f + 0.5f);
       px[1] = (uint8_t)(clampf(g, 0.0f, 1.0f) * 255.0f + 0.5f);
@@ -175,12 +188,6 @@ class VoxelScene : public Scene {
       rgb[3 * i + 1] = px[1];
       rgb[3 * i + 2] = px[2];
     }
-  }
-public:
-  int marchSteps() const {   // for the host test: the steps a frame takes
-    int n = 0;
-    for (float z = kZNear, dz = 0.2f; z < kZFar; z += dz, dz *= 1.02f) n++;
-    return n;
   }
 private:
   static Col skyHigh() {
@@ -745,8 +752,13 @@ class GlobeScene : public Scene {
         const V3 oc = r.o - centre;
         const float bb = dot(oc, d), cc = dot(oc, oc) - kR * kR, disc = bb * bb - cc;
         if (disc < 0.0f) {
+          // The old globe painted this pixel for any glow above zero, black
+          // included, which puts out a star behind the limb; a glow that
+          // rounds to nothing keeps the 1 so that still happens.
           const float miss = sqrtf(-disc);
-          px.glow = (uint8_t)(clampf(1.0f - miss / 0.12f, 0.0f, 1.0f) * 255.0f + 0.5f);
+          const float glow = clampf(1.0f - miss / 0.12f, 0.0f, 1.0f);
+          px.glow = (uint8_t)(glow * 255.0f + 0.5f);
+          if (!px.glow && glow > 0.0f) px.glow = 1;
           continue;
         }
         const V3 p = r.o + d * (-bb - sqrtf(disc));

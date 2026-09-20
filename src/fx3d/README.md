@@ -124,7 +124,7 @@ Measured with `platformio run`, against the same env without the flag:
 | | Without | With `FX3D_ENABLED` |
 |---|---|---|
 | Static RAM | 103,376 B | 104,000 B (**+624 B**, of it the blit's 384 B row) |
-| Flash | 2,270,665 B | 2,335,869 B (**+65,204 B**), the page 8.2 KB of it |
+| Flash | 2,270,665 B | 2,335,937 B (**+65,272 B**), the page 8.2 KB of it |
 
 At run time: **no internal heap per frame**. Saving or resetting the glasses profile opens NVS
 for a moment: ESP-IDF allocates the handle then (`nvs_api.cpp`), and a write that adds an entry
@@ -161,7 +161,8 @@ Every one is freed when it stops.
   as bytes; the globe keeps a table per eye of what each ray finds (the normal in the Earth's
   frame before the spin, the latitude, the longitude before the spin, the limb, the
   atmosphere), so a frame is multiplications where it used to call `asinf` twice, `atan2f`,
-  `sinf`, three square roots and six divisions a pixel. Each is held to what it drew before in
+  `sinf`, three square roots and six divisions a pixel - at the price of reading 98,304 B an
+  eye from PSRAM every frame, which is where its gain on the panel will run into the cache. Each is held to what it drew before in
   `tools/fx3d/fx3d_host_test.cpp`, which keeps the old code verbatim: within one code for
   tunnel, the landscape and the globe, and a mean of 0.0016 for blobs, whose march can end a
   step early. On the Mac: tunnel 2.3-2.8x, the landscape 1.1-1.2x, the globe 2.9-4.0x, blobs
@@ -206,6 +207,10 @@ resolution does.
 back (`Cache_WriteBack_Addr`) the way the per-pixel path does under `SPIRAM_DMA_BUFFER`. That
 flag is not set here (the buffers stay internal, docs/03 in the knowledge base), so it is
 harmless today; if it is ever set, the blit by runs goes wrong where single pixels would not.
+
+**Opening a scene** draws one frame at once and throws it away, so a scene that builds tables
+for the view it is shown in - the tunnel, the drum's look, the globe - pays for them inside
+`open_us` rather than in the first tick the owner sees. In red-blue that is both eyes' tables.
 
 **Still to measure: the time.** The frame time of every scene and look, and of the blit of
 8192 pixels, is what the bench is for (`/api/fx3d?bench=1`, the page's button, or the bench

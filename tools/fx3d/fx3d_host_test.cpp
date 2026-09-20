@@ -1976,7 +1976,7 @@ static void heavyScenesMatch() {
   {
     static VoxelScene sc;
     static ref::VoxelOld old;
-    CHECK(sc.marchSteps() < 200);   // the table's room
+    CHECK(VoxelScene::march(72.0f, nullptr, nullptr, nullptr) < VoxelScene::kSteps);   // the table's room
     sc.reset(5);
     old.reset(5);
     FrameDiff d;

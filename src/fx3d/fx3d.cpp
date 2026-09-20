@@ -224,6 +224,12 @@ bool openScene(int idx) {
   }
   g_scene = e.make(g_sceneMem);
   g_scene->reset(kSeed);
+  // One frame at once: a scene that builds tables for the view it is shown in
+  // (the tunnel, the globe) pays for them here, inside open_us, instead of in
+  // the first tick the owner sees. The frame itself is thrown away.
+  Env env;
+  fillEnv(env);
+  renderFrame(*g_scene, g_ctx, 0.0f, env);
   g_run.openUs = micros() - t0;
   g_sceneIdx = idx;
   updateCapture();   // a scene draws itself: the look waits
