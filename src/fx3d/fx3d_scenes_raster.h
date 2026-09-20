@@ -552,9 +552,23 @@ class BlobsScene : public Scene {
     const float h = clampf(0.5f + 0.5f * (b - a) * kInvK, 0.0f, 1.0f);
     return mixf(b, a, h) - kK * h * (1.0f - h);
   }
+  // The blend reaches kK, and smin(a, b) is exactly a once b - a is that far,
+  // so a ball further than that cannot change the answer. Squared distances
+  // cost no square root, so they are worked out first and only the balls that
+  // can take part are rooted: the same number to the last bit, the margin
+  // over kK only to stay clear of the reciprocal's own rounding.
   float sdf(V3 p) const {
-    float d = lengthFast(p - pos_[0]) - radius(0);
-    for (int k = 1; k < kBalls; k++) d = smin(d, lengthFast(p - pos_[k]) - radius(k));
+    float s[kBalls];
+    for (int k = 0; k < kBalls; k++) {
+      const V3 q = p - pos_[k];
+      s[k] = dot(q, q);
+    }
+    float d = sqrtFast(s[0]) - radius(0);
+    for (int k = 1; k < kBalls; k++) {
+      const float reach = d + kK * 1.0001f + radius(k);
+      if (reach <= 0.0f || s[k] >= reach * reach) continue;
+      d = smin(d, sqrtFast(s[k]) - radius(k));
+    }
     return d;
   }
   V3 normal(V3 p) const {
@@ -792,17 +806,20 @@ class GlobeScene : public Scene {
     col = ((col % WORLD_COLS) + WORLD_COLS) % WORLD_COLS;
     return (kWorldMask[row] >> col) & 1ULL ? 1.0f : 0.0f;
   }
-  // The mask read bilinearly, then a soft threshold: coastlines without steps.
+  // The mask read bilinearly, then a soft threshold: coastlines without
+  // steps. Once per pixel of the globe, so the two divisions, the two floorf
+  // and smoothstepf's own division are all multiplications and casts here.
   static float landAt(float lat, float lon) {
-    const float fr = (WORLD_TOP - lat) / ((WORLD_TOP - WORLD_BOTTOM) / WORLD_ROWS) - 0.5f;
-    const float fc = (lon + 180.0f) / (360.0f / WORLD_COLS) - 0.5f;
-    const int r0 = (int)floorf(fr), c0 = (int)floorf(fc);
+    const float fr = (WORLD_TOP - lat) * ((float)WORLD_ROWS / (WORLD_TOP - WORLD_BOTTOM)) - 0.5f;
+    const float fc = (lon + 180.0f) * ((float)WORLD_COLS / 360.0f) - 0.5f;
+    const int r0 = floorInt(fr), c0 = floorInt(fc);
     const float ar = fr - (float)r0, ac = fc - (float)c0;
     const float v = mixf(mixf(cell(r0, c0), cell(r0, c0 + 1), ac), mixf(cell(r0 + 1, c0), cell(r0 + 1, c0 + 1), ac), ar);
-    return smoothstepf(0.3f, 0.7f, v);
+    const float t = clampf((v - 0.3f) * 2.5f, 0.0f, 1.0f);   // smoothstepf(0.3, 0.7, v), without its divide
+    return t * t * (3.0f - 2.0f * t);
   }
   static void starPoint(Ctx &c, float x, float y, float v) {
-    const int ix = (int)floorf(x), iy = (int)floorf(y);
+    const int ix = floorInt(x), iy = floorInt(y);
     if ((unsigned)ix >= (unsigned)kW || (unsigned)iy >= (unsigned)kH) return;
     c.pixel(iy * kW + ix, v, v, v);
   }

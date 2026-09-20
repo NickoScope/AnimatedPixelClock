@@ -124,7 +124,7 @@ Measured with `platformio run`, against the same env without the flag:
 | | Without | With `FX3D_ENABLED` |
 |---|---|---|
 | Static RAM | 103,376 B | 104,000 B (**+624 B**, of it the blit's 384 B row) |
-| Flash | 2,270,665 B | 2,335,937 B (**+65,272 B**), the page 8.2 KB of it |
+| Flash | 2,270,665 B | 2,335,925 B (**+65,260 B**), the page 8.2 KB of it |
 
 At run time: **no internal heap per frame**. Saving or resetting the glasses profile opens NVS
 for a moment: ESP-IDF allocates the handle then (`nvs_api.cpp`), and a write that adds an entry
@@ -154,6 +154,13 @@ Every one is freed when it stops.
   twelve divisions for every one of its 65,536 cells: the noise divided by each octave's cell
   width. A cell's width is a power of two, so multiplying by its reciprocal gives the same map
   to the last bit - the host test checks it cell by cell - without the calls.
+- **Measured on the panel at `6016158`** (`docs/drafts/27-fx3d-panel-measurements-6016158.md`):
+  tunnel 34,960 -> 6,366 us a frame in mono and 69,372 -> 12,044 in red-blue (5.5x and 5.8x);
+  globe 45,516 -> 11,680 and 90,091 -> 23,064 (3.9x both); the landscape 32,827 -> 13,306 and
+  62,344 -> 26,591 (2.5x and 2.3x), and its map opens in 258 ms instead of 452; blobs only
+  1.25x, 33,455 us in mono and 65,772 in red-blue. So in mono every scene but blobs holds
+  30 Hz, and with the glasses every scene but blobs and the landscape. The globe's table
+  reading from PSRAM did not become the wall: its gain is the same in both modes.
 - Answered since, the four heavy scenes: tunnel works its eight band colours out once a frame
   instead of three `cosf` a pixel; blobs march with `sqrtFast` and no division, and the upscale
   reads a table instead of calling `floorf` twice a pixel; the landscape's march reads a table

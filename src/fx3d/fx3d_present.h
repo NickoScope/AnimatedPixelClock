@@ -190,7 +190,7 @@ class PictureScene : public Scene {
         for (int n = count[k]; n < count[k + 1]; n++) {
           const int x = order_[n];
           const float xs = (float)x - shift * d_[x];
-          const int i0 = (int)floorf(xs);
+          const int i0 = floorInt(xs);   // floorf is a call on the S3, and this is per lit pixel
           if (i0 < lo) lo = i0;
           if (i0 + 1 > hi) hi = i0 + 1;
         }
@@ -201,8 +201,8 @@ class PictureScene : public Scene {
           const int x = order_[n];
           const uint8_t *p = crow + 3 * x;
           const float xs = (float)x - shift * d_[x];
-          const float fl = floorf(xs);
-          const int i0 = (int)fl;
+          const int i0 = floorInt(xs);
+          const float fl = (float)i0;
           const float fr = xs - fl;
           const float col[3] = {lin(p[0]), lin(p[1]), lin(p[2])};
           for (int j = 0; j < 2; j++) {
