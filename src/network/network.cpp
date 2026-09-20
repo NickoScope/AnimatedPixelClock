@@ -322,6 +322,7 @@ static const char* netRecoverReason = "";
 static esp_ping_handle_t netPing = nullptr;
 static volatile bool netPingReplied = false;
 static volatile bool netPingDone = false;
+static volatile uint32_t netPingSent = 0;   // requests the socket actually took
 
 static void netMarkAlive() {
   netLastTrafficMs = millis();
@@ -345,7 +346,16 @@ uint32_t netRecoveryCount() { return netRecoverCount; }
 const char* netLastRecoveryReason() { return netRecoverReason; }
 
 static void netPingSuccess(esp_ping_handle_t, void*) { netPingReplied = true; }
-static void netPingEnd(esp_ping_handle_t, void*) { netPingDone = true; }
+static void netPingEnd(esp_ping_handle_t hdl, void*) {
+  // How many of the three actually left the board. ESP-IDF counts a request
+  // only once the socket has taken it (ping_sock.c increments `transmitted` in
+  // the else of the send-failure branch), so zero here means nothing was sent
+  // and the silence that follows says nothing at all about the gateway.
+  uint32_t sent = 0;
+  esp_ping_get_profile(hdl, ESP_PING_PROF_REQUEST, &sent, sizeof(sent));
+  netPingSent = sent;
+  netPingDone = true;
+}
 
 static void netPingRelease() {
   if (!netPing) return;
@@ -433,8 +443,19 @@ static void netHealthTick() {
     bool replied = netPingReplied;
     netPingRelease();
     netNextProbeMs = now + NET_PROBE_RETRY_MS;
+    const uint32_t sent = netPingSent;
     if (replied) {
       netMarkAlive();
+    } else if (!sent) {
+      // Nothing left the board, so this says nothing about the gateway.
+      // Measured on the panel 2026-09-20 over the cable: "ping_sock: send
+      // error=0" three times, then this watchdog restarted a Wi-Fi link that
+      // was working, and the panel was unreachable for minutes - twice in eight
+      // minutes. The line above it in the log gives the cause: the Wi-Fi task
+      // could not get its 1,626 B buffer while the rail board was fetching and
+      // a browser had the portal open. Counting that as "gateway unreachable"
+      // made this watchdog the outage it exists to prevent.
+      Serial.println("Link probe could not be sent (no buffer): not counted against the gateway");
     } else if (++netProbeFails >= NET_PROBE_FAILS_BEFORE_RECOVERY && !cooling) {
       netRecover("gateway unreachable");
     }
