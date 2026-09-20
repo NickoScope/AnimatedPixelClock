@@ -17,6 +17,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
+// `head = seq % cap` only stays right across the 2^32 wrap of `seq` when the
+// capacity divides 2^32, so the capacity is a power of two and says so here
+// rather than in a comment someone can miss.
+
 struct DbgRing {
   char *buf;        // caller's storage; null means the log is off
   uint32_t cap;     // bytes of it
@@ -45,6 +49,9 @@ static inline void dbgRingWrite(DbgRing *r, const char *p, uint32_t n) {
   if (n >= r->cap) {           // only the last cap bytes can survive
     p += n - r->cap;
     r->dropped += n - r->cap + r->kept;
+    // The bytes thrown away still happened: the sequence has to count them, or
+    // a reader is told it missed nothing when it missed most of a write.
+    r->seq += n - r->cap;
     n = r->cap;
     r->kept = 0;
   }
@@ -54,8 +61,8 @@ static inline void dbgRingWrite(DbgRing *r, const char *p, uint32_t n) {
   }
   const uint32_t head = r->seq % r->cap;   // the ring is indexed by the absolute sequence
   const uint32_t first = (r->cap - head) < n ? (r->cap - head) : n;
-  for (uint32_t i = 0; i < first; i++) r->buf[head + i] = p[i];
-  for (uint32_t i = first; i < n; i++) r->buf[i - first] = p[i];
+  __builtin_memcpy(r->buf + head, p, first);
+  __builtin_memcpy(r->buf, p + first, n - first);
   r->seq += n;
   r->kept += n;
 }
@@ -73,6 +80,11 @@ static inline uint32_t dbgRingRead(const DbgRing *r, uint32_t since, char *out, 
   uint32_t n = r->seq - start;
   if (n > max) n = max;
   if (!r->buf || !r->cap) return 0;
-  for (uint32_t i = 0; i < n; i++) out[i] = r->buf[(start + i) % r->cap];
+  // Two runs, not a modulo a byte: this copy runs inside the writer's lock, so
+  // its length is time with interrupts disabled on one core.
+  const uint32_t off = start % r->cap;
+  const uint32_t first = (r->cap - off) < n ? (r->cap - off) : n;
+  __builtin_memcpy(out, r->buf + off, first);
+  __builtin_memcpy(out + first, r->buf, n - first);
   return n;
 }

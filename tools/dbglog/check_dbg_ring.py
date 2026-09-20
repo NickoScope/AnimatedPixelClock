@@ -50,11 +50,18 @@ int main() {
   is(readAll(&r, 0, &from) == "lloabcdefghijkXY", true, "the newest sixteen");
   eq(from, 2, "a reader behind the window is told where it really starts");
 
-  // A write larger than the ring keeps its tail
+  // A write larger than the ring keeps its tail. The numbers below are worked
+  // out by hand, not read back from the ring: an earlier version of this test
+  // compared `from` with `seq - kept`, which is what `from` is computed from,
+  // and so passed a ring that hid the gap entirely.
+  const uint32_t seqBefore = r.seq, dropBefore = r.dropped;   // 18 and 2
   put(&r, "0123456789ABCDEFGHIJ");    // 20 bytes into a 16-byte ring
+  eq(r.seq, seqBefore + 20, "every offered byte counts, even the ones thrown away");
   eq(r.kept, 16, "a ringful again");
+  eq(r.dropped, dropBefore + 20 - 16 + 16, "the four over, plus the sixteen it replaced");
+  eq(dbgRingOldest(&r), seqBefore + 20 - 16, "the oldest byte is four into that write");
   is(readAll(&r, 0, &from) == "456789ABCDEFGHIJ", true, "the tail of an oversized write");
-  eq(from, r.seq - 16, "and the cursor says so");
+  eq(from, seqBefore + 4, "a reader is told it missed the first four bytes of it");
 
   // A reader in the middle of the window
   const uint32_t mid = r.seq - 4;

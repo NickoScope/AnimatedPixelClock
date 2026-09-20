@@ -2015,16 +2015,22 @@ function logFetch(){
   var from = parseInt(r.headers.get('X-Log-From')||'0',10);
   var seq = parseInt(r.headers.get('X-Log-Seq')||'0',10);
   var dropped = parseInt(r.headers.get('X-Log-Dropped')||'0',10);
+  var bytes = parseInt(r.headers.get('X-Log-Bytes')||'0',10);
   return r.text().then(function(txt){
    var el = $('#logText'), meta = $('#logMeta');
    if(!on){ el.textContent='Log is off.'; meta.textContent=''; logCursor=0; return; }
    if(from > logCursor && logCursor) el.textContent += '\n--- ' + (from-logCursor) + ' bytes missed ---\n';
    if(logCursor === 0) el.textContent = txt; else el.textContent += txt;
-   logCursor = from + txt.length;
+   // In bytes, from the panel - txt.length counts UTF-16 units and would drift
+   // on the first non-ASCII byte, and a slice can cut a character in two.
+   logCursor = from + bytes;
    if(el.textContent.length > 200000) el.textContent = el.textContent.slice(-100000);
    el.scrollTop = el.scrollHeight;
    meta.textContent = seq + ' bytes logged' + (dropped ? ', ' + dropped + ' dropped to make room' : '') + '.';
   });
+ }).catch(function(e){
+  var meta = $('#logMeta');
+  if (meta) meta.textContent = 'The panel did not answer (' + e + ').';
  });
 }
 function logSetFollow(on){
@@ -2039,11 +2045,17 @@ function logInit(){
   fetch('/api/log?on=' + (sw.checked ? '1' : '0')).then(function(){
    logCursor = 0; $('#logText').textContent = sw.checked ? '' : 'Log is off.';
    if(!sw.checked) logSetFollow(false); else logFetch();
+  }).catch(function(e){
+   // The panel did not take it: put the switch back rather than lie about it.
+   sw.checked = !sw.checked;
+   var meta = $('#logMeta'); if (meta) meta.textContent = 'The panel did not answer (' + e + ').';
   });
  });
- $('#logFollow').addEventListener('click', function(){ logSetFollow(!logFollowing); });
- $('#logClear').addEventListener('click', function(){
-  fetch('/api/log?clear=1').then(function(){ logCursor = 0; $('#logText').textContent = ''; logFetch(); });
+ var f = $('#logFollow'), c = $('#logClear');
+ if (f) f.addEventListener('click', function(){ logSetFollow(!logFollowing); });
+ if (c) c.addEventListener('click', function(){
+  fetch('/api/log?clear=1').then(function(){ logCursor = 0; $('#logText').textContent = ''; return logFetch(); })
+   .catch(function(e){ var m = $('#logMeta'); if (m) m.textContent = 'The panel did not answer (' + e + ').'; });
  });
 }
 

@@ -137,6 +137,8 @@ static inline int16_t ctrlMarketSub(uint8_t page) {
 #endif
 bool httpForceViz = false;  // HTTP override to force the audio visualizer (via /api/mode/viz)
 
+static void netReserveTake();   // the radio's contiguous reserve (net_reserve.h)
+
 // ========== Forward Declarations ==========
 // Redundant forward declarations removed (covered by headers)
 void displayStats();
@@ -404,8 +406,7 @@ void setup() {
 #endif
   Serial.begin(115200);
   heap_caps_register_failed_alloc_callback(onAllocFailed);   // internal heap diagnostics: see loopMark()
-  extern void netReserveTakeFwd();
-  netReserveTakeFwd();
+  netReserveTake();
   dbgLogBegin();   // restores the remote log's switch from NVS; off costs nothing   // while the heap is still whole: net_reserve.h says why
   delay(1000);
   crashReportBegin();   // the last crash from the core dump in flash: src/utils/crash_report.cpp
@@ -846,6 +847,7 @@ static uint32_t s_heapMinSeen = 0;
 static volatile uint32_t s_allocFails = 0, s_allocFailBytes = 0, s_allocFailCaps = 0;
 static char s_allocFailTask[16] = "";
 static uint32_t s_allocFailsPrinted = 0;
+extern volatile bool s_inReserveAlloc;   // defined with the reserve below
 // When the Wi-Fi task last failed an allocation. The web path reads it and
 // stops sending the portal's big blobs while the radio is starving: measured
 // 2026-09-20, 1,626 B with caps 0x80c (internal + 8-bit + DMA), 25 failures in
@@ -861,6 +863,7 @@ static uint32_t s_allocFailWifiMs = 0;
 static volatile uint32_t s_allocFailWifi = 0;
 static uint32_t s_allocFailWifiSeen = 0;
 static IRAM_ATTR void onAllocFailed(size_t size, uint32_t caps, const char *) {   // called from IRAM heap code
+  if (s_inReserveAlloc) return;   // our own reserve: never pose as the radio's failure
   s_allocFailBytes = (uint32_t)size;
   s_allocFailCaps = caps;
   const char *name = pcTaskGetName(nullptr);
@@ -872,13 +875,33 @@ static IRAM_ATTR void onAllocFailed(size_t size, uint32_t caps, const char *) { 
 // the moment the radio starts failing, taken back after it has been quiet.
 static void *s_netReserve = nullptr;
 static uint32_t s_netReserveDrops = 0;
-void netReserveTakeFwd();
+static uint32_t s_netReserveTryMs = 0;   // when the last attempt was made
+static bool s_netReserveFailed = false;  // and whether it came back empty
+// True only while our own reserve allocation is in flight. The failed-allocation
+// hook skips it: otherwise a fragmented heap - the exact case this exists for -
+// would have the panel's own 8 KB request overwrite s_allocFailTask with
+// "loopTask", and /api/info would report that instead of the radio's failure.
+// That signal is what the whole portal fix is built on; it must stay the radio's.
+volatile bool s_inReserveAlloc = false;
 static void netReserveTake() {
   if (s_netReserve) return;
-  s_netReserve = heap_caps_malloc(NET_RESERVE_BYTES, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT | MALLOC_CAP_DMA);
-  dbgLogf("[net] reserve %s: %u B, internal free %u, largest %u\n", s_netReserve ? "held" : "NOT taken",
-                (unsigned)NET_RESERVE_BYTES, (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
-                (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+  // A failed attempt is not repeated every pass: the malloc walks the heap, the
+  // log line costs about ten milliseconds of blocking Serial, and both would
+  // repeat thousands of times a minute in the state that caused the failure.
+  const uint32_t now = millis();
+  if (s_netReserveFailed && now - s_netReserveTryMs < NET_RESERVE_REARM_MS) return;
+  s_netReserveTryMs = now;
+  s_inReserveAlloc = true;
+  void *p = heap_caps_malloc(NET_RESERVE_BYTES, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT | MALLOC_CAP_DMA);
+  s_inReserveAlloc = false;
+  s_netReserve = p;
+  const bool failedNow = (p == nullptr);
+  if (failedNow != s_netReserveFailed || p) {   // only when the state changes
+    dbgLogf("[net] reserve %s: %u B, internal free %u, largest %u\n", p ? "held" : "NOT taken",
+            (unsigned)NET_RESERVE_BYTES, (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+            (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+  }
+  s_netReserveFailed = failedNow;
 }
 static void netReserveRelease() {
   if (!s_netReserve) return;
@@ -891,7 +914,6 @@ static void netReserveRelease() {
 }
 bool     netReserveHeld()  { return s_netReserve != nullptr; }
 uint32_t netReserveDrops() { return s_netReserveDrops; }
-void netReserveTakeFwd() { netReserveTake(); }   // setup() runs before the definition above
 
 uint32_t allocFailCount() { return s_allocFails; }
 uint32_t allocFailLastBytes() { return s_allocFailBytes; }

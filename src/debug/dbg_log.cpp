@@ -32,13 +32,17 @@ void ringWrite(const char *p, uint32_t n) {
 // the log is on, and is forwarded to whatever printed it before, so the cable
 // still shows it.
 int dbgVprintf(const char *fmt, va_list ap) {
-  char line[256];
+  // This lands on the stack of whatever task logged - tiT and mdns among them,
+  // and their stacks are not generous. 128 B is enough for the lines that
+  // matter and half the footprint.
+  char line[128];
   va_list copy;
   va_copy(copy, ap);
   const int n = vsnprintf(line, sizeof line, fmt, copy);
   va_end(copy);
   if (n > 0) ringWrite(line, (uint32_t)(n < (int)sizeof line ? n : (int)sizeof line - 1));
-  return g_prevVprintf ? g_prevVprintf(fmt, ap) : 0;
+  vprintf_like_t prev = g_prevVprintf;   // one read: the off path clears it
+  return prev ? prev(fmt, ap) : 0;
 }
 
 }  // namespace
@@ -64,7 +68,10 @@ bool dbgLogSetEnabled(bool on) {
     portENTER_CRITICAL(&g_mux);
     dbgRingInit(&g_ring, buf, DBG_LOG_BYTES);
     portEXIT_CRITICAL(&g_mux);
+    // The previous hook is in place before ours can run, so no line is lost in
+    // the window between installing and remembering it.
     g_prevVprintf = esp_log_set_vprintf(dbgVprintf);
+    if (!g_prevVprintf) g_prevVprintf = vprintf;
     g_on = true;
     dbgLogf("[dbg] log on: %u B in PSRAM\n", (unsigned)DBG_LOG_BYTES);
   } else {
@@ -112,6 +119,14 @@ void dbgLogf(const char *fmt, ...) {
 void dbgLogWrite(const char *p, uint32_t n) {
   Serial.write((const uint8_t *)p, n);
   if (g_on) ringWrite(p, n);
+}
+
+void dbgLogClear() {
+  // In place: freeing and re-allocating would churn 36 KB of PSRAM and write
+  // the switch to flash twice, on an unauthenticated GET.
+  portENTER_CRITICAL(&g_mux);
+  if (g_ring.buf) dbgRingInit(&g_ring, g_ring.buf, DBG_LOG_BYTES);
+  portEXIT_CRITICAL(&g_mux);
 }
 
 char *dbgLogReadBuf() { return g_ring.buf ? g_ring.buf + DBG_LOG_BYTES : nullptr; }

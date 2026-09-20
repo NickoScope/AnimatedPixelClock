@@ -146,7 +146,7 @@ void setupWebServer() {
      if (v != "0" && v != "1") { sendJsonGuarded(400, "{\"error\":\"on: 0 or 1\"}"); return; }
      dbgLogSetEnabled(v == "1");
    }
-   if (server.hasArg("clear") && dbgLogEnabled()) { dbgLogSetEnabled(false); dbgLogSetEnabled(true); }
+   if (server.hasArg("clear")) dbgLogClear();
    char head[192];
    const uint32_t since = (uint32_t)strtoul(server.arg("since").c_str(), nullptr, 10);
    char *out = dbgLogReadBuf();   // PSRAM, carved from the log's own block
@@ -158,6 +158,10 @@ void setupWebServer() {
    server.sendHeader("X-Log-Seq", head);
    snprintf(head, sizeof head, "%u", (unsigned)dbgLogDropped());
    server.sendHeader("X-Log-Dropped", head);
+   // The body's length in BYTES. A reader must not measure it in JavaScript
+   // string units: one non-ASCII byte and the cursor is wrong for ever.
+   snprintf(head, sizeof head, "%u", (unsigned)n);
+   server.sendHeader("X-Log-Bytes", head);
    server.sendHeader("X-Log-On", dbgLogEnabled() ? "1" : "0");
    server.sendHeader("Cache-Control", "no-store");
    sendBytesGuarded(200, "text/plain; charset=utf-8", out ? out : "", n);
