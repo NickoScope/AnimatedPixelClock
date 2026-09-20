@@ -53,6 +53,7 @@ static String lastAnimationError;
 static bool writeAllGuarded(int sock, const char* data, size_t len, uint32_t totalDeadline);
 static void sendJsonGuarded(int code, const String& json);
 static void sendBytesGuarded(int code, const char* contentType, const char* data, size_t len);
+static bool webRefuseBig();   // the radio's back-off: web_heap_backoff.h
 
 // JSON documents built for a response come from PSRAM when there is some.
 // Internal SRAM is the scarce heap on this board - the HUB75 buffers and lwip
@@ -357,6 +358,10 @@ void handleDeviceInfo() {
    // refused because of it (web_heap_backoff.h).
    doc["wifiFailAgeS"] = age >= ALLOC_FAIL_WIFI_NEVER ? -1 : (int)(age / 1000UL);
    doc["webRefused"] = webRefusedCount(); }
+ { extern bool netReserveHeld(); extern uint32_t netReserveDrops();
+   // The contiguous block held back for the radio's recovery (net_reserve.h).
+   doc["netReserve"] = netReserveHeld();
+   doc["netReserveDrops"] = netReserveDrops(); }
  { extern const char *loopSlowPart(); extern uint32_t loopSlowPartMs();       // and the part of loop() that took longest
    doc["loopSlowPart"] = loopSlowPart(); doc["loopSlowPartMs"] = loopSlowPartMs(); }
  doc["resetReason"] = (int)esp_reset_reason();
@@ -393,8 +398,13 @@ void handleDeviceInfo() {
 #if defined(AUDIO_MIC_ENABLED)
  audioInfoJson(doc.as<JsonObject>());   // audioSource, audioLevelDb, audioBpm, audioClipping, ...
 #endif
- if (server.uri() == "/api/diagnostics")
+ // /api/diagnostics is this same document as a file to keep. Nobody needs to
+ // download it in the middle of an episode, and /api/info - the same bytes, and
+ // the one route that must never go quiet - is still there for reading.
+ if (server.uri() == "/api/diagnostics") {
+   if (webRefuseBig()) return;
    server.sendHeader("Content-Disposition", "attachment; filename=pixelclock-diagnostics.json");
+ }
 
  String json;
  serializeJson(doc, json);
@@ -917,6 +927,10 @@ static void failPortalOom() {
 // it carries the static IP setup and the weather key, which only the page itself
 // showed before. Built and serialized in PSRAM.
 void handlePortalValues() {
+  // Measured at 1,740 ms and then 4,239 ms while the radio was starving
+  // (2026-09-20). It was exempted as "a small JSON route" and it is not one; and
+  // if the page itself is being refused, its values are of no use anyway.
+  if (webRefuseBig()) return;
   netMarkHttp();
   JsonDocument doc(webJsonAllocator());
   doc["ver"] = FIRMWARE_VERSION;

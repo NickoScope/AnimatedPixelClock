@@ -225,6 +225,7 @@ static inline uint8_t ctrlPageCount() {
 #include "health/boot_health.h"
 #include "web/web.h"
 #include "web/web_heap_backoff.h"   // ALLOC_FAIL_WIFI_NEVER: the portal backs off while the radio starves
+#include "net/net_reserve.h"       // the contiguous block held back for the radio's recovery
 
 
 // ========== Helper Functions ==========
@@ -402,6 +403,8 @@ void setup() {
 #endif
   Serial.begin(115200);
   heap_caps_register_failed_alloc_callback(onAllocFailed);   // internal heap diagnostics: see loopMark()
+  extern void netReserveTakeFwd();
+  netReserveTakeFwd();   // while the heap is still whole: net_reserve.h says why
   delay(1000);
   crashReportBegin();   // the last crash from the core dump in flash: src/utils/crash_report.cpp
   healthBegin();   // confirms an OTA image only once it has run: src/health
@@ -863,6 +866,31 @@ static IRAM_ATTR void onAllocFailed(size_t size, uint32_t caps, const char *) { 
   strncpy(s_allocFailTask, name ? name : "?", sizeof(s_allocFailTask) - 1);
   s_allocFails++;
 }
+// The reserve (net_reserve.h): taken at boot while the heap is whole, given up
+// the moment the radio starts failing, taken back after it has been quiet.
+static void *s_netReserve = nullptr;
+static uint32_t s_netReserveDrops = 0;
+void netReserveTakeFwd();
+static void netReserveTake() {
+  if (s_netReserve) return;
+  s_netReserve = heap_caps_malloc(NET_RESERVE_BYTES, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT | MALLOC_CAP_DMA);
+  Serial.printf("[net] reserve %s: %u B, internal free %u, largest %u\n", s_netReserve ? "held" : "NOT taken",
+                (unsigned)NET_RESERVE_BYTES, (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+}
+static void netReserveRelease() {
+  if (!s_netReserve) return;
+  heap_caps_free(s_netReserve);
+  s_netReserve = nullptr;
+  s_netReserveDrops++;
+  Serial.printf("[net] reserve released for the radio: internal free %u, largest %u\n",
+                (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+}
+bool     netReserveHeld()  { return s_netReserve != nullptr; }
+uint32_t netReserveDrops() { return s_netReserveDrops; }
+void netReserveTakeFwd() { netReserveTake(); }   // setup() runs before the definition above
+
 uint32_t allocFailCount() { return s_allocFails; }
 uint32_t allocFailLastBytes() { return s_allocFailBytes; }
 const char *allocFailLastTask() { return s_allocFailTask; }
@@ -1132,6 +1160,10 @@ void loop() {
       Serial.printf("[loop] web %s took %u ms\n", webLastUri(), (unsigned)((micros() - httpFromUs) / 1000UL));
   }
   loopMark("web server");
+  // The radio's reserve follows the same signal the portal's back-off does.
+  if (netReserveWanted(allocFailWifiAgeMs())) netReserveTake();
+  else netReserveRelease();
+  loopMark("net reserve");
 
   // Handle UDP packets - always process to track PC online status accurately
   handleUDP();

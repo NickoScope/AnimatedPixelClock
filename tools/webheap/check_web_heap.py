@@ -4,6 +4,7 @@ import subprocess, sys, tempfile, os, pathlib
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 SRC = r'''
 #include "web/web_heap_backoff.h"
+#include "net/net_reserve.h"
 #include <cstdio>
 static int failed = 0, checks = 0;
 static void is(bool got, bool want, const char *what) {
@@ -63,6 +64,22 @@ int main() {
   // calm, so only the clock can tell the episodes apart.
   eq(webHeapStreakNow(WEB_HEAP_REFUSE_STREAK, WEB_HEAP_BACKOFF_MS * 100), 0,
      "a full streak does not survive a quiet spell");
+  // The radio's reserve: held from boot, given up while the radio is failing,
+  // taken back only after a good quiet spell.
+  is(netReserveWanted(ALLOC_FAIL_WIFI_NEVER), true, "held from boot, the radio never failed");
+  is(netReserveWanted(0), false, "given up the instant the radio fails");
+  is(netReserveWanted(NET_RESERVE_REARM_MS - 1), false, "still given up just before the re-arm");
+  is(netReserveWanted(NET_RESERVE_REARM_MS), true, "taken back at the re-arm");
+  is(netReserveWanted(3600000), true, "an hour of quiet, certainly held");
+  // It must outlast a burst: the measured bursts ran about eleven seconds, so a
+  // gap inside one episode must not hand the space back mid-episode.
+  is(NET_RESERVE_REARM_MS > 11000UL, true, "the re-arm outlasts a measured burst");
+  // And it must cover both measured failures at once: 1,626 B for the wifi
+  // task's DMA buffer and 3,072 B for the reconnect.
+  is(NET_RESERVE_BYTES >= 1626 + 3072, true, "the reserve covers both measured allocations");
+  // A negative control: a reserve released on the same signal the portal keeps
+  // sending on would be pointless, so the two must agree that fresh is fresh.
+  is(!netReserveWanted(0) && webHeapBackoffActive(0, 0), true, "both react to the same fresh failure");
   printf("%d checks, %d failed\n", checks, failed);
   return failed ? 1 : 0;
 }
