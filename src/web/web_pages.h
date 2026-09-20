@@ -2027,6 +2027,9 @@ function logFetch(){
    if(el.textContent.length > 200000) el.textContent = el.textContent.slice(-100000);
    el.scrollTop = el.scrollHeight;
    meta.textContent = seq + ' bytes logged' + (dropped ? ', ' + dropped + ' dropped to make room' : '') + '.';
+   // A read is capped, so a burst arrives over several of them. Drain it now
+   // rather than a kilobyte every two seconds, which a real burst outruns.
+   if (bytes && seq - logCursor > 0) return logFetch();
   });
  }).catch(function(e){
   var meta = $('#logMeta');

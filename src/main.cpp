@@ -847,7 +847,13 @@ static uint32_t s_heapMinSeen = 0;
 static volatile uint32_t s_allocFails = 0, s_allocFailBytes = 0, s_allocFailCaps = 0;
 static char s_allocFailTask[16] = "";
 static uint32_t s_allocFailsPrinted = 0;
-extern volatile bool s_inReserveAlloc;   // defined with the reserve below
+// Which task is inside the reserve's own allocation, or null. A bare flag would
+// have swallowed a failure on ANY task while ours was allocating - and the radio
+// runs on the other core here (CONFIG_ESP32_WIFI_TASK_PINNED_TO_CORE_0 against
+// CONFIG_ARDUINO_RUNNING_CORE 1), so the signal this protects is exactly the one
+// it could have eaten. xTaskGetCurrentTaskHandle lives in IRAM, so the hook may
+// call it.
+static TaskHandle_t volatile s_reserveAllocTask = nullptr;
 // When the Wi-Fi task last failed an allocation. The web path reads it and
 // stops sending the portal's big blobs while the radio is starving: measured
 // 2026-09-20, 1,626 B with caps 0x80c (internal + 8-bit + DMA), 25 failures in
@@ -863,7 +869,7 @@ static uint32_t s_allocFailWifiMs = 0;
 static volatile uint32_t s_allocFailWifi = 0;
 static uint32_t s_allocFailWifiSeen = 0;
 static IRAM_ATTR void onAllocFailed(size_t size, uint32_t caps, const char *) {   // called from IRAM heap code
-  if (s_inReserveAlloc) return;   // our own reserve: never pose as the radio's failure
+  if (s_reserveAllocTask == xTaskGetCurrentTaskHandle()) return;   // our own reserve, on our own task
   s_allocFailBytes = (uint32_t)size;
   s_allocFailCaps = caps;
   const char *name = pcTaskGetName(nullptr);
@@ -882,7 +888,6 @@ static bool s_netReserveFailed = false;  // and whether it came back empty
 // would have the panel's own 8 KB request overwrite s_allocFailTask with
 // "loopTask", and /api/info would report that instead of the radio's failure.
 // That signal is what the whole portal fix is built on; it must stay the radio's.
-volatile bool s_inReserveAlloc = false;
 static void netReserveTake() {
   if (s_netReserve) return;
   // A failed attempt is not repeated every pass: the malloc walks the heap, the
@@ -891,12 +896,12 @@ static void netReserveTake() {
   const uint32_t now = millis();
   if (s_netReserveFailed && now - s_netReserveTryMs < NET_RESERVE_REARM_MS) return;
   s_netReserveTryMs = now;
-  s_inReserveAlloc = true;
+  s_reserveAllocTask = xTaskGetCurrentTaskHandle();
   void *p = heap_caps_malloc(NET_RESERVE_BYTES, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT | MALLOC_CAP_DMA);
-  s_inReserveAlloc = false;
+  s_reserveAllocTask = nullptr;
   s_netReserve = p;
   const bool failedNow = (p == nullptr);
-  if (failedNow != s_netReserveFailed || p) {   // only when the state changes
+  if (failedNow != s_netReserveFailed || p) {   // a success always follows a release, so at most two lines a minute
     dbgLogf("[net] reserve %s: %u B, internal free %u, largest %u\n", p ? "held" : "NOT taken",
             (unsigned)NET_RESERVE_BYTES, (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));

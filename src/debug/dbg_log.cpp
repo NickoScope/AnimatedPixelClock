@@ -40,7 +40,13 @@ int dbgVprintf(const char *fmt, va_list ap) {
   va_copy(copy, ap);
   const int n = vsnprintf(line, sizeof line, fmt, copy);
   va_end(copy);
-  if (n > 0) ringWrite(line, (uint32_t)(n < (int)sizeof line ? n : (int)sizeof line - 1));
+  if (n > 0) {
+    uint32_t len = (uint32_t)(n < (int)sizeof line ? n : (int)sizeof line - 1);
+    // The cable gets the whole line below; the ring gets what fits. Say so,
+    // rather than let the two show different text for the same line.
+    if (n >= (int)sizeof line) __builtin_memcpy(line + sizeof line - 5, "...\n", 4);
+    ringWrite(line, len);
+  }
   vprintf_like_t prev = g_prevVprintf;   // one read: the off path clears it
   return prev ? prev(fmt, ap) : 0;
 }
