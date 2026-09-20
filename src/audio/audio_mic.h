@@ -36,7 +36,12 @@ void audioBegin();
 // only while the microphones are on screen (and 5 s after).
 // This is also where the ES7210 is configured over I2C, once MCLK runs and the
 // shared bus is started (boardI2cBegin), and again after a stall.
-void audioPoll(bool vizShown);
+// vizShown  - the visualiser is actually on screen; this alone keeps it running
+//             and this alone stops it, so the idle stop still works.
+// vizSelected - the mode is chosen, whether or not anything is on screen yet;
+//             with audioStartPending() it is what lets a failed first attempt
+//             have its retry.
+void audioPoll(bool vizShown, bool vizSelected);
 
 // The microphone was asked for and has neither come up nor given up for good.
 // Read it beside vizShouldDisplay(): that answer is true because the microphone

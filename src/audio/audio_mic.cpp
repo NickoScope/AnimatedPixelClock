@@ -81,13 +81,6 @@ uint32_t s_i2cHeld = 0, s_i2cStalls = 0;   // loop task only
 // uninstalls I2S, records its stack margin, says it has gone and deletes itself.
 // Nobody else ever calls a FreeRTOS function on its handle.
 TaskHandle_t s_task = nullptr;             // loop task only; cleared once the task has gone
-
-// True while the microphone has been asked for but is not yet up and has not
-// given up for good. The caller needs this because the visualiser's "is it
-// showing" answer depends on the microphone already feeding it - so using that
-// answer alone to decide whether the microphone may run is circular, and a
-// first attempt that fails would never be retried (the retry cadence is 30 s,
-// the display's patience 10 s).
 volatile bool s_stopReq = false;           // loop task -> task
 volatile bool s_taskGone = false;          // task -> loop task, set just before vTaskDelete(NULL)
 volatile uint32_t s_stackFree = 0;         // the task's own uxTaskGetStackHighWaterMark(NULL)
@@ -396,17 +389,40 @@ void audioBegin() {
 #endif
 }
 
+// True while the microphone has been asked for but is not yet up and has not
+// given up for good. The visualiser's "is it showing" answer depends on the
+// microphone already feeding it, so that answer alone cannot decide whether the
+// microphone may run: a first attempt that failed would never see its retry.
 bool audioStartPending() {
+  // Every state that schedules another attempt. The two I2C ones were missed
+  // on the first pass and they have the longest back-off of all - 60 s against
+  // the display's ten-second patience - so leaving them out reproduced exactly
+  // the stuck switch this exists to prevent.
+  //
+  // MIC_NO_MEMORY means two different things and only one of them is final:
+  // at the DSP buffers it is terminal (no PSRAM, s_dsp stays null and the poll
+  // below needs it), but when the capture task could not be created it is a
+  // fragmented internal heap - the very condition of this whole branch - and a
+  // retry is already scheduled. So it is pending exactly when the DSP is up.
+  if (s_state == MIC_NO_MEMORY) return s_dsp != nullptr;
   return s_state == MIC_IDLE || s_state == MIC_STARTING || s_state == MIC_STALLED ||
-         s_state == MIC_NO_CODEC || s_state == MIC_NO_I2S || s_state == MIC_NO_I2C;
+         s_state == MIC_NO_CODEC || s_state == MIC_NO_I2S || s_state == MIC_NO_I2C ||
+         s_state == MIC_I2C_HELD || s_state == MIC_I2C_STALLED;
 }
 
-void audioPoll(bool vizShown) {
+void audioPoll(bool vizShown, bool vizSelected) {
   const unsigned long now = millis();
+  // Two questions, not one. `wanted` is "keep going", and it is what stops the
+  // task - fold anything else into it and a task that came up useless is never
+  // stopped, which is the 10 KB leak coming back by another door. `mayStart` is
+  // "try again", and it is the wider one: the visualiser's own answer is true
+  // only because the microphone is already feeding it, so a first attempt that
+  // failed would otherwise never get its retry.
   const bool wanted = vizShown && micFeedsViz();
+  const bool mayStart = wanted || (vizSelected && micFeedsViz() && audioStartPending());
   if (wanted) s_wantedMs = now;
   if (s_task && s_taskGone) finishStop(now);
-  if (!s_task && wanted && s_dsp && (int32_t)(now - s_nextStartMs) >= 0) startCapture(now);
+  if (!s_task && mayStart && s_dsp && (int32_t)(now - s_nextStartMs) >= 0) startCapture(now);
   if (s_task && !s_stopReq && !wanted && now - s_wantedMs >= kIdleStopMs) s_stopReq = true;
 
   if (s_task && !s_stopReq && s_i2sReady && !s_codecUp && (int32_t)(now - s_codecRetryMs) >= 0) codecBringUp();

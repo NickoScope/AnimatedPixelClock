@@ -249,7 +249,11 @@ void wcHomeTick() {
   // One lookup per boot, once NTP has proved the way out works, and only when
   // nothing better will ever answer.
   if (s_ipState == IP_IDLE && !locationSet() && WiFi.status() == WL_CONNECTED && time(nullptr) > 1700000000 &&
-      !netLockBusy() && !wcYieldToPortal()) {
+      !netLockBusy()) {
+    // Out of the condition on purpose: this records that it stood aside, and a
+    // side effect inside a short-circuit chain is exactly what swallowed the
+    // count the first time round.
+    if (wcYieldToPortal()) return;
     s_ipState = IP_RUNNING;
     // Core 0 and 8 KB, as the weather task that does the same HTTPS and JSON work.
     if (xTaskCreatePinnedToCore(ipTask, "wcHomeIp", 8192, nullptr, 0, nullptr, 0) != pdPASS) s_ipState = IP_FAILED;

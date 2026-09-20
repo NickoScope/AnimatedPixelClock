@@ -621,6 +621,10 @@ void aeroDirectLoop(const AeroWant &w) {
   // A person at the portal beats a refresh that can wait (net_turns.h). The
   // deadline stops a browser left open from starving this for ever - counted in
   // time, because this runs on every pass of loop() and passes are free.
+  // Reset by anyone who leaves before the yield too: the deadline measures time
+  // since the first standing aside, so a starter that left for another reason -
+  // the page off screen, the link down - would come back with it already spent
+  // and skip its first yield.
   { static uint32_t yieldingSince = 0;
     const uint32_t nowTurn = millis();
     if (netTurnYield(netMsSinceHttp(), yieldingSince, nowTurn)) {

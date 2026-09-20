@@ -1215,7 +1215,7 @@ void loop() {
   // is on a 30 s cadence and needs to still be wanted when it arrives. So the
   // microphone also runs while it is still trying. The leak stays closed:
   // `wanted` goes false the moment httpForceViz does.
-  audioPoll(httpForceViz && (vizShouldDisplay() || audioStartPending()));
+  audioPoll(httpForceViz && vizShouldDisplay(), httpForceViz);
 #endif
 
   // Check timeout

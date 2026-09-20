@@ -1034,9 +1034,14 @@ function renderRb(d) {
   setText('rbUpd', last ? londonTime(last) + (d.synced ? ' · ' + ago(d.now - last) : '') : 'never');
   setText('rbDep', listLine(d.dep)); setText('rbArr', listLine(d.arr));
   var ha = d.ha;
+  // dx is read on the next line, so it is defined here and not below: `var`
+  // hoists the declaration and not the assignment, and reading dx.token before
+  // it threw a TypeError on exactly the panel this line was written for - one
+  // that fetches directly and has never heard from Home Assistant. renderRb
+  // then stopped updating the whole card, not just this row.
+  var dx = d.direct || {}, SRC = { direct: 'direct from Realtime Trains', ha: 'Home Assistant', none: 'none fresh' };
   setText('rbHa', !ha.have ? (dx.token ? 'not in use \u2014 the panel fetches directly' : 'no status yet') : (ha.err ? ha.err + (ha.code ? ' ' + ha.code : '') + (ha.retry ? ' · retry ' + ha.retry + ' s' : '') : 'ok ' + ha.code) + (ha.left ? ' · ' + ha.left + ' left today' : ''));
   // The panel's own fetch. Token presence, kind and expiry only - the route never carries the token.
-  var dx = d.direct || {}, SRC = { direct: 'direct from Realtime Trains', ha: 'Home Assistant', none: 'none fresh' };
   setText('rbSrc', (SRC[d.source] || '--') + (d.haShadowed ? ' · ' + d.haShadowed + ' HA boards set aside' : ''));
   var dEl = $('rbDirect'), KIND = { unknown: 'kind not known yet', access: 'access token', 'refresh-exchanged': 'refresh token, exchanged', refused: 'refused by Realtime Trains' };
   if (!dx.built) {
