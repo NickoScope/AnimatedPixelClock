@@ -124,7 +124,7 @@ Measured with `platformio run`, against the same env without the flag:
 | | Without | With `FX3D_ENABLED` |
 |---|---|---|
 | Static RAM | 103,376 B | 104,000 B (**+624 B**, of it the blit's 384 B row) |
-| Flash | 2,270,665 B | 2,335,953 B (**+65,288 B**), the page 8.2 KB of it |
+| Flash | 2,270,665 B | 2,335,869 B (**+65,204 B**), the page 8.2 KB of it |
 
 At run time: **no internal heap per frame**. Saving or resetting the glasses profile opens NVS
 for a moment: ESP-IDF allocates the handle then (`nvs_api.cpp`), and a write that adds an entry
@@ -150,6 +150,10 @@ Every one is freed when it stops.
   38 and 25 ms of it their own work beyond the blit); blobs
   41.7 / 82.2 ms (mono / red-blue); globe, tunnel and voxel 18-22 fps in mono and 10-13 in
   red-blue; voxel opens in 0.45 s.
+- The landscape's map, which took 1.08 s to build at `264d6f1` and 0.45 s at `80eb788`, made
+  twelve divisions for every one of its 65,536 cells: the noise divided by each octave's cell
+  width. A cell's width is a power of two, so multiplying by its reciprocal gives the same map
+  to the last bit - the host test checks it cell by cell - without the calls.
 - Answered since, the four heavy scenes: tunnel works its eight band colours out once a frame
   instead of three `cosf` a pixel; blobs march with `sqrtFast` and no division, and the upscale
   reads a table instead of calling `floorf` twice a pixel; the landscape's march reads a table
@@ -184,8 +188,14 @@ image (`tool-esp-rom-elfs/esp32s3_rev0_rom.elf`), arduino-esp32 2.0.17:
 | `atan2f`, `asinf` | newlib wrappers around `__ieee754_atan2f`, `__ieee754_asinf` | software |
 
 A division by a constant that is not a power of two is not turned into a multiplication (no
-`-ffast-math`): `x / 255.0f` is a call too. The instruction counts are counts, not cycles;
-what they cost in time is the panel bench's to say. The hot loops of the scenes and looks keep
+`-ffast-math`): `x / 255.0f` is a call too. The instruction counts are counts, not cycles.
+Espressif has measured the cycles on an S3 with its FPU - 10,000 calls in a loop, the average
+including the call's own cost: a float addition 25, a float division **69**, `cosf` **121**, a
+`double` division 75, a `double` cosine 1619 ("Floating-Point Units on Espressif SoCs",
+developer.espressif.com/blog/2025/10/cores_with_fpu/, read 2026-09-20; the article does not
+give its compiler flags). So three `cosf` a pixel, as the tunnel had, is about 290 cycles a
+pixel over an addition, and 8192 pixels of that is some 10 ms an eye at 240 MHz. What each
+change is worth on this panel is still the bench's to say. The hot loops of the scenes and looks keep
 these out: `sqrtFast()`/`normalizeFast()` in `fx3d_model.h`, reciprocals worked out once,
 tables where the geometry does not change.
 The blobs changed more than their resolution: the march also stops at 28 steps instead of 40

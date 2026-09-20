@@ -216,13 +216,23 @@ private:
       off += per * per;
     }
   }
+  // The map is built cell by cell, 65,536 of them, so what is a division here
+  // is 65,536 calls to __divsf3 (69 cycles each on an S3; README, "What floats
+  // cost on the S3"). Dividing by the cell's width is the same as multiplying
+  // by its reciprocal to the last bit - the width is a power of two - so the
+  // map is the one it was, which the host test checks cell by cell.
+  static float invCell(int o) {
+    static const float k[6] = {1.0f / 64.0f, 1.0f / 32.0f, 1.0f / 16.0f, 1.0f / 8.0f, 1.0f / 4.0f, 1.0f / 2.0f};
+    return k[o];
+  }
   float noise(int x, int y) const {
     float sum = 0.0f, amp = 0.5f, norm = 0.0f;
     int off = 0;
     for (int o = 0; o < 6; o++) {
       const int cell = 64 >> o, per = kN / cell;
       const int gx = x / cell, gy = y / cell, gx1 = (gx + 1) % per, gy1 = (gy + 1) % per;
-      const float fx = (float)(x % cell) / cell, fy = (float)(y % cell) / cell;
+      const float ic = invCell(o);
+      const float fx = (float)(x % cell) * ic, fy = (float)(y % cell) * ic;
       const float sx = fx * fx * (3.0f - 2.0f * fx), sy = fy * fy * (3.0f - 2.0f * fy);
       const float *l = lat_ + off;
       const float a = l[gy * per + gx], b = l[gy * per + gx1], c = l[gy1 * per + gx], d = l[gy1 * per + gx1];
@@ -256,7 +266,7 @@ private:
         } else if (h < water + 5.0f) {
           k.r = 0.55f; k.g = 0.45f; k.b = 0.22f;
         } else if (h < 80.0f) {
-          const float t = (h - water) / (80.0f - water);
+          const float t = (h - water) * (1.0f / (80.0f - 34.0f));   // water is 34
           k.r = mixf(0.10f, 0.06f, t); k.g = mixf(0.40f, 0.22f, t); k.b = mixf(0.06f, 0.04f, t);
         } else if (h < 120.0f) {
           k.r = 0.30f; k.g = 0.26f; k.b = 0.22f;
