@@ -124,7 +124,7 @@ Measured with `platformio run`, against the same env without the flag:
 | | Without | With `FX3D_ENABLED` |
 |---|---|---|
 | Static RAM | 103,376 B | 104,000 B (**+624 B**, of it the blit's 384 B row) |
-| Flash | 2,270,665 B | 2,336,009 B (**+65,344 B**), the page 8.2 KB of it |
+| Flash | 2,270,665 B | 2,336,081 B (**+65,416 B**), the page 8.2 KB of it |
 
 At run time: **no internal heap per frame**. Saving or resetting the glasses profile opens NVS
 for a moment: ESP-IDF allocates the handle then (`nvs_api.cpp`), and a write that adds an entry
