@@ -848,10 +848,18 @@ static uint32_t s_allocFailsPrinted = 0;
 // firmware still running (the knowledge base, drafts/28-portal-hang-2026-09-20).
 // 0 means never; stamped in loop context, not in the IRAM hook.
 static uint32_t s_allocFailWifiMs = 0;
+// Counted in the hook itself rather than read back from s_allocFailTask later:
+// the hook fires for every task, so one failure on loopTask or tiT arriving last
+// in a burst would otherwise overwrite the name and hide the radio's - exactly
+// in the case this exists for. A four-byte inline compare, so no library call
+// appears in IRAM.
+static volatile uint32_t s_allocFailWifi = 0;
+static uint32_t s_allocFailWifiSeen = 0;
 static IRAM_ATTR void onAllocFailed(size_t size, uint32_t caps, const char *) {   // called from IRAM heap code
   s_allocFailBytes = (uint32_t)size;
   s_allocFailCaps = caps;
   const char *name = pcTaskGetName(nullptr);
+  if (name && name[0] == 'w' && name[1] == 'i' && name[2] == 'f' && name[3] == 'i' && name[4] == 0) s_allocFailWifi++;
   strncpy(s_allocFailTask, name ? name : "?", sizeof(s_allocFailTask) - 1);
   s_allocFails++;
 }
@@ -862,10 +870,16 @@ const char *allocFailLastTask() { return s_allocFailTask; }
 // Milliseconds since the Wi-Fi task last failed an allocation, or
 // ALLOC_FAIL_WIFI_NEVER when it never has. Unsigned elapsed time, so the
 // millis() wrap needs no special case.
+// The arithmetic lives in web_heap_backoff.h so the host test can drive it
+// across the millis() wrap; only the reading of the clock is here. At the clamp
+// the stamp is forgotten, so an age that has run past 24.8 days cannot come
+// back round and refuse for a window - both this and the web path run on the
+// loop task, so the write needs no guard.
 uint32_t allocFailWifiAgeMs() {
   if (!s_allocFailWifiMs) return ALLOC_FAIL_WIFI_NEVER;
-  const uint32_t age = millis() - s_allocFailWifiMs;
-  return age < ALLOC_FAIL_WIFI_NEVER ? age : ALLOC_FAIL_WIFI_NEVER - 1;
+  const uint32_t age = webHeapFailAgeMs(millis(), s_allocFailWifiMs);
+  if (age >= ALLOC_FAIL_WIFI_NEVER - 1) { s_allocFailWifiMs = 0; return ALLOC_FAIL_WIFI_NEVER; }
+  return age;
 }
 
 static void loopMark(const char *tag) {
@@ -888,7 +902,8 @@ static void loopMark(const char *tag) {
   if (!s_heapMinSeen || heapMin < s_heapMinSeen) s_heapMinSeen = heapMin;
   if (s_allocFails != s_allocFailsPrinted) {
     s_allocFailsPrinted = s_allocFails;
-    if (!strcmp(s_allocFailTask, "wifi")) {
+    if (s_allocFailWifi != s_allocFailWifiSeen) {
+      s_allocFailWifiSeen = s_allocFailWifi;
       s_allocFailWifiMs = millis();
       if (!s_allocFailWifiMs) s_allocFailWifiMs = 1;   // 0 is "never"
     }

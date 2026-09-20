@@ -19,10 +19,10 @@
 // instead, which it already counts, and no threshold is guessed.
 //
 // While the signal is fresh the portal's large blobs - the page and its assets,
-// kilobytes each, seconds to send under load - are refused with 503 and the
-// socket is dropped at once, which frees the queue. The small JSON endpoints are
-// never refused: /api/info is how anyone finds out what is wrong, and a
-// diagnostic that goes quiet exactly when it is needed is worse than useless.
+// kilobytes each, seconds to send under load - are refused with 503. The small
+// JSON endpoints are never refused: /api/info is how anyone finds out what is
+// wrong, and a diagnostic that goes quiet exactly when it is needed is worse
+// than useless.
 
 #include <stdint.h>
 
@@ -34,12 +34,29 @@
 // big blobs. **Our choice, not a measured figure**, in the manner of
 // src/fx3d/fx3d_profile.h's retry count: the observed bursts ran about eleven
 // seconds, and each further blob is what feeds them, so the window only has to
-// outlast one browser's retry - it re-arms on every new failure, so a panel
-// that keeps starving keeps refusing.
+// outlast one browser's retry - it re-arms on every new failure.
 #define WEB_HEAP_BACKOFF_MS 3000UL
 
-// True while the portal should refuse large responses. Pure, so the host test
-// drives it without a panel.
-static inline bool webHeapBackoffActive(uint32_t wifiFailAgeMs) {
-  return wifiFailAgeMs < WEB_HEAP_BACKOFF_MS;
+// ...but it must not re-arm for ever. Any traffic can starve those buffers -
+// mDNS, MQTT, a broadcast - not only the portal, so a panel that is chronically
+// short would answer 503 with no way back and no sign of it on the screen. After
+// this many refusals in a row one blob goes through regardless, and the count
+// starts again: the symptom then degrades to a slow portal rather than a silent
+// one. **Our choice as well**; a browser's first load asks for about half a
+// dozen, so this is roughly "one page load refused, then let someone in".
+#define WEB_HEAP_REFUSE_STREAK 8
+
+// Elapsed milliseconds between two millis() readings, clamped below the "never"
+// sentinel. Unsigned subtraction, so the 49.7-day wrap needs no special case;
+// the clamp is what keeps a genuine age from ever colliding with the sentinel.
+static inline uint32_t webHeapFailAgeMs(uint32_t nowMs, uint32_t stampMs) {
+  const uint32_t age = nowMs - stampMs;
+  return age < ALLOC_FAIL_WIFI_NEVER ? age : ALLOC_FAIL_WIFI_NEVER - 1;
+}
+
+// True while the portal should refuse large responses: the radio failed
+// recently, and we have not already refused a whole page load's worth in a row.
+// Pure, so the host test drives both halves without a panel.
+static inline bool webHeapBackoffActive(uint32_t wifiFailAgeMs, uint32_t refusedInARow) {
+  return wifiFailAgeMs < WEB_HEAP_BACKOFF_MS && refusedInARow < WEB_HEAP_REFUSE_STREAK;
 }

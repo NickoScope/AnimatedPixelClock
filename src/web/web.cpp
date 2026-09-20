@@ -1218,21 +1218,39 @@ void sendJsonBytesGuarded(int code, const char* data, size_t len) {
 // (web_heap_backoff.h has the measurement and the reasoning). The socket is
 // dropped with the refusal so the queue drains at once. The small JSON routes
 // are never refused - /api/info is how anyone finds out what is happening.
-static uint32_t s_webRefused = 0;
+static uint32_t s_webRefused = 0, s_webRefusedInARow = 0;
 uint32_t webRefusedCount() { return s_webRefused; }
+
+// Called first in each big-blob handler, before any header of its own is
+// queued: a 503 must not carry the page's ETag, and WebServer has no way to
+// take a header back. Returns true when it has already answered.
+//
+// The socket is not closed here. `server.client()` hands back a copy, so
+// stopping it releases that copy and nothing else (WiFiClient.cpp: the fd goes
+// with the last WiFiClientSocketHandle reference, and the server still holds
+// one). It needs no help: with 2.0.17's keep-alive branch commented out,
+// handleClient() assigns `_currentClient = WiFiClient()` as soon as the handler
+// returns, which closes it. This path is not free of allocation either - the
+// headers and the reply build half a dozen Strings - but that is kilobytes
+// saved against the blob it replaces.
+static bool webRefuseBig() {
+  extern uint32_t allocFailWifiAgeMs();
+  if (!webHeapBackoffActive(allocFailWifiAgeMs(), s_webRefusedInARow)) {
+    s_webRefusedInARow = 0;
+    return false;
+  }
+  s_webRefused++;
+  s_webRefusedInARow++;
+  netMarkHttp();
+  server.sendHeader("Retry-After", "1");
+  server.sendHeader("Cache-Control", "no-store");
+  server.setContentLength(0);
+  server.send(503, "text/plain", "");
+  return true;
+}
 
 static void sendGzip(const uint8_t* gz, size_t len, const char* contentType, const char* cacheControl) {
   netMarkHttp();
-  extern uint32_t allocFailWifiAgeMs();
-  if (webHeapBackoffActive(allocFailWifiAgeMs())) {
-    s_webRefused++;
-    server.sendHeader("Retry-After", "1");
-    server.sendHeader("Cache-Control", "no-store");
-    server.setContentLength(0);
-    server.send(503, "text/plain", "");
-    server.client().stop();   // free the socket now: the queue is the problem
-    return;
-  }
   server.sendHeader("Cache-Control", cacheControl);
   server.sendHeader("Content-Encoding", "gzip");
   sendBytesGuarded(200, contentType, (const char*)gz, len);
@@ -1242,6 +1260,7 @@ static void sendGzip(const uint8_t* gz, size_t len, const char* contentType, con
 // kept for a year: the browser asks every time, and the ETag gets it a 304 until
 // a firmware with a different page is running.
 void handleRoot() {
+  if (webRefuseBig()) return;
   server.sendHeader("ETag", WEB_INDEX_ETAG);
   if (server.header("If-None-Match") == WEB_INDEX_ETAG) {
     netMarkHttp();
@@ -1258,6 +1277,7 @@ void handleRoot() {
 // The assets, versioned by a hash of their bytes (?v=), and the icon: cached
 // hard by the browser, fetched once.
 static void streamStatic(const uint8_t* gz, size_t len, const char* contentType) {
+  if (webRefuseBig()) return;
   sendGzip(gz, len, contentType, "public, max-age=31536000, immutable");
 }
 
