@@ -412,7 +412,12 @@ void setup() {
   // The one owner of the outbound socket, created here and not later: its task
   // stack is .bss, but the PSRAM request buffers and the TLS client are taken
   // now, while nothing transient has touched the heap. src/net/net_broker.h.
-  nbBegin();
+  if (!nbBegin()) {
+    // Not fatal and not silent: every consumer asks nbUp() and keeps its own
+    // fetch path, so the panel works either way - but this is the line that
+    // explains why the [nb] log is empty.
+    Serial.println("[nb] broker not available: modules will fetch for themselves");
+  }
   delay(1000);
   crashReportBegin();   // the last crash from the core dump in flash: src/utils/crash_report.cpp
   healthBegin();   // confirms an OTA image only once it has run: src/health

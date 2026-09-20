@@ -36,14 +36,19 @@ class Stream;
 #define NB_URL_MAX   384
 #define NB_AUTH_MAX  128
 
+// Two failures that happen before HTTP is reached at all, so they cannot
+// collide with HTTPClient's own error codes (which run -1 to -11).
+#define NB_ERR_NO_TURN  (-101)   // never got the network's turn in time
+#define NB_ERR_BAD_URL  (-102)   // the URL was refused before a connection
+
 // What the broker hands to the caller's parse function.
 //
 // **`body` is live.** It is the open socket, valid only while the call is on
 // the stack; the caller reads what it needs - typically straight into a PSRAM
 // JsonDocument, exactly as it does today - and does not keep the pointer.
 struct NbReply {
-  int     code;    // HTTP status, or a negative HTTPClient error
-  Stream *body;    // the response stream, or nullptr when code < 0
+  int     code;    // HTTP status, or a negative error: HTTPClient's, or the two above
+  Stream *body;    // the body, including an error page; nullptr whenever code < 0
   bool    tls;     // the failure was in the handshake, not in HTTP
   void   *ctx;     // whatever the caller passed in
 };
@@ -52,6 +57,13 @@ struct NbReply {
 // the wire during the call. So it may touch only what a fetch task touches
 // today - its own module's published data, under that module's own lock. The
 // loop side learns the request is over through nbTake().
+//
+// **The contract, and it is kept literally.** It is called EXACTLY ONCE for
+// every accepted request, whatever the outcome - including the two failures
+// above, where `code` is negative and `body` is nullptr. So a caller has one
+// place to handle everything, and can never be left without an answer. What it
+// returns IS the outcome nbTake() reports: return false on a code you do not
+// want treated as a success. Check `code` before touching `body`.
 typedef bool (*NbParseFn)(const NbReply &reply);
 
 struct NbRequest {
@@ -64,10 +76,17 @@ struct NbRequest {
 };
 
 // Create the task. Called once from setup(), before the heap has been used by
-// anything transient. Returns false if the stack or the PSRAM request storage
-// could not be had - then nbSubmitRequest() always refuses and the callers
-// keep their own path, so a broker that fails to start costs nothing.
+// anything transient. Returns false if the PSRAM request storage or the TLS
+// client could not be had.
+//
+// **A caller must not assume this succeeded.** Ask nbUp() and keep your own
+// fetch path for when it is false - a module whose only path is the broker
+// goes silent until a reboot if the broker fails to start, which is a worse
+// failure than the one the broker exists to fix. Weather shows the shape.
 bool nbBegin();
+
+// Is the broker actually running? The one thing a caller must branch on.
+bool nbUp();
 
 // Ask for a fetch. `interactive` means a person is waiting on it - the owner
 // changed the station, picked a city - and it goes ahead of scheduled work.

@@ -37,8 +37,11 @@
 
 static WeatherData published = {};
 static portMUX_TYPE weatherMux = portMUX_INITIALIZER_UNLOCKED;
-// fetchBusy is set by loop() before the task starts and cleared by the task
-// last, after it has written nextFetchMs; loop() reads nextFetchMs only while
+// fetchBusy marks "a fetch is out". On the broker path only the loop task ever
+// touches it or nextFetchMs - it is set at submit and cleared when nbTake()
+// collects, which is strictly simpler than what follows. On the fallback path
+// it is set by loop() before the task starts and cleared by the task last,
+// after it has written nextFetchMs; loop() reads nextFetchMs only while
 // fetchBusy is clear.
 static volatile bool fetchBusy = false;
 static volatile bool fetchKick = false;
@@ -144,7 +147,6 @@ static bool weatherParse(Stream &body) {
   return true;
 }
 
-#if defined(NET_BROKER_ENABLED)
 // What the broker calls, on the broker task, while the body is still open.
 static bool weatherNbParse(const NbReply &r) {
   if (r.code != HTTP_CODE_OK || !r.body) {
@@ -153,9 +155,7 @@ static bool weatherNbParse(const NbReply &r) {
   }
   return weatherParse(*r.body);
 }
-#endif
 
-#if !defined(NET_BROKER_ENABLED)
 static bool fetchWeather() {
   char url[320];
   weatherBuildUrl(url, sizeof url);
@@ -178,9 +178,7 @@ static bool fetchWeather() {
   http.end();
   return ok;
 }
-#endif
 
-#if !defined(NET_BROKER_ENABLED)
 static void weatherFetchTask(void*) {
   bool ok = false;
   {
@@ -191,7 +189,6 @@ static void weatherFetchTask(void*) {
   fetchBusy = false;
   vTaskDelete(nullptr);
 }
-#endif
 
 // When this starter first stood aside for someone at the portal, 0 if it is not
 // waiting. File scope so the early returns above can clear it: the deadline
@@ -201,7 +198,6 @@ static void weatherFetchTask(void*) {
 static uint32_t s_weatherYieldingSince = 0;
 
 void weatherLoop() {
-#if defined(NET_BROKER_ENABLED)
   // Collect first, and unconditionally: the answer has to be taken even if the
   // page has since left the screen, or fetchBusy would never clear and this
   // module would go quiet until a reboot.
@@ -210,7 +206,6 @@ void weatherLoop() {
       nextFetchMs = millis() + (ok ? WEATHER_FETCH_INTERVAL_MS : WEATHER_RETRY_INTERVAL_MS);
       fetchBusy = false;
     } }
-#endif
   if (fetchBusy) return;
   const unsigned long now = millis();
   static unsigned long lastCheckMs = 0;
@@ -230,27 +225,36 @@ void weatherLoop() {
       return;
     }
     s_weatherYieldingSince = 0; }
-#if defined(NET_BROKER_ENABLED)
-  // Neither of the two checks below is needed here, and that is the point of
-  // the broker: there is no task to create, so there is no 9 KB contiguous
-  // internal block to find first, and no reason to stand down because someone
-  // else is on the wire - the queue is what handles that, without losing the
-  // request. A settings change is interactive: the owner is looking at the
-  // panel waiting for the new place's weather.
-  char url[320];
-  weatherBuildUrl(url, sizeof url);
-  NbRequest req = {};
-  req.url = url;
-  req.timeoutMs = 10000;   // as this module has always used
-  req.parse = weatherNbParse;
-  const bool interactive = fetchKick;
-  fetchKick = false;
-  fetchBusy = true;
-  if (!nbSubmitRequest(NB_WEATHER, req, interactive)) {
-    fetchBusy = false;
-    nextFetchMs = now + WEATHER_RETRY_INTERVAL_MS;
+  // **The broker if it is up, this module's own task if it is not.** A runtime
+  // choice, not a compile-time one, and deliberately so: nbBegin() can fail
+  // (no PSRAM for its buffers), and a module whose only path is the broker
+  // would then go silent until a reboot - a worse failure than the one the
+  // broker exists to fix. The old path costs flash, which is not scarce here.
+  if (nbUp()) {
+    // Neither of the two checks below is needed here, and that is the point of
+    // the broker: there is no task to create, so there is no 9 KB contiguous
+    // internal block to find first, and no reason to stand down because someone
+    // else is on the wire - the queue is what handles that, without losing the
+    // request. A settings change is interactive: the owner is looking at the
+    // panel waiting for the new place's weather.
+    char url[320];
+    weatherBuildUrl(url, sizeof url);
+    NbRequest req = {};
+    req.url = url;
+    req.timeoutMs = 10000;   // as this module has always used
+    req.parse = weatherNbParse;
+    const bool interactive = fetchKick;
+    fetchBusy = true;
+    if (nbSubmitRequest(NB_WEATHER, req, interactive)) {
+      // Only now: a refused submit must not throw away the fact that a person
+      // was waiting, or the retry goes out as an ordinary scheduled refresh.
+      fetchKick = false;
+    } else {
+      fetchBusy = false;
+      nextFetchMs = now + WEATHER_RETRY_INTERVAL_MS;
+    }
+    return;
   }
-#else
   if (netLockBusy()) return;   // another fetch holds the network; check again in a second
   if (heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) < WEATHER_TASK_STACK + 1024) {
     nextFetchMs = now + WEATHER_RETRY_INTERVAL_MS;
@@ -266,7 +270,6 @@ void weatherLoop() {
     fetchBusy = false;
     nextFetchMs = now + WEATHER_RETRY_INTERVAL_MS;
   }
-#endif
 }
 
 void weatherSettingsChanged() {

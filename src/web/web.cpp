@@ -5,6 +5,7 @@
  * Extracted from PCMonitor_WifiPortal.cpp
  */
 
+#include "../net/net_broker.h"
 #include "web.h"
 #include "../config/config.h"
 #include "../config/settings.h"
@@ -405,6 +406,19 @@ void handleDeviceInfo() {
  doc["largestHeapBlock"] = (uint32_t)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
  doc["freeInternalHeap"] = (uint32_t)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
  { extern uint32_t loopMaxMs(); doc["loopMaxMs"] = loopMaxMs(); }   // longest loop() pass, last 10 s
+ // The network broker, when it is built and up (src/net/net_broker.h). The one
+ // that matters here is `netStackFreeMin`: the 12 KB stack was chosen as the
+ // largest of the four it replaces, and this is the reading it gets cut from.
+ { NbStats nb; nbGetStats(&nb);
+   if (nbUp()) {
+     JsonObject o = doc["netBroker"].to<JsonObject>();
+     o["onAir"] = nb.onAir < NB_CALLER_COUNT ? (int)nb.onAir : -1;   // -1: the wire is idle
+     o["onAirMs"] = nb.onAirMs;
+     o["waiting"] = nb.waiting;
+     o["served"] = nb.served;
+     o["failed"] = nb.failed;
+     o["stackFreeMin"] = nb.stackFreeMin;
+   } }
  { extern uint32_t allocFailCount(); extern uint32_t allocFailLastBytes(); extern const char *allocFailLastTask();
    doc["allocFails"] = allocFailCount();             // failed heap allocations since boot (main.cpp)
    doc["allocFailBytes"] = allocFailLastBytes();

@@ -109,9 +109,15 @@ static inline void nbFinish(NbQueue *q) {
   q->onAir = NB_CALLER_COUNT;
 }
 
-// How long the slot on the wire has been there. The broker enforces the
-// deadline itself rather than trusting a caller to: one stalled host must not
-// hold the other three.
+// How long the slot on the wire has been there, for the diagnostics.
+//
+// **It is not a deadline, and an earlier draft of this comment claimed it
+// was.** What actually bounds a request is the HTTP client's own connect,
+// read and TLS-handshake timeouts, set by the broker per request - and those
+// bound each *step*, not the transfer as a whole, so a host dribbling a byte
+// every few seconds holds the wire for longer than any of them. A real
+// deadline would mean closing the socket from a second task while this one is
+// inside mbedTLS, which is not safe. So this reports; it does not enforce.
 static inline uint32_t nbOnAirMs(const NbQueue *q, uint32_t nowMs) {
   return nbBusy(q) ? (uint32_t)(nowMs - q->slot[q->onAir].queuedMs) : 0;
 }
