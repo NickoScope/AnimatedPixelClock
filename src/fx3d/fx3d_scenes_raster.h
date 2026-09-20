@@ -95,39 +95,54 @@ class VoxelScene : public Scene {
     const float sky = stereo ? 0.0f : 1.0f;
     const Col lo = skyLow(), hi = skyHigh();
     float zMin = kZFar;
+    // Every column marches the same steps, so the steps are a table: where
+    // each one is, f / z there, and the fog. A division, floorf and ceilf are
+    // calls on the S3 (README, "What floats cost on the S3"), and the march
+    // made two floorf and a division at every step of every column, about 150
+    // steps of 128 columns an eye. f / z instead of dividing (alt - h) * f by
+    // z moves a slice's edge by a millionth of a pixel, so a slice can end a
+    // row sooner or later where its edge sits on a pixel's.
+    int steps = 0;
+    for (float z = kZNear, dz = 0.2f; z < kZFar && steps < kSteps; z += dz, dz *= 1.02f, steps++) {
+      stepZ_[steps] = z;
+      stepFz_[steps] = v.f / z;
+      stepFog_[steps] = smoothstepf(kZFar * 0.35f, kZFar, z);
+    }
+    // The sky by rows, once a frame; each slice's colour once, as bytes.
+    uint8_t *rgb = c.fb.rgb, *plane = stereo ? c.plane() : nullptr;
+    for (int yy = 0; yy < kH; yy++) {
+      const float t = clampf((float)yy / kHorizon, 0.0f, 1.0f);
+      pixelBytes(stereo, sky * mixf(hi.r, lo.r, t), sky * mixf(hi.g, lo.g, t), sky * mixf(hi.b, lo.b, t), skyRow_[yy]);
+    }
     for (int x = 0; x < kW; x++) {
       const float lat = ((float)x - v.cx - shift) / v.f;
       const float dx = fx + rx * lat, dy = fy + ry * lat;
       int ybuf = kH;
-      float z = kZNear, dz = 0.2f;
-      while (z < kZFar && ybuf > 0) {
-        const int mx = (int)floorf(ox + dx * z) & (kN - 1), my = (int)floorf(oy + dy * z) & (kN - 1);
+      for (int s = 0; s < steps && ybuf > 0; s++) {
+        const float z = stepZ_[s];
+        const int mx = floorInt(ox + dx * z) & (kN - 1), my = floorInt(oy + dy * z) & (kN - 1);
         const int m = my * kN + mx;
-        const float y = kHorizon + (alt_ - (float)h_[m]) * v.f / z;
+        const float y = kHorizon + (alt_ - (float)h_[m]) * stepFz_[s];
         if (y < (float)ybuf) {
-          int top = (int)ceilf(y);
-          if (top < 0) top = 0;
-          const float fog = smoothstepf(kZFar * 0.35f, kZFar, z);
+          int top = y > 0.0f ? ceilInt(y) : 0;
+          const float fog = stepFog_[s];
           float r, g, b;
           if (stereo) {   // the shape, not the colours: relief light and height, fading into black
-            const float lum = (float)l_[m] / 255.0f * (0.35f + 0.65f * (float)h_[m] / 170.0f) * (1.0f - fog);
+            const float lum = (float)l_[m] * (1.0f / 255.0f) * (0.35f + 0.65f * (float)h_[m] * (1.0f / 170.0f)) * (1.0f - fog);
             r = g = b = lum;
           } else {
-            r = mixf(c_[3 * m] / 255.0f, lo.r, fog);
-            g = mixf(c_[3 * m + 1] / 255.0f, lo.g, fog);
-            b = mixf(c_[3 * m + 2] / 255.0f, lo.b, fog);
+            r = mixf(c_[3 * m] * (1.0f / 255.0f), lo.r, fog);
+            g = mixf(c_[3 * m + 1] * (1.0f / 255.0f), lo.g, fog);
+            b = mixf(c_[3 * m + 2] * (1.0f / 255.0f), lo.b, fog);
           }
-          for (int yy = top; yy < ybuf; yy++) c.pixel(yy * kW + x, r, g, b);
+          uint8_t px[3];
+          pixelBytes(stereo, r, g, b, px);
+          for (int yy = top; yy < ybuf; yy++) putBytes(stereo, rgb, plane, yy * kW + x, px);
           if (z < zMin) zMin = z;
           ybuf = top;
         }
-        z += dz;
-        dz *= 1.02f;
       }
-      for (int yy = 0; yy < ybuf; yy++) {
-        const float t = clampf((float)yy / kHorizon, 0.0f, 1.0f);
-        c.pixel(yy * kW + x, sky * mixf(hi.r, lo.r, t), sky * mixf(hi.g, lo.g, t), sky * mixf(hi.b, lo.b, t));
-      }
+      for (int yy = 0; yy < ybuf; yy++) putBytes(stereo, rgb, plane, yy * kW + x, skyRow_[yy]);
     }
     c.note(zMin);
     c.note(kZFar);
@@ -136,6 +151,38 @@ class VoxelScene : public Scene {
  private:
   static constexpr float kZ0 = 24.0f, kZNear = 2.0f, kZFar = 180.0f;
   static constexpr float kHorizon = 22.0f, kSpeed = 16.0f, kClearance = 16.0f;
+  // The march's steps (about 150 from kZNear to kZFar, dz growing 2 % a
+  // step), and a margin; the host test holds the count under it.
+  static const int kSteps = 200;
+  float stepZ_[kSteps], stepFz_[kSteps], stepFog_[kSteps];
+  uint8_t skyRow_[kH][3];
+  // Ctx::pixel's bytes, worked out once for a run of pixels of one colour.
+  static void pixelBytes(bool stereo, float r, float g, float b, uint8_t *px) {
+    if (stereo) {
+      const float m = r > g ? (r > b ? r : b) : (g > b ? g : b);
+      px[0] = (uint8_t)(clampf(m, 0.0f, 1.0f) * 255.0f + 0.5f);
+    } else {
+      px[0] = (uint8_t)(clampf(r, 0.0f, 1.0f) * 255.0f + 0.5f);
+      px[1] = (uint8_t)(clampf(g, 0.0f, 1.0f) * 255.0f + 0.5f);
+      px[2] = (uint8_t)(clampf(b, 0.0f, 1.0f) * 255.0f + 0.5f);
+    }
+  }
+  static void putBytes(bool stereo, uint8_t *rgb, uint8_t *plane, int i, const uint8_t *px) {
+    if (stereo) {
+      plane[i] = px[0];
+    } else {
+      rgb[3 * i] = px[0];
+      rgb[3 * i + 1] = px[1];
+      rgb[3 * i + 2] = px[2];
+    }
+  }
+public:
+  int marchSteps() const {   // for the host test: the steps a frame takes
+    int n = 0;
+    for (float z = kZNear, dz = 0.2f; z < kZFar; z += dz, dz *= 1.02f) n++;
+    return n;
+  }
+private:
   static Col skyHigh() {
     Col k = {0.05f, 0.12f, 0.45f};
     return k;

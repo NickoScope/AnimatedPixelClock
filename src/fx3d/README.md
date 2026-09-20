@@ -124,7 +124,7 @@ Measured with `platformio run`, against the same env without the flag:
 | | Without | With `FX3D_ENABLED` |
 |---|---|---|
 | Static RAM | 103,376 B | 104,000 B (**+624 B**, of it the blit's 384 B row) |
-| Flash | 2,270,665 B | 2,334,717 B (**+64,052 B**), the page 8.2 KB of it |
+| Flash | 2,270,665 B | 2,335,129 B (**+64,464 B**), the page 8.2 KB of it |
 
 At run time: **no internal heap per frame**. Saving or resetting the glasses profile opens NVS
 for a moment: ESP-IDF allocates the handle then (`nvs_api.cpp`), and a write that adds an entry
@@ -149,6 +149,12 @@ Every one is freed when it stops.
   38 and 25 ms of it their own work beyond the blit); blobs
   41.7 / 82.2 ms (mono / red-blue); globe, tunnel and voxel 18-22 fps in mono and 10-13 in
   red-blue; voxel opens in 0.45 s.
+- Answered since (`467e544`, and the landscape at the commit after it): tunnel works its eight
+  band colours out once a frame instead of three `cosf` a pixel; blobs march with `sqrtFast`
+  and no division, and the upscale reads a table instead of calling `floorf` twice a pixel;
+  the landscape's march reads a table of its steps (where, `f / z`, the fog) and floors in
+  integers, and paints a slice and the sky as bytes. Each is held to what it drew before in
+  `tools/fx3d/fx3d_host_test.cpp`, which keeps the old code verbatim.
 - Answered since: card and drum sample the picture in integers and write bytes straight into
   the target; the drum keeps its table per column instead of per pixel (the rays of a column
   meet a vertical drum at one angle); the card carries its reciprocal along the row instead of

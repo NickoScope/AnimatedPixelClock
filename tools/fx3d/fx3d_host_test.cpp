@@ -1533,6 +1533,189 @@ class BlobsOld : public Scene {
     return normalize(k1 * sdf(p + k1 * h) + k2 * sdf(p + k2 * h) + k3 * sdf(p + k3 * h) + k4 * sdf(p + k4 * h));
   }
 };
+// The landscape as it was at 467e544: two floorf and a division at every
+// step of every column, ceilf per slice, a float pixel at a time.
+class VoxelOld : public Scene {
+ public:
+  static const int kN = 256;
+  VoxelOld() : x_(0.0f), y_(0.0f), heading_(0.0f), alt_(60.0f), t_(0.0f) {}
+  const char *id() const { return "voxel"; }
+  void setup(View &v) const {
+    v.f = 72.0f;
+    v.z0 = kZ0;
+    v.nearZ = 1.0f;
+  }
+  void depthRange(float &zn, float &zf) const {
+    zn = kZNear;
+    zf = kZFar;
+  }
+  bool fills() const { return true; }
+  uint8_t mapHeight(int x, int y) const { return h_[(y & (kN - 1)) * kN + (x & (kN - 1))]; }   // for the host test
+  void reset(uint32_t seed) {
+    generate(seed);
+    x_ = 40.0f;
+    y_ = 40.0f;
+    heading_ = 0.3f;
+    t_ = 0.0f;
+    alt_ = heightAt(x_, y_) + kClearance;
+  }
+  void step(float dt, const Env &) {
+    t_ = fmodf(t_ + dt, 3600.0f);
+    heading_ = wrapAngle(heading_ + dt * 0.16f * sinf(kTwoPi * t_ / 40.0f));
+    x_ = fmodf(x_ + sinf(heading_) * kSpeed * dt + kN, (float)kN);
+    y_ = fmodf(y_ + cosf(heading_) * kSpeed * dt + kN, (float)kN);
+    // Hold a clearance over the highest ground in the next stretch ahead.
+    float top = 0.0f;
+    for (int k = 0; k < 8; k++) {
+      float d = 6.0f * k;
+      float h = heightAt(x_ + sinf(heading_) * d, y_ + cosf(heading_) * d);
+      if (h > top) top = h;
+    }
+    float want = top + kClearance;
+    alt_ += (want - alt_) * clampf(dt * 1.5f, 0.0f, 1.0f);
+  }
+  void draw(Ctx &c) {
+    const View &v = c.view;
+    const float e = (float)c.eye;
+    const float shift = e * v.f * v.b / (2.0f * v.z0);
+    const float fx = sinf(heading_), fy = cosf(heading_);    // forward on the map
+    const float rx = cosf(heading_), ry = -sinf(heading_);   // right on the map
+    const float ox = x_ + rx * e * 0.5f * v.b, oy = y_ + ry * e * 0.5f * v.b;
+    // For the glasses a lit sky or a coloured plain is one flat field in both
+    // eyes: stereo draws the relief as light on black instead.
+    const bool stereo = c.stereo();
+    const float sky = stereo ? 0.0f : 1.0f;
+    const Col lo = skyLow(), hi = skyHigh();
+    float zMin = kZFar;
+    for (int x = 0; x < kW; x++) {
+      const float lat = ((float)x - v.cx - shift) / v.f;
+      const float dx = fx + rx * lat, dy = fy + ry * lat;
+      int ybuf = kH;
+      float z = kZNear, dz = 0.2f;
+      while (z < kZFar && ybuf > 0) {
+        const int mx = (int)floorf(ox + dx * z) & (kN - 1), my = (int)floorf(oy + dy * z) & (kN - 1);
+        const int m = my * kN + mx;
+        const float y = kHorizon + (alt_ - (float)h_[m]) * v.f / z;
+        if (y < (float)ybuf) {
+          int top = (int)ceilf(y);
+          if (top < 0) top = 0;
+          const float fog = smoothstepf(kZFar * 0.35f, kZFar, z);
+          float r, g, b;
+          if (stereo) {   // the shape, not the colours: relief light and height, fading into black
+            const float lum = (float)l_[m] / 255.0f * (0.35f + 0.65f * (float)h_[m] / 170.0f) * (1.0f - fog);
+            r = g = b = lum;
+          } else {
+            r = mixf(c_[3 * m] / 255.0f, lo.r, fog);
+            g = mixf(c_[3 * m + 1] / 255.0f, lo.g, fog);
+            b = mixf(c_[3 * m + 2] / 255.0f, lo.b, fog);
+          }
+          for (int yy = top; yy < ybuf; yy++) c.pixel(yy * kW + x, r, g, b);
+          if (z < zMin) zMin = z;
+          ybuf = top;
+        }
+        z += dz;
+        dz *= 1.02f;
+      }
+      for (int yy = 0; yy < ybuf; yy++) {
+        const float t = clampf((float)yy / kHorizon, 0.0f, 1.0f);
+        c.pixel(yy * kW + x, sky * mixf(hi.r, lo.r, t), sky * mixf(hi.g, lo.g, t), sky * mixf(hi.b, lo.b, t));
+      }
+    }
+    c.note(zMin);
+    c.note(kZFar);
+  }
+
+ private:
+  static constexpr float kZ0 = 24.0f, kZNear = 2.0f, kZFar = 180.0f;
+  static constexpr float kHorizon = 22.0f, kSpeed = 16.0f, kClearance = 16.0f;
+  static Col skyHigh() {
+    Col k = {0.05f, 0.12f, 0.45f};
+    return k;
+  }
+  static Col skyLow() {
+    Col k = {0.55f, 0.45f, 0.55f};
+    return k;
+  }
+  uint8_t h_[kN * kN];
+  uint8_t c_[kN * kN * 3];   // linear RGB, light baked in
+  uint8_t l_[kN * kN];       // the baked light alone, for stereo
+  float x_, y_, heading_, alt_, t_;
+
+  float heightAt(float x, float y) const {
+    return (float)h_[((int)floorf(y) & (kN - 1)) * kN + ((int)floorf(x) & (kN - 1))];
+  }
+  // Value noise on a tiling lattice, six octaves. Every octave's lattice is
+  // hashed once (4 x 4 up to 128 x 128 values, 21,840 in all) and each texel
+  // reads it: hashing all four corners per texel per octave, 1.57 million
+  // hashes, made the map take 1.08 s to build on the panel (the integration
+  // session's measurement, 2026-09-18). Same lattice values, same landscape.
+  static const int kLattice = 4 * 4 + 8 * 8 + 16 * 16 + 32 * 32 + 64 * 64 + 128 * 128;
+  float lat_[kLattice];
+  void buildLattices(uint32_t seed) {
+    int off = 0;
+    for (int o = 0; o < 6; o++) {
+      const int per = kN / (64 >> o);
+      for (int gy = 0; gy < per; gy++)
+        for (int gx = 0; gx < per; gx++)
+          lat_[off + gy * per + gx] = (float)(hash3((uint32_t)gx, (uint32_t)gy, seed + (uint32_t)o) & 0xFFFF) / 65535.0f;
+      off += per * per;
+    }
+  }
+  float noise(int x, int y) const {
+    float sum = 0.0f, amp = 0.5f, norm = 0.0f;
+    int off = 0;
+    for (int o = 0; o < 6; o++) {
+      const int cell = 64 >> o, per = kN / cell;
+      const int gx = x / cell, gy = y / cell, gx1 = (gx + 1) % per, gy1 = (gy + 1) % per;
+      const float fx = (float)(x % cell) / cell, fy = (float)(y % cell) / cell;
+      const float sx = fx * fx * (3.0f - 2.0f * fx), sy = fy * fy * (3.0f - 2.0f * fy);
+      const float *l = lat_ + off;
+      const float a = l[gy * per + gx], b = l[gy * per + gx1], c = l[gy1 * per + gx], d = l[gy1 * per + gx1];
+      sum += amp * mixf(mixf(a, b, sx), mixf(c, d, sx), sy);
+      norm += amp;
+      amp *= 0.5f;
+      off += per * per;
+    }
+    return sum / norm;
+  }
+  void generate(uint32_t seed) {
+    const float water = 34.0f;
+    buildLattices(seed);
+    for (int y = 0; y < kN; y++)
+      for (int x = 0; x < kN; x++) {
+        float n = noise(x, y);
+        n = clampf((n - 0.28f) / 0.5f, 0.0f, 1.0f);
+        float h = n * n * 150.0f + 12.0f;
+        h_[y * kN + x] = (uint8_t)(h < water ? water : clampf(h, 0.0f, 255.0f));
+      }
+    for (int y = 0; y < kN; y++)
+      for (int x = 0; x < kN; x++) {
+        const int m = y * kN + x;
+        const float h = (float)h_[m];
+        const float gx = (float)h_[y * kN + ((x + kN - 1) & (kN - 1))] - (float)h_[y * kN + ((x + 1) & (kN - 1))];
+        const float gy = (float)h_[((y + kN - 1) & (kN - 1)) * kN + x] - (float)h_[((y + 1) & (kN - 1)) * kN + x];
+        const float light = clampf(0.72f + 0.035f * (gx + 0.6f * gy), 0.3f, 1.25f);
+        Col k;
+        if (h <= water + 0.5f) {
+          k.r = 0.02f; k.g = 0.10f; k.b = 0.30f;
+        } else if (h < water + 5.0f) {
+          k.r = 0.55f; k.g = 0.45f; k.b = 0.22f;
+        } else if (h < 80.0f) {
+          const float t = (h - water) / (80.0f - water);
+          k.r = mixf(0.10f, 0.06f, t); k.g = mixf(0.40f, 0.22f, t); k.b = mixf(0.06f, 0.04f, t);
+        } else if (h < 120.0f) {
+          k.r = 0.30f; k.g = 0.26f; k.b = 0.22f;
+        } else {
+          k.r = 0.85f; k.g = 0.88f; k.b = 0.95f;
+        }
+        const float l = h <= water + 0.5f ? 1.0f : light;
+        l_[m] = (uint8_t)(clampf(h <= water + 0.5f ? 0.12f : 0.8f * light, 0.0f, 1.0f) * 255.0f);
+        c_[3 * m] = (uint8_t)(clampf(k.r * l, 0.0f, 1.0f) * 255.0f);
+        c_[3 * m + 1] = (uint8_t)(clampf(k.g * l, 0.0f, 1.0f) * 255.0f);
+        c_[3 * m + 2] = (uint8_t)(clampf(k.b * l, 0.0f, 1.0f) * 255.0f);
+      }
+  }
+};
 }  // namespace ref
 
 // How far one frame is from another: the frame for this eye (the eye's plane
@@ -1629,6 +1812,51 @@ static void heavyScenesMatch() {
     std::printf("  blobs against 0f3b2c7: mean %.4f, worst %d, %ld of %ld bytes over 2 (%ld lit)\n", sum / (double)d.bytes,
                 d.worst, d.over, d.bytes, d.lit);
     CHECK(sum / (double)d.bytes < 0.05 && d.over * 1000 < d.bytes && d.lit > 20000);
+  }
+  // The landscape: f / z from the step's table instead of dividing at every
+  // step moves a slice's edge by a millionth of a pixel, so a slice can end a
+  // row sooner or later. Both fly the same way from the same seed.
+  {
+    static VoxelScene sc;
+    static ref::VoxelOld old;
+    CHECK(sc.marchSteps() < 200);   // the table's room
+    sc.reset(5);
+    old.reset(5);
+    FrameDiff d;
+    double sum = 0.0;
+    long rows = 0;
+    Env w;
+    for (int k = 0; k < 12; k++) {
+      const float dt = 0.033f + 0.004f * (float)k;
+      sc.step(dt, w);
+      old.step(dt, w);
+      if (k % 4 != 3) continue;
+      for (int eye = -1; eye <= 1; eye++) {
+        Bufs a, b;
+        Ctx ca, cb;
+        a.bind(ca);
+        b.bind(cb);
+        sc.setup(ca.view);
+        old.setup(cb.view);
+        ca.eye = cb.eye = eye;
+        ca.view.b = cb.view.b = eye ? 0.5f : 0.0f;
+        sc.draw(ca);
+        old.draw(cb);
+        FrameDiff one;
+        diffFrame(a, b, eye, 2, one);
+        const uint8_t *na = eye ? (eye < 0 ? a.left.data() : a.right.data()) : a.rgb.data();
+        const uint8_t *nb = eye ? (eye < 0 ? b.left.data() : b.right.data()) : b.rgb.data();
+        for (long i = 0; i < one.bytes; i++) sum += na[i] > nb[i] ? na[i] - nb[i] : nb[i] - na[i];
+        d.bytes += one.bytes;
+        d.over += one.over;
+        d.lit += one.lit;
+        if (one.worst > d.worst) d.worst = one.worst;
+        rows++;
+      }
+    }
+    std::printf("  voxel against 467e544: mean %.4f, worst %d, %ld of %ld bytes over 2 (%ld lit, %ld frames)\n",
+                sum / (double)d.bytes, d.worst, d.over, d.bytes, d.lit, rows);
+    CHECK(sum / (double)d.bytes < 0.05 && d.over * 500 < d.bytes && d.lit > 20000);
   }
 }
 

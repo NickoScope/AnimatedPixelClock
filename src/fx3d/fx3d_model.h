@@ -74,6 +74,17 @@ inline float rsqrtFast(float x) {   // x > 0
   return y;
 }
 inline float sqrtFast(float x) { return x > 0.0f ? x * rsqrtFast(x) : 0.0f; }
+// floorf and ceilf as ints, inline: on the S3 each is a call to 53
+// instructions of bit work (README). Exact for |v| < 2^31, not NaN; the
+// callers keep to that.
+inline int floorInt(float v) {
+  const int i = (int)v;
+  return (float)i > v ? i - 1 : i;
+}
+inline int ceilInt(float v) {
+  const int i = (int)v;
+  return (float)i < v ? i + 1 : i;
+}
 inline float lengthFast(V3 a) { return sqrtFast(dot(a, a)); }
 inline V3 normalizeFast(V3 a) {
   const float d = dot(a, a);
