@@ -169,6 +169,22 @@ bool runJob(uint8_t who) {
   if (s_text[who].auth[0]) s_http->addHeader("Authorization", s_text[who].auth);
   s_http->addHeader("Accept", "application/json");
 
+  // Baseline, because WiFiClientSecure::_lastError is sticky and now SHARED.
+  // It is written only by connect(IPAddress,...) - WiFiClientSecure.cpp:142 -
+  // and never cleared: not by stop(), not at the start of a connect. Two
+  // consequences, both of which would make this log lie:
+  //   * on SUCCESS it is set to start_ssl_client's return, which is the socket
+  //     descriptor (ssl_client.cpp) - a positive number, not zero, so every
+  //     later failure would report a handshake error that did not happen;
+  //   * connect(const char *host,...) returns 0 on a DNS failure WITHOUT
+  //     touching it, so a name that does not resolve would report whatever the
+  //     previous fetch left - and with one client serving four consumers, that
+  //     is another module's error against this module's host.
+  // So: a real handshake failure is negative AND different from what was there
+  // before this request.
+  char prevErr[64];
+  const int errBefore = s_tls->lastError(prevErr, sizeof prevErr);
+
   reply.code = s_http->GET();
   if (reply.code > 0) {
     // Set for an error status too, so a caller that wants to read the server's
@@ -177,7 +193,8 @@ bool runJob(uint8_t who) {
     if (reply.code != HTTP_CODE_OK) dbgLogf("[nb] %u: HTTP %d\n", (unsigned)who, reply.code);
   } else {
     char err[64] = {0};
-    reply.tls = s_tls->lastError(err, sizeof err) != 0;
+    const int errAfter = s_tls->lastError(err, sizeof err);
+    reply.tls = errAfter < 0 && errAfter != errBefore;
     dbgLogf("[nb] %u: HTTP %d%s%s\n", (unsigned)who, reply.code,
             reply.tls ? " tls: " : "", reply.tls ? err : "");
   }
@@ -351,6 +368,10 @@ bool nbTake(uint8_t who, bool *ok) {
 
 void nbGetStats(NbStats *out) {
   if (!out) return;
+  // The guard belongs here, not only in the caller: if nbBegin() failed before
+  // nbInit(), s_q is zeroed .bss where onAir == 0 == NB_WEATHER, so nbBusy()
+  // would read as true and onAirMs would climb from boot.
+  if (!s_task) { *out = NbStats{NB_CALLER_COUNT, 0, 0, 0, 0, 0}; return; }
   const uint32_t now = millis();
   portENTER_CRITICAL(&s_mux);
   out->onAir = s_q.onAir;

@@ -48,7 +48,11 @@ class Stream;
 // JsonDocument, exactly as it does today - and does not keep the pointer.
 struct NbReply {
   int     code;    // HTTP status, or a negative error: HTTPClient's, or the two above
-  Stream *body;    // the body, including an error page; nullptr whenever code < 0
+  Stream *body;    // the body, including an error page. nullptr whenever code
+                   // is negative - AND possibly nullptr for a positive one too,
+                   // when the server answered without a body and closed (204,
+                   // 304, an empty 200): getStreamPtr() gives nullptr once the
+                   // connection is no longer live. **Always null-check it.**
   bool    tls;     // the failure was in the handshake, not in HTTP
   void   *ctx;     // whatever the caller passed in
 };
@@ -63,7 +67,8 @@ struct NbReply {
 // above, where `code` is negative and `body` is nullptr. So a caller has one
 // place to handle everything, and can never be left without an answer. What it
 // returns IS the outcome nbTake() reports: return false on a code you do not
-// want treated as a success. Check `code` before touching `body`.
+// want treated as a success. Check `code`, and null-check `body` as well - a
+// positive code does not promise one.
 typedef bool (*NbParseFn)(const NbReply &reply);
 
 struct NbRequest {
@@ -97,9 +102,10 @@ bool nbSubmitRequest(uint8_t who, const NbRequest &req, bool interactive);
 bool nbPending(uint8_t who);
 
 // Collect the outcome, once. Returns false while there is nothing to collect.
-// `ok` is what the parse function returned, or false if the fetch never got
-// far enough to call it. Called from loop(): this is where a caller sets its
-// next refresh time and clears its own busy flag.
+// `ok` is what the parse function returned - always, since it is always called
+// (or, for a caller that passed none, whether the status was 200). Called from
+// loop(): this is where a caller sets its next refresh time and clears its own
+// busy flag.
 bool nbTake(uint8_t who, bool *ok);
 
 // For the diagnostics page. `onAir` is NB_CALLER_COUNT when the wire is idle.

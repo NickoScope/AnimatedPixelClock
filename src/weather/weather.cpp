@@ -209,7 +209,13 @@ void weatherLoop() {
   if (fetchBusy) return;
   const unsigned long now = millis();
   static unsigned long lastCheckMs = 0;
-  if (!fetchKick && now - lastCheckMs < WEATHER_CHECK_MS) return;
+  // The kick no longer skips this. It used to, so that a settings change acted
+  // at once - but fetchKick now survives a refused submit (which is right: a
+  // person is still waiting), and the two together let a refusal retry on every
+  // single pass of loop(). One second's delay on a kick is not perceptible; an
+  // unthrottled retry loop is exactly the kind of thing that only shows up on
+  // the consumer with the longest URL, months later.
+  if (now - lastCheckMs < WEATHER_CHECK_MS) return;
   lastCheckMs = now;
   // Not the moment to fetch at all: forget any standing aside, or the deadline
   // is already spent when the page comes back.
