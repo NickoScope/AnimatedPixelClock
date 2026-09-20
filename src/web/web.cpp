@@ -57,6 +57,7 @@ static bool writeAllGuarded(int sock, const char* data, size_t len, uint32_t tot
 static void sendJsonGuarded(int code, const String& json);
 static void sendBytesGuarded(int code, const char* contentType, const char* data, size_t len);
 static bool webRefuseBig();   // the radio's back-off: web_heap_backoff.h
+bool webBusyRefuse();         // the same door, for src/web/web_panel.cpp
 
 // JSON documents built for a response come from PSRAM when there is some.
 // Internal SRAM is the scarce heap on this board - the HUB75 buffers and lwip
@@ -1328,6 +1329,8 @@ uint32_t webRefusedCount() { return s_webRefused; }
 // returns, which closes it. This path is not free of allocation either - the
 // headers and the reply build half a dozen Strings - but that is kilobytes
 // saved against the blob it replaces.
+bool webBusyRefuse() { return webRefuseBig(); }
+
 static bool webRefuseBig() {
   extern uint32_t allocFailWifiAgeMs();
   // A background fetch is on the network: it is holding 12-16 KB of internal
@@ -1336,7 +1339,9 @@ static bool webRefuseBig() {
   // itself, so the refusal streak that guards against a starving radio must NOT
   // apply here: its eighth refusal would let 38 KB through in the middle of a
   // TLS handshake, which is the one moment this exists to prevent.
-  if (netLockBusy()) {
+  // Either the network is busy, or the memory from the last client has not
+  // come back yet. Both mean the same thing to a big response: wait your turn.
+  if (netLockBusy() || webHeapTooTight(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL))) {
     s_webRefused++;
     netMarkHttp();
     server.sendHeader("Retry-After", "1");
@@ -1441,6 +1446,10 @@ static bool parseHHMM(const String &v, uint8_t &hour, uint8_t &minute) {
 }
 
 void handleSave() {
+  // Writing settings parses a form, touches NVS and answers - heavy, and the
+  // owner's panel hung on exactly this (a brightness change) while the rail
+  // board was fetching. It waits its turn like everything else.
+  if (webRefuseBig()) return;
  if (server.hasArg("cycleConfig")) {
    String cycle = server.arg("cycleConfig"); CycleEntry checked[CYCLE_COUNT];
    if (cycle.length() >= sizeof(settings.cycleConfig) || !parseCycleConfig(cycle.c_str(), checked)) {

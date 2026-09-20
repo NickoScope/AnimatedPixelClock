@@ -64,6 +64,26 @@ static inline uint32_t webHeapStreakNow(uint32_t streak, uint32_t sinceLastRefus
   return sinceLastRefuseMs >= WEB_HEAP_BACKOFF_MS ? 0 : streak;
 }
 
+// The portal also waits until the memory of the previous client has come back.
+// Refusing while a fetch is on the wire is only half a queue: without this the
+// next request walks in before the last one has given anything up, and the
+// panel steps down to nothing a request at a time - measured over the cable
+// 2026-09-20, from 30,712 B to 1,268 B in six steps, every one of them "during
+// web server", with nothing but a browser holding the portal open.
+//
+// The line is what the other two consumers need to be able to start at all:
+// 1,626 B for the Wi-Fi task's DMA receive buffer, and 10,240 B for the rail
+// board's fetch (a 9 KB task stack plus a kilobyte, rtt_direct.cpp). Below the
+// sum of those, a large response would be taking the last piece either of them
+// could have used, so it waits instead. The small diagnostics are never
+// refused, whatever this says.
+#define WEB_HEAP_KEEP_FOR_OTHERS (1626UL + 10240UL)
+
+// True when a large response would leave the radio and a fetch with nothing.
+static inline bool webHeapTooTight(uint32_t largestFreeBlock) {
+  return largestFreeBlock < WEB_HEAP_KEEP_FOR_OTHERS;
+}
+
 // True while the portal should refuse large responses: the radio failed
 // recently, and we have not already refused a whole page load's worth in a row.
 // Pure, so the host test drives both halves without a panel.

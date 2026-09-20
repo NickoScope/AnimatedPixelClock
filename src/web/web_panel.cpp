@@ -1109,8 +1109,12 @@ static void handleClipFrame() {
 #endif
 
 static void route(const char *uri, WebServer::THandlerFunction fn) {
-  server.on(uri, HTTP_GET, fn);
-  server.on(uri, HTTP_POST, fn);
+  // Every panel route goes through the queue's door. One place, so a route
+  // added later cannot quietly slip past it - which is how the settings write
+  // and all of these were outside it until 2026-09-20.
+  WebServer::THandlerFunction gated = [fn]() { if (webBusyRefuse()) return; fn(); };
+  server.on(uri, HTTP_GET, gated);
+  server.on(uri, HTTP_POST, gated);
 }
 
 void panelWebBegin() {

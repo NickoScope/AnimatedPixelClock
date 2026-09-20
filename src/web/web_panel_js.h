@@ -62,7 +62,7 @@ var HINTS = { clock: 'Always on - where the panel falls back to', world: 'Daylig
 var pageIdx = {}, lastPanel = null;
 
 // ---------------------------------------------------------------- polling
-var POLL = { pnow: [pollNow, 2000], pflights: [pollFb, 5000], ptrains: [pollRb, 5000], pmedia: [pollMp, 2000], pworld: [pollWc, 30000], pyachts: [pollYr, 3000], plua: [pollEffects, 3000], pknob: [pollKnob, 250], pmarket: [pollMk, 5000] };
+var POLL = { pnow: [pollNow, 2000], pmedia: [pollMp, 2000], pworld: [pollWc, 30000], pyachts: [pollYr, 3000], plua: [pollEffects, 3000], pknob: [pollKnob, 250], pmarket: [pollMk, 5000] };
 var active = null, timer = null;
 function activePage() { var s = document.querySelector('section.page.active'); return s && POLL[s.dataset.page] ? s.dataset.page : null; }
 function tick() {

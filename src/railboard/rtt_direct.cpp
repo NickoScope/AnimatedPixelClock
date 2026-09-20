@@ -68,7 +68,16 @@ const int64_t  kTokenAssumeS = 600;     // validUntil missing or unreadable
 // reference only. It also did not help - the panel still lost the link. The
 // real problem is the budget, not this number: src/web (JSON in PSRAM), the
 // audio leak, and the per-socket send buffer come first.
-const uint32_t    kStackBytes      = 12 * 1024;
+// 9 KB, from what the task itself reports. Two readings of its high-water mark
+// on the panel 2026-09-20: stackFree 6,304 B and 6,136 B of the 12,288 it had,
+// so 5,984 B and 6,152 B used at their deepest - half the stack never touched.
+// The gate below asks for kStackBytes + 1024 CONTIGUOUS, and with 12 KB that
+// is 13,312 B: the panel's largest free block had settled at 12,788 B and the
+// board stopped fetching, short by 524 bytes with 30,828 B free. At 9 KB the
+// gate is 10,240 B, cleared by 2.5 KB, and the task keeps 2.8 KB over the
+// deepest reading. The board reports stackFree on every fetch, so further
+// samples arrive on their own and this can be revisited with a distribution.
+const uint32_t    kStackBytes      = 9 * 1024;
 // Below the Lua effect task (priority 1, core 0): a TLS handshake is hundreds of
 // milliseconds of maths, and at equal priority it took turns with the effect's
 // frames - the snooker clock stuttered on the panel, 2026-09-14. At 0 it runs

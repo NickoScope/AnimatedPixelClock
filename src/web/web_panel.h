@@ -14,6 +14,12 @@
 // (bounded blocking, watchdog fed, a stalled client dropped). Every build.
 void sendJsonBytesGuarded(int code, const char *data, size_t len);
 
+// The queue's door. True when this request has already been answered with 503
+// because the network is busy with a fetch or the memory from the previous
+// client has not come back yet - the caller must return at once. Never refuses
+// /api/info or /api/status: those are how anyone sees what is happening.
+bool webBusyRefuse();
+
 // web.cpp's allocator for response documents: PSRAM when there is some. Every build.
 ArduinoJson::Allocator *webJsonAllocator();
 
