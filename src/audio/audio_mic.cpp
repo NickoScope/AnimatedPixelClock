@@ -87,6 +87,20 @@ volatile uint32_t s_stackFree = 0;         // the task's own uxTaskGetStackHighW
 bool s_codecConfigured = false;            // loop task only: es7210::begin() succeeded since the last end()
 uint32_t s_starts = 0;                     // loop task only
 unsigned long s_wantedMs = 0, s_nextStartMs = 0;
+// When an attempt that nobody is watching was started, and how long it is left
+// alone. Without this the split between "keep going" and "try again" ate itself:
+// a task raised because a retry was due was stopped on the SAME pass, because
+// the idle-stop looks at s_wantedMs and nothing had wanted it for 25 s - so the
+// codec was never even attempted and the 10 KB task plus the I2S driver were
+// created and destroyed without pause. **Our choice, not a measured figure**:
+// long enough for the task to report I2S ready and for one codecBringUp().
+unsigned long s_tryStartedMs = 0;
+// Was this attempt raised because someone was watching, or only because a retry
+// had come due? A stop of the second kind must push the next attempt out by the
+// retry interval, or it starts again on the next pass and the two chase each
+// other with a 10 KB task and an I2S driver between them.
+bool s_startedWanted = false;
+constexpr unsigned long kTryGraceMs = 10000;
 
 // PSRAM, allocated once in audioBegin() and kept: ~52 KB the task reuses on every start.
 audiodsp::Dsp *s_dsp = nullptr;
@@ -355,6 +369,10 @@ void finishStop(unsigned long now) {
   s_codecConfigured = false;
   if (requested) {
     s_state = MIC_IDLE;
+    // A stop nobody asked for - the idle stop took an attempt that was only
+    // there because a retry was due - must not let the next attempt start at
+    // once, or the two chase each other for ever.
+    if (!s_startedWanted) s_nextStartMs = now + kRetryMs;
   } else {
     s_nextStartMs = now + kRetryMs;   // the task gave up on I2S: its state stays, retry later
   }
@@ -422,8 +440,11 @@ void audioPoll(bool vizShown, bool vizSelected) {
   const bool mayStart = wanted || (vizSelected && micFeedsViz() && audioStartPending());
   if (wanted) s_wantedMs = now;
   if (s_task && s_taskGone) finishStop(now);
-  if (!s_task && mayStart && s_dsp && (int32_t)(now - s_nextStartMs) >= 0) startCapture(now);
-  if (s_task && !s_stopReq && !wanted && now - s_wantedMs >= kIdleStopMs) s_stopReq = true;
+  if (!s_task && mayStart && s_dsp && (int32_t)(now - s_nextStartMs) >= 0) { startCapture(now); s_tryStartedMs = now; s_startedWanted = wanted; }
+  // An attempt gets its grace before the idle stop can take it, or it never
+  // reaches the codec at all.
+  if (s_task && !s_stopReq && !wanted && now - s_wantedMs >= kIdleStopMs &&
+      now - s_tryStartedMs >= kTryGraceMs) s_stopReq = true;
 
   if (s_task && !s_stopReq && s_i2sReady && !s_codecUp && (int32_t)(now - s_codecRetryMs) >= 0) codecBringUp();
   if (wanted) s_lastActiveMs = now;

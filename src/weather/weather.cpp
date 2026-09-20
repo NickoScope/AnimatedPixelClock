@@ -163,29 +163,33 @@ static void weatherFetchTask(void*) {
   vTaskDelete(nullptr);
 }
 
+// When this starter first stood aside for someone at the portal, 0 if it is not
+// waiting. File scope so the early returns above can clear it: the deadline
+// measures time since the FIRST standing aside, so a pass that left for another
+// reason - the page off screen, the link down - would otherwise come back with
+// the deadline already spent and skip its first yield.
+static uint32_t s_weatherYieldingSince = 0;
+
 void weatherLoop() {
   if (fetchBusy) return;
   const unsigned long now = millis();
   static unsigned long lastCheckMs = 0;
   if (!fetchKick && now - lastCheckMs < WEATHER_CHECK_MS) return;
   lastCheckMs = now;
-  if (!weatherConfigured() || !weatherOnScreen() || WiFi.status() != WL_CONNECTED) return;
+  // Not the moment to fetch at all: forget any standing aside, or the deadline
+  // is already spent when the page comes back.
+  if (!weatherConfigured() || !weatherOnScreen() || WiFi.status() != WL_CONNECTED) { s_weatherYieldingSince = 0; return; }
   // A settings change (new location, toggle) fetches now instead of waiting.
   if (!fetchKick && nextFetchMs && (long)(now - nextFetchMs) < 0) return;
   // A person at the portal beats a refresh that can wait (net_turns.h). The
   // deadline stops a browser left open from starving this for ever - counted in
   // time, because this runs on every pass of loop() and passes are free.
-  // Reset by anyone who leaves before the yield too: the deadline measures time
-  // since the first standing aside, so a starter that left for another reason -
-  // the page off screen, the link down - would come back with it already spent
-  // and skip its first yield.
-  { static uint32_t yieldingSince = 0;
-    const uint32_t nowTurn = millis();
-    if (netTurnYield(netMsSinceHttp(), yieldingSince, nowTurn)) {
-      if (!yieldingSince) yieldingSince = nowTurn ? nowTurn : 1;
+  { const uint32_t nowTurn = millis();
+    if (netTurnYield(netMsSinceHttp(), s_weatherYieldingSince, nowTurn)) {
+      if (!s_weatherYieldingSince) s_weatherYieldingSince = nowTurn ? nowTurn : 1;
       return;
     }
-    yieldingSince = 0; }
+    s_weatherYieldingSince = 0; }
   if (netLockBusy()) return;   // another fetch holds the network; check again in a second
   if (heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) < WEATHER_TASK_STACK + 1024) {
     nextFetchMs = now + WEATHER_RETRY_INTERVAL_MS;

@@ -578,6 +578,13 @@ void aeroDirectBegin() {
 
 bool aeroDirectHasKey() { return s_begun && s_keyStored; }
 
+// When this starter first stood aside for someone at the portal, 0 if it is not
+// waiting. File scope so the early returns above can clear it: the deadline
+// measures time since the FIRST standing aside, so a pass that left for another
+// reason - the page off screen, the link down - would otherwise come back with
+// the deadline already spent and skip its first yield.
+static uint32_t s_aeroYieldingSince = 0;
+
 void aeroDirectLoop(const AeroWant &w) {
   if (!s_begun) return;
   saveCfg();
@@ -612,26 +619,24 @@ void aeroDirectLoop(const AeroWant &w) {
   // cannot make it look active again.
   if (s_holdUntilMs && !held(s_holdUntilMs, nowMs)) s_holdUntilMs = 0;
 
-  if (!s_keyStored) { s_blocked = ST_NOKEY; return; }
+  // Each of these is "not the moment to fetch at all", so any standing aside is
+  // forgotten with them: the deadline measures time since the FIRST yield, and
+  // a pass that left here would otherwise come back with it already spent.
+  if (!s_keyStored) { s_blocked = ST_NOKEY; s_aeroYieldingSince = 0; return; }
   if (running) return;
   if (s_started && nowMs - s_lastStartMs < fbs::kCallSpacingS * 1000UL) return;
   if (held(s_holdUntilMs, nowMs)) return;
-  if (WiFi.status() != WL_CONNECTED) { s_blocked = ST_NOWIFI; return; }
-  if (!clockSet()) { s_blocked = ST_NOCLOCK; return; }        // certificates, windows and caps need the date
+  if (WiFi.status() != WL_CONNECTED) { s_blocked = ST_NOWIFI; s_aeroYieldingSince = 0; return; }
+  if (!clockSet()) { s_blocked = ST_NOCLOCK; s_aeroYieldingSince = 0; return; }   // certificates, windows and caps need the date
   // A person at the portal beats a refresh that can wait (net_turns.h). The
   // deadline stops a browser left open from starving this for ever - counted in
   // time, because this runs on every pass of loop() and passes are free.
-  // Reset by anyone who leaves before the yield too: the deadline measures time
-  // since the first standing aside, so a starter that left for another reason -
-  // the page off screen, the link down - would come back with it already spent
-  // and skip its first yield.
-  { static uint32_t yieldingSince = 0;
-    const uint32_t nowTurn = millis();
-    if (netTurnYield(netMsSinceHttp(), yieldingSince, nowTurn)) {
-      if (!yieldingSince) yieldingSince = nowTurn ? nowTurn : 1;
+  { const uint32_t nowTurn = millis();
+    if (netTurnYield(netMsSinceHttp(), s_aeroYieldingSince, nowTurn)) {
+      if (!s_aeroYieldingSince) s_aeroYieldingSince = nowTurn ? nowTurn : 1;
       return;
     }
-    yieldingSince = 0; }
+    s_aeroYieldingSince = 0; }
   if (netLockBusy()) { s_holdUntilMs = (nowMs + 2000UL) | 1; return; }   // another fetch is on the network; nothing counted
 
   Job j;

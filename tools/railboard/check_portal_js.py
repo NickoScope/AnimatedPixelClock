@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
-"""renderRb() actually runs, in both configurations. src/web/web_panel_js.h.
+"""renderRb() actually runs, in every configuration that reaches a panel. src/web/web_panel_js.h.
 
 Written because it did not. On 2026-09-20 a line read `dx.token` two lines
 above `var dx = ...`: `var` hoists the declaration but not the assignment, so
 on a panel that fetches directly and has never heard from Home Assistant -
 exactly the configuration the line was written for - renderRb threw a
 TypeError and the whole rail card stopped updating. A parse check cannot see
-that; only running it can. The flight board has had this check for a while
+that; only running it can.
+
+What this does NOT see: $() is stubbed to null, so the branches guarded by
+`if (dEl)`, `if (led)` and `if (dg)` never execute. It answers "does renderRb
+run and set its text", not "does the card look right". The flight board has had this check for a while
 (tools/flightboard/check_portal_js.py); the rail board had seven checks and
 none of them touched the portal.
 """
@@ -27,8 +31,8 @@ while i < len(SRC):
     i += 1
 body = SRC[m.start():i + 1]
 
-# Two shapes, both real: a panel with its own token and no Home Assistant, and
-# one that has heard from Home Assistant.
+# Three shapes, all real: a panel with its own token and no Home Assistant
+# (this one), one that has heard from Home Assistant, and one with no token.
 CASES = {
     "direct, Home Assistant never seen": {
         "ha": {"have": False}, "source": "direct",
@@ -90,5 +94,10 @@ jsc = "/System/Library/Frameworks/JavaScriptCore.framework/Versions/Current/Help
 if not pathlib.Path(jsc).exists():
     sys.exit("check_portal_js: no jsc on this host")
 p = subprocess.run([jsc, "-e", script], capture_output=True, text=True)
-print(p.stdout.strip() or p.stderr.strip())
-sys.exit(p.returncode)
+out = (p.stdout.strip() or p.stderr.strip())
+print(out)
+# jsc does not pass quit(1) out to the shell - checked: quit(1) exits 0, only an
+# uncaught throw gives a non-zero code, and the harness catches. So the verdict
+# is read from what it printed, the way tools/flightboard/check_portal_js.py
+# already does. Without this the gate prints FAIL and exits 0.
+sys.exit(0 if p.returncode == 0 and re.search(r"\b0 failed\b", out) else 1)
