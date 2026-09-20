@@ -31,7 +31,16 @@ const char *const kNvsNs       = "rb";
 // Home Assistant polls the same token every 20 s when its poll is on, so the
 // day's quota is shared: this side slows down as it runs out and leaves the
 // rest to Home Assistant.
-const uint32_t kIntervalS  = 30;        // the owner's brief, while the page is on screen
+// 120 s, and it was 30. Measured over the cable 2026-09-20: five minutes with
+// this page shown and NO other traffic left the panel at 13,644 B free internal
+// and a 7,668 B largest block, because each fetch costs 12-16 KB - a 12 KB task
+// stack that must be internal in this SDK (xPortcheckValidStackMem: no
+// CONFIG_FREERTOS_TASK_CREATE_ALLOW_EXT_MEM here) plus the TLS context. With
+// the portal now standing aside while a fetch is on the wire, a slower poll
+// also means the portal is refused four times less often. Freshness is what it
+// costs; departures do not change on a thirty-second scale, and the board still
+// fetches at once when the page appears and when the station changes.
+const uint32_t kIntervalS  = 120;       // was 30 - docs/drafts/31 has the measurement
 // Off screen nothing is fetched: no task, no TLS session, no buffers (the
 // owner's brief, 2026-09-14). Coming into view fetches at once unless the last
 // good board is younger than kIntervalS.
