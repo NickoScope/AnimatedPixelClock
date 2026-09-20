@@ -503,6 +503,21 @@ class BlobsScene : public Scene {
     const V3 oc = r.o - centre;
     const float bb = dot(oc, d), cc = dot(oc, oc) - kBound * kBound, disc = bb * bb - cc;
     if (disc <= 0.0f) return;
+    // Of the rays that meet the bounding sphere, four in five find nothing
+    // inside it (the host counted 840 of 1044 in one frame) and spend five
+    // steps of the march to learn it. A ray that passes every ball by more
+    // than its radius and half the blend cannot reach the surface: the blend
+    // pulls the field in by at most a quarter of kK, so half of it is margin
+    // enough, and the picture does not change.
+    bool near = false;
+    for (int k = 0; k < kBalls && !near; k++) {
+      const V3 oq = r.o - pos_[k];
+      const float along = dot(oq, d);
+      const float off = dot(oq, oq) - along * along;   // the ray's least square distance to the centre
+      const float reach = radius(k) + 0.5f * kK;
+      near = off <= reach * reach;
+    }
+    if (!near) return;
     const float sq = sqrtf(disc);
     float t = -bb - sq;
     const float tEnd = -bb + sq;
