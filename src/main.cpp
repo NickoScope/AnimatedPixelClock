@@ -224,6 +224,7 @@ static inline uint8_t ctrlPageCount() {
 #include "weather/weather.h"
 #include "health/boot_health.h"
 #include "web/web.h"
+#include "web/web_heap_backoff.h"   // ALLOC_FAIL_WIFI_NEVER: the portal backs off while the radio starves
 
 
 // ========== Helper Functions ==========
@@ -840,6 +841,13 @@ static uint32_t s_heapMinSeen = 0;
 static volatile uint32_t s_allocFails = 0, s_allocFailBytes = 0, s_allocFailCaps = 0;
 static char s_allocFailTask[16] = "";
 static uint32_t s_allocFailsPrinted = 0;
+// When the Wi-Fi task last failed an allocation. The web path reads it and
+// stops sending the portal's big blobs while the radio is starving: measured
+// 2026-09-20, 1,626 B with caps 0x80c (internal + 8-bit + DMA), 25 failures in
+// eleven seconds, after which the panel left the network for minutes with the
+// firmware still running (the knowledge base, drafts/28-portal-hang-2026-09-20).
+// 0 means never; stamped in loop context, not in the IRAM hook.
+static uint32_t s_allocFailWifiMs = 0;
 static IRAM_ATTR void onAllocFailed(size_t size, uint32_t caps, const char *) {   // called from IRAM heap code
   s_allocFailBytes = (uint32_t)size;
   s_allocFailCaps = caps;
@@ -850,6 +858,15 @@ static IRAM_ATTR void onAllocFailed(size_t size, uint32_t caps, const char *) { 
 uint32_t allocFailCount() { return s_allocFails; }
 uint32_t allocFailLastBytes() { return s_allocFailBytes; }
 const char *allocFailLastTask() { return s_allocFailTask; }
+
+// Milliseconds since the Wi-Fi task last failed an allocation, or
+// ALLOC_FAIL_WIFI_NEVER when it never has. Unsigned elapsed time, so the
+// millis() wrap needs no special case.
+uint32_t allocFailWifiAgeMs() {
+  if (!s_allocFailWifiMs) return ALLOC_FAIL_WIFI_NEVER;
+  const uint32_t age = millis() - s_allocFailWifiMs;
+  return age < ALLOC_FAIL_WIFI_NEVER ? age : ALLOC_FAIL_WIFI_NEVER - 1;
+}
 
 static void loopMark(const char *tag) {
   const uint32_t nowUs = micros();
@@ -871,6 +888,10 @@ static void loopMark(const char *tag) {
   if (!s_heapMinSeen || heapMin < s_heapMinSeen) s_heapMinSeen = heapMin;
   if (s_allocFails != s_allocFailsPrinted) {
     s_allocFailsPrinted = s_allocFails;
+    if (!strcmp(s_allocFailTask, "wifi")) {
+      s_allocFailWifiMs = millis();
+      if (!s_allocFailWifiMs) s_allocFailWifiMs = 1;   // 0 is "never"
+    }
     const int n = snprintf(line, sizeof(line), "[mem] allocation failed: %u B, caps 0x%x, task %s, %u so far, before %s\n",
                            (unsigned)s_allocFailBytes, (unsigned)s_allocFailCaps, s_allocFailTask,
                            (unsigned)s_allocFailsPrinted, tag);

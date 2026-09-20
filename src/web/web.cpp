@@ -48,6 +48,7 @@ static void handlePanelJs();
 #include <esp_system.h>
 #include <esp_heap_caps.h>
 #include "../clocks/cycle_config.h"
+#include "web_heap_backoff.h"
 static String lastAnimationError;
 static bool writeAllGuarded(int sock, const char* data, size_t len, uint32_t totalDeadline);
 static void sendJsonGuarded(int code, const String& json);
@@ -350,6 +351,12 @@ void handleDeviceInfo() {
    doc["allocFails"] = allocFailCount();             // failed heap allocations since boot (main.cpp)
    doc["allocFailBytes"] = allocFailLastBytes();
    doc["allocFailTask"] = allocFailLastTask(); }
+ { extern uint32_t allocFailWifiAgeMs(); extern uint32_t webRefusedCount();
+   const uint32_t age = allocFailWifiAgeMs();
+   // How long ago the radio last went short, and how many big portal blobs were
+   // refused because of it (web_heap_backoff.h).
+   doc["wifiFailAgeS"] = age >= ALLOC_FAIL_WIFI_NEVER ? -1 : (int)(age / 1000UL);
+   doc["webRefused"] = webRefusedCount(); }
  { extern const char *loopSlowPart(); extern uint32_t loopSlowPartMs();       // and the part of loop() that took longest
    doc["loopSlowPart"] = loopSlowPart(); doc["loopSlowPartMs"] = loopSlowPartMs(); }
  doc["resetReason"] = (int)esp_reset_reason();
@@ -1204,8 +1211,28 @@ void sendJsonBytesGuarded(int code, const char* data, size_t len) {
 // Send a gzip blob from web_assets.h (tools/web_assets_gen.py). Every browser
 // takes gzip, and no uncompressed copy is kept: the 4MB boards have no room for
 // two. PROGMEM is memory-mapped on ESP32, so the blob feeds send() directly.
+//
+// While the Wi-Fi task is failing its own allocations, these blobs are refused
+// instead of sent: they are the kilobytes that take seconds under load and keep
+// the queue fed, and the radio's buffers matter more than this second's repaint
+// (web_heap_backoff.h has the measurement and the reasoning). The socket is
+// dropped with the refusal so the queue drains at once. The small JSON routes
+// are never refused - /api/info is how anyone finds out what is happening.
+static uint32_t s_webRefused = 0;
+uint32_t webRefusedCount() { return s_webRefused; }
+
 static void sendGzip(const uint8_t* gz, size_t len, const char* contentType, const char* cacheControl) {
   netMarkHttp();
+  extern uint32_t allocFailWifiAgeMs();
+  if (webHeapBackoffActive(allocFailWifiAgeMs())) {
+    s_webRefused++;
+    server.sendHeader("Retry-After", "1");
+    server.sendHeader("Cache-Control", "no-store");
+    server.setContentLength(0);
+    server.send(503, "text/plain", "");
+    server.client().stop();   // free the socket now: the queue is the problem
+    return;
+  }
   server.sendHeader("Cache-Control", cacheControl);
   server.sendHeader("Content-Encoding", "gzip");
   sendBytesGuarded(200, contentType, (const char*)gz, len);
