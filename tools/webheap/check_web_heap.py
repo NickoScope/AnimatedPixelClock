@@ -76,7 +76,15 @@ int main() {
   is(NET_RESERVE_REARM_MS > 11000UL, true, "the re-arm outlasts a measured burst");
   // And it must cover both measured failures at once: 1,626 B for the wifi
   // task's DMA buffer and 3,072 B for the reconnect.
-  is(NET_RESERVE_BYTES >= 1626 + 3072, true, "the reserve covers both measured allocations");
+  // The reserve is off (NET_RESERVE_BYTES 0): taking it at boot cost more than
+  // it bought - it cut the largest free block from 25,588 B to 11,252 B and
+  // stopped the rail board fetching. What the test holds to is the rule that
+  // survives either setting: whenever it IS on, it must cover both measured
+  // allocations at once - 1,626 B for the Wi-Fi task and 3,072 B for the
+  // reconnect - and when it is off, nothing is ever taken.
+  is(NET_RESERVE_BYTES == 0 || NET_RESERVE_BYTES >= 1626 + 3072, true,
+     "off, or big enough for both measured allocations");
+  is(NET_RESERVE_BYTES == 0, true, "and it is off today: see net_reserve.h for what it cost");
   // A negative control: a reserve released on the same signal the portal keeps
   // sending on would be pointless, so the two must agree that fresh is fresh.
   is(!netReserveWanted(0) && webHeapBackoffActive(0, 0), true, "both react to the same fresh failure");

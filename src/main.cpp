@@ -1199,7 +1199,15 @@ void loop() {
   handleUDP();
 #if defined(AUDIO_MIC_ENABLED)
   // The microphones' newest spectrum packet, when they are the visualizer's source.
-  audioPoll(httpForceViz);
+  // Both halves must agree. The renderer draws the visualiser on
+  // httpForceViz && vizShouldDisplay(); telling the microphone only the first
+  // half meant that when the microphone failed to come up, vizShouldDisplay()
+  // went false after ten seconds, the panel drew the clock - and audio's
+  // `wanted` stayed true for ever, so the stop was never requested, the I2S
+  // driver was never uninstalled and its task never deleted. 9.2 KB of internal
+  // RAM held until a reboot, and the task re-created every 30 s. That is the
+  // debt from 2026-09-15, "the audio visualiser hangs the panel".
+  audioPoll(httpForceViz && vizShouldDisplay());
 #endif
 
   // Check timeout

@@ -49,6 +49,14 @@ const int64_t  kTokenAssumeS = 600;     // validUntil missing or unreadable
 // arduino-esp32 2.0.17, see src/lua/lua_effects.cpp) and exists only while a
 // fetch runs. Everything else - mbedTLS (tlsUsePsram), the body, the JSON, the
 // access token - is PSRAM. The task reports its stack high-water mark.
+// 12 KB, and it stays 12 KB. It was cut to 9 KB on 2026-09-20 from a single
+// high-water reading (stackFree 6,304 B of 12 KB, so 5,984 B used) and put back
+// the same evening: one sample is not a distribution, the deepest path through
+// mbedTLS depends on the certificate chain and the cipher suite that day, and
+// the project's own rule is that a threshold comes from a distribution or it is
+// reference only. It also did not help - the panel still lost the link. The
+// real problem is the budget, not this number: src/web (JSON in PSRAM), the
+// audio leak, and the per-socket send buffer come first.
 const uint32_t    kStackBytes      = 12 * 1024;
 // Below the Lua effect task (priority 1, core 0): a TLS handshake is hundreds of
 // milliseconds of maths, and at equal priority it took turns with the effect's

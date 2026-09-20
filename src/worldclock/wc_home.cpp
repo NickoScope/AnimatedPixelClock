@@ -17,6 +17,30 @@
 #include "posix_tz.h"
 #include "worldclock.h"
 
+#include <esp_heap_caps.h>
+
+// The document's blocks go to PSRAM. Under CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL
+// (4096) in this build every block ArduinoJson asks for lands in the internal
+// heap instead - the heap the Wi-Fi task takes its buffers from, and the one
+// this panel runs short of. Measured 2026-09-20: internal free reached 144 B
+// with a fetch and the portal at once.
+namespace {
+class PsramJson : public ArduinoJson::Allocator {
+ public:
+  void *allocate(size_t n) override {
+    void *p = heap_caps_malloc(n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    return p ? p : heap_caps_malloc(n, MALLOC_CAP_8BIT);
+  }
+  void deallocate(void *p) override { heap_caps_free(p); }
+  void *reallocate(void *p, size_t n) override {
+    void *q = heap_caps_realloc(p, n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    return q ? q : heap_caps_realloc(p, n, MALLOC_CAP_8BIT);
+  }
+};
+inline ArduinoJson::Allocator *psramJson() { static PsramJson a; return &a; }
+}  // namespace
+
+
 // "At the panel's location" means the same city, not the nearest famous one.
 // A circle as large as Greater London (1 572 km2, Wikipedia) has a radius of
 // 22.4 km, so 25 km names a panel anywhere in a city of that size after it,
@@ -159,7 +183,7 @@ static void ipTask(void *) {
     if (net.held() && http.begin(client, IP_URL)) {
       const int code = http.GET();
       if (code == HTTP_CODE_OK) {
-        JsonDocument doc;
+        JsonDocument doc(psramJson());   // the location lookup
         if (!deserializeJson(doc, http.getStream())) {
           c.lat = doc["latitude"] | NAN;
           c.lon = doc["longitude"] | NAN;

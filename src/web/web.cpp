@@ -74,6 +74,22 @@ class WebJsonAllocator : public ArduinoJson::Allocator {
   }
 };
 
+// Serialise a document straight into PSRAM and send it from there, instead of
+// through a String. Both the document's blocks and a String's repeated reallocs
+// are under CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL (4096) in this build, so they
+// come out of the internal heap - the one the radio needs, on routes a browser
+// polls without pause and which are never held back. /api/portal already did
+// this by hand (handlePortalValues); this is the same, named once.
+static void sendDocFromPsram(JsonDocument &doc) {
+  const size_t n = measureJson(doc);
+  char *buf = (char *)heap_caps_malloc(n + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (!buf) buf = (char *)heap_caps_malloc(n + 1, MALLOC_CAP_8BIT);
+  if (!buf) { sendJsonGuarded(503, "{\"error\":\"out of memory\"}"); return; }
+  serializeJson(doc, buf, n + 1);
+  sendJsonBytesGuarded(200, buf, n);
+  heap_caps_free(buf);
+}
+
 ArduinoJson::Allocator *webJsonAllocator() {
   static WebJsonAllocator alloc;
   return &alloc;
@@ -325,7 +341,7 @@ void setupWebServer() {
 
 // API endpoint to return current metrics as JSON (uses ArduinoJson for proper string escaping)
 void handleMetricsAPI() {
- JsonDocument doc;
+ JsonDocument doc(webJsonAllocator());
  JsonArray metricsArray = doc["metrics"].to<JsonArray>();
 
  for (int i = 0; i < metricData.count; i++) {
@@ -353,14 +369,12 @@ void handleMetricsAPI() {
  if (getLocalTime(&ti, 0)) strftime(ts, sizeof(ts), "%H:%M", &ti);
  doc["time"] = ts;
 
- String json;
- serializeJson(doc, json);
- sendJsonGuarded(200, json);
+ sendDocFromPsram(doc);
 }
 
 // API endpoint to return device info for app discovery
 void handleDeviceInfo() {
- JsonDocument doc;
+ JsonDocument doc(webJsonAllocator());
  doc["version"] = FIRMWARE_VERSION;
  doc["mac"] = WiFi.macAddress();
  doc["ip"] = WiFi.localIP().toString();
@@ -444,9 +458,7 @@ void handleDeviceInfo() {
    server.sendHeader("Content-Disposition", "attachment; filename=pixelclock-diagnostics.json");
  }
 
- String json;
- serializeJson(doc, json);
- sendJsonGuarded(200, json);
+ sendDocFromPsram(doc);
 }
 
 // ========== Runtime Control API ==========
@@ -455,7 +467,7 @@ void handleDeviceInfo() {
 
 // GET /api/status - report live display/mode state as JSON
 void handleStatus() {
- JsonDocument doc;
+ JsonDocument doc(webJsonAllocator());
 
  bool pcOnline = metricData.online;
  bool showViz = httpForceViz && vizShouldDisplay();
@@ -475,9 +487,7 @@ void handleStatus() {
  doc["pcOnline"] = pcOnline;
  doc["uptime"] = millis() / 1000;
 
- String json;
- serializeJson(doc, json);
- sendJsonGuarded(200, json);
+ sendDocFromPsram(doc);
 }
 
 // GET /api/display/on - turn the panel back on (restore normal/scheduled brightness)
@@ -581,7 +591,7 @@ void handleRename() {
    return;
  }
 
- JsonDocument doc;
+ JsonDocument doc(webJsonAllocator());
  DeserializationError error = deserializeJson(doc, server.arg("plain"));
  if (error) {
    server.send(400, "application/json", "{\"error\":\"Invalid JSON\"}");
@@ -626,7 +636,7 @@ void handleNotify() {
    return;
  }
 
- JsonDocument doc;
+ JsonDocument doc(webJsonAllocator());
  DeserializationError error = deserializeJson(doc, server.arg("plain"));
  if (error) {
    server.send(400, "application/json", "{\"error\":\"Invalid JSON\"}");
@@ -696,7 +706,7 @@ void handleNotifyDismiss() {
 // GET /api/anim/list - {"usable":bool,"free":n,"total":n,"current":s,"anims":[...]}
 void handleAnimList() {
  server.sendHeader("Access-Control-Allow-Origin", "*");
- JsonDocument doc;
+ JsonDocument doc(webJsonAllocator());
  doc["usable"] = animFsUsable();
  doc["playing"] = ambientCustomPlaying();
  doc["failReason"] = ambientCustomFailReason();
@@ -724,9 +734,7 @@ void handleAnimList() {
      o["frames"] = hdr.frameCount;
    }
  }
- String json;
- serializeJson(doc, json);
- sendJsonGuarded(200, json);
+ sendDocFromPsram(doc);
 }
 
 // Start an uploaded animation without changing unrelated saved settings.
@@ -1209,9 +1217,18 @@ void handlePortalValues() {
 static const uint32_t STREAM_IDLE_LIMIT_MS = 4000;   // no bytes drained -> stalled
 static const uint32_t STREAM_TOTAL_LIMIT_MS = 30000; // hard cap per response
 
-// One TCP segment on a 1500-byte link: 1500 - 20 (IP) - 20 (TCP). Offering
-// more only asks lwIP to hold more of our bytes in internal RAM.
-#define WEB_SEND_CHUNK 1460
+// One TCP segment as THIS build defines it. It was 1460 - "1500 - 20 - 20" -
+// which is 24 bytes past CONFIG_LWIP_TCP_MSS here, so every chunk straddled a
+// segment boundary. Taken from the macro so it cannot drift from sdkconfig.
+//
+// Honest note on what this does and does not buy. It does NOT stop lwIP holding
+// our bytes: TCP_SND_BUF is 5,760 B per stream in this build, the loop below
+// refills to that same ceiling either way, and the steady state is identical
+// with or without the cap. The measured win on 2026-09-20 came from the other
+// half of that commit - 41,343 B of panel.css and panel.js taken out of the
+// browser's first burst. The real lever on the send buffer is per-socket
+// TCP_SNDBUF, applied below.
+#define WEB_SEND_CHUNK TCP_MSS
 
 static bool writeAllGuarded(int sock, const char* data, size_t len, uint32_t totalDeadline) {
   uint32_t idleDeadline = millis() + STREAM_IDLE_LIMIT_MS;
@@ -2355,7 +2372,7 @@ void handleImportConfig() {
  if (server.hasArg("plain")) {
  String body = server.arg("plain");
 
- JsonDocument doc;
+ JsonDocument doc(webJsonAllocator());
  DeserializationError error = deserializeJson(doc, body);
 
  if (error) {
