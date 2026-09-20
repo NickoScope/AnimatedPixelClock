@@ -98,6 +98,20 @@ static const char PAGE_HTML[] PROGMEM = R"PAGE(<!doctype html>
         <pre id="diagnosticsText" style="white-space:pre-wrap;font-size:11px">Loading...</pre>
         <a href="/api/diagnostics" download="pixelclock-diagnostics.json">Download diagnostics</a>
       </details>
+      <details id="deviceLog" style="margin:12px 0">
+        <summary>Log over the network</summary>
+        <label class="check-row standalone" style="margin:8px 0">
+          <input type="checkbox" id="logOn"><span class="check-box"></span>
+          <span class="check-text"><strong>Keep a log</strong>
+            <span class="ct-hint">Off by default and costs nothing while it is off. On, the panel keeps its last 32 KB of log lines in PSRAM - never in the internal memory it runs short of - and this page reads them without a cable. The switch survives a reboot, so an intermittent fault can be caught across the restart it causes.</span></span>
+        </label>
+        <div style="display:flex;gap:8px;margin:8px 0">
+          <button type="button" class="btn" id="logFollow">Follow</button>
+          <button type="button" class="btn" id="logClear">Clear</button>
+        </div>
+        <pre id="logText" style="white-space:pre-wrap;font-size:11px;max-height:320px;overflow:auto">Log is off.</pre>
+        <div class="field-hint" id="logMeta"></div>
+      </details>
       <div class="status-readout" id="statusReadout">
         <div class="sr-head">
           <span class="sr-led online" id="srLed"></span>
@@ -1989,6 +2003,50 @@ function updateDiagnostics(d) {
  $('#diagnosticsText').textContent=lines.join('\n');
 }
 
+// The log over the network (src/debug/dbg_log.h). The cursor is the panel's own
+// byte count: we ask for what follows what we last saw, so a quiet panel answers
+// a few bytes. X-Log-From tells us where the answer really starts - larger than
+// we asked means the panel dropped lines while we were away, and that is shown
+// rather than hidden.
+var logCursor = 0, logFollowing = false, logTimer = 0;
+function logFetch(){
+ return fetch('/api/log?since='+logCursor).then(function(r){
+  var on = r.headers.get('X-Log-On') === '1';
+  var from = parseInt(r.headers.get('X-Log-From')||'0',10);
+  var seq = parseInt(r.headers.get('X-Log-Seq')||'0',10);
+  var dropped = parseInt(r.headers.get('X-Log-Dropped')||'0',10);
+  return r.text().then(function(txt){
+   var el = $('#logText'), meta = $('#logMeta');
+   if(!on){ el.textContent='Log is off.'; meta.textContent=''; logCursor=0; return; }
+   if(from > logCursor && logCursor) el.textContent += '\n--- ' + (from-logCursor) + ' bytes missed ---\n';
+   if(logCursor === 0) el.textContent = txt; else el.textContent += txt;
+   logCursor = from + txt.length;
+   if(el.textContent.length > 200000) el.textContent = el.textContent.slice(-100000);
+   el.scrollTop = el.scrollHeight;
+   meta.textContent = seq + ' bytes logged' + (dropped ? ', ' + dropped + ' dropped to make room' : '') + '.';
+  });
+ });
+}
+function logSetFollow(on){
+ logFollowing = on;
+ var b = $('#logFollow'); if(b) b.textContent = on ? 'Stop' : 'Follow';
+ if(logTimer){ clearInterval(logTimer); logTimer = 0; }
+ if(on){ logFetch(); logTimer = setInterval(logFetch, 2000); }
+}
+function logInit(){
+ var sw = $('#logOn'); if(!sw) return;
+ sw.addEventListener('change', function(){
+  fetch('/api/log?on=' + (sw.checked ? '1' : '0')).then(function(){
+   logCursor = 0; $('#logText').textContent = sw.checked ? '' : 'Log is off.';
+   if(!sw.checked) logSetFollow(false); else logFetch();
+  });
+ });
+ $('#logFollow').addEventListener('click', function(){ logSetFollow(!logFollowing); });
+ $('#logClear').addEventListener('click', function(){
+  fetch('/api/log?clear=1').then(function(){ logCursor = 0; $('#logText').textContent = ''; logFetch(); });
+ });
+}
+
 function climateStatus(c) {
 var tag = $('#climateTag'), now = $('#climateNow');
 if (!c || !tag || !now) return;
@@ -2037,6 +2095,7 @@ now.textContent = p.source === 'demo' ? 'Drawing the scripted demo, not the room
 function refreshStatus() {
 fetch('/api/info').then(function (r) { return r.json(); }).then(function (d) {
 updateDiagnostics(d);
+ { var sw = $('#logOn'); if (sw && typeof d.logOn === 'boolean') sw.checked = d.logOn; }
 climateStatus(d.climate);
 presenceStatus(d.presence);
 irStatus(d.ir);
@@ -2165,6 +2224,7 @@ cfgRetry.style.display = '';
 });
 }
 cfgRetry.addEventListener('click', loadValues);
+logInit();
 loadValues();
 
 refreshStatus();

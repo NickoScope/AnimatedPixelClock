@@ -226,6 +226,7 @@ static inline uint8_t ctrlPageCount() {
 #include "web/web.h"
 #include "web/web_heap_backoff.h"   // ALLOC_FAIL_WIFI_NEVER: the portal backs off while the radio starves
 #include "net/net_reserve.h"       // the contiguous block held back for the radio's recovery
+#include "debug/dbg_log.h"        // the log readable over the network, off by default
 
 
 // ========== Helper Functions ==========
@@ -404,7 +405,8 @@ void setup() {
   Serial.begin(115200);
   heap_caps_register_failed_alloc_callback(onAllocFailed);   // internal heap diagnostics: see loopMark()
   extern void netReserveTakeFwd();
-  netReserveTakeFwd();   // while the heap is still whole: net_reserve.h says why
+  netReserveTakeFwd();
+  dbgLogBegin();   // restores the remote log's switch from NVS; off costs nothing   // while the heap is still whole: net_reserve.h says why
   delay(1000);
   crashReportBegin();   // the last crash from the core dump in flash: src/utils/crash_report.cpp
   healthBegin();   // confirms an OTA image only once it has run: src/health
@@ -874,7 +876,7 @@ void netReserveTakeFwd();
 static void netReserveTake() {
   if (s_netReserve) return;
   s_netReserve = heap_caps_malloc(NET_RESERVE_BYTES, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT | MALLOC_CAP_DMA);
-  Serial.printf("[net] reserve %s: %u B, internal free %u, largest %u\n", s_netReserve ? "held" : "NOT taken",
+  dbgLogf("[net] reserve %s: %u B, internal free %u, largest %u\n", s_netReserve ? "held" : "NOT taken",
                 (unsigned)NET_RESERVE_BYTES, (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
 }
@@ -883,7 +885,7 @@ static void netReserveRelease() {
   heap_caps_free(s_netReserve);
   s_netReserve = nullptr;
   s_netReserveDrops++;
-  Serial.printf("[net] reserve released for the radio: internal free %u, largest %u\n",
+  dbgLogf("[net] reserve released for the radio: internal free %u, largest %u\n",
                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
 }
@@ -915,7 +917,7 @@ static void loopMark(const char *tag) {
   const uint32_t us = s_markUs ? nowUs - s_markUs : 0;
   s_markUs = nowUs;
   if (us > s_partMaxUs) { s_partMaxUs = us; s_partMaxTag = tag; }
-  if (us > 200000UL) Serial.printf("[loop] %s took %u ms\n", tag, (unsigned)(us / 1000UL));
+  if (us > 200000UL) dbgLogf("[loop] %s took %u ms\n", tag, (unsigned)(us / 1000UL));
   char line[192];
   const uint32_t heapMin = heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL);
   if (s_heapMinSeen && heapMin + 1024 <= s_heapMinSeen) {
@@ -925,7 +927,7 @@ static void loopMark(const char *tag) {
                            (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
                            (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
                            (unsigned)uxTaskGetNumberOfTasks());
-    if (n > 0) Serial.write((const uint8_t *)line, n < (int)sizeof(line) ? n : sizeof(line) - 1);
+    if (n > 0) dbgLogWrite(line, (uint32_t)(n < (int)sizeof(line) ? n : (int)sizeof(line) - 1));
   }
   if (!s_heapMinSeen || heapMin < s_heapMinSeen) s_heapMinSeen = heapMin;
   if (s_allocFails != s_allocFailsPrinted) {
@@ -938,7 +940,7 @@ static void loopMark(const char *tag) {
     const int n = snprintf(line, sizeof(line), "[mem] allocation failed: %u B, caps 0x%x, task %s, %u so far, before %s\n",
                            (unsigned)s_allocFailBytes, (unsigned)s_allocFailCaps, s_allocFailTask,
                            (unsigned)s_allocFailsPrinted, tag);
-    if (n > 0) Serial.write((const uint8_t *)line, n < (int)sizeof(line) ? n : sizeof(line) - 1);
+    if (n > 0) dbgLogWrite(line, (uint32_t)(n < (int)sizeof(line) ? n : (int)sizeof(line) - 1));
   }
 }
 const char *loopSlowPart() { return s_partMaxLastTag; }

@@ -49,6 +49,7 @@ static void handlePanelJs();
 #include <esp_heap_caps.h>
 #include "../clocks/cycle_config.h"
 #include "web_heap_backoff.h"
+#include "../debug/dbg_log.h"
 static String lastAnimationError;
 static bool writeAllGuarded(int sock, const char* data, size_t len, uint32_t totalDeadline);
 static void sendJsonGuarded(int code, const String& json);
@@ -133,6 +134,34 @@ void setupWebServer() {
  server.on("/metrics", handleMetricsAPI);
  server.on("/api/info", HTTP_GET, handleDeviceInfo);
  server.on("/api/diagnostics", HTTP_GET, handleDeviceInfo);
+ // The panel's log over the network, off by default (src/debug/dbg_log.h).
+ // GET /api/log?since=N      the bytes after N, at most DBG_LOG_READ_MAX
+ // GET /api/log?on=1 | on=0  the switch, remembered in NVS
+ // It is never held back by the radio's back-off: a read is capped small on
+ // purpose, because the log has to stay readable exactly when things are bad.
+ server.on("/api/log", HTTP_GET, []() {
+   netMarkHttp();
+   if (server.hasArg("on")) {
+     const String v = server.arg("on");
+     if (v != "0" && v != "1") { sendJsonGuarded(400, "{\"error\":\"on: 0 or 1\"}"); return; }
+     dbgLogSetEnabled(v == "1");
+   }
+   if (server.hasArg("clear") && dbgLogEnabled()) { dbgLogSetEnabled(false); dbgLogSetEnabled(true); }
+   char head[192];
+   const uint32_t since = (uint32_t)strtoul(server.arg("since").c_str(), nullptr, 10);
+   char *out = dbgLogReadBuf();   // PSRAM, carved from the log's own block
+   uint32_t from = 0;
+   const uint32_t n = (dbgLogEnabled() && out) ? dbgLogRead(since, out, DBG_LOG_READ_MAX, &from) : 0;
+   snprintf(head, sizeof head, "%u", (unsigned)from);
+   server.sendHeader("X-Log-From", head);
+   snprintf(head, sizeof head, "%u", (unsigned)dbgLogSeq());
+   server.sendHeader("X-Log-Seq", head);
+   snprintf(head, sizeof head, "%u", (unsigned)dbgLogDropped());
+   server.sendHeader("X-Log-Dropped", head);
+   server.sendHeader("X-Log-On", dbgLogEnabled() ? "1" : "0");
+   server.sendHeader("Cache-Control", "no-store");
+   sendBytesGuarded(200, "text/plain; charset=utf-8", out ? out : "", n);
+ });
 #if defined(CLIMATE_ENABLED)
  // GET /api/climate/pause?s=0-600 - start no reading of the board's sensor for
  // that long, so the weather screen's stale state can be seen on the panel;
@@ -362,6 +391,11 @@ void handleDeviceInfo() {
    // The contiguous block held back for the radio's recovery (net_reserve.h).
    doc["netReserve"] = netReserveHeld();
    doc["netReserveDrops"] = netReserveDrops(); }
+ { // the remote log (src/debug/dbg_log.h): off by default, PSRAM when on
+   doc["logOn"] = dbgLogEnabled();
+   doc["logSeq"] = dbgLogSeq();
+   doc["logKept"] = dbgLogKept();
+   doc["logDropped"] = dbgLogDropped(); }
  { extern const char *loopSlowPart(); extern uint32_t loopSlowPartMs();       // and the part of loop() that took longest
    doc["loopSlowPart"] = loopSlowPart(); doc["loopSlowPartMs"] = loopSlowPartMs(); }
  doc["resetReason"] = (int)esp_reset_reason();
