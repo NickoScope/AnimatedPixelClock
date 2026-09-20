@@ -1235,7 +1235,15 @@ uint32_t webRefusedCount() { return s_webRefused; }
 // saved against the blob it replaces.
 static bool webRefuseBig() {
   extern uint32_t allocFailWifiAgeMs();
-  if (!webHeapBackoffActive(allocFailWifiAgeMs(), s_webRefusedInARow)) {
+  // The streak counts refusals within one episode of starvation, so it is also
+  // cleared when a calm spell ends: otherwise a count left over from an hour ago
+  // would spend the escape hatch on the first blob of the next episode.
+  static bool wasCalm = true;
+  const uint32_t age = allocFailWifiAgeMs();
+  const bool fresh = age < WEB_HEAP_BACKOFF_MS;
+  if (fresh && wasCalm) s_webRefusedInARow = 0;
+  wasCalm = !fresh;
+  if (!webHeapBackoffActive(age, s_webRefusedInARow)) {
     s_webRefusedInARow = 0;
     return false;
   }
@@ -1249,6 +1257,9 @@ static bool webRefuseBig() {
   return true;
 }
 
+// Precondition: call webRefuseBig() first and return if it answered. This
+// function is no longer self-guarding - the check moved out so a 503 cannot
+// carry a header the handler had already queued.
 static void sendGzip(const uint8_t* gz, size_t len, const char* contentType, const char* cacheControl) {
   netMarkHttp();
   server.sendHeader("Cache-Control", cacheControl);
@@ -1260,10 +1271,15 @@ static void sendGzip(const uint8_t* gz, size_t len, const char* contentType, con
 // kept for a year: the browser asks every time, and the ETag gets it a 304 until
 // a firmware with a different page is running.
 void handleRoot() {
-  if (webRefuseBig()) return;
-  server.sendHeader("ETag", WEB_INDEX_ETAG);
+  // The conditional GET goes first, before any refusal. A 304 is headers only -
+  // about the same bytes as the refusal itself - so refusing one saves nothing,
+  // and it would take the portal away from exactly the browser that already has
+  // the page cached: the owner coming back to see what is wrong. It would also
+  // spend one of the refusal streak's slots on a request that never needed it.
+  // The ETag is set inside each branch, so the 503 path still carries none.
   if (server.header("If-None-Match") == WEB_INDEX_ETAG) {
     netMarkHttp();
+    server.sendHeader("ETag", WEB_INDEX_ETAG);
     server.sendHeader("Cache-Control", "no-cache");
     // No body. WebServer writes a Content-Length regardless; let it describe the
     // page the browser already holds rather than claim an empty one.
@@ -1271,6 +1287,8 @@ void handleRoot() {
     server.send(304, "text/html", "");
     return;
   }
+  if (webRefuseBig()) return;
+  server.sendHeader("ETag", WEB_INDEX_ETAG);
   sendGzip(WEB_INDEX_GZ, sizeof(WEB_INDEX_GZ), "text/html", "no-cache");
 }
 
