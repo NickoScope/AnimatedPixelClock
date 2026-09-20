@@ -90,18 +90,28 @@ int main() {
   // sending on would be pointless, so the two must agree that fresh is fresh.
   is(!netReserveWanted(0) && webHeapBackoffActive(0, 0), true, "both react to the same fresh failure");
   // Taking turns: a fetch stands aside for someone at the portal, but not for ever.
-  is(netTurnYield(0, 0), true, "a request just now: stand aside");
-  is(netTurnYield(NET_TURN_QUIET_MS - 1, 0), true, "still inside the quiet window");
-  is(netTurnYield(NET_TURN_QUIET_MS, 0), false, "quiet long enough: go");
-  is(netTurnYield(NET_HTTP_NEVER, 0), false, "nobody has ever asked: go");
-  is(netTurnYield(0, NET_TURN_MAX_YIELDS - 1), true, "one short of the limit, still yielding");
-  is(netTurnYield(0, NET_TURN_MAX_YIELDS), false, "at the limit the data wins");
-  is(netTurnYield(0, NET_TURN_MAX_YIELDS + 500), false, "and past it");
-  // The two guards are independent: quiet alone is enough, and so is the count.
-  is(netTurnYield(NET_TURN_QUIET_MS, NET_TURN_MAX_YIELDS), false, "both clear");
-  // A negative control: without the limit an open portal would starve the fetch
-  // for ever, which is the failure this counter exists to prevent.
-  is(NET_TURN_MAX_YIELDS > 0 && NET_TURN_QUIET_MS > 0, true, "neither guard is disabled");
+  // yieldingSinceMs 0 means "not waiting yet".
+  is(netTurnYield(0, 0, 1000), true, "a request just now: stand aside");
+  is(netTurnYield(NET_TURN_QUIET_MS - 1, 0, 1000), true, "still inside the quiet window");
+  is(netTurnYield(NET_TURN_QUIET_MS, 0, 1000), false, "quiet long enough: go");
+  is(netTurnYield(NET_HTTP_NEVER, 0, 1000), false, "nobody has ever asked: go");
+  // The ceiling is TIME, not passes. This is the bug the first version had: it
+  // counted calls, and the starters are called on every pass of loop(), so the
+  // ceiling was spent in milliseconds and the mechanism did nothing.
+  is(netTurnYield(0, 1000, 1000 + NET_TURN_MAX_YIELD_MS - 1), true, "one tick short of the ceiling");
+  is(netTurnYield(0, 1000, 1000 + NET_TURN_MAX_YIELD_MS), false, "at the ceiling the data wins");
+  is(netTurnYield(0, 1000, 1000 + NET_TURN_MAX_YIELD_MS * 10), false, "and long past it");
+  // Ten thousand calls inside the window still yield - a counter would not.
+  { bool all = true;
+    for (uint32_t k = 0; k < 10000; k++) if (!netTurnYield(0, 1000, 1000 + k % 100)) all = false;
+    is(all, true, "ten thousand passes inside the window all yield"); }
+  // Across the millis() wrap.
+  is(netTurnYield(0, 0xFFFFFF00UL, 0x00000100UL), true, "waiting across the wrap, still inside");
+  is(netTurnYield(0, 0xFFFFFF00UL, 0x00000100UL + NET_TURN_MAX_YIELD_MS), false, "and past it across the wrap");
+  // Quiet wins over the ceiling either way round.
+  is(netTurnYield(NET_TURN_QUIET_MS, 1000, 1000), false, "quiet beats a fresh wait");
+  // Negative control: neither guard may be disabled.
+  is(NET_TURN_MAX_YIELD_MS > 0 && NET_TURN_QUIET_MS > 0, true, "neither guard is disabled");
   printf("%d checks, %d failed\n", checks, failed);
   return failed ? 1 : 0;
 }

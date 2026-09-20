@@ -16,28 +16,7 @@
 #include "basemap.h"
 #include "../fonts/picopixel_fb.h"
 
-#include <esp_heap_caps.h>
-
-// The document's blocks go to PSRAM. Under CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL
-// (4096) in this build every block ArduinoJson asks for lands in the internal
-// heap instead - the heap the Wi-Fi task takes its buffers from, and the one
-// this panel runs short of. Measured 2026-09-20: internal free reached 144 B
-// with a fetch and the portal at once.
-namespace {
-class PsramJson : public ArduinoJson::Allocator {
- public:
-  void *allocate(size_t n) override {
-    void *p = heap_caps_malloc(n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    return p ? p : heap_caps_malloc(n, MALLOC_CAP_8BIT);
-  }
-  void deallocate(void *p) override { heap_caps_free(p); }
-  void *reallocate(void *p, size_t n) override {
-    void *q = heap_caps_realloc(p, n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    return q ? q : heap_caps_realloc(p, n, MALLOC_CAP_8BIT);
-  }
-};
-inline ArduinoJson::Allocator *psramJson() { static PsramJson a; return &a; }
-}  // namespace
+#include "../util/psram_json.h"
 
 
 // ---------------------------------------------------------------- geometry

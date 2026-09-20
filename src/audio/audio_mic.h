@@ -38,6 +38,13 @@ void audioBegin();
 // shared bus is started (boardI2cBegin), and again after a stall.
 void audioPoll(bool vizShown);
 
+// The microphone was asked for and has neither come up nor given up for good.
+// Read it beside vizShouldDisplay(): that answer is true because the microphone
+// is feeding the visualiser, so it cannot by itself decide whether the
+// microphone may run - a first attempt that failed would be shut out before its
+// own retry came round.
+bool audioStartPending();
+
 // network.cpp, for each "FFT1" packet from the PC: false when it must be dropped.
 bool audioAcceptPcPacket();
 

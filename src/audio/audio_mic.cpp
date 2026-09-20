@@ -81,6 +81,13 @@ uint32_t s_i2cHeld = 0, s_i2cStalls = 0;   // loop task only
 // uninstalls I2S, records its stack margin, says it has gone and deletes itself.
 // Nobody else ever calls a FreeRTOS function on its handle.
 TaskHandle_t s_task = nullptr;             // loop task only; cleared once the task has gone
+
+// True while the microphone has been asked for but is not yet up and has not
+// given up for good. The caller needs this because the visualiser's "is it
+// showing" answer depends on the microphone already feeding it - so using that
+// answer alone to decide whether the microphone may run is circular, and a
+// first attempt that fails would never be retried (the retry cadence is 30 s,
+// the display's patience 10 s).
 volatile bool s_stopReq = false;           // loop task -> task
 volatile bool s_taskGone = false;          // task -> loop task, set just before vTaskDelete(NULL)
 volatile uint32_t s_stackFree = 0;         // the task's own uxTaskGetStackHighWaterMark(NULL)
@@ -387,6 +394,11 @@ void audioBegin() {
 #if defined(VIZ_WOW_ENABLED)
   if (!s_wowRing) s_wowRing = static_cast<wow::VizFrame *>(psram(kWowRing * sizeof(wow::VizFrame)));
 #endif
+}
+
+bool audioStartPending() {
+  return s_state == MIC_IDLE || s_state == MIC_STARTING || s_state == MIC_STALLED ||
+         s_state == MIC_NO_CODEC || s_state == MIC_NO_I2S || s_state == MIC_NO_I2C;
 }
 
 void audioPoll(bool vizShown) {

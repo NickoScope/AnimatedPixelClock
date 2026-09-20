@@ -20,27 +20,7 @@
 #include <esp_heap_caps.h>
 #include "../network/net_turns.h"
 #include "../network/network.h"
-
-// The document's blocks go to PSRAM. Under CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL
-// (4096) in this build every block ArduinoJson asks for lands in the internal
-// heap instead - the heap the Wi-Fi task takes its buffers from, and the one
-// this panel runs short of. Measured 2026-09-20: internal free reached 144 B
-// with a fetch and the portal at once.
-namespace {
-class PsramJson : public ArduinoJson::Allocator {
- public:
-  void *allocate(size_t n) override {
-    void *p = heap_caps_malloc(n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    return p ? p : heap_caps_malloc(n, MALLOC_CAP_8BIT);
-  }
-  void deallocate(void *p) override { heap_caps_free(p); }
-  void *reallocate(void *p, size_t n) override {
-    void *q = heap_caps_realloc(p, n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    return q ? q : heap_caps_realloc(p, n, MALLOC_CAP_8BIT);
-  }
-};
-inline ArduinoJson::Allocator *psramJson() { static PsramJson a; return &a; }
-}  // namespace
+#include "../util/psram_json.h"
 
 
 // "At the panel's location" means the same city, not the nearest famous one.
@@ -66,9 +46,18 @@ static volatile uint8_t s_ipState = IP_IDLE;
 static WcCity           s_ipCity;
 
 static const char *s_source   = "zone";
-// Times this lookup stood aside for someone at the portal (net_turns.h). It
-// runs once per boot, so it only has to survive a page load, not a day.
-static uint32_t s_wcYields = 0;
+// When this lookup first stood aside for someone at the portal, 0 if it is not
+// waiting (net_turns.h). It was a counter inside a compound condition, which
+// meant it was never incremented at all and the ceiling never applied: a browser
+// left open blocked the lookup for ever. A function, so there is somewhere to
+// record the waiting.
+static uint32_t s_wcYieldingSince = 0;
+static bool wcYieldToPortal() {
+  const uint32_t now = millis();
+  if (!netTurnYield(netMsSinceHttp(), s_wcYieldingSince, now)) { s_wcYieldingSince = 0; return false; }
+  if (!s_wcYieldingSince) s_wcYieldingSince = now ? now : 1;
+  return true;
+}
 static bool        s_dirty    = true;
 static bool        s_wasChosen = false;
 static float       s_lat = NAN, s_lon = NAN;
@@ -260,7 +249,7 @@ void wcHomeTick() {
   // One lookup per boot, once NTP has proved the way out works, and only when
   // nothing better will ever answer.
   if (s_ipState == IP_IDLE && !locationSet() && WiFi.status() == WL_CONNECTED && time(nullptr) > 1700000000 &&
-      !netLockBusy() && !netTurnYield(netMsSinceHttp(), s_wcYields)) {
+      !netLockBusy() && !wcYieldToPortal()) {
     s_ipState = IP_RUNNING;
     // Core 0 and 8 KB, as the weather task that does the same HTTPS and JSON work.
     if (xTaskCreatePinnedToCore(ipTask, "wcHomeIp", 8192, nullptr, 0, nullptr, 0) != pdPASS) s_ipState = IP_FAILED;

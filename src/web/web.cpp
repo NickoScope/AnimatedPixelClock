@@ -82,13 +82,20 @@ class WebJsonAllocator : public ArduinoJson::Allocator {
 // come out of the internal heap - the one the radio needs, on routes a browser
 // polls without pause and which are never held back. /api/portal already did
 // this by hand (handlePortalValues); this is the same, named once.
-static void sendDocFromPsram(JsonDocument &doc) {
+static void sendDocFromPsram(JsonDocument &doc, int code = 200) {
   const size_t n = measureJson(doc);
   char *buf = (char *)heap_caps_malloc(n + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-  if (!buf) buf = (char *)heap_caps_malloc(n + 1, MALLOC_CAP_8BIT);
-  if (!buf) { sendJsonGuarded(503, "{\"error\":\"out of memory\"}"); return; }
+  // No falling back to the internal heap for a large body: MALLOC_CAP_8BIT
+  // alone takes internal first, which is the heap this whole change exists to
+  // protect. A small reply may still come from there.
+  if (!buf && n <= 2048) buf = (char *)heap_caps_malloc(n + 1, MALLOC_CAP_8BIT);
+  if (!buf) {
+    static const char kOom[] = "{\"error\":\"out of memory\"}";
+    sendJsonBytesGuarded(503, kOom, sizeof kOom - 1);   // no String: we have just run out
+    return;
+  }
   serializeJson(doc, buf, n + 1);
-  sendJsonBytesGuarded(200, buf, n);
+  sendJsonBytesGuarded(code, buf, n);
   heap_caps_free(buf);
 }
 
@@ -455,6 +462,8 @@ void handleDeviceInfo() {
  // /api/diagnostics is this same document as a file to keep. Nobody needs to
  // download it in the middle of an episode, and /api/info - the same bytes, and
  // the one route that must never go quiet - is still there for reading.
+ // The refusal first: a 503 must not go out wearing a filename, or the browser
+ // saves the error as the diagnostics file.
  if (server.uri() == "/api/diagnostics") {
    if (webRefuseBig()) return;
    server.sendHeader("Content-Disposition", "attachment; filename=pixelclock-diagnostics.json");
@@ -1228,8 +1237,11 @@ static const uint32_t STREAM_TOTAL_LIMIT_MS = 30000; // hard cap per response
 // refills to that same ceiling either way, and the steady state is identical
 // with or without the cap. The measured win on 2026-09-20 came from the other
 // half of that commit - 41,343 B of panel.css and panel.js taken out of the
-// browser's first burst. The real lever on the send buffer is per-socket
-// TCP_SNDBUF, applied below.
+// browser's first burst. Nor is there a lever to reach for: this lwIP marks
+// SO_SNDBUF "Unimplemented" (lwip/sockets.h:211) and has no TCP_SNDBUF option
+// at all, and TCP_SND_BUF comes from sdkconfig in a pre-built SDK. Checked,
+// not assumed - an earlier note here claimed a per-socket setting was applied
+// below, and nothing was.
 #define WEB_SEND_CHUNK TCP_MSS
 
 static bool writeAllGuarded(int sock, const char* data, size_t len, uint32_t totalDeadline) {

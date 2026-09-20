@@ -619,10 +619,15 @@ void aeroDirectLoop(const AeroWant &w) {
   if (WiFi.status() != WL_CONNECTED) { s_blocked = ST_NOWIFI; return; }
   if (!clockSet()) { s_blocked = ST_NOCLOCK; return; }        // certificates, windows and caps need the date
   // A person at the portal beats a refresh that can wait (net_turns.h). The
-  // count stops a browser left open from starving this for ever.
-  { static uint32_t yields = 0;
-    if (netTurnYield(netMsSinceHttp(), yields)) { yields++; return; }
-    yields = 0; }
+  // deadline stops a browser left open from starving this for ever - counted in
+  // time, because this runs on every pass of loop() and passes are free.
+  { static uint32_t yieldingSince = 0;
+    const uint32_t nowTurn = millis();
+    if (netTurnYield(netMsSinceHttp(), yieldingSince, nowTurn)) {
+      if (!yieldingSince) yieldingSince = nowTurn ? nowTurn : 1;
+      return;
+    }
+    yieldingSince = 0; }
   if (netLockBusy()) { s_holdUntilMs = (nowMs + 2000UL) | 1; return; }   // another fetch is on the network; nothing counted
 
   Job j;

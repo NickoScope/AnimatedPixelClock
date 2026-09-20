@@ -5,7 +5,6 @@
 
 static SemaphoreHandle_t s_lock = nullptr;
 static portMUX_TYPE      s_initMux = portMUX_INITIALIZER_UNLOCKED;
-static volatile bool     s_busy = false;
 
 // Created on first use from whichever task gets there first. The mutex is
 // allocated outside the critical section, which must not allocate.
@@ -19,16 +18,20 @@ static SemaphoreHandle_t lockHandle() {
   return s_lock;
 }
 
-bool netLockBusy() { return s_busy; }
+// Asked of the mutex itself, not of a flag beside it. The flag was set after
+// the take and cleared before the give, so between one fetch giving and the
+// next taking it read "free" while the network was about to be busy again.
+// That was tolerable when the only cost was an extra fetch; now the web server
+// reads this to decide whether to send kilobytes, and a wrong "free" puts them
+// on the wire in the middle of a TLS handshake - the exact collision this is
+// here to prevent.
+bool netLockBusy() { return s_lock && xSemaphoreGetMutexHolder(s_lock) != nullptr; }
 
 bool netLockTake(uint32_t waitMs) {
   const SemaphoreHandle_t l = lockHandle();
-  if (!l || xSemaphoreTake(l, pdMS_TO_TICKS(waitMs)) != pdTRUE) return false;
-  s_busy = true;
-  return true;
+  return l && xSemaphoreTake(l, pdMS_TO_TICKS(waitMs)) == pdTRUE;
 }
 
 void netLockGive() {
-  s_busy = false;
   if (s_lock) xSemaphoreGive(s_lock);
 }

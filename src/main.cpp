@@ -1207,7 +1207,15 @@ void loop() {
   // driver was never uninstalled and its task never deleted. 9.2 KB of internal
   // RAM held until a reboot, and the task re-created every 30 s. That is the
   // debt from 2026-09-15, "the audio visualiser hangs the panel".
-  audioPoll(httpForceViz && vizShouldDisplay());
+  //
+  // vizShouldDisplay() alone is not enough, and the first version of this fix
+  // traded the leak for something worse: that answer is true *because* the
+  // microphone is feeding the visualiser, so a first attempt that failed to
+  // come up went false after ten seconds and was never asked again - the retry
+  // is on a 30 s cadence and needs to still be wanted when it arrives. So the
+  // microphone also runs while it is still trying. The leak stays closed:
+  // `wanted` goes false the moment httpForceViz does.
+  audioPoll(httpForceViz && (vizShouldDisplay() || audioStartPending()));
 #endif
 
   // Check timeout

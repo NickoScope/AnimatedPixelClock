@@ -28,8 +28,12 @@
 //      fetch goes anyway.
 //
 // Both windows are **our choice, not measured figures**, in the manner of
-// fx3d_profile.h's retry count: a page load's burst is over in well under a
-// second, so a second and a half of quiet means the browser has stopped asking.
+// fx3d_profile.h's retry count. The quiet window is set against the portal's
+// own measured cadence, not an assumed one: the page asks every 5 s
+// (/api/status, /api/panel), every 3 s (/metrics, and only on its page) and
+// every 2 s while the network log is on (web_pages.h). So 1.5 s of quiet is a
+// gap the page leaves routinely - except with the log on, where the gaps close
+// and the yield ceiling above is what lets the data through.
 
 #include <stdint.h>
 
@@ -42,13 +46,23 @@
 // How quiet the web has to have been before a fetch starts.
 #define NET_TURN_QUIET_MS 1500UL
 
-// ...and how many times in a row a fetch may be asked to stand aside before it
-// stops asking. At one poll a second from an open portal this is about a
-// minute of deference, after which the data wins.
-#define NET_TURN_MAX_YIELDS 40
+// ...and how long a fetch may be asked to stand aside before it goes anyway.
+//
+// This counted yields, not time, and that was wrong: the starters run on every
+// pass of loop(), which has no delay in it, so forty passes burned in
+// milliseconds - faster than the quiet window itself could close. The mechanism
+// was inert for exactly the two fetches that hold the network longest. Time
+// does not care how often loop() runs.
+#define NET_TURN_MAX_YIELD_MS 60000UL
 
-// Should a background fetch stand aside right now? Pure, so the host test drives
-// it without a panel.
-static inline bool netTurnYield(uint32_t msSinceHttp, uint32_t yieldsSoFar) {
-  return msSinceHttp < NET_TURN_QUIET_MS && yieldsSoFar < NET_TURN_MAX_YIELDS;
+// Should a background fetch stand aside right now?
+//   msSinceHttp     - how long since we served any HTTP request
+//   yieldingSinceMs - when this fetch first stood aside, 0 if it is not waiting
+//   nowMs           - millis()
+// Pure, so the host test drives it without a panel. Unsigned elapsed time, so
+// the millis() wrap needs no special case.
+static inline bool netTurnYield(uint32_t msSinceHttp, uint32_t yieldingSinceMs, uint32_t nowMs) {
+  if (msSinceHttp >= NET_TURN_QUIET_MS) return false;         // quiet: go
+  if (!yieldingSinceMs) return true;                          // first time: wait
+  return (uint32_t)(nowMs - yieldingSinceMs) < NET_TURN_MAX_YIELD_MS;
 }

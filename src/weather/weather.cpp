@@ -26,27 +26,7 @@
 #include <esp_heap_caps.h>
 #include "../network/net_turns.h"
 #include "../network/network.h"
-
-// The document's blocks go to PSRAM. Under CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL
-// (4096) in this build every block ArduinoJson asks for lands in the internal
-// heap instead - the heap the Wi-Fi task takes its buffers from, and the one
-// this panel runs short of. Measured 2026-09-20: internal free reached 144 B
-// with a fetch and the portal at once.
-namespace {
-class PsramJson : public ArduinoJson::Allocator {
- public:
-  void *allocate(size_t n) override {
-    void *p = heap_caps_malloc(n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    return p ? p : heap_caps_malloc(n, MALLOC_CAP_8BIT);
-  }
-  void deallocate(void *p) override { heap_caps_free(p); }
-  void *reallocate(void *p, size_t n) override {
-    void *q = heap_caps_realloc(p, n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    return q ? q : heap_caps_realloc(p, n, MALLOC_CAP_8BIT);
-  }
-};
-inline ArduinoJson::Allocator *psramJson() { static PsramJson a; return &a; }
-}  // namespace
+#include "../util/psram_json.h"
 
 
 #define WEATHER_FETCH_INTERVAL_MS (10UL * 60UL * 1000UL)
@@ -193,10 +173,15 @@ void weatherLoop() {
   // A settings change (new location, toggle) fetches now instead of waiting.
   if (!fetchKick && nextFetchMs && (long)(now - nextFetchMs) < 0) return;
   // A person at the portal beats a refresh that can wait (net_turns.h). The
-  // count stops a browser left open from starving this for ever.
-  { static uint32_t yields = 0;
-    if (netTurnYield(netMsSinceHttp(), yields)) { yields++; return; }
-    yields = 0; }
+  // deadline stops a browser left open from starving this for ever - counted in
+  // time, because this runs on every pass of loop() and passes are free.
+  { static uint32_t yieldingSince = 0;
+    const uint32_t nowTurn = millis();
+    if (netTurnYield(netMsSinceHttp(), yieldingSince, nowTurn)) {
+      if (!yieldingSince) yieldingSince = nowTurn ? nowTurn : 1;
+      return;
+    }
+    yieldingSince = 0; }
   if (netLockBusy()) return;   // another fetch holds the network; check again in a second
   if (heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) < WEATHER_TASK_STACK + 1024) {
     nextFetchMs = now + WEATHER_RETRY_INTERVAL_MS;
