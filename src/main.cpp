@@ -889,6 +889,7 @@ static bool s_netReserveFailed = false;  // and whether it came back empty
 // "loopTask", and /api/info would report that instead of the radio's failure.
 // That signal is what the whole portal fix is built on; it must stay the radio's.
 static void netReserveTake() {
+  if (!NET_RESERVE_BYTES) return;   // off: see net_reserve.h for what it cost
   if (s_netReserve) return;
   // A failed attempt is not repeated every pass: the malloc walks the heap, the
   // log line costs about ten milliseconds of blocking Serial, and both would

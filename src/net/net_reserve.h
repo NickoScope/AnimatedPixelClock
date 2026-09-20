@@ -33,7 +33,20 @@
 
 #include <stdint.h>
 
-#define NET_RESERVE_BYTES 8192
+// **Zero, and why.** Taking this at boot carves it out of the one large
+// contiguous region the heap has while it is still whole. Measured 2026-09-20:
+// the largest free internal block after boot went from **25,588 B** without the
+// reserve to **11,252 B** with it - and the rail board's direct fetch needs a
+// 13 KB contiguous block for its task stack, so holding this reserve stopped
+// both boards fetching on a panel where they had worked that morning.
+//
+// It was aimed at the symptom. The cause was fixed separately and better: the
+// send path now offers lwIP one segment at a time instead of a whole 38 KB file
+// (web.cpp, WEB_SEND_CHUNK), and after that a portal load moves the heap not at
+// all. So the reserve is off, and the code stays because the measurement that
+// justified it is real: if the radio starves again on some future build, this is
+// the lever, and the number above says what it costs.
+#define NET_RESERVE_BYTES 0
 
 // How long the radio must have been quiet before the panel takes the space back.
 // **Our choice, not a measured figure**: long enough that a burst of failures
