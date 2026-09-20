@@ -124,14 +124,15 @@ Measured with `platformio run`, against the same env without the flag:
 | | Without | With `FX3D_ENABLED` |
 |---|---|---|
 | Static RAM | 103,376 B | 104,000 B (**+624 B**, of it the blit's 384 B row) |
-| Flash | 2,270,665 B | 2,335,129 B (**+64,464 B**), the page 8.2 KB of it |
+| Flash | 2,270,665 B | 2,335,953 B (**+65,288 B**), the page 8.2 KB of it |
 
 At run time: **no internal heap per frame**. Saving or resetting the glasses profile opens NVS
 for a moment: ESP-IDF allocates the handle then (`nvs_api.cpp`), and a write that adds an entry
 to a page can grow NVS's index by a 128-byte block (`nvs_item_hash_list.hpp`/`.cpp`, v4.4.7);
 blocks that small come from internal RAM (`CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL` = 4096 in
 arduino-esp32 2.0.17's S3 sdkconfig). PSRAM: 73,984 B of frame buffers from boot (colour, two
-eye planes, depth, the encoder); the scene on screen (from 16 B to 415,072 B for the landscape,
+eye planes, depth, the encoder); the scene on screen (from 16 B to 415,072 B for the landscape and 295,752 B for the globe,
+whose per-eye tables hold what its rays find,
 87,360 B of which are its noise lattices, dead once the map is built and kept only because 87 KB
 of 16 MB is not worth a second allocation); while a look is on, 24,576 B for the captured frame plus the look (8,432 B
 on the host; 225,624 B at `6200dc7`, before the drum's tables went from per pixel to per column).
@@ -149,12 +150,19 @@ Every one is freed when it stops.
   38 and 25 ms of it their own work beyond the blit); blobs
   41.7 / 82.2 ms (mono / red-blue); globe, tunnel and voxel 18-22 fps in mono and 10-13 in
   red-blue; voxel opens in 0.45 s.
-- Answered since (`467e544`, and the landscape at the commit after it): tunnel works its eight
-  band colours out once a frame instead of three `cosf` a pixel; blobs march with `sqrtFast`
-  and no division, and the upscale reads a table instead of calling `floorf` twice a pixel;
-  the landscape's march reads a table of its steps (where, `f / z`, the fog) and floors in
-  integers, and paints a slice and the sky as bytes. Each is held to what it drew before in
-  `tools/fx3d/fx3d_host_test.cpp`, which keeps the old code verbatim.
+- Answered since, the four heavy scenes: tunnel works its eight band colours out once a frame
+  instead of three `cosf` a pixel; blobs march with `sqrtFast` and no division, and the upscale
+  reads a table instead of calling `floorf` twice a pixel; the landscape's march reads a table
+  of its steps (where, `f / z`, the fog) and floors in integers, and paints a slice and the sky
+  as bytes; the globe keeps a table per eye of what each ray finds (the normal in the Earth's
+  frame before the spin, the latitude, the longitude before the spin, the limb, the
+  atmosphere), so a frame is multiplications where it used to call `asinf` twice, `atan2f`,
+  `sinf`, three square roots and six divisions a pixel. Each is held to what it drew before in
+  `tools/fx3d/fx3d_host_test.cpp`, which keeps the old code verbatim: within one code for
+  tunnel, the landscape and the globe, and a mean of 0.0016 for blobs, whose march can end a
+  step early. On the Mac: tunnel 2.3-2.8x, the landscape 1.1-1.2x, the globe 2.9-4.0x, blobs
+  the same (the Mac's square root is one instruction). The panel's figures are the integration
+  session's to measure.
 - Answered since: card and drum sample the picture in integers and write bytes straight into
   the target; the drum keeps its table per column instead of per pixel (the rays of a column
   meet a vertical drum at one angle); the card carries its reciprocal along the row instead of

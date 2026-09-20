@@ -556,7 +556,9 @@ class BlobsScene : public Scene {
 // world clock's cities are dots.
 class GlobeScene : public Scene {
  public:
-  GlobeScene() : spin_(0.0f), decl_(0.0f), subLon_(0.0f), home_(-1), t_(0.0f) {}
+  GlobeScene() : spin_(0.0f), decl_(0.0f), subLon_(0.0f), home_(-1), t_(0.0f) {
+    for (int k = 0; k < 3; k++) tab_[k].valid = false;
+  }
   const char *id() const { return "globe"; }
   void setup(View &v) const {
     v.f = 110.0f;
@@ -570,6 +572,7 @@ class GlobeScene : public Scene {
   bool fills() const { return true; }
   void reset(uint32_t seed) {
     spin_ = kPi;   // the side facing the viewer starts at longitude 0
+    for (int k = 0; k < 3; k++) tab_[k].valid = false;
     started_ = false;
     t_ = 0.0f;
     Rng rng(seed);
@@ -594,13 +597,22 @@ class GlobeScene : public Scene {
       started_ = true;
     }
   }
+  // Only two things change from frame to frame: the Earth's spin and where
+  // the sun is. Everything a pixel needs besides those - where its ray meets
+  // the globe, the latitude there, the longitude before the spin, how the
+  // limb dims it, the atmosphere just outside - is the same until the view
+  // changes, so it is a table per eye. What is left in the frame is
+  // multiplications: the per-pixel asinf, atan2f, sinf, the three square
+  // roots and the six divisions are all calls on the S3 (README, "What
+  // floats cost on the S3").
   void draw(Ctx &c) {
     const View &v = c.view;
+    Tab &t = tab_[c.eye + 1];
+    if (!t.valid || t.f != v.f || t.b != v.b || t.z0 != v.z0 || t.cx != v.cx || t.cy != v.cy) build(t, v, c.eye);
     const float e = (float)c.eye;
     const float shift = e * v.f * v.b / (2.0f * v.z0);
     // Stars, far behind the globe: at depth kZStars for this eye.
-    for (int y = 0; y < kH; y++)
-      for (int x = 0; x < kW; x++) c.pixel(y * kW + x, 0.0f, 0.0f, 0.0f);
+    c.clear();
     const float starShift = e * 0.5f * v.b * v.f / kZStars - shift;   // where depth kZStars lands for this eye
     for (int k = 0; k < kStars; k++) starPoint(c, star_[k].x - starShift, star_[k].y, star_[k].z);
     c.note(kZStars);
@@ -609,61 +621,67 @@ class GlobeScene : public Scene {
     const V3 sun = v3(cosf(decl_) * sinf(subLon_), sinf(decl_), cosf(decl_) * cosf(subLon_));
     const V3 centre = v3(0.0f, 0.0f, kZ);
     const V3 view = v3(-0.35f, 0.25f, -1.0f);   // for the glint
-    float zMin = kZ;
-    for (int y = 0; y < kH; y++)
-      for (int x = 0; x < kW; x++) {
-        const Ray r = eyeRay(v, c.eye, (float)x, (float)y);
-        const V3 d = normalize(r.d);
-        const V3 oc = r.o - centre;
-        const float bb = dot(oc, d), cc = dot(oc, oc) - kR * kR, disc = bb * bb - cc;
-        const int i = y * kW + x;
-        if (disc < 0.0f) {
-          // A thin atmosphere just outside the limb.
-          const float miss = sqrtf(-disc);
-          const float glow = clampf(1.0f - miss / 0.12f, 0.0f, 1.0f);
-          if (glow > 0.0f) c.pixel(i, 0.05f * glow, 0.18f * glow, 0.55f * glow * glow);
-          continue;
+    // The table holds q, the normal in the Earth's frame before the spin.
+    // dot(ne, sun) is then dot(q, rotY(spin) sun), and the glint's dot(n, hv)
+    // is dot(q, rotZ(-0.41) hv): both vectors are the frame's, not a pixel's.
+    const V3 sunQ = apply(rotY(spin_), sun);
+    const V3 hvQ = apply(rotZ(-0.41f), normalize(apply(m, sun) + normalize(view) * -1.0f));
+    const float spinDeg = spin_ * (180.0f / kPi);
+    for (int i = 0; i < kPixels; i++) {
+      const Px &px = t.px[i];
+      if (!px.limb) {   // the ray missed: a thin atmosphere just outside the limb
+        if (px.glow) {
+          const float glow = (float)px.glow * (1.0f / 255.0f);
+          c.pixel(i, 0.05f * glow, 0.18f * glow, 0.55f * glow * glow);
         }
-        const float t = -bb - sqrtf(disc);
-        const V3 p = r.o + d * t;
-        const V3 n = (p - centre) * (1.0f / kR);
-        if (p.z < zMin) zMin = p.z;
-        // Into the Earth's frame: the transpose of m.
-        const V3 ne = v3(m.m[0][0] * n.x + m.m[1][0] * n.y + m.m[2][0] * n.z,
-                         m.m[0][1] * n.x + m.m[1][1] * n.y + m.m[2][1] * n.z,
-                         m.m[0][2] * n.x + m.m[1][2] * n.y + m.m[2][2] * n.z);
-        const float lat = asinf(clampf(ne.y, -1.0f, 1.0f)) * (180.0f / kPi);
-        const float lon = atan2f(ne.x, ne.z) * (180.0f / kPi);
-        const float land = landAt(lat, lon);
-        const float ice = lat > 72.0f || lat < -64.0f ? 1.0f : 0.0f;
-        // Sun elevation here, and the world clock's twilight ramp.
-        const float el = asinf(clampf(dot(ne, sun), -1.0f, 1.0f)) * (180.0f / kPi);
-        const float day = clampf((el + 6.0f) / 6.0f, 0.0f, 1.0f);
-        const float lit = 0.18f + 0.82f * clampf(sinf(el * kPi / 180.0f), 0.0f, 1.0f);
-        Col k;
-        k.r = mixf(0.015f, mixf(0.14f, 0.36f, clampf((30.0f - fabsf(lat)) / 20.0f, 0.0f, 1.0f)), land);
-        k.g = mixf(0.05f, mixf(0.32f, 0.30f, clampf((30.0f - fabsf(lat)) / 20.0f, 0.0f, 1.0f)), land);
-        k.b = mixf(0.20f, 0.08f, land);
-        k.r = mixf(k.r, 0.85f, ice);
-        k.g = mixf(k.g, 0.9f, ice);
-        k.b = mixf(k.b, 0.97f, ice);
-        // Night: the land a faint outline, the sea black.
-        const float nr = 0.05f * land, ng = 0.055f * land, nb = 0.08f * land + 0.012f;
-        float gl = 0.0f;   // the sun's glint on the sea
-        if (land < 0.5f && day > 0.0f) {
-          const V3 sc = apply(m, sun);
-          const V3 hv = normalize(sc + normalize(view) * -1.0f);
-          const float h = dot(n, hv);
-          if (h > 0.0f) {
-            float h2 = h * h, h4 = h2 * h2, h8 = h4 * h4, h16 = h8 * h8;
-            gl = 0.5f * h16 * h8 * day;
-          }
-        }
-        const float limb = 0.55f + 0.45f * clampf(-dot(n, d), 0.0f, 1.0f);
-        c.pixel(i, limb * mixf(nr, k.r * lit, day) + gl, limb * mixf(ng, k.g * lit, day) + gl,
-                limb * mixf(nb, k.b * lit, day) + gl);
+        continue;
       }
-    c.note(zMin);
+      const V3 q = v3((float)px.q[0] * kQ, (float)px.q[1] * kQ, (float)px.q[2] * kQ);
+      const float lat = (float)px.lat * 0.01f;
+      float lon = (float)px.lon * 0.01f - spinDeg;
+      while (lon < -180.0f) lon += 360.0f;
+      while (lon > 180.0f) lon -= 360.0f;
+      const float land = landAt(lat, lon);
+      const float ice = lat > 72.0f || lat < -64.0f ? 1.0f : 0.0f;
+      // The sine of the sun's elevation here, and the world clock's twilight
+      // ramp. sin(asin(x)) is x, so the elevation itself is only needed
+      // between -6 degrees and 0, where a cubic and a fifth term stand in for
+      // asinf (their error below |x| = 0.11 is under a hundred millionth).
+      const float ds = dot(q, sunQ);
+      float day;
+      if (ds >= 0.0f) {
+        day = 1.0f;
+      } else if (ds <= kSinDusk) {
+        day = 0.0f;
+      } else {
+        const float x2 = ds * ds;
+        const float el = (ds + ds * x2 * (1.0f / 6.0f + x2 * (3.0f / 40.0f))) * (180.0f / kPi);
+        day = clampf((el + 6.0f) * (1.0f / 6.0f), 0.0f, 1.0f);
+      }
+      const float lit = 0.18f + 0.82f * clampf(ds, 0.0f, 1.0f);
+      const float warm = clampf((30.0f - fabsf(lat)) * (1.0f / 20.0f), 0.0f, 1.0f);
+      Col k;
+      k.r = mixf(0.015f, mixf(0.14f, 0.36f, warm), land);
+      k.g = mixf(0.05f, mixf(0.32f, 0.30f, warm), land);
+      k.b = mixf(0.20f, 0.08f, land);
+      k.r = mixf(k.r, 0.85f, ice);
+      k.g = mixf(k.g, 0.9f, ice);
+      k.b = mixf(k.b, 0.97f, ice);
+      // Night: the land a faint outline, the sea black.
+      const float nr = 0.05f * land, ng = 0.055f * land, nb = 0.08f * land + 0.012f;
+      float gl = 0.0f;   // the sun's glint on the sea
+      if (land < 0.5f && day > 0.0f) {
+        const float h = dot(q, hvQ);
+        if (h > 0.0f) {
+          const float h2 = h * h, h4 = h2 * h2, h8 = h4 * h4, h16 = h8 * h8;
+          gl = 0.5f * h16 * h8 * day;
+        }
+      }
+      const float limb = (float)px.limb * (1.0f / 255.0f);
+      c.pixel(i, limb * mixf(nr, k.r * lit, day) + gl, limb * mixf(ng, k.g * lit, day) + gl,
+              limb * mixf(nb, k.b * lit, day) + gl);
+    }
+    c.note(t.zMin);
     // The cities, on the side facing us.
     for (int k = 0; k < (int)WORLD_CITY_COUNT; k++) {
       const float la = kWorldCities[k].lat * (kPi / 180.0f), lo = kWorldCities[k].lon * (kPi / 180.0f);
@@ -682,7 +700,65 @@ class GlobeScene : public Scene {
 
  private:
   static constexpr float kZ = 4.5f, kR = 1.0f, kZ0 = 4.5f, kZStars = 7.0f;
+  static constexpr float kQ = 1.0f / 32767.0f;
+  static constexpr float kSinDusk = -0.104528463f;   // sin(-6 degrees): the world clock's dusk
   static const int kStars = 60;
+  // What a pixel's ray finds, until the view changes: the normal in the
+  // Earth's frame before the spin, where that is on the map, and the light
+  // the limb leaves. limb is never below 0.55 of full, so 0 marks a miss.
+  struct Px {
+    int16_t q[3];       // the normal before the spin, x 32767
+    int16_t lat, lon;   // hundredths of a degree; lon before the spin
+    uint8_t limb;       // 0.55 + 0.45 |cos| as a code; 0: the ray missed
+    uint8_t glow;       // the atmosphere just outside the limb, as a code
+  };
+  struct Tab {
+    bool valid;
+    float f, b, z0, cx, cy, zMin;
+    Px px[kPixels];
+  };
+  Tab tab_[3];   // left, mono, right
+
+  static void build(Tab &t, const View &v, int eye) {
+    const V3 centre = v3(0.0f, 0.0f, kZ);
+    const M3 back = rotZ(-0.41f);   // camera frame -> the Earth's, before the spin
+    t.zMin = kZ;
+    for (int y = 0; y < kH; y++)
+      for (int x = 0; x < kW; x++) {
+        Px &px = t.px[y * kW + x];
+        px.limb = 0;
+        px.glow = 0;
+        px.q[0] = px.q[1] = px.q[2] = 0;
+        px.lat = px.lon = 0;
+        const Ray r = eyeRay(v, eye, (float)x, (float)y);
+        const V3 d = normalize(r.d);
+        const V3 oc = r.o - centre;
+        const float bb = dot(oc, d), cc = dot(oc, oc) - kR * kR, disc = bb * bb - cc;
+        if (disc < 0.0f) {
+          const float miss = sqrtf(-disc);
+          px.glow = (uint8_t)(clampf(1.0f - miss / 0.12f, 0.0f, 1.0f) * 255.0f + 0.5f);
+          continue;
+        }
+        const V3 p = r.o + d * (-bb - sqrtf(disc));
+        const V3 n = (p - centre) * (1.0f / kR);
+        if (p.z < t.zMin) t.zMin = p.z;
+        const V3 q = apply(back, n);
+        px.q[0] = (int16_t)(clampf(q.x, -1.0f, 1.0f) * 32767.0f + (q.x < 0.0f ? -0.5f : 0.5f));
+        px.q[1] = (int16_t)(clampf(q.y, -1.0f, 1.0f) * 32767.0f + (q.y < 0.0f ? -0.5f : 0.5f));
+        px.q[2] = (int16_t)(clampf(q.z, -1.0f, 1.0f) * 32767.0f + (q.z < 0.0f ? -0.5f : 0.5f));
+        const float lat = asinf(clampf(q.y, -1.0f, 1.0f)) * (180.0f / kPi);
+        const float lon = atan2f(q.x, q.z) * (180.0f / kPi);
+        px.lat = (int16_t)(lat * 100.0f + (lat < 0.0f ? -0.5f : 0.5f));
+        px.lon = (int16_t)(lon * 100.0f + (lon < 0.0f ? -0.5f : 0.5f));
+        px.limb = (uint8_t)((0.55f + 0.45f * clampf(-dot(n, d), 0.0f, 1.0f)) * 255.0f + 0.5f);
+      }
+    t.f = v.f;
+    t.b = v.b;
+    t.z0 = v.z0;
+    t.cx = v.cx;
+    t.cy = v.cy;
+    t.valid = true;
+  }
   float spin_, decl_, subLon_;
   int home_;
   bool started_ = false;

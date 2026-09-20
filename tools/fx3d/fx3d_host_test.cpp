@@ -1716,6 +1716,163 @@ class VoxelOld : public Scene {
       }
   }
 };
+// The globe as it was at 4ad229f: asinf, atan2f and sinf for every pixel,
+// the glint's frame vectors worked out per pixel too.
+class GlobeOld : public Scene {
+ public:
+  GlobeOld() : spin_(0.0f), decl_(0.0f), subLon_(0.0f), home_(-1), t_(0.0f) {}
+  const char *id() const { return "globe"; }
+  void setup(View &v) const {
+    v.f = 110.0f;
+    v.z0 = kZ0;
+    v.nearZ = 0.5f;
+  }
+  void depthRange(float &zn, float &zf) const {
+    zn = kZ - kR;
+    zf = kZStars;
+  }
+  bool fills() const { return true; }
+  void reset(uint32_t seed) {
+    spin_ = kPi;   // the side facing the viewer starts at longitude 0
+    started_ = false;
+    t_ = 0.0f;
+    Rng rng(seed);
+    for (int k = 0; k < kStars; k++) {
+      star_[k].x = rng.range(0.0f, (float)kW);
+      star_[k].y = rng.range(0.0f, (float)kH);
+      star_[k].z = rng.range(0.15f, 0.6f);   // brightness
+    }
+  }
+  // Which of the world clock's cities is home, or -1: set by the panel.
+  void setHome(int i) { home_ = i; }
+  void step(float dt, const Env &w) {
+    spin_ = wrapAngle(spin_ + dt * kTwoPi / 48.0f);
+    t_ = fmodf(t_ + dt, 60.0f);
+    if (w.valid) {
+      decl_ = -23.44f * (kPi / 180.0f) * cosf(kTwoPi * (float)(w.yday + 10) / 365.0f);
+      subLon_ = -15.0f * (w.utcHours - 12.0f) * (kPi / 180.0f);
+      // The longitude facing the viewer is pi - spin. Open a radian east of
+      // the subsolar point, on the afternoon side with the dusk line in view;
+      // the spin then carries the view westward, as the real Earth turns.
+      if (!started_) spin_ = wrapAngle(kPi - subLon_ - 1.0f);
+      started_ = true;
+    }
+  }
+  void draw(Ctx &c) {
+    const View &v = c.view;
+    const float e = (float)c.eye;
+    const float shift = e * v.f * v.b / (2.0f * v.z0);
+    // Stars, far behind the globe: at depth kZStars for this eye.
+    for (int y = 0; y < kH; y++)
+      for (int x = 0; x < kW; x++) c.pixel(y * kW + x, 0.0f, 0.0f, 0.0f);
+    const float starShift = e * 0.5f * v.b * v.f / kZStars - shift;   // where depth kZStars lands for this eye
+    for (int k = 0; k < kStars; k++) starPoint(c, star_[k].x - starShift, star_[k].y, star_[k].z);
+    c.note(kZStars);
+    // The globe: tilted 23.4 degrees for the look, spun about its axis.
+    const M3 m = mul(rotZ(0.41f), rotY(spin_));   // Earth frame -> camera
+    const V3 sun = v3(cosf(decl_) * sinf(subLon_), sinf(decl_), cosf(decl_) * cosf(subLon_));
+    const V3 centre = v3(0.0f, 0.0f, kZ);
+    const V3 view = v3(-0.35f, 0.25f, -1.0f);   // for the glint
+    float zMin = kZ;
+    for (int y = 0; y < kH; y++)
+      for (int x = 0; x < kW; x++) {
+        const Ray r = eyeRay(v, c.eye, (float)x, (float)y);
+        const V3 d = normalize(r.d);
+        const V3 oc = r.o - centre;
+        const float bb = dot(oc, d), cc = dot(oc, oc) - kR * kR, disc = bb * bb - cc;
+        const int i = y * kW + x;
+        if (disc < 0.0f) {
+          // A thin atmosphere just outside the limb.
+          const float miss = sqrtf(-disc);
+          const float glow = clampf(1.0f - miss / 0.12f, 0.0f, 1.0f);
+          if (glow > 0.0f) c.pixel(i, 0.05f * glow, 0.18f * glow, 0.55f * glow * glow);
+          continue;
+        }
+        const float t = -bb - sqrtf(disc);
+        const V3 p = r.o + d * t;
+        const V3 n = (p - centre) * (1.0f / kR);
+        if (p.z < zMin) zMin = p.z;
+        // Into the Earth's frame: the transpose of m.
+        const V3 ne = v3(m.m[0][0] * n.x + m.m[1][0] * n.y + m.m[2][0] * n.z,
+                         m.m[0][1] * n.x + m.m[1][1] * n.y + m.m[2][1] * n.z,
+                         m.m[0][2] * n.x + m.m[1][2] * n.y + m.m[2][2] * n.z);
+        const float lat = asinf(clampf(ne.y, -1.0f, 1.0f)) * (180.0f / kPi);
+        const float lon = atan2f(ne.x, ne.z) * (180.0f / kPi);
+        const float land = landAt(lat, lon);
+        const float ice = lat > 72.0f || lat < -64.0f ? 1.0f : 0.0f;
+        // Sun elevation here, and the world clock's twilight ramp.
+        const float el = asinf(clampf(dot(ne, sun), -1.0f, 1.0f)) * (180.0f / kPi);
+        const float day = clampf((el + 6.0f) / 6.0f, 0.0f, 1.0f);
+        const float lit = 0.18f + 0.82f * clampf(sinf(el * kPi / 180.0f), 0.0f, 1.0f);
+        Col k;
+        k.r = mixf(0.015f, mixf(0.14f, 0.36f, clampf((30.0f - fabsf(lat)) / 20.0f, 0.0f, 1.0f)), land);
+        k.g = mixf(0.05f, mixf(0.32f, 0.30f, clampf((30.0f - fabsf(lat)) / 20.0f, 0.0f, 1.0f)), land);
+        k.b = mixf(0.20f, 0.08f, land);
+        k.r = mixf(k.r, 0.85f, ice);
+        k.g = mixf(k.g, 0.9f, ice);
+        k.b = mixf(k.b, 0.97f, ice);
+        // Night: the land a faint outline, the sea black.
+        const float nr = 0.05f * land, ng = 0.055f * land, nb = 0.08f * land + 0.012f;
+        float gl = 0.0f;   // the sun's glint on the sea
+        if (land < 0.5f && day > 0.0f) {
+          const V3 sc = apply(m, sun);
+          const V3 hv = normalize(sc + normalize(view) * -1.0f);
+          const float h = dot(n, hv);
+          if (h > 0.0f) {
+            float h2 = h * h, h4 = h2 * h2, h8 = h4 * h4, h16 = h8 * h8;
+            gl = 0.5f * h16 * h8 * day;
+          }
+        }
+        const float limb = 0.55f + 0.45f * clampf(-dot(n, d), 0.0f, 1.0f);
+        c.pixel(i, limb * mixf(nr, k.r * lit, day) + gl, limb * mixf(ng, k.g * lit, day) + gl,
+                limb * mixf(nb, k.b * lit, day) + gl);
+      }
+    c.note(zMin);
+    // The cities, on the side facing us.
+    for (int k = 0; k < (int)WORLD_CITY_COUNT; k++) {
+      const float la = kWorldCities[k].lat * (kPi / 180.0f), lo = kWorldCities[k].lon * (kPi / 180.0f);
+      const V3 ce = v3(cosf(la) * sinf(lo), sinf(la), cosf(la) * cosf(lo));
+      const V3 cn = apply(m, ce);
+      const V3 p = centre + cn * (kR * 1.01f);
+      if (dot(cn, normalize(p - v3(e * 0.5f * v.b, 0.0f, 0.0f))) > -0.15f) continue;   // on the far side
+      const bool night = dot(ce, sun) < 0.0f;
+      const bool isHome = k == home_;
+      const float pulse = isHome ? 0.6f + 0.4f * sinf(kTwoPi * t_ / 1.5f) : 1.0f;
+      if (night) c.color(1.0f, 0.75f, 0.25f);
+      else c.color(1.0f, 1.0f, 1.0f);
+      c.dot(p, isHome ? 1.3f : 0.7f, pulse);
+    }
+  }
+
+ private:
+  static constexpr float kZ = 4.5f, kR = 1.0f, kZ0 = 4.5f, kZStars = 7.0f;
+  static const int kStars = 60;
+  float spin_, decl_, subLon_;
+  int home_;
+  bool started_ = false;
+  float t_;
+  V3 star_[kStars];
+
+  static float cell(int row, int col) {
+    if (row < 0 || row >= WORLD_ROWS) return 0.0f;
+    col = ((col % WORLD_COLS) + WORLD_COLS) % WORLD_COLS;
+    return (kWorldMask[row] >> col) & 1ULL ? 1.0f : 0.0f;
+  }
+  // The mask read bilinearly, then a soft threshold: coastlines without steps.
+  static float landAt(float lat, float lon) {
+    const float fr = (WORLD_TOP - lat) / ((WORLD_TOP - WORLD_BOTTOM) / WORLD_ROWS) - 0.5f;
+    const float fc = (lon + 180.0f) / (360.0f / WORLD_COLS) - 0.5f;
+    const int r0 = (int)floorf(fr), c0 = (int)floorf(fc);
+    const float ar = fr - (float)r0, ac = fc - (float)c0;
+    const float v = mixf(mixf(cell(r0, c0), cell(r0, c0 + 1), ac), mixf(cell(r0 + 1, c0), cell(r0 + 1, c0 + 1), ac), ar);
+    return smoothstepf(0.3f, 0.7f, v);
+  }
+  static void starPoint(Ctx &c, float x, float y, float v) {
+    const int ix = (int)floorf(x), iy = (int)floorf(y);
+    if ((unsigned)ix >= (unsigned)kW || (unsigned)iy >= (unsigned)kH) return;
+    c.pixel(iy * kW + ix, v, v, v);
+  }
+};
 }  // namespace ref
 
 // How far one frame is from another: the frame for this eye (the eye's plane
@@ -1857,6 +2014,53 @@ static void heavyScenesMatch() {
     std::printf("  voxel against 467e544: mean %.4f, worst %d, %ld of %ld bytes over 2 (%ld lit, %ld frames)\n",
                 sum / (double)d.bytes, d.worst, d.over, d.bytes, d.lit, rows);
     CHECK(sum / (double)d.bytes < 0.05 && d.over * 500 < d.bytes && d.lit > 20000);
+  }
+  // The globe: the table holds the geometry in 1/32767 of a unit and
+  // hundredths of a degree, so a coastline or the terminator can fall on the
+  // other side of a pixel. The sun moves with the clock, so both are stepped
+  // with the same environment.
+  {
+    static GlobeScene sc;
+    static ref::GlobeOld old;
+    sc.reset(3);
+    old.reset(3);
+    FrameDiff d;
+    double sum = 0.0;
+    long frames = 0;
+    Env w;
+    w.valid = true;
+    w.yday = 80;
+    for (int k = 0; k < 6; k++) {
+      w.utcHours = 3.0f + 3.7f * (float)k;
+      const float dt = 1.7f + 0.3f * (float)k;
+      sc.step(dt, w);
+      old.step(dt, w);
+      for (int eye = -1; eye <= 1; eye++) {
+        Bufs a, b;
+        Ctx ca, cb;
+        a.bind(ca);
+        b.bind(cb);
+        sc.setup(ca.view);
+        old.setup(cb.view);
+        ca.eye = cb.eye = eye;
+        ca.view.b = cb.view.b = eye ? 0.08f : 0.0f;
+        sc.draw(ca);
+        old.draw(cb);
+        FrameDiff one;
+        diffFrame(a, b, eye, 2, one);
+        const uint8_t *na = eye ? (eye < 0 ? a.left.data() : a.right.data()) : a.rgb.data();
+        const uint8_t *nb = eye ? (eye < 0 ? b.left.data() : b.right.data()) : b.rgb.data();
+        for (long i = 0; i < one.bytes; i++) sum += na[i] > nb[i] ? na[i] - nb[i] : nb[i] - na[i];
+        d.bytes += one.bytes;
+        d.over += one.over;
+        d.lit += one.lit;
+        if (one.worst > d.worst) d.worst = one.worst;
+        frames++;
+      }
+    }
+    std::printf("  globe against 4ad229f: mean %.4f, worst %d, %ld of %ld bytes over 2 (%ld lit, %ld frames)\n",
+                sum / (double)d.bytes, d.worst, d.over, d.bytes, d.lit, frames);
+    CHECK(sum / (double)d.bytes < 0.05 && d.over * 200 < d.bytes && d.lit > 20000);
   }
 }
 
