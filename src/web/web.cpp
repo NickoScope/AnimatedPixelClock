@@ -1209,6 +1209,10 @@ void handlePortalValues() {
 static const uint32_t STREAM_IDLE_LIMIT_MS = 4000;   // no bytes drained -> stalled
 static const uint32_t STREAM_TOTAL_LIMIT_MS = 30000; // hard cap per response
 
+// One TCP segment on a 1500-byte link: 1500 - 20 (IP) - 20 (TCP). Offering
+// more only asks lwIP to hold more of our bytes in internal RAM.
+#define WEB_SEND_CHUNK 1460
+
 static bool writeAllGuarded(int sock, const char* data, size_t len, uint32_t totalDeadline) {
   uint32_t idleDeadline = millis() + STREAM_IDLE_LIMIT_MS;
   while (len > 0) {
@@ -1217,7 +1221,15 @@ static bool writeAllGuarded(int sock, const char* data, size_t len, uint32_t tot
       return false; // client stalled
     }
     esp_task_wdt_reset();
-    int sent = send(sock, data, len, MSG_DONTWAIT);
+    // One segment at a time, never the whole file. Offering lwIP all 38 KB of
+    // panel.js lets it buffer as much as its window allows, and those buffers
+    // come out of the internal heap the radio needs - measured 2026-09-20: one
+    // portal load in a real browser cost seventeen failed 1,626 B allocations
+    // in the Wi-Fi task and left 556 B of internal heap. A segment is the
+    // largest amount that can leave in one packet anyway, so nothing is lost by
+    // offering only that much and waiting for it to drain.
+    const size_t chunk = len < WEB_SEND_CHUNK ? len : WEB_SEND_CHUNK;
+    int sent = send(sock, data, chunk, MSG_DONTWAIT);
     if (sent > 0) {
       data += sent;
       len -= (size_t)sent;

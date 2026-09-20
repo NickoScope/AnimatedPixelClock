@@ -1352,7 +1352,10 @@ window.scrollTo(0, 0);
 closeNav();
 try { localStorage.setItem('soled_section', key); } catch (e) {}
 }
-navItems.forEach(function (n) { n.addEventListener('click', function () { showPage(n.dataset.nav); }); });
+navItems.forEach(function (n) { n.addEventListener('click', function () {
+ if (window.loadPanelAssets) window.loadPanelAssets();   // going anywhere means the first burst is over
+ showPage(n.dataset.nav);
+}); });
 try { var s = localStorage.getItem('soled_section'); if (s && $('[data-page="' + s + '"]')) showPage(s); } catch (e) {}
 var accSw = $$('.acc-sw');
 function setAccent(acc) {
@@ -1854,6 +1857,10 @@ el.addEventListener('input', renderFrame); el.addEventListener('change', renderF
 });
 setupListDrop();
 function pollMetrics() {
+// Only while its page is on screen. This ran every 1.5 s whatever the reader
+// was looking at, and on this board every request costs internal RAM.
+var pg = $('[data-page="metrics"]');
+if (pg && !pg.classList.contains('active')) return;
 fetch('/metrics').then(function (r) { return r.json(); }).then(function (data) {
 if (data.time) DEVTIME = data.time;
 if (data.metrics) data.metrics.forEach(function (d) { var m = byId(d.id); if (m) m.value = d.value; });
@@ -1865,7 +1872,7 @@ fetch('/metrics').then(function (r) { return r.json(); }).then(function (data) {
 if (data.time) DEVTIME = data.time;
 if (data.metrics && data.metrics.length) { metricsData = data.metrics; renderMetrics(); buildDropCells(); buildChipTray(); renderFrame(); }
 else { $('#metricsList').innerHTML = '<p class="field-hint">No metrics received yet. Start the companion app on your PC.</p>'; buildDropCells(); buildChipTray(); renderFrame(); }
-setInterval(pollMetrics, 1500);
+setInterval(pollMetrics, 3000);
 }).catch(function () { $('#metricsList').innerHTML = '<p class="field-hint">Could not load metrics from the device.</p>'; });
 }
 form.addEventListener('submit', function (e) {
@@ -2142,13 +2149,29 @@ $$('[data-need]').forEach(function (el) { if (!F[el.getAttribute('data-need')] &
 if (!$('section.page.active')) showPage('clock', true);   // the remembered page is one this build lacks
 if (!F.panel || !root) { html.classList.add('cfg-feat'); return; }
 root.setAttribute('data-f', list);
-var css = document.createElement('link');
-css.rel = 'stylesheet'; css.href = '/panel.css?v=%ASSETVER%';
-css.onload = css.onerror = function () { html.classList.add('cfg-feat'); };
-document.head.appendChild(css);
-var js = document.createElement('script');
-js.src = '/panel.js?v=%ASSETVER%';
-document.body.appendChild(js);
+// panel.css and panel.js are 41 KB together, and fetching them alongside the
+// first burst is what hurts this board: the browser opens five connections at
+// once and every one of them holds internal RAM the radio needs (measured
+// 2026-09-20 - one portal load cost seventeen failed allocations in the Wi-Fi
+// task). So they are fetched after the page has settled, or at once if the
+// reader goes somewhere that needs them first. Nothing is lost: until they
+// arrive the Panel group is simply not interactive, which it was not during
+// the fetch either.
+var panelAssetsIn = false;
+function loadPanelAssets() {
+ if (panelAssetsIn) return;
+ panelAssetsIn = true;
+ var css = document.createElement('link');
+ css.rel = 'stylesheet'; css.href = '/panel.css?v=%ASSETVER%';
+ css.onload = css.onerror = function () { html.classList.add('cfg-feat'); };
+ document.head.appendChild(css);
+ var js = document.createElement('script');
+ js.src = '/panel.js?v=%ASSETVER%';
+ document.body.appendChild(js);
+}
+window.loadPanelAssets = loadPanelAssets;   // showPage() calls it on the first move
+if (window.requestIdleCallback) requestIdleCallback(loadPanelAssets, { timeout: 2500 });
+else setTimeout(loadPanelAssets, 1500);
 }
 function colorRow(slot, label, hex) {
 return '<label style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:5px 0"><span>' + esc(label) + '</span><input type="color" name="color_' + slot + '" value="' + hex + '"></label>';
