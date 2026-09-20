@@ -1218,7 +1218,7 @@ void sendJsonBytesGuarded(int code, const char* data, size_t len) {
 // (web_heap_backoff.h has the measurement and the reasoning). The socket is
 // dropped with the refusal so the queue drains at once. The small JSON routes
 // are never refused - /api/info is how anyone finds out what is happening.
-static uint32_t s_webRefused = 0, s_webRefusedInARow = 0;
+static uint32_t s_webRefused = 0, s_webRefusedInARow = 0, s_webLastRefuseMs = 0;
 uint32_t webRefusedCount() { return s_webRefused; }
 
 // Called first in each big-blob handler, before any header of its own is
@@ -1235,20 +1235,16 @@ uint32_t webRefusedCount() { return s_webRefused; }
 // saved against the blob it replaces.
 static bool webRefuseBig() {
   extern uint32_t allocFailWifiAgeMs();
-  // The streak counts refusals within one episode of starvation, so it is also
-  // cleared when a calm spell ends: otherwise a count left over from an hour ago
-  // would spend the escape hatch on the first blob of the next episode.
-  static bool wasCalm = true;
-  const uint32_t age = allocFailWifiAgeMs();
-  const bool fresh = age < WEB_HEAP_BACKOFF_MS;
-  if (fresh && wasCalm) s_webRefusedInARow = 0;
-  wasCalm = !fresh;
-  if (!webHeapBackoffActive(age, s_webRefusedInARow)) {
+  // A streak left over from an earlier episode is dropped first
+  // (web_heap_backoff.h says why it is keyed on time, not on a sampled flag).
+  s_webRefusedInARow = webHeapStreakNow(s_webRefusedInARow, millis() - s_webLastRefuseMs);
+  if (!webHeapBackoffActive(allocFailWifiAgeMs(), s_webRefusedInARow)) {
     s_webRefusedInARow = 0;
     return false;
   }
   s_webRefused++;
   s_webRefusedInARow++;
+  s_webLastRefuseMs = millis();
   netMarkHttp();
   server.sendHeader("Retry-After", "1");
   server.sendHeader("Cache-Control", "no-store");

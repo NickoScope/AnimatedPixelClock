@@ -53,6 +53,16 @@ int main() {
   // refuse at any streak, which is the silent-portal bug it exists to prevent.
   is(0 < WEB_HEAP_BACKOFF_MS && !webHeapBackoffActive(0, WEB_HEAP_REFUSE_STREAK), true,
      "fresh failure plus a full streak does not refuse");
+  // The streak belongs to one episode: a refusal older than the window is gone.
+  eq(webHeapStreakNow(5, 0), 5, "a refusal just now keeps the streak");
+  eq(webHeapStreakNow(5, WEB_HEAP_BACKOFF_MS - 1), 5, "still inside the window");
+  eq(webHeapStreakNow(5, WEB_HEAP_BACKOFF_MS), 0, "at the window, a new episode");
+  eq(webHeapStreakNow(5, 3600000), 0, "an hour later, certainly new");
+  eq(webHeapStreakNow(0, 0), 0, "nothing to drop");
+  // The case the dead flag could not see: nobody asked for a blob during the
+  // calm, so only the clock can tell the episodes apart.
+  eq(webHeapStreakNow(WEB_HEAP_REFUSE_STREAK, WEB_HEAP_BACKOFF_MS * 100), 0,
+     "a full streak does not survive a quiet spell");
   printf("%d checks, %d failed\n", checks, failed);
   return failed ? 1 : 0;
 }

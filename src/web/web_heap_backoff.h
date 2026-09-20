@@ -54,6 +54,16 @@ static inline uint32_t webHeapFailAgeMs(uint32_t nowMs, uint32_t stampMs) {
   return age < ALLOC_FAIL_WIFI_NEVER ? age : ALLOC_FAIL_WIFI_NEVER - 1;
 }
 
+// The refusal streak belongs to one episode of starvation. A refusal older than
+// the window is from a previous one - the window is three seconds - so the
+// count starts again rather than spending the escape hatch on the first blob of
+// the next episode. Pure, and keyed on the time of the last refusal rather than
+// on sampling "was it calm when someone last asked": a sampled flag cannot
+// notice an episode nobody asked during, which is the case this is for.
+static inline uint32_t webHeapStreakNow(uint32_t streak, uint32_t sinceLastRefuseMs) {
+  return sinceLastRefuseMs >= WEB_HEAP_BACKOFF_MS ? 0 : streak;
+}
+
 // True while the portal should refuse large responses: the radio failed
 // recently, and we have not already refused a whole page load's worth in a row.
 // Pure, so the host test drives both halves without a panel.
