@@ -28,6 +28,9 @@ and reports "changed" and "was already so" as different outcomes - because an
 """
 
 import json
+import os
+import pathlib
+import socket
 import re
 import time
 import uuid
@@ -141,16 +144,106 @@ def _nothing_answered(seen):
 # --- finding one ---------------------------------------------------------
 
 _cache = {"at": 0.0, "panels": []}
-_CACHE_S = 30.0    # mDNS browsing costs seconds; a tool call should not pay it twice
+_CACHE_S = 30.0     # within one process
+_DISK_S = 600.0     # and across them
+
+# Browsing mDNS costs the better part of a minute on a quiet network, and a
+# command-line tool pays it on every invocation - which turned "put this screen
+# on the panel" into a minute of waiting for nothing. The answer barely changes:
+# a panel's MAC never does and its address rarely does. So the last answer is
+# kept on disk, used if it still works, and thrown away the moment it does not.
+_DISK = pathlib.Path(os.environ.get("XDG_CACHE_HOME") or
+                     (pathlib.Path.home() / ".cache")) / "nickopanel" / "panels.json"
+
+
+def _read_disk():
+    try:
+        d = json.loads(_DISK.read_text())
+        if time.time() - d.get("at", 0) > _DISK_S:
+            return None
+        return d.get("panels") or None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _write_disk(panels):
+    try:
+        _DISK.parent.mkdir(parents=True, exist_ok=True)
+        _DISK.write_text(json.dumps({"at": time.time(), "panels": panels}))
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def forget():
+    """Drop the remembered answer. Called when one of them stops answering."""
+    _cache["at"] = 0.0
+    try:
+        _DISK.unlink()
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def known(refresh=False):
-    """Every panel on this network. Cached briefly - browsing is slow."""
+    """Every panel on this network, remembered where that is safe to do.
+
+    A cached entry is only handed back after the panel behind it has answered -
+    a remembered address that has moved is worse than no answer, because the
+    caller would go on to talk to nothing."""
     now = time.time()
-    if refresh or now - _cache["at"] > _CACHE_S or not _cache["panels"]:
-        _cache["panels"] = discover()
-        _cache["at"] = now
-    return _cache["panels"]
+    if not refresh and now - _cache["at"] <= _CACHE_S and _cache["panels"]:
+        return _cache["panels"]
+
+    if not refresh:
+        remembered = _read_disk()
+        if remembered:
+            alive = []
+            for p in remembered:
+                got = _identify_quick(p.get("address"))
+                if got:
+                    q = dict(p)
+                    q["reachable"] = True
+                    q["version"] = got.get("version") or p.get("version")
+                    q["uptime"] = got.get("uptime")
+                    alive.append(q)
+            if alive:
+                _cache["panels"], _cache["at"] = alive, now
+                return alive
+            forget()
+
+    panels = discover()
+    # Resolve the mDNS name to an address once and keep both. Every HTTP call
+    # through a .local name pays another multicast round trip - measured at
+    # about five seconds a request on this network - and a tool that makes four
+    # of them spends twenty seconds resolving a name that has not moved. The
+    # name stays for display; the address is what is dialled.
+    for p in panels:
+        if p.get("reachable") and p.get("address", "").endswith(".local"):
+            try:
+                p["hostname"] = p["address"]
+                p["address"] = socket.gethostbyname(p["hostname"])
+            except OSError:
+                pass
+    _cache["panels"], _cache["at"] = panels, now
+    if any(p.get("reachable") for p in panels):
+        _write_disk(panels)
+    return panels
+
+
+def _identify_quick(addr, timeout=3.0):
+    """Is the remembered address still one of ours? Short, because this is the
+    fast path and a slow answer here costs what the cache was meant to save."""
+    if not addr:
+        return None
+    try:
+        with urllib.request.urlopen(f"http://{addr}/api/info", timeout=timeout) as r:
+            d = json.loads(r.read().decode("utf-8", "replace"))
+        if "freeInternalHeap" not in d:
+            return None
+        return {"version": d.get("version"), "uptime": d.get("uptime")}
+    except urllib.error.HTTPError:
+        return {"version": None, "uptime": None}     # answering is enough
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def resolve(panel=None, refresh=False):

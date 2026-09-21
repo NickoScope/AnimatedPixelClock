@@ -57,6 +57,7 @@ import panel as P  # noqa: E402
 REPO = Path(__file__).resolve().parents[2]
 LUASIM = REPO / "tools" / "luasim"
 SCRIPTS = LUASIM / "scripts"
+GALLERY = REPO / "gallery"
 
 mcp = FastMCP("ledmatrix")
 
@@ -1048,8 +1049,11 @@ async def effect_preview(args: PreviewIn) -> str:
         see the effect.
     """
     try:
-        src = SCRIPTS / f"{args.name}.lua"
+        src = (GALLERY if args.from_gallery else SCRIPTS) / f"{args.name}.lua"
         if not src.exists():
+            if args.from_gallery:
+                have = ", ".join(sorted(p.stem for p in GALLERY.glob("*.lua"))) or "nothing"
+                return f"No {args.name} in the gallery. It holds: {have}"
             return f"No script at {src}. Write it with effect_write first."
         code, out = _run(["make"], LUASIM)
         if code != 0:
@@ -1130,12 +1134,40 @@ async def effect_check(quick: bool = False, only: str | None = None) -> str:
 
 class UploadIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    from_gallery: bool = Field(default=False,
+                               description="Take it from gallery/ instead of "
+                                           "tools/luasim/scripts/. The gallery is "
+                                           "the finished ones, kept with a preview "
+                                           "and an entry in gallery/README.md.")
     name: str = Field(pattern=r"^[A-Za-z0-9_]{1,24}$",
                       description="The script's stem, as it is named in "
                                   "tools/luasim/scripts/. Becomes the on-panel "
                                   "name with underscores as spaces, upper-cased.")
     show: bool = Field(default=True, description="Put it on screen once it is stored.")
     panel: str | None = None
+
+
+@mcp.tool(
+    name="gallery_list",
+    annotations={"title": "The finished screens", "readOnlyHint": True})
+async def gallery_list() -> str:
+    """What is in gallery/ - the screens kept ready to send to a panel.
+
+    Each has a preview image and an entry in gallery/README.md saying what it is
+    and what it cost. Send one with effect_upload and from_gallery=true, which
+    takes about a second once a panel has been found.
+
+    Returns: {"ok": true, "screens": [{"name", "bytes", "preview"}]}
+    """
+    try:
+        out = []
+        for f in sorted(GALLERY.glob("*.lua")):
+            prev = GALLERY / "preview" / f"{f.stem}.png"
+            out.append({"name": f.stem, "bytes": f.stat().st_size,
+                        "preview": str(prev) if prev.exists() else None})
+        return _ok(screens=out, count=len(out), where=str(GALLERY))
+    except Exception as e:  # noqa: BLE001
+        return _say(e)
 
 
 @mcp.tool(
@@ -1174,8 +1206,11 @@ async def effect_upload(args: UploadIn) -> str:
         "uploaded": {"count", "slots", "fsFree"}}
     """
     try:
-        src = SCRIPTS / f"{args.name}.lua"
+        src = (GALLERY if args.from_gallery else SCRIPTS) / f"{args.name}.lua"
         if not src.exists():
+            if args.from_gallery:
+                have = ", ".join(sorted(p.stem for p in GALLERY.glob("*.lua"))) or "nothing"
+                return f"No {args.name} in the gallery. It holds: {have}"
             return f"No script at {src}. Write it with effect_write first."
         verdict = _validate(src)
         if verdict and not verdict["ok"]:

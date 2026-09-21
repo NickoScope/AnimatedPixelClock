@@ -47,3 +47,4 @@ src/market/market_local_defaults.h
 tools/luasim/*.gif
 tools/luasim/*.png
 tools/luasim/*.raw
+gallery/*.raw
