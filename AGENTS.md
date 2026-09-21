@@ -23,7 +23,7 @@ python3 tools/agent/discover.py --mac 90:E5:B1:D2:0E:C8   # just that one's addr
 ```
 
 ```
-  90:E5:B1:D2:0E:C8  NickoScope-64x128.local   v2.5.0   NickoScope-64x128
+  90:E5:B1:D2:0E:C8  NickoSha-64x128.local   v2.5.0   NickoSha-64x128
 ```
 
 It works from macOS (`dns-sd`) and Linux (`avahi-browse`), and it confirms every
@@ -41,6 +41,117 @@ curl -s "http://$PANEL/api/info"
 ```
 
 Everything below writes `$PANEL`, and never an address.
+
+---
+
+## Bringing a new panel to life
+
+A panel arriving fresh needs three things, in this order, before anything else
+is worth doing with it.
+
+### 1. A name. Asked for, never invented.
+
+Every panel out of a flash calls itself whatever the build's default was, and so
+does the next one. Two of them on one network advertise the same mDNS name and
+the only thing telling them apart is the MAC. So the first act is to give this
+one a name of its own - and to **ask the person for it**, because it is what
+they will type for the rest of the panel's life. An agent does not choose it.
+
+```bash
+curl -s -X POST -H 'Content-Type: application/json' \
+     -d '{"name":"NickoSha-64x128"}' "http://$PANEL/api/rename"
+# {"success":true,"name":"NickoSha-64x128"}
+```
+
+The rules are enforced in the handler (`src/web/web.cpp:613-649`): **1 to 31
+characters, letters, digits and hyphens only, and it must start with a letter.**
+Anything else is a 400 that names the rule. The route saves to NVS and restarts
+mDNS on the spot - **no reboot**, and the panel answers on the new
+`<name>.local` within a couple of seconds.
+
+**Do not use the portal's "Device name" field for this.** The portal posts to
+`/save`, which is a whole-form replace of about 125 fields, and every boolean it
+does not carry is written back as *false* (section 3). `/api/rename` is one
+field and touches nothing else. Tried here on 2026-09-21: filling the portal
+field and pressing Save & apply rebooted the panel and left the name unchanged;
+`/api/rename` did it in one call. The portal's own `/save` path for `deviceName`
+looks correct in the source, so this is recorded as what happened rather than
+as a diagnosed bug - either way, use the single-purpose route.
+
+Then read it back from the panel itself, and re-find it by MAC - the name
+changed, the MAC did not:
+
+```bash
+python3 tools/agent/discover.py --mac 90:E5:B1:D2:0E:C8
+```
+
+### 2. No Home Assistant? Switch off what has nothing behind it.
+
+**Several pages have no source other than MQTT.** On a panel with no broker they
+are not "empty for now" - nothing will ever arrive, and the carousel still
+dwells fifteen seconds on each of them. So probe, and switch those off.
+
+The probe is the same object on three routes - `/api/flightboard`,
+`/api/railboard`, `/api/media` all return `mqtt{configured,connected,status}`;
+whichever the build has will answer:
+
+```bash
+curl -s "http://$PANEL/api/railboard" | python3 -c 'import sys,json;print(json.load(sys.stdin)["mqtt"])'
+# {'configured': True, 'connected': True, 'status': 'NO DATA'}
+```
+
+What needs what, from the source rather than from habit:
+
+| Page | Where its data comes from | With no Home Assistant |
+|---|---|---|
+| CARDS | `nickoscope_matrix/card/+`, `icon/+` (`src/cards/cards.cpp:124-129`) | **switch off** - MQTT is the only source |
+| MEDIA | `nickoscope_matrix/<dev>/media/+` (`src/media/media_ha.cpp:218-225`) | **switch off** |
+| MARKETS · TICKER · PORTFOLIO · HOLDINGS | `nickoscope_matrix/<dev>/market/#` (`src/market/market_ha.cpp:236-243`) | **switch off** |
+| FLIGHTS | MQTT via HA **or** its own AeroAPI key | keep it **if** `/api/flightboard` → `direct.key` is true |
+| TRAINS | MQTT via HA **or** its own RTT token | keep it **if** `/api/railboard` → `direct.token` is true |
+| YACHTS | straight to `wss://stream.aisstream.io` (`src/yachtradar/yachtradar.cpp:342`) | keep - never used HA |
+| ROOM RADAR | MQTT presence, with a scripted story as fallback | keep - it draws the story, not real people |
+| CLOCK · WORLD CLOCK · Lua effects | the panel itself | keep |
+| Indoor temperature | a local sensor; MQTT only *publishes* it to HA | keep - the reading is local |
+| Notifications | MQTT **or** `POST /api/notify` | keep - HTTP works with no broker |
+
+Switching one off is one call per key, and `clock` cannot be switched off:
+
+```bash
+curl -s -X POST -H 'Content-Type: application/json' \
+     -d '{"enable":{"key":"media","on":false}}' "http://$PANEL/api/panel"
+```
+
+The answer carries the whole new state, so **compare `pages[]` rather than
+trusting the 200** - see section 3 for why that matters here.
+
+### 3. The panel is yours, and so is the fork.
+
+**Work on your own panels in your own fork of this repository.** Your names,
+your stations and airports, your keys, your screens - they belong in your fork
+and in your NVS, not in a pull request. Nothing here reads a central server and
+nothing here phones home; a panel is a device on your LAN and the repository is
+just the firmware that runs on it.
+
+**Issues and pull requests are welcome upstream.** A fix, a new screen, a trap
+you hit that this file should have warned you about - open an issue or send a
+PR. What stays in your fork is your configuration; what comes back upstream is
+anything that would help the next person.
+
+### The whole of 1 and 2 in one command
+
+```bash
+python3 tools/agent/bringup.py                        # what is here, and what it needs
+python3 tools/agent/bringup.py --mac <MAC> --check --name <NAME>   # say what would change
+python3 tools/agent/bringup.py --mac <MAC> --name <NAME>           # do it
+python3 tools/agent/bringup.py --mac <MAC> --name <NAME> --keep-ha # leave the pages alone
+```
+
+Called without `--name` **it asks for one and stops with exit code 3** - a name
+is a person's decision, and the script will not invent it. It then probes MQTT,
+switches off only pages that have no source at all, and reads every change back
+before reporting it. `--json` gives the same thing for a tool to read. Exit
+codes: 0 done · 2 bad arguments · 3 a person must decide · 4 no panel answered.
 
 ---
 
@@ -143,13 +254,18 @@ click dismisses one instead of doing what the click would normally do
 can be on screen when you think a page is, and `GET /api/panel`'s `now.notify`
 says so.
 
-### e. fx3d — a scene engine that takes the screen
+### e. fx3d — a scene engine, and **not in the firmware you are talking to**
 
-Three-dimensional scenes with their own looks. When one is running it **owns the
-display**, and the first knob event stops it and gives the panel back.
+Three-dimensional scenes with their own looks, which own the display while one
+is running. It is listed here so nobody spends an afternoon on it: **`FX3D_ENABLED`
+is set only in `env:matrix-waveshare-rgb-fx3dbench` (`platformio.ini:253-257`),
+not in the shipping `env:matrix-waveshare-rgb`.** A route whose module is not
+built is not registered, so `/api/fx3d` and `/fx3d` answer **404** on a normal
+panel - checked against this one on 2026-09-21, HTTP 404.
 
-*Working with them:* `/api/fx3d`. Documented separately in the knowledge base
-(doc 27) because the scene and look vocabulary is large.
+*If you want it:* build the bench environment. The scene and look vocabulary is
+in the knowledge base (doc 27). Doc 29 lists these two routes among the
+firmware's registered routes without that caveat, and is wrong to.
 
 ### f. Clips and animations — played from the SD card
 
@@ -330,7 +446,15 @@ serial console is not - do not confuse them.
 
 ## 6. Tools that already exist
 
-In the knowledge base repository, not here, under `tools/nsc/`:
+**In this repository, under `tools/agent/` - these are the ones that work from
+any machine against any panel:**
+
+| tool | what it does |
+|---|---|
+| `discover.py` | every panel on the network, identified by MAC. `--json`, `--mac`. Exit 3 when several and none chosen |
+| `bringup.py` | a new panel: asks for a name, sets it, then switches off the pages that have no source without Home Assistant. `--check` is read-only |
+
+**In the knowledge base repository**, under `tools/nsc/`:
 
 | tool | what it does |
 |---|---|
@@ -405,6 +529,11 @@ finished, read `src/lua/README.md` and `tools/luasim/` for the Lua path, and
   `largestHeapBlock` against what each module needs contiguous. A build that
   passes this check may still be wrong; a build that fails it is certainly wrong,
   and the check costs nothing.
-- **Do not trust this file over the source.** It has been wrong before. Where it
-  and the code disagree, the code is right and this file needs fixing - please
-  fix it.
+- **Ask for a panel's name; do not invent one.** It is what a person types for
+  the rest of that panel's life. See "Bringing a new panel to life".
+- **Your configuration lives in your fork, not in a pull request.** Names,
+  stations, airports, keys, your own screens: your fork and your NVS. Issues and
+  PRs for anything that helps the next person are welcome upstream.
+- **Do not trust this file over the source.** It has been wrong before - the
+  fx3d entry in section 2 was wrong until 2026-09-21. Where it and the code
+  disagree, the code is right and this file needs fixing - please fix it.
