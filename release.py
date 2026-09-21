@@ -298,6 +298,12 @@ def main():
     write_checksums(ota_dir, release_names + [COMPANION_EXE.name])
     write_checksums(DOCS_LATEST, [f"AnimatedPixelClock-{fid}-{version}-Full.bin" for _, fid, _ in VARIANTS])
     write_version_file(version)
+    # Stamp what these images were built FROM, not only what they are called.
+    # tools/firmware_stamp.py --check reads it in the pre-commit hook and
+    # refuses a tree whose sources have moved while the version has not, which
+    # is how two different binaries came to share the name v2.5.0 on
+    # 2026-09-21.
+    run([sys.executable, str(REPO_ROOT / "tools" / "firmware_stamp.py"), "--write"])
     print(f"  Companion: {COMPANION_EXE.name}; SHA256SUMS.txt; VERSION ({version})")
 
     print("\n" + "=" * 60)

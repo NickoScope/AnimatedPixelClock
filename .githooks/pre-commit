@@ -100,6 +100,16 @@ if git diff --cached --name-only | grep -qE '^(tools/luasim/gen_effects\.py|tool
   }
 fi
 
+# The web flasher serves real binaries to real boards, and on 2026-09-21 it came
+# to serve one labelled v2.5.0 while the panel ran different bytes under the
+# same name. Two binaries, one version, is the defect this refuses; a published
+# image merely being older than main only prints a note, because that is normal
+# between a change and a release and a hook that demands a three-board build on
+# every commit is a hook people switch off. Offline: hashes the tree.
+if git diff --cached --name-only | grep -qE '^(src/|platformio\.ini$|.*\.csv$)'; then
+  python3 tools/firmware_stamp.py --check || exit 1
+fi
+
 # What a panel should stop showing when there is no broker behind it. That
 # branch cannot be exercised on the panel we have - its broker works, which is
 # the other branch - so it runs against a stub serving a real panel's captured
