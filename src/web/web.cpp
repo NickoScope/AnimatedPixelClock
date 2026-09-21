@@ -459,6 +459,7 @@ void handleDeviceInfo() {
  doc["secsSinceHttp"] = netSecsSinceHttp();
  doc["secsSinceTraffic"] = netSecsSinceTraffic();
  doc["linkRecoveries"] = netRecoveryCount();
+ doc["linkBlindS"] = netBlindSeconds();   // >0: it cannot even tell whether the link works
  doc["lastLinkRecovery"] = netLastRecoveryReason();
  WeatherData weather = getWeather();
  doc["weatherValid"] = weather.valid;

@@ -310,9 +310,17 @@ void initNTP() {
 #define NET_PROBE_FAILS_BEFORE_RECOVERY 2
 #define NET_REBOOT_AFTER_MS 360000UL
 
+// The blind timer: how long the panel may be unreachable AND unable to find out
+// why before it reboots. Deliberately far longer than NET_REBOOT_AFTER_MS,
+// because the path that arms it has already caused one outage by acting too
+// eagerly (see the comment at the `!sent` branch below). Fifteen minutes of a
+// clock that is invisible on the network beats an hour of it.
+#define NET_BLIND_REBOOT_MS 900000UL
+
 static uint32_t netLastHttpMs = 0;
 static uint32_t netLastTrafficMs = 0;
 static uint32_t netBadSinceMs = 0;
+static uint32_t netBlindSinceMs = 0;
 static uint32_t netLastRecoverMs = 0;
 static uint32_t netNextProbeMs = 0;
 static uint32_t netHttpCount = 0;
@@ -327,7 +335,40 @@ static volatile uint32_t netPingSent = 0;   // requests the socket actually took
 static void netMarkAlive() {
   netLastTrafficMs = millis();
   netBadSinceMs = 0;
+  netBlindSinceMs = 0;
   netProbeFails = 0;
+}
+
+// Arm, or keep armed, the blind timer: we cannot say whether the link works,
+// and nothing has reached us. Deliberately separate from netBadSinceMs, which
+// means "the gateway did not answer" - a claim this state cannot make.
+static void netBlind(const char *why) {
+  uint32_t now = millis();
+  if (!netBlindSinceMs) {
+    netBlindSinceMs = now ? now : 1;   // 0 is the disarmed value
+    Serial.printf("Link blind (%s): cannot probe and nothing is arriving\n", why);
+    return;
+  }
+  if (now - netBlindSinceMs > NET_BLIND_REBOOT_MS) {
+    // Whose fault it is remains unknown, and that is the point: in this state
+    // the panel is useless to everyone on the network, and a fresh boot is the
+    // one action that reliably gets its buffers back. Confirmed needed on
+    // 2026-09-21: the panel sat unreachable for over an hour, loop() running
+    // and the clock still drawing on the wall, because both blind paths
+    // returned without arming anything. resetReason came back POWERON, so the
+    // six-minute backstop never fired once.
+    Serial.printf("Link blind for %lu s (%s), restarting\n",
+                  (unsigned long)((now - netBlindSinceMs) / 1000), why);
+    Serial.flush();
+    delay(100);
+    ESP.restart();
+  }
+}
+
+// Seconds the panel has been unable to tell whether its link works, 0 when it
+// can. Exposed so the next diagnosis is a reading rather than an afternoon.
+uint32_t netBlindSeconds() {
+  return netBlindSinceMs ? (millis() - netBlindSinceMs) / 1000 : 0;
 }
 
 void netMarkHttp() {
@@ -458,8 +499,18 @@ static void netHealthTick() {
       // the panel was unreachable for minutes. The cause was on the line above
       // it in the log: the Wi-Fi task could not get its 1,626 B buffer. Counting
       // that as "gateway unreachable" made this watchdog the outage it exists
-      // to prevent. Try again later; do not count it, and never restart on it.
+      // to prevent. Try again later; do not count it, and never restart the
+      // radio on it.
+      //
+      // What that reasoning missed, and what 2026-09-21 cost: declining to
+      // blame the gateway is right, but declining to notice anything at all
+      // left the panel with no way out. netBadSinceMs is set only inside
+      // netRecover(), so a board that can never raise a probe can never count
+      // a failure, never recover, and never reach the six-minute reboot. It
+      // sits there, drawing the clock, invisible. Hence the blind timer, which
+      // makes no claim about the gateway.
       Serial.println("Link probe could not be sent (no buffer): not counted against the gateway");
+      netBlind("probe not sent");
     } else if (++netProbeFails >= NET_PROBE_FAILS_BEFORE_RECOVERY && !cooling) {
       netRecover("gateway unreachable");
     }
@@ -469,7 +520,11 @@ static void netHealthTick() {
   if (now - netLastTrafficMs < NET_IDLE_BEFORE_PROBE_MS) return;
   if ((int32_t)(now - netNextProbeMs) < 0) return;
   netNextProbeMs = now + NET_PROBE_RETRY_MS;
-  netStartProbe();
+  // The other blind path, and the quieter one: the session itself could not be
+  // created. It wants a 3 KB task stack, which is exactly what a board short of
+  // internal RAM cannot spare - so the watchdog goes deaf at the moment it is
+  // most needed, and until now it did so silently.
+  if (!netStartProbe()) netBlind("probe session not created");
 }
 
 // ========== WiFi Reconnection Handling ==========

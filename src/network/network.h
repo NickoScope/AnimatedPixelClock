@@ -58,6 +58,12 @@ uint32_t netSecsSinceTraffic();
 uint32_t netRecoveryCount();
 const char* netLastRecoveryReason();
 
+// Seconds the panel has been unable to tell whether its link works - it cannot
+// raise a probe and nothing is arriving. 0 when it can tell. This is NOT a
+// claim that the gateway is down; it is the absence of any claim at all, which
+// is the state that left the panel invisible for an hour on 2026-09-21.
+uint32_t netBlindSeconds();
+
 // Display connection status screens
 void displaySetupInstructions();
 void displayConnecting();

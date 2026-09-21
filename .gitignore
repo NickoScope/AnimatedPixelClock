@@ -44,3 +44,6 @@ provision_secrets.ini
 **/apps_market.local.yaml
 # The market pages' own defaults for one's build (src/market/README.md) - never committed
 src/market/market_local_defaults.h
+tools/luasim/*.gif
+tools/luasim/*.png
+tools/luasim/*.raw
