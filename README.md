@@ -381,14 +381,21 @@ after detecting its new uptime (checked every 10 seconds).
 
 ### Web flasher (recommended)
 
-Open **[pixelclock.stolaris.dev](https://pixelclock.stolaris.dev)** in Chrome or Edge
-on a desktop, pick your board, plug it in over USB and press Install. It flashes a
-prebuilt firmware image straight from the browser, then walks you through joining
-WiFi and connecting the PC companion. Nothing to install, no PlatformIO, no drivers
-beyond the ones your OS already ships.
+Open **[nickoscope.github.io/AnimatedPixelClock](https://nickoscope.github.io/AnimatedPixelClock/)**
+in Chrome or Edge on a desktop, pick your board, plug it in over USB and press
+Install. It flashes a prebuilt firmware image straight from the browser, then walks
+you through joining WiFi and connecting the PC companion. Nothing to install, no
+PlatformIO, no drivers beyond the ones your OS already ships.
+
+That page is this fork's, and it serves images built from this branch. Upstream
+runs its own at [pixelclock.stolaris.dev](https://pixelclock.stolaris.dev), which
+carries the two boards it supports and not the Waveshare one.
 
 Board choices on that page:
 
+- **Waveshare ESP32-S3-RGB-Matrix (32MB)** - the driver board with the controller
+  on it. **Do not flash it with the WROOM image**: that module has octal flash, and
+  a quad-flash image installs cleanly and then fails to boot every time.
 - **ESP32-S3-Zero / Super Mini (4MB)** - the compact build. Native USB: if the serial
   port never appears, hold BOOT while plugging the board in.
 - **ESP32-S3-WROOM devkit (16MB)** - the full-size devkit; its larger flash also

@@ -137,6 +137,27 @@ async def panel_bringup() -> str:
                 "A tool that can reflash a wall-mounted device without a witness "
                 "is how a bad build becomes an outage nobody saw start. This "
                 "server has no flash tool and will not grow one.",
+        "0_easiest_path_offer_this_first": {
+            "what": "A browser flasher, published from this repository: "
+                    "https://nickoscope.github.io/AnimatedPixelClock/ - ESP Web "
+                    "Tools over WebSerial, with Improv for the Wi-Fi in the same "
+                    "dialog. Chrome or Edge on a desktop. Nothing to install, no "
+                    "PlatformIO, about thirty seconds.",
+            "the_person_does": "opens the page, picks the board, plugs the USB "
+                               "cable in, chooses the serial port in the browser's "
+                               "own dialog, presses Install, then types their Wi-Fi "
+                               "password into the Configure WiFi step.",
+            "you_cannot_do_it_for_them": "The port picker is a native browser "
+                                         "dialog and the cable is physical. Offer "
+                                         "the link and step them through it.",
+            "when_to_build_instead": "Only when they need something the published "
+                                     "image does not have - a different build flag, "
+                                     "an unreleased change. Then steps 1 and 2.",
+            "keeping_it_current": "python3 release.py builds every board and "
+                                  "refreshes docs/firmware/latest. The page serves "
+                                  "whatever VERSION names; docs/firmware/README.md "
+                                  "is the process.",
+        },
         "1_pick_the_environment": {
             "why": "By the MODULE, never by the board's marketing name. The wrong "
                    "memory type flashes cleanly and then dies every boot.",

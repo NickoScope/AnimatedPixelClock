@@ -57,6 +57,13 @@ that is already running this firmware and already on the network. Getting it
 there is the one part you do not do alone: **you build, a person uploads**, and
 a person types their own Wi-Fi password.
 
+**Offer the browser first.** <https://nickoscope.github.io/AnimatedPixelClock/>
+is this repository's own flasher - ESP Web Tools over WebSerial, Improv for the
+Wi-Fi in the same dialog, all three boards including this one. Chrome or Edge on
+a desktop, cable, Install, thirty seconds. A person still picks the port and
+types the password; you cannot click a native browser dialog and should not try.
+Build from source only when the published image lacks something they need.
+
 **The SDK owns this, not this file.** `panel_bringup` in
 `tools/agent/mcp_server.py` is the full version and the one that is kept
 current: every build environment with the module it belongs to, the memory-type
