@@ -81,6 +81,9 @@ bool httpForceYachtRadar = false;   // yacht radar page override
 #endif
 #if defined(LUA_EFFECTS_ENABLED)
 #include "lua/lua_effects_page.h"    // LUA_EFFECT_COUNT, which the page enum below needs
+#if defined(LUA_STORE_ENABLED)
+#include "lua/lua_store.h"           // LUA_USER_MAX, the slots kept for uploaded ones
+#endif
 #endif
 #if defined(MARKET_ENABLED)
 #include "market/market.h"           // MARKET_PAGE_COUNT, which the page enum below needs
@@ -93,8 +96,16 @@ enum CtrlPage : uint8_t {
 #if defined(LUA_EFFECTS_ENABLED)
   // Each Lua effect is a page of its own, straight after the clock styles, so
   // the knob and the carousel walk them one at a time as they walk the styles.
+  // LUA_USER_MAX slots are reserved beyond the compiled-in scripts, for the
+  // ones uploaded to LittleFS at run time (src/lua/lua_store.h). The enum is
+  // fixed at build time and an uploaded effect cannot extend it, so the room is
+  // made here and ctrlPageVisitable() hides whatever is still empty.
   PAGE_LUA_FIRST,
+#if defined(LUA_STORE_ENABLED)
+  PAGE_LUA_LAST = PAGE_LUA_FIRST + LUA_EFFECT_COUNT + LUA_USER_MAX - 1,
+#else
   PAGE_LUA_LAST = PAGE_LUA_FIRST + LUA_EFFECT_COUNT - 1,
+#endif
 #endif
 #if defined(WORLDCLOCK_ENABLED)
   PAGE_WORLDCLOCK,               // a clock too, so it sits next to the clock
@@ -671,6 +682,14 @@ static uint32_t ctrlEnterTimeoutMs(uint8_t page) {
 static bool ctrlPageVisitable(uint8_t page) {
 #if defined(MARKET_ENABLED)
   if (ctrlMarketSub(page) >= 0) return marketPageEnabled((uint8_t)ctrlMarketSub(page));
+#endif
+#if defined(LUA_EFFECTS_ENABLED) && defined(LUA_STORE_ENABLED)
+  // A reserved upload slot with nothing in it: the knob and the carousel skip
+  // it, and it never appears as a black page nobody asked for.
+  {
+    const int16_t e = ctrlLuaEffect(page);
+    if (e >= 0 && e >= (int16_t)luaEffectCount()) return false;
+  }
 #endif
   (void)page;
   return true;

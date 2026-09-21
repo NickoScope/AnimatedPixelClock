@@ -80,6 +80,12 @@ BENCH_COMPUTE = "local x = 0 for i = 1, 50000 do x = x + i % 7 end\nfunction dra
 BENCH_MS = 64.1 - 2.54
 
 
+# Kept in step with platformio.ini by hand; the parity run is what would catch
+# them drifting apart, because a script that loads on one and not the other
+# stops being identical.
+CCALLS = 40
+
+
 def sh(cmd, **kw):
     return subprocess.run(cmd, check=True, **kw)
 
@@ -97,7 +103,11 @@ def build():
             continue
         o = BUILD / (c.stem + ".o")
         if not o.exists() or o.stat().st_mtime < c.stat().st_mtime:
-            sh(["cc", "-O2", "-I", str(LUA), "-c", str(c), "-o", str(o)])
+            # The panel lowers Lua's C-call cap so an uploaded script's parser
+            # recursion fits the effect task's 12 KB stack (platformio.ini, and
+            # the reasoning in src/lua/lua_store.h). The host has to compile the
+            # interpreter the same way or this check tests a different Lua.
+            sh(["cc", "-O2", f"-DLUAI_MAXCCALLS={CCALLS}", "-I", str(LUA), "-c", str(c), "-o", str(o)])
         objs.append(str(o))
     srcs = [ROOT / "src/lua/lua_fx.cpp", ROOT / "src/lua/lua_px.cpp",
             ROOT / "src/lua/nslua_sandbox.cpp", SIM / "fxhost.cpp"]

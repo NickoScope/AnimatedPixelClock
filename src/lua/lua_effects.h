@@ -22,7 +22,13 @@
 #error "LUA_EFFECTS_ENABLED needs CONTROL_ENCODER_ENABLED: each effect is one of the knob's pages"
 #endif
 
-uint8_t     luaEffectCount();
+uint8_t     luaEffectCount();             // compiled-in plus uploaded; changes at run time
+uint8_t     luaEffectSlots();             // how many pages are reserved, empty ones included
+bool        luaEffectUploaded(uint8_t i); // true when this one came over the air
 const char *luaEffectName(uint8_t i);     // "ROOM RADAR"; "" past the end
 void        luaEffectShow(uint8_t i);     // make it the page on screen now
 int16_t     luaEffectCurrent();           // -1 when none is showing
+// Step off whatever is running. Deleting an uploaded script moves every index
+// above it, so the selection has to be dropped rather than left pointing at a
+// slot that now holds something else.
+void        luaEffectStop();

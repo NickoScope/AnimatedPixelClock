@@ -23,10 +23,15 @@ key is ignored and the route still answers `200 {"success":true}`. So a tool
 that says it changed something has compared the state afterwards, and it
 distinguishes "changed" from "was already so".
 
-**There is no flashing tool, and there will not be.** Building and uploading is
-a person's call, with the panel in front of them. The effect tools go as far as
-writing the script, previewing it, measuring it against the firmware's real
-budgets and generating the header - and then stop and say what a person must do.
+**A new screen no longer needs a flash.** effect_upload sends a Lua script to a
+running panel over the air, where it is stored on LittleFS and shown beside the
+compiled-in ones. The loop is write, preview, measure, upload, watch. Four
+uploaded scripts fit at once.
+
+**There is still no flashing tool, and there will not be.** Changing the
+firmware itself is a person's call, with the panel in front of them.
+effect_install, which compiles a script into the image, stops at generating the
+header and says so.
 
 Run it directly (`./mcp_server.py`) or register it:
 
@@ -968,19 +973,129 @@ async def effect_check(quick: bool = False) -> str:
         return _say(e)
 
 
+class UploadIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(pattern=r"^[A-Za-z0-9_]{1,24}$",
+                      description="The script's stem, as it is named in "
+                                  "tools/luasim/scripts/. Becomes the on-panel "
+                                  "name with underscores as spaces, upper-cased.")
+    show: bool = Field(default=True, description="Put it on screen once it is stored.")
+    panel: str | None = None
+
+
+@mcp.tool(
+    name="effect_upload",
+    annotations={"title": "Send an effect to a panel over the air", "readOnlyHint": False,
+                 "destructiveHint": False, "idempotentHint": True, "openWorldHint": True})
+async def effect_upload(args: UploadIn) -> str:
+    """Put a Lua effect on a running panel. **No build and no flash.**
+
+    This is the only way to add a screen without a person at the panel, and it
+    is why it exists: write, preview, measure, upload, watch it run.
+
+    The panel takes it seriously before it accepts it. A script is refused if it
+    is over 24 KB, if it defines no draw(), or if its brackets nest deeper than
+    32 - because the effect task has a 12 KB stack and Lua's parser recurses
+    with the source's nesting. The interpreter's own limit is set to 40 C calls
+    as the backstop, so a script that slips past the first check is still
+    refused cleanly rather than running off the stack.
+
+    Four uploaded scripts fit. Names are per-slot: uploading over an existing
+    name replaces it and does not need a free slot.
+
+    **Run `effect_check` first.** The panel enforces size and depth but nothing
+    tells it that a draw() will fit the 2,000,000-instruction frame budget until
+    it is already running, and a script that blows it shows LUA ERROR on a wall.
+
+    Returns:
+        {"ok": true, "name": "...", "index": N, "showing": bool, "hz": N,
+        "uploaded": {"count", "slots", "fsFree"}}
+    """
+    try:
+        src = SCRIPTS / f"{args.name}.lua"
+        if not src.exists():
+            return f"No script at {src}. Write it with effect_write first."
+        data = src.read_bytes()
+        p = _pick(args.panel)
+        a = p["address"]
+        r = P.post_file(a, f"/api/lua/upload?name={args.name}", "script",
+                        f"{args.name}.lua", data)
+        if not r or not r.get("success"):
+            return (f"The panel refused it: {(r or {}).get('error', 'no answer')}")
+        idx = r.get("index")
+        out = {"ok": True, "name": args.name, "bytes": len(data), "index": idx}
+        if args.show and isinstance(idx, int) and idx >= 0:
+            P.post(a, "/api/lua", {"show": idx})
+            hz = None
+            for _ in range(5):
+                time.sleep(1.0)
+                hz = (P.get(a, "/api/panel").get("now") or {}).get("hz")
+                if hz and hz > 2:
+                    break
+            out["showing"] = bool(hz and hz > 2)
+            out["hz"] = hz
+            if not out["showing"]:
+                out["note"] = ("Stored, but the panel is not reporting a frame rate "
+                               "above the 2 Hz floor. Read panel_log - it is the "
+                               "only place the Lua error text appears.")
+        listing = P.get(a, "/api/lua")
+        out["uploaded"] = listing.get("uploaded")
+        return json.dumps(out, ensure_ascii=False, indent=2)
+    except Exception as e:  # noqa: BLE001
+        return _say(e)
+
+
+class DeleteIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(pattern=r"^[A-Za-z0-9_]{1,24}$")
+    panel: str | None = None
+
+
+@mcp.tool(
+    name="effect_delete",
+    annotations={"title": "Remove an uploaded effect", "readOnlyHint": False,
+                 "destructiveHint": True, "idempotentHint": True, "openWorldHint": True})
+async def effect_delete(args: DeleteIn) -> str:
+    """Take an uploaded script off a panel and free its slot.
+
+    Only uploaded scripts can go; the compiled-in ones are part of the firmware.
+    Deleting moves every index above it, so the panel steps off whatever was
+    showing rather than leave the selection pointing at a different effect.
+
+    Returns: {"ok": true, "removed": "...", "uploaded": {...}}
+    """
+    try:
+        p = _pick(args.panel)
+        a = p["address"]
+        try:
+            P.post(a, "/api/lua", {"delete": args.name})
+        except P.PanelError as e:
+            if "404" in str(e):
+                return f"There is no uploaded script called {args.name!r} on that panel."
+            raise
+        return _ok(removed=args.name, uploaded=P.get(a, "/api/lua").get("uploaded"))
+    except Exception as e:  # noqa: BLE001
+        return _say(e)
+
+
 @mcp.tool(
     name="effect_install",
     annotations={"title": "Generate the effect table", "readOnlyHint": False,
                  "destructiveHint": False})
 async def effect_install() -> str:
-    """Regenerate `src/lua/lua_effects_scripts.h` from the scripts on disk.
+    """Compile a script INTO the firmware image. Usually you want effect_upload.
+
+    Regenerates `src/lua/lua_effects_scripts.h` from the scripts on disk.
 
     Every `.lua` in `tools/luasim/scripts/` (minus a small skip list) is compiled
     into the firmware image as a C string literal. This regenerates that header.
 
-    **It does not reach the panel.** Effects are not uploadable; the image has to
-    be built and flashed, and that is a person's call with the panel in front of
-    them. This server has no flashing tool and will not get one.
+    **It does not reach the panel**, and since effect_upload exists there is
+    rarely a reason to want it: use this only for a script that should ship with
+    the firmware rather than live in one of the four uploaded slots. The image
+    still has to be built and flashed, and that is a person's call with the
+    panel in front of them. This server has no flashing tool and will not get
+    one.
 
     The same generator runs in the pre-commit hook with `--check`, so a stale
     header blocks a commit.

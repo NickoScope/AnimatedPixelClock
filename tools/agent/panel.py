@@ -30,6 +30,7 @@ and reports "changed" and "was already so" as different outcomes - because an
 import json
 import re
 import time
+import uuid
 import urllib.error
 import urllib.request
 
@@ -252,6 +253,24 @@ def post(address, path, payload, timeout=12.0, tries=6):
     return _request(urllib.request.Request(f"http://{address}{path}", data=body,
                                            headers=JSON_HEADERS),
                     timeout, tries, f"POST {path}")
+
+
+def post_file(address, path, field, filename, data, timeout=60.0, tries=4):
+    """One multipart file, the way the firmware's upload routes want it.
+
+    These routes are registered with a raw server.on rather than through
+    route(), because webBusyRefuse() would reject a transfer already in flight -
+    so there is no 503 to absorb here, only the ordinary faults."""
+    boundary = "----nickopanel" + uuid.uuid4().hex
+    head = (f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="{field}"; filename="{filename}"\r\n'
+            f"Content-Type: application/octet-stream\r\n\r\n").encode()
+    body = head + data + f"\r\n--{boundary}--\r\n".encode()
+    req = urllib.request.Request(
+        f"http://{address}{path}", data=body,
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}",
+                 "Content-Length": str(len(body))})
+    return _request(req, timeout, tries, f"POST {path}")
 
 
 def get_text(address, path, timeout=20.0, tries=4):

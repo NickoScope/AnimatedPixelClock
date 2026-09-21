@@ -107,6 +107,9 @@
 #include "../yachtradar/yachtradar.h"
 #if defined(LUA_EFFECTS_ENABLED)
 #include "../lua/lua_effects.h"
+#if defined(LUA_STORE_ENABLED)
+#include "../lua/lua_store.h"
+#endif
 #endif
 #if defined(CLIPS_SD_ENABLED)
 #include <SD_MMC.h>
@@ -920,9 +923,28 @@ static void handleLua() {
   if (isPost()) {
     JsonDocument in(&s_alloc);
     if (!readBody(in)) return;
-    long i;
-    if (!intIn(in["show"], 0, (long)luaEffectCount() - 1, &i)) REJECT(400, "show out of range");
-    luaEffectShow((uint8_t)i);
+    // One of show or delete, never both: a caller that means to remove an
+    // effect and show another should say so in two calls, in the order it wants.
+    const bool hasShow = !in["show"].isNull();
+    const bool hasDel  = !in["delete"].isNull();
+    if (hasShow && hasDel) REJECT(400, "send show or delete, not both");
+#if defined(LUA_STORE_ENABLED)
+    if (hasDel) {
+      const char *stem = in["delete"];
+      if (!stem || !*stem) REJECT(400, "delete wants the uploaded script's name");
+      if (!luaStoreDelete(stem)) REJECT(404, "no uploaded script by that name");
+      // It may have been the one on screen, and its slot has just moved under
+      // every index above it. Step off rather than leave a stale selection.
+      luaEffectStop();
+    }
+#else
+    if (hasDel) REJECT(400, "this build stores no uploaded scripts");
+#endif
+    if (hasShow) {
+      long i;
+      if (!intIn(in["show"], 0, (long)luaEffectCount() - 1, &i)) REJECT(400, "show out of range");
+      luaEffectShow((uint8_t)i);
+    }
   }
   JsonDocument doc(&s_alloc);
   doc["success"] = true;
@@ -932,7 +954,92 @@ static void handleLua() {
     const char *name = luaEffectName(i);
     list.add(name ? name : "");
   }
+#if defined(LUA_STORE_ENABLED)
+  // What an uploading tool needs to know before it spends the upload.
+  JsonObject up = doc["uploaded"].to<JsonObject>();
+  up["count"] = luaStoreCount();
+  up["slots"] = LUA_USER_MAX;
+  up["builtIn"] = (uint8_t)(luaEffectCount() - luaStoreCount());
+  up["maxBytes"] = LUA_USER_SRC_MAX;
+  up["maxDepth"] = LUA_USER_DEPTH_MAX;
+  up["fsFree"] = (uint32_t)luaStoreFreeBytes();
+  JsonArray mine = up["scripts"].to<JsonArray>();
+  for (uint8_t i = 0; i < luaStoreCount(); i++) {
+    JsonObject o = mine.add<JsonObject>();
+    o["i"] = (uint8_t)(luaEffectCount() - luaStoreCount() + i);
+    o["name"] = luaStoreStem(i);
+    o["bytes"] = luaStoreBytes(i);
+  }
+#endif
   sendDoc(doc);
+}
+#endif
+
+// ------------------------------------------------------- /api/lua/upload
+#if defined(LUA_STORE_ENABLED)
+// Chunked like the animation upload, and for the same reason: LittleFS writes
+// are slow, loop() stays inside handleClient for the whole transfer, and the
+// task watchdog has to be fed per chunk or the board reboots mid-upload.
+static const char *s_luaUpErr = nullptr;
+static String      s_luaUpName;
+
+static void handleLuaUploadChunk() {
+  HTTPUpload &upload = server.upload();
+  esp_task_wdt_reset();
+  char err[160];
+  if (upload.status == UPLOAD_FILE_START) {
+    s_luaUpErr = nullptr;
+    s_luaUpName = server.arg("name");
+    if (!s_luaUpName.length()) {
+      s_luaUpName = upload.filename;
+      const int dot = s_luaUpName.lastIndexOf('.');
+      if (dot > 0) s_luaUpName.remove(dot);
+    }
+    if (!luaStoreBegin(s_luaUpName.c_str(), err, sizeof(err))) {
+      static char kept[160];
+      strncpy(kept, err, sizeof(kept) - 1);
+      kept[sizeof(kept) - 1] = 0;
+      s_luaUpErr = kept;
+    }
+  } else if (upload.status == UPLOAD_FILE_WRITE) {
+    if (s_luaUpErr) return;
+    if (!luaStoreWrite(upload.buf, upload.currentSize)) s_luaUpErr = "the script is too large";
+  } else if (upload.status == UPLOAD_FILE_END) {
+    if (s_luaUpErr) { luaStoreAbort(); return; }
+    if (!luaStoreFinish(err, sizeof(err))) {
+      static char kept[160];
+      strncpy(kept, err, sizeof(kept) - 1);
+      kept[sizeof(kept) - 1] = 0;
+      s_luaUpErr = kept;
+    }
+  } else if (upload.status == UPLOAD_FILE_ABORTED) {
+    luaStoreAbort();
+    s_luaUpErr = "the upload was cut short";
+  }
+}
+
+static void handleLuaUploadDone() {
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  JsonDocument doc(&s_alloc);
+  if (s_luaUpErr) {
+    doc["success"] = false;
+    doc["error"] = s_luaUpErr;
+    String out;
+    serializeJson(doc, out);
+    server.send(400, "application/json", out);
+    return;
+  }
+  doc["success"] = true;
+  doc["name"] = s_luaUpName;
+  // The index it landed on, so a caller can show it without a second round trip.
+  int idx = -1;
+  for (uint8_t i = 0; i < luaStoreCount(); i++)
+    if (s_luaUpName == luaStoreStem(i)) idx = (int)(luaEffectCount() - luaStoreCount() + i);
+  doc["index"] = idx;
+  doc["note"] = "no reboot and no flash: select it with POST /api/lua {\"show\": index}";
+  String out;
+  serializeJson(doc, out);
+  server.send(200, "application/json", out);
 }
 #endif
 
@@ -1156,6 +1263,11 @@ void panelWebBegin() {
 #endif
 #if defined(LUA_EFFECTS_ENABLED)
   route("/api/lua", handleLua);
+#if defined(LUA_STORE_ENABLED)
+  // Raw server.on, like the other two upload routes: webBusyRefuse() would
+  // reject a transfer that is already in flight.
+  server.on("/api/lua/upload", HTTP_POST, handleLuaUploadDone, handleLuaUploadChunk);
+#endif
 #endif
 #if defined(MEDIAPLAYER_ENABLED)
   route("/api/media", handleMedia);
