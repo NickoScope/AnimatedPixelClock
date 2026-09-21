@@ -50,10 +50,20 @@ and a screensaver:
 - **There is glass on all four sides.** Nothing is ever off screen. This is an
   aquarium, not a window on the sea.
 
-Bubbles leave the airstone in the corner and nowhere else; one starting in open
-water is the tell of a drawn tank.
+**Depth is continuous and the fish swim through it.** Each carries a depth from
+0 at the back glass to 1 at the front, drifting on its own twenty-to-forty
+second cycle. It picks the body from five precomputed sizes, sets the haze on
+the colour, sets the apparent speed and decides what is drawn over what - the
+shoal is sorted back to front. A fish coming toward you grows, sharpens and
+passes in front of the others. And a turn is a turn: `face` crosses zero over a
+third of a second while the body foreshortens, so the fish banks through it.
 
-*24.1 KB, within 500 bytes of the panel's limit · ~48,000 instructions a frame - 15 fps*
+Bubbles leave the airstone in the corner and nowhere else; one starting in open
+water is the tell of a drawn tank. A corydoras shuffles along the sand on its
+pectorals, a snail crosses at a pixel every two seconds, and every fish in the
+near half of the tank has a shadow under it.
+
+*31.4 KB of the 50 KB a script may be · ~48,000 instructions a frame · 12-15 fps*
 
 ---
 
