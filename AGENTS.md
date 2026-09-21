@@ -453,6 +453,8 @@ any machine against any panel:**
 |---|---|
 | `discover.py` | every panel on the network, identified by MAC. `--json`, `--mac`. Exit 3 when several and none chosen |
 | `bringup.py` | a new panel: asks for a name, sets it, then switches off the pages that have no source without Home Assistant. `--check` is read-only |
+| `mcp_server.py` | eighteen MCP tools over stdio - driving, debugging and writing screens. `tools/agent/README.md` has the registration and the traps |
+| `panel.py` | the transport everything shares: mDNS resolution, the 503 back-off absorbed, and read-back verification on every change |
 
 **In the knowledge base repository**, under `tools/nsc/`:
 
