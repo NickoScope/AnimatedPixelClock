@@ -1,102 +1,83 @@
--- LA GIOCONDA - the painting in quadrant cells, by libtcod's rule.
+-- LA GIOCONDA - the painting drawn in ASCII characters.
 --
--- Four libraries were read for this. asciicker (msokalski/asciicker) is a 3D
--- game, not a converter: it never loads an image, and its cells come from
--- rasterising geometry - four depth samples a cell, a four-bit mask of which
--- quadrants the nearer surface covers, and the glyph straight off that mask
--- (render.cpp:2106-2153). The idea is right and it is where this started.
+-- Four libraries were read before this, and none of them converts an image.
+-- asciicker is a 3D game whose cells come from rasterising geometry - it never
+-- loads a picture. libtcod's generate_quadrant_graphic (image_c.c:711-805) is
+-- an excellent converter but it converts to QUADRANT BLOCKS, not to type.
+-- SadConsole averages a cell to one colour and picks a block by brightness.
+-- BearLibTerminal has no converter at all.
 --
--- But CP437 has no quarter block, so asciicker cannot draw a single covered
--- quadrant and substitutes an ordered dither instead (render.cpp:2146). On a
--- painting that dither is speckle, and it was visibly wrong.
+-- The one that actually draws pictures with characters is chafa
+-- (hpjansson/chafa), and it is far better at it than anything fitted by hand
+-- here. Per cell it searches the whole symbol set for the glyph whose bitmap
+-- best matches which of the cell's pixels belong to the foreground - a Hamming
+-- distance over the glyph coverage - and evaluates the colours jointly with
+-- that choice rather than picking density first and colour after.
 --
--- libtcod's generate_quadrant_graphic (image_c.c:711-805, credited to Jeff
--- Lait) fixes both halves of it:
+-- The part that made it work on this panel: chafa's --glyph-file takes any font
+-- FreeType can read, so PicopixelFB was written out as a BDF and handed to it.
+-- Matching against some other font's idea of an S would have put a character on
+-- the panel that does not look like what was matched. And because px.text
+-- upper-cases before it looks a glyph up (lua_px.cpp:202), the BDF gives every
+-- lowercase code the uppercase shape - which is true of this panel and lets
+-- chafa use the whole range honestly.
 --
---   * it reaches for U+2596..U+259D and draws the quadrant as geometry. Eight
---     codepoints cover all sixteen masks, because a mask and its complement are
---     the same shape with the colours swapped.
---   * it reduces the four quadrant colours to two IN RGB, by weighted merge -
---     each further colour is compared against both palette entries and against
---     the distance between them, and the closest pair merges, weighted by how
---     many quadrants each entry already holds. Not a luminance threshold, which
---     is what a first attempt used here and why the hues drifted.
+--   tools/luasim/mkbdf.py      PicopixelFB -> picopixel.bdf
+--   chafa --glyph-file picopixel.bdf --symbols ascii --size 21x12 \
+--         -f symbols --font-ratio 4/5 --fg-only -c truecolor in.png
+--   tools/luasim/chafa_to_lua.py   its ANSI output -> the table below
 --
--- SadConsole averages a whole cell to one colour and picks a block by its
--- brightness (Host.MonoGame/Extensions.cs, ToSurface) - one sample a cell
--- against libtcod's four. BearLibTerminal has no converter; it offers sub-cell
--- offsets and layers, which do not apply to a fixed grid like this one.
---
--- tools/luasim/tcodify.py does the fitting; this draws the answer. The
--- codepoints are not needed - a quadrant is a rectangle, and px.rect draws a
--- rectangle exactly where a glyph would only approximate it.
+-- 21 x 12 characters on a 4 x 5 grid: 84 x 60 of the panel's 128 x 64. Every
+-- cell is one px.text call in the colour chafa chose. The painting is drawn
+-- once - this firmware does not clear the canvas between frames - and only the
+-- clock is repainted after that.
 
 PERIOD = 60.0
 FPS = 4
 
-local ART_W, ART_H = 20, 16
-local ART_M = {
-  "C4CCCC2ECC4CECCC4CCC",
-  "CCCCC848C42CCEEACCAA",
-  "CCCCCC8CCCCCC4CACCCC",
-  "4C42C86CC4A44242CAEC",
-  "E4C886EC222442A44CC8",
-  "2EA2EA28CA24A424C4C8",
-  "C428AAC48CCEA42A4CCA",
-  "22CE88CEC2C4AA8AA8E2",
-  "22C2AA88228EA22A4ACE",
-  "24AA6ACAECAAA44ACEC2",
-  "CCCA8244C2EAA82A48C4",
-  "A88AEC2CCCCE44E24CE8",
-  "CE4AACCC8CCC44C4A8CC",
-  "CCCCEC88ECCC24CA22CC",
-  "A8AAA8EE2CEAAA4EC22C",
-  "4C6E8EEEAC4AAAA8C424",
-}
-local ART_B = {
-  "798C2D788C3070882E768B27768D2B779030808F2D84901E768F3678923478933975923A788F3177983C7A9535798F337C8F317A902C7D902F758E35",
-  "8A9B3A88983786973883963A83993A8D9E388D94318D9A3B8A9C4290A04895A54A87963C81963F819A4085A554889E4187993E8899438D983A899A45",
-  "93A14196A2439AA84096A03597A23798A33BA3A63E9D932F845C1972410F714814836E22919F4090A24595A53E91A042939932939D3E8E9D4890A148",
-  "A5AE51A5AF50A4AC47A9B148A9B041AAB251A1690D9A4D01954D027E3C056428052F0D0C2D0608301810A0AF4B9BAC5195A04298A64998AC56A2AF46",
-  "B2B349B5B851B0B24BB5B749B1BE6AA8791DDC960CFFD234FDD430F8B713B468014614092206101D071427140CA0B257A4B357A6B350A8B657AEB652",
-  "C5C55DB9BA51BCC261C0C155B8B963662309F8BD2FFACB30FDCE2AFABC1CDE940C854104430F0A1905150F021188993D9FAA48A1AE4BAAB954B0B552",
-  "B4BA5AC3C76CC8C969CECA58825114723318F7B829FEC527EDAB1AEBA615E79F14C9840B5217091A061D1D061A3E3A2569792C7893437D9F4894A143",
-  "71732A828834B2B55EAEBA5D6B2212924914B8640CCF7C09B5680AF4B015A6590ABF740A5F2008290B201B061C281C213D572C50763F5377456B843F",
-  "4D57275555276E62245142236C22106A240BFCC434F8BB2DDD9219FCBD28FBB61CD18106420E0B2B0F1D190C1F220E1A5D6A3162783B507441547639",
-  "575A2C5B5827575122453F245A1010430814F6A818F1AB198E3F08FAB421DC91129C50093F0C0A250F1E150D21210D1F343D2538462C355639405A36",
-  "564F28574D254E4C225656255F1813460914D8850EEA9B13BE6807CD810ED58B11813A093A0B0D2C0E1A180A1B230F21464F274756323F5A3C465E3A",
-  "4E4C265458315C64337277385922165C0E0C340814DD9517E79B16A75A067C330560220C320B10270D18230A1521101D4A572D60662C636E2C495D36",
-  "596A42607245748046747E415333214A0B10390A113A10148B4C0C662E1062290B73370B6627052F090F1D0B161F0B192D2E20445C314C5D29454F2A",
-  "635A296E72406C723D6565274E351F460D134211115C270E92570CCF8F12BB7908C5850BCA81075412093B1010511C0B1D0A19362D154C521E657031",
-  "7F570D482611351916502F122B0F234F1113783008DD9B15FAD036F7BB1DF7BE23FBC829F3B013903A04763007511D0C310E1A3B18165C4B11928C2D",
-  "7941086B3B0A582710642A0A400F1A79200BF6B61CFBD53AFEDF37FED529FEDA39FCCF2CF5B1139939027F33062E0C13581B0D4F181338141887660F",
+local ART_W, ART_H = 21, 12
+local ART_G = {
+  "UUUUUUUUUUUUUUUUaUaUU",
+  "UUUUUUUbe^ ^9aUaUUUaU",
+  "aUUUUUkUU$l   4aUUUUa",
+  "UaUUUFUaaaal   9hahah",
+  "haUae hhhaaaI   aUahh",
+  "dbaaF UUeUeUI    Uehh",
+  "[  '' habhae'   ^444h",
+  "`     jUbUeb        _",
+  "  _U.   aaF       a'-",
+  "Uaaa6    l__l     =l_",
+  ", ^`   _UUUUUl    _{z",
+  "P     UUaaUaeb     ja",
 }
 local ART_F = {
-  "8195357D933B7A8D307C8F2F7A93368296327E8B2783932E829A3C829B4081993F7E91387B93377D983D829A3D8395397D923C8395398394367D9642",
-  "91A34792A244939F34909E3792A135979F3195992992A24995A64C999D3C889A4893A340879A4288A14B8BA34789983E8E9A388D993D8C9C44899F4B",
-  "9DA340A3AB47A1AC489FA941A2AA3B9FA9439D8220843F038134005E21054311064F12036543139BA23796A747929C39929E3F94A34894A8549AA53D",
-  "AAAD4AADB551ABB14FABB23DAAB3558D661C803C00D69110CF890AB46D034E1C0840130B1F0810999732A19D3397A5469DAA4C97AA549FAF55ABB653",
-  "B7B951BBBC4EB7BC58B5BB5EA29C4A743303FBC732FBDA3BFCC31FDE94057A3603702D033509090D0013888537ACBF5D9DAE59AFB856B1BD5CAFB758",
-  "BFBE4EB8BC5DBBBD53B9C26D8A5515D78D0EFCCC31FBC92CFCC932EFA814B76C01C67D062907122306132B181255622B858B2F849B4296AE4ABCBA4C",
-  "7E8A3B9BA148CACA609E9C42551116D88E19C2720CDF920C9C4D01BC6C04934A069149052C081B22082110001653662951662B658845638A48B7B645",
-  "8F8C31B6C1627E78298B8A3E48000EFFBA21F0AC1CF9B91DD88C0FBA6403F7B31BF6A8102E081916072223061843572A466031496D3C476E3EA2A93D",
-  "515B2C5E5420564F2376571C55080DF2A114F6B424FDC437EDA41BFACF37DD8F0E974B05290C18240D20200B1D4B522B48582C587A4159834B6A8D49",
-  "525F2D5E572B4C4B254623194A0F15A14E08E18F0EC8760FB5670DD5880FBB6F097029052C0A142B0D191F0D1C2F241D3E4C283950333D51304B683E",
-  "4E512D51582C5A5D295835184807145619105F1E0EFFB820DB9014E49A18A256065D1C062D0C18220B1A1409203B201B525322506335506231415939",
-  "55552C555E366D773E664B205612124608104D100B5B2211833A086E2C0957210D4A190E43130A2A0A121A0C1B3A17172D3E2D4356314662374C532E",
-  "667B506A7C4E6D84566D7238480D175610123F0F10431511CD8F16A05F09904D06A05F07965404490C072208142D0D1144542766722B5F6D2F5A6F39",
-  "714C0D57351B5B3F114B320E40121B400A13531D0EB3720EDD9E1BE7A61AE2A217E6A6179747017A2A0461200C2009192F2516474B123E38103E4014",
-  "5F39115D3A0B55341333151A3F0D197A2307D89011F8C52EF9C226FDCE29FCCD32F7BD21D68607701E078837063C1013400E144F3F1B787023B29921",
-  "8D4C057D4A097035092A0D1D852C09C35F04FCD22EFDE041FEDA32FED930FFE13EFBC524D27C058528045C230A57240D823E0773300B5E3C0A65390D",
+  "8297358094337C8E2E7B8C29798E2D7E932C829129818E2B829533829637849B3E7F93377B8F327B93357D9C417F98387D90348093348091347E92387D9C46",
+  "92A03C95A23D99A73F98A53896A23198A4359AA23599922A896D2194993892983A919A3A7A742787943590A33F8EA13B8D98318E9B398D9B3F8E9F4193A544",
+  "A7AE44AAB24DACB44BA7AF43AEB541AAB4519B8127AA680CC5810EB169058F46028F46028F46028F46028B88289CAE4A98AA4A99A8439AAD51A4B34DAEB544",
+  "BFC352BFC04DBAC056BABC4BBBC260A7A74EC8830DF9DC3EFAE439FBD425E59905A05200A05200A05200A052008D974199AC4EA9B54DADBC51B1BB53B9BF53",
+  "ADB446BCBF5AC9CD68D0CF5CBCB244BCB244E59F1DF4C32BFAD12DEAB01BE69F13CB7E07984D00984D00984D00984D00616E207488337FA14396A643C4C44F",
+  "606824737624A7AB4B999D4992903D92903DD58D17D4870DEBAA15D4890BCF880EC57B0BB86703B86703B86703B86703B8670343642E486E37547333B7BB47",
+  "525D1F525D1F525D1F766311624F18624F18E8A01BF6BD28EDB126EAAA1EF9C226D58508A24F00A24F00A24F00A24F004D5D2B52642C496F38507639738F41",
+  "556025556025556025556025556025556025A15608F0A714CB7407C5730AE2920FA35403A35403A35403A35403A35403A35403A35403A35403A35403375938",
+  "FFFFFF0000004D592C585C27707837707837707837CD8012DA9815BA6A0AA45504A45504A45504A45504A45504A45504A45504A455044B5C26485622335338",
+  "4E5C3155683E61703F6874395F602A5F602A5F602A5F602A5F602AAC690DA66004A35B03894A05894A05894A05894A05894A05894A054D6023475F2A697A37",
+  "744B08575A2D645D29636730636730636730636730D68C0AB47915EBAE1AE3A215E3A718E09C10BB6903BB6903BB6903BB6903BB69035E50165D5F1E65631C",
+  "8B56048B56048B56048B56048B56048B5604B05E09F7CE2EFBE23DFCE335FCDF31FCDF37F8C51EB96103B96103B96103B96103B96103B96103846410A28518",
 }
 
-local CW, CH  = 4, 4             -- the cell; a quadrant is 2 x 2 pixels
-local CLK_X   = 80               -- 20 x 16 cells of 4 px fill 80 x 64
-local CLK_W   = 48
+local CW, CH = 4, 5              -- three pixels of glyph and one of air
+local ART_X, ART_Y = 0, 2
+local CLK_X, CLK_W = 86, 42
 
-local GOLD   = {238, 200, 120}
-local OCHRE  = {172, 128,  62}
-local SHADOW = {  9,   8,  12}
+local GOLD  = {238, 202, 124}
+local OCHRE = {170, 126,  60}
+local DIM   = { 44,  34,  22}
+
+-- The digits are characters too: each lit square of a 3x5 digit is one glyph,
+-- and 'U' is the densest the panel's font offers inside a cell (11 of 15
+-- pixels). Nothing in ASCII is solid, so a digit drawn this way is the closest
+-- a character grid gets to a stroke.
+local INK = "U"
 
 local DIGITS = {
   [0] = {7,5,5,5,7}, [1] = {2,6,2,2,7}, [2] = {7,1,7,4,7}, [3] = {7,1,3,1,7},
@@ -106,34 +87,25 @@ local DIGITS = {
 
 local CELL = {}
 for r = 1, ART_H do
-  local m, b, f = ART_M[r], ART_B[r], ART_F[r]
+  local g, f = ART_G[r], ART_F[r]
   local row = {}
   for c = 1, ART_W do
     local h = (c - 1) * 6
-    row[c] = { tonumber(m:sub(c, c), 16),
-      tonumber(b:sub(h+1,h+2),16), tonumber(b:sub(h+3,h+4),16), tonumber(b:sub(h+5,h+6),16),
+    row[c] = { g:sub(c, c),
       tonumber(f:sub(h+1,h+2),16), tonumber(f:sub(h+3,h+4),16), tonumber(f:sub(h+5,h+6),16) }
   end
   CELL[r] = row
 end
-ART_M, ART_B, ART_F = nil, nil, nil
-
--- Quadrant order is libtcod's: TL, TR, BL, BR.
-local QX = {0, 2, 0, 2}
-local QY = {0, 0, 2, 2}
+ART_G, ART_F = nil, nil
 
 local function portrait()
   for r = 1, ART_H do
-    local row, y = CELL[r], (r - 1) * CH
+    local row, y = CELL[r], ART_Y + (r - 1) * CH
     for c = 1, ART_W do
       local u = row[c]
-      local x = (c - 1) * CW
-      px.rect(x, y, CW, CH, u[2], u[3], u[4], true)
-      local m = u[1]
-      for i = 1, 4 do
-        if m % (2 ^ i) >= (2 ^ (i - 1)) then
-          px.rect(x + QX[i], y + QY[i], 2, 2, u[5], u[6], u[7], true)
-        end
+      if u[1] ~= " " then
+        -- px.text puts a glyph's ink two rows below the y it is given
+        px.text(ART_X + (c - 1) * CW, y - 2, u[1], u[2], u[3], u[4])
       end
     end
   end
@@ -145,7 +117,7 @@ local function digit(n, x, y, r, g, b)
     local bits = rows[ry]
     for rx = 1, 3 do
       if bits % (2 ^ (4 - rx)) >= (2 ^ (3 - rx)) then
-        px.rect(x + (rx - 1) * CW, y + (ry - 1) * CH, CW, CH, r, g, b, true)
+        px.text(x + (rx - 1) * CW, y + (ry - 1) * CH - 2, INK, r, g, b)
       end
     end
   end
@@ -163,27 +135,25 @@ function draw()
 
   local t = px.now()
   local phase = px.t()
-  px.rect(CLK_X, 0, CLK_W, 64, SHADOW[1], SHADOW[2], SHADOW[3], true)
+  px.rect(CLK_X - 2, 0, 128 - CLK_X + 2, 64, 0, 0, 0, true)
 
-  -- Hours above, minutes below, on the same 4 px grid as the painting.
   local PAIR = DW * 2 + CW
   local x = CLK_X + (((CLK_W - PAIR) // 2) // CW) * CW
-  digit(math.floor(t.hour / 10) % 10, x,           6,  GOLD[1], GOLD[2], GOLD[3])
-  digit(t.hour % 10,                  x + DW + CW, 6,  GOLD[1], GOLD[2], GOLD[3])
-  digit(math.floor(t.min / 10) % 10,  x,           32, OCHRE[1], OCHRE[2], OCHRE[3])
-  digit(t.min % 10,                   x + DW + CW, 32, OCHRE[1], OCHRE[2], OCHRE[3])
+  digit(math.floor(t.hour / 10) % 10, x,           4,  GOLD[1], GOLD[2], GOLD[3])
+  digit(t.hour % 10,                  x + DW + CW, 4,  GOLD[1], GOLD[2], GOLD[3])
+  digit(math.floor(t.min / 10) % 10,  x,           34, OCHRE[1], OCHRE[2], OCHRE[3])
+  digit(t.min % 10,                   x + DW + CW, 34, OCHRE[1], OCHRE[2], OCHRE[3])
 
-  -- The minute, along the foot: a lit cell ahead of the filled ones, which is
-  -- the half-block a partial cell would be.
+  -- The minute, in characters along the foot of the clock half.
   local cells = CLK_W // CW
   local lit = phase * cells
   for i = 1, cells do
     local bx = CLK_X + (i - 1) * CW
     if i <= lit then
-      if i > lit - 1 then px.rect(bx, 56, CW, CH, GOLD[1], GOLD[2], GOLD[3], true)
-      else px.rect(bx, 58, CW, 2, OCHRE[1], OCHRE[2], OCHRE[3], true) end
+      if i > lit - 1 then px.text(bx, 57, INK, GOLD[1], GOLD[2], GOLD[3])
+      else px.text(bx, 57, "_", OCHRE[1], OCHRE[2], OCHRE[3]) end
     else
-      px.rect(bx + 1, 59, 1, 1, 48, 38, 26, true)
+      px.text(bx, 57, ".", DIM[1], DIM[2], DIM[3])
     end
   end
 end
