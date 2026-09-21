@@ -19,22 +19,35 @@
 // and it is worth being exact about which carries the weight, because an
 // earlier version of this comment had it backwards.
 //
-//   * **The scan below is the load-bearing one.** Nothing reaches the parser
-//     without passing it: luaStoreFinish runs it on the way in, and the load
-//     path runs it again, so a file that arrives in /lua by some other route -
-//     a filesystem image, a rolled-back firmware - is still checked. It counts
-//     BLOCKS as well as brackets, because the expensive nesting has no bracket
-//     in it at all, and it is a small lexer rather than a counter: levelled
-//     long brackets and strings are understood, and every path that cannot make
-//     sense of the source refuses the file. tools/luasim/store_test.py drives
-//     24 cases through it, every one of them a bypass that once worked.
+// The two bound different things, and saying which is which has taken three
+// attempts to get right - both earlier versions of this comment overstated one
+// of them.
 //
-//   * LUAI_MAXCCALLS, lowered from Lua's default 200 (llimits.h:254) in
-//     platformio.ini where the arithmetic is written out, is the backstop. Lua
-//     counts its own recursion through luaE_incCstack and raises a catchable
-//     "C stack overflow" past the limit. It is the second line, not the first:
-//     at the cap alone the worst cycle would not fit the stack, which is why
-//     the scan comes first and is not merely a nicer error message.
+//   * **The scan below bounds bracket and block nesting**, which is the
+//     expensive kind for the PARSER: a `local function` inside a `local
+//     function` costs 272 bytes of C stack a level and a table constructor
+//     384, and a counter that watched only brackets would see neither. It is a
+//     small lexer - levelled long brackets and strings are understood - and
+//     every path that cannot make sense of the source refuses the file rather
+//     than passing it on. luaStoreFinish runs it on the way in and the load
+//     path runs it again, so a file that reaches /lua by some other route is
+//     still measured. tools/luasim/store_test.py drives 34 cases through it,
+//     every one a bypass that once worked.
+//
+//     What it does NOT bound: unary and right-associative operator chains
+//     (`not not not x`), which recurse through subexpr with no bracket and no
+//     block, and every kind of runtime recursion. Those are cheap - 64 bytes a
+//     level - but they are not the scan's business.
+//
+//   * **LUAI_MAXCCALLS bounds everything else**, including the runtime. Lua
+//     counts its own C recursion through luaE_incCstack and raises a catchable
+//     "C stack overflow" past the limit. It is lowered from Lua's default 200
+//     in platformio.ini, where the arithmetic is written out in full.
+//
+//     The worst case is not in the parser at all: nested pcall cost 560 bytes
+//     a level, and `local function f() pcall(f) end` is three lines that no
+//     amount of reading the source can recognise as deep. pcall and xpcall are
+//     out of the sandbox for that reason (nslua_sandbox.cpp).
 //
 // The source itself is read into PSRAM, never the internal heap.
 // ============================================================
@@ -88,7 +101,13 @@ uint32_t    luaStoreBytes(uint8_t i);
 char *luaStoreRead(uint8_t i, size_t *lenOut);
 void  luaStoreRelease(char *src);
 
-bool luaStoreDelete(const char *stem);
+// Removing one. The three outcomes are kept apart because a caller answering
+// HTTP has to: a file that is not there is a 404, and one the filesystem would
+// not let go of - a reader still has it open - is not.
+#define LUA_STORE_OK      0
+#define LUA_STORE_ABSENT  1
+#define LUA_STORE_BUSY    2
+int luaStoreDelete(const char *stem);
 
 // Upload, chunk by chunk, the way the animation store takes a file. The name
 // must be 1..24 of [A-Za-z0-9_] - the same rule gen_effects.py enforces on a

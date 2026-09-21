@@ -123,6 +123,13 @@ void fillClock(LuaPxClock &c, double period) {
   c.utcMinutes = days * 1440 + (lt.tm_hour - ut.tm_hour) * 60 + (lt.tm_min - ut.tm_min);
 }
 
+bool luaEffectsHasError(uint32_t word) {
+  portENTER_CRITICAL(&s_mux);
+  const bool has = (s_errorWord == word) && s_error[0];
+  portEXIT_CRITICAL(&s_mux);
+  return has;
+}
+
 void publishError(uint32_t word, const char *msg) {
   // The first line only: the traceback goes to serial, not onto 128 pixels.
   char line[sizeof(s_error)];
@@ -220,7 +227,10 @@ void effectTask(void *) {
           // back to a build with a different limit - and the parser must never
           // see one that has not been measured.
           if (src) {
-            char why[160];
+            // static, not a local: this frame is the bottom of the deepest
+            // stack in the firmware, and 160 bytes of it is 160 bytes the Lua
+            // parser does not get. Only this task runs here.
+            static char why[160];
             if (!luaStoreValidate(src, srcLen, why, sizeof(why))) {
               Serial.printf("[luafx] %s refused: %s\n", id, why);
               publishError(runningWord, why);
@@ -234,15 +244,23 @@ void effectTask(void *) {
         fillClock(s_canvas.clock, 60.0);      // for a script that reads px.now() at load
         const int64_t t0 = esp_timer_get_time();
         const bool ok = src && s_fx.open(id, src, srcLen, &s_canvas, kLuaFxPanelLimits);
-        if (!src) Serial.printf("[luafx] %s: nothing to run in that slot\n", id);
+        if (!src) {
+          Serial.printf("[luafx] %s: nothing to run in that slot\n", id);
+          // Whatever is in s_fx.error() belongs to the previous effect: open()
+          // was short-circuited and never cleared it. Say what is actually
+          // wrong instead, and leave a refusal message already published alone.
+          if (!luaEffectsHasError(runningWord)) publishError(runningWord, "nothing in that slot");
+        }
         Serial.printf("[luafx] open %s: %s in %.1f ms, ~%u instr, heap %u B, fps cap %u, period %.0f s, "
                       "stack free %u B\n", id, ok ? "ok" : "FAILED",
                       (esp_timer_get_time() - t0) / 1000.0, (unsigned)s_fx.lastInstructions(),
                       (unsigned)s_fx.heapBytes(), s_fx.fps(), s_fx.periodSeconds(),
                       (unsigned)uxTaskGetStackHighWaterMark(nullptr));
         if (!ok) {
-          Serial.printf("[luafx] %s\n", s_fx.error());
-          publishError(runningWord, s_fx.error());
+          if (src) {                       // open() ran, so the message is its own
+            Serial.printf("[luafx] %s\n", s_fx.error());
+            publishError(runningWord, s_fx.error());
+          }
           failed = true;
 #if defined(LUA_STORE_ENABLED)
           releaseUser();   // nothing will run: give the PSRAM back now

@@ -917,6 +917,29 @@ static void handleYachtradar() {
 }
 #endif
 
+#if defined(LUA_STORE_ENABLED)
+// Nothing on this panel is authenticated, and that has been an acceptable trade
+// while the worst an unauthenticated caller could do was change a setting.
+// Uploading a script is not that: it is code. The panel cannot grow a password
+// here without growing one everywhere, but it can refuse the one case that lets
+// a stranger reach it - a page in the owner's own browser POSTing to the
+// panel's address. multipart/form-data is CORS-safelisted, so such a request
+// needs no preflight and would otherwise go straight through.
+//
+// A browser always sends Origin on a cross-origin POST; curl, the agent tools
+// and anything else server-side send none. So: no Origin is allowed, an Origin
+// naming this panel is allowed, anything else is refused. This stops the
+// drive-by, not a caller already on the network - that one is the standing
+// posture, written down rather than fixed here.
+static bool originIsForeign() {
+  if (!server.hasHeader("Origin")) return false;
+  const String o = server.header("Origin");
+  if (!o.length() || o == "null") return false;
+  const String host = server.hostHeader();
+  return !(host.length() && o.endsWith(host));
+}
+#endif
+
 // ---------------------------------------------------------------- /api/lua
 #if defined(LUA_EFFECTS_ENABLED)
 static void handleLua() {
@@ -930,16 +953,17 @@ static void handleLua() {
     if (hasShow && hasDel) REJECT(400, "send show or delete, not both");
 #if defined(LUA_STORE_ENABLED)
     if (hasDel) {
+      if (originIsForeign()) REJECT(403, "refused: this request came from another origin");
       const char *stem = in["delete"];
       if (!stem || !*stem) REJECT(400, "delete wants the uploaded script's name");
-      if (!luaStoreDelete(stem)) REJECT(404, "no uploaded script by that name");
-      // Every index above the one removed has just moved down, so the page the
-      // panel is on now means a different script. Dropping only the selection
-      // is not enough: loop() re-selects from ctrlPage on its very next pass
-      // (main.cpp, luaEffectsSelect(ctrlLuaEffect(ctrlPage))) and would quietly
-      // start whatever slid into that slot. Leave the page itself.
+      // Off the page BEFORE the list moves: rescan() renumbers everything above
+      // the one removed, and the effect task could otherwise open by an index
+      // that has just come to mean a different script.
       luaEffectStop();
       panelShowPage(0);   // the clock, which is always page 0 and always there
+      const int rc = luaStoreDelete(stem);
+      if (rc == LUA_STORE_ABSENT) REJECT(404, "no uploaded script by that name");
+      if (rc != LUA_STORE_OK) REJECT(409, "the script is in use and could not be removed");
     }
 #else
     if (hasDel) REJECT(400, "this build stores no uploaded scripts");
@@ -1004,6 +1028,10 @@ static void handleLuaUploadChunk() {
   if (upload.status == UPLOAD_FILE_START) {
     s_luaUpErr = nullptr;
     s_luaUpSeen = true;
+    if (originIsForeign()) {
+      s_luaUpErr = "refused: this request came from another origin";
+      return;
+    }
     // The name comes from the query string. A multipart field cannot be read
     // here: WebServer merges _postArgs into _currentArgs only after the whole
     // form is parsed (Parsing.cpp), which is long after UPLOAD_FILE_START.
@@ -1032,10 +1060,10 @@ static void handleLuaUploadChunk() {
     }
   } else if (upload.status == UPLOAD_FILE_ABORTED) {
     luaStoreAbort();
+    // s_luaUpSeen stays true: the chunk handler did run, and the done handler
+    // should say the transfer was cut short rather than that no file arrived.
+    // Every START clears both, so nothing leaks into the next request.
     s_luaUpErr = "the upload was cut short";
-    // The done handler may never run for an aborted transfer, and a stale flag
-    // would answer the next request with this message instead of its own.
-    s_luaUpSeen = false;
   }
 }
 

@@ -97,8 +97,22 @@ extern "C" void nslua_sandbox_open(lua_State *L) {
     // dofile/loadfile reach a filesystem; load accepts unverifiable bytecode;
     // collectgarbage hands a script control of GC pauses. setmetatable, rawset
     // and friends stay: tables need them and they are not an escape.
+    //
+    // pcall and xpcall go for a different reason, and it is about the stack
+    // rather than the sandbox. Each nested pcall costs a whole C cycle -
+    // luaD_precall 48 + precallC 32 + luaB_pcall 32 + lua_pcallk 64 +
+    // luaD_pcall 48 + luaD_rawrunprotected 128 + f_call 32 +
+    // luaD_callnoyield 32 + ccall 32 + luaV_execute 112 = 560 bytes a level,
+    // measured from this build - and `local function f() pcall(f) end` reaches
+    // LUAI_MAXCCALLS with three lines of source that no amount of scanning the
+    // text can recognise as deep. On a 12 KB task stack that peaks around
+    // 11.6 KB, inside the margin kept for interrupts.
+    //
+    // Nothing shipped uses them: an effect is a draw loop, its errors are
+    // caught by the C-level lua_pcall around draw(), and a script swallowing
+    // its own would only hide them from the budget machinery.
     static const char *const kRemoved[] = {"dofile", "loadfile", "load",
-                                           "collectgarbage"};
+                                           "collectgarbage", "pcall", "xpcall"};
     for (size_t i = 0; i < sizeof(kRemoved) / sizeof(kRemoved[0]); i++) {
         lua_pushnil(L);
         lua_setglobal(L, kRemoved[i]);

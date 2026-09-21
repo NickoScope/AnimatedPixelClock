@@ -835,6 +835,9 @@ uint16_t panelPageSeconds(uint8_t page) {
 }
 
 bool panelShowPage(uint8_t page) {
+  // A reserved-but-empty Lua slot is a real page number and an unreal page:
+  // the banner would be blank and the screen would hold the last frame drawn.
+  if (!ctrlPageVisitable(page)) return false;
   if (page >= ctrlPageCount()) return false;
 #if defined(CAROUSEL_ENABLED)
   carouselNote();             // held for the idle time, as if the knob had put it there

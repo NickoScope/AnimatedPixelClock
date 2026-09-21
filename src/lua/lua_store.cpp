@@ -369,14 +369,14 @@ char *luaStoreRead(uint8_t i, size_t *lenOut) {
 
 void luaStoreRelease(char *src) { if (src) heap_caps_free(src); }
 
-bool luaStoreDelete(const char *stem) {
-  if (!s_usable || !validStem(stem)) return false;
+int luaStoreDelete(const char *stem) {
+  if (!s_usable || !validStem(stem)) return LUA_STORE_ABSENT;
   char path[48];
   pathOf(stem, path, sizeof(path));
-  if (!LittleFS.exists(path)) return false;
+  if (!LittleFS.exists(path)) return LUA_STORE_ABSENT;
   const bool ok = LittleFS.remove(path);
   rescan();
-  return ok;
+  return ok ? LUA_STORE_OK : LUA_STORE_BUSY;
 }
 
 // --- upload ---------------------------------------------------------------

@@ -995,13 +995,18 @@ async def effect_upload(args: UploadIn) -> str:
     is why it exists: write, preview, measure, upload, watch it run.
 
     The panel takes it seriously before it accepts it. A script is refused if it
-    is over 24 KB, if nothing in it is called draw, or if its blocks and brackets
-    nest deeper than 16 - because the effect task has a 12 KB stack and Lua's
-    parser recurses with the source's nesting. Blocks count as well as
-    brackets: nested `local function` is the expensive kind and has no bracket
-    in it. The interpreter's own limit is 20 C calls as the backstop, so a
-    script that somehow slips past the first check is still refused cleanly
-    rather than running off the stack.
+    is over 24 KB, if nothing in it is called draw, or if its blocks and
+    brackets nest deeper than 16. That is not tidiness: the effect task has a
+    12 KB stack and Lua's parser recurses with the source's nesting, at up to
+    384 bytes a level. Blocks count as well as brackets, because the expensive
+    nesting has no bracket in it.
+
+    Two things the scan cannot see, so do not rely on it as the whole answer.
+    Runtime recursion is bounded by the interpreter instead - LUAI_MAXCCALLS is
+    20 on this firmware - and **pcall and xpcall are not in the sandbox**,
+    because a nested pcall costs 560 bytes a level and three lines of source
+    can reach the limit. A script that needs to catch its own errors cannot;
+    an effect is a draw loop and its failures are caught around draw() anyway.
 
     Four uploaded scripts fit. Names are per-slot: uploading over an existing
     name replaces it and does not need a free slot.
