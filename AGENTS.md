@@ -68,9 +68,111 @@ Which of these are compiled in depends on build flags - see `platformio.ini`,
 environment `matrix-waveshare-rgb`. `GET /api/info` tells you what a running
 panel actually has.
 
+### The page numbers are not fixed. Read them.
+
+`CtrlPage` in `src/main.cpp:91-122` is assembled from `#if` blocks, one per
+build flag. Turn a module off and every page after it shifts down. The table
+above is this build; **it is not a constant**.
+
+```bash
+curl -s http://$PANEL/api/panel | python3 -c \
+  'import json,sys; [print(p["i"], p["key"], p["name"]) for p in json.load(sys.stdin)["pages"]]'
+```
+
+Match on `key` or `name`, never on a number you read in a document.
+
 ---
 
-## 2. Read this before you call anything
+## 2. The kinds of screen, and what each one needs from you
+
+Six kinds, and they differ in **where a screen's content comes from** - which is
+what decides how you drive it, how it fails, and what it costs.
+
+### a. Clock styles — page 0, chosen with `style`
+
+About fifteen faces (Mario, Pac-Man, Tetris, Asteroids, Dino, Tron, Weather…),
+all drawn in C++ every frame from the time and nothing else.
+
+*Working with them:* `{"style": N}`, and `styles[]` in `GET /api/panel` gives the
+ids - **which are not contiguous**, so iterate the list rather than counting.
+They are a second axis, not pages: page 0 plus a style. No network, no budget,
+they cannot fail from outside. The carousel walks them by itself when
+`carousel.allStyles` is on.
+
+### b. Lua effect pages — one page each
+
+Scripted faces: football, Minecraft, room radar, snake, snooker, Tetris. Each is
+a page of its own so the knob and carousel walk them singly.
+
+*Working with them:* `/api/lua`. They run on their own task with a frame cap and
+PSRAM frame buffers, and the panel logs each one's cost - `[luafx] open <name>:
+ok in N ms, ~N instr, heap N B, fps cap N, stack free N`. Some are slow to open
+(a few hundred milliseconds) and the portal is unresponsive while one does.
+
+### c. Data boards — they fetch, and only while you are looking
+
+World clock, flights, trains, the four market pages, media, yachts.
+
+*Working with them, and this is the part that surprises people:* **a board does
+not fetch while its page is off the screen.** That is deliberate - it is the
+owner's brief - so "the data is stale" usually means "nothing has looked at it".
+Put the page up, wait, then read.
+
+Each has its own rhythm and its own ceiling:
+
+| board | source | rhythm | ceiling |
+|---|---|---|---|
+| trains | Realtime Trains, direct | ~120 s | 9,000/day, 30/minute |
+| flights | FlightAware AeroAPI, direct | on demand | **30 calls/day, ~$0.005 each** |
+| markets | Home Assistant over MQTT | pushed | none |
+| media | Home Assistant / Music Assistant | pushed | none |
+| world clock | one IP lookup per boot | once | none |
+| yachts | AIS websocket, **long-lived** | continuous while shown | holds 17.5 KB while the page is up |
+
+They all fetch through one broker now (`src/net/net_broker.h`), one request at a
+time, and a change you make by hand - a new station, a new city - goes in as
+*interactive* and jumps the queue ahead of scheduled refreshes.
+
+### d. Overlays — drawn on top of whatever is showing
+
+Notifications and cards. They own the screen while they are up, and the first
+click dismisses one instead of doing what the click would normally do
+(`src/main.cpp`, `cardsNotifyActive()`).
+
+*Working with them:* `/api/notify`, `/api/notify/dismiss`. Be aware that a card
+can be on screen when you think a page is, and `GET /api/panel`'s `now.notify`
+says so.
+
+### e. fx3d — a scene engine that takes the screen
+
+Three-dimensional scenes with their own looks. When one is running it **owns the
+display**, and the first knob event stops it and gives the panel back.
+
+*Working with them:* `/api/fx3d`. Documented separately in the knowledge base
+(doc 27) because the scene and look vocabulary is large.
+
+### f. Clips and animations — played from the SD card
+
+*Working with them:* `/api/anim/list|play|upload|delete`, `/api/clips`,
+`/api/clips/frame`, `/api/clips/upload`. Note the known fault: `/api/anim/play`
+answers ok and `animationPlaying` stays false - it needs eyes on the screen to
+confirm, and nobody has.
+
+### Two things true of every kind
+
+**Only one thing draws at a time**, and the precedence is: a notification card,
+then fx3d, then the page. If you set a page and see something else, check those
+two first rather than doubting the page call.
+
+**The carousel moves pages on its own** unless somebody has touched the knob
+recently. `carousel` in `GET /api/panel` gives `enabled`, `idleS`, `slotS`. If
+you are testing and the screen keeps wandering off, that is why - and if you
+reboot the panel repeatedly, the carousel will walk it onto the metered flight
+page for you, which is one way to spend a day's API budget without meaning to.
+
+---
+
+## 3. Read this before you call anything
 
 These are not hypotheticals. Each one cost this project real time in the week
 before this file was written.
@@ -85,7 +187,7 @@ were written down *wrong* in the knowledge base for months:
 | `{"styleId": 14}` | `{"style": 14}` |
 
 **So verify every change by reading the state back.** Not the reply - the state.
-There is a tool that does this for you (§5).
+There is a tool that does this for you (§6).
 
 **An "ok" that only means "it was already like that" proves nothing.** If you set
 page 9 and it was already on page 9, your read-back confirms nothing about
@@ -109,7 +211,7 @@ is generous (9,000/day) but real.
 
 ---
 
-## 3. Driving it
+## 4. Driving it
 
 ### Pages and styles
 
@@ -160,7 +262,7 @@ test sweeps.
 
 ---
 
-## 4. Seeing what is happening
+## 5. Seeing what is happening
 
 This is the part worth learning first. A panel this small fails quietly, and
 nearly every mistake in this project's history was made by reasoning instead of
@@ -174,7 +276,7 @@ curl -s http://$PANEL/api/info
 
 | field | what it tells you |
 |---|---|
-| `freeInternalHeap`, `largestHeapBlock` | internal SRAM. **This is the scarce thing** (§6) |
+| `freeInternalHeap`, `largestHeapBlock` | internal SRAM. **This is the scarce thing** (§7) |
 | `allocFails`, `allocFailBytes`, `allocFailTask` | failed allocations - `wifi` means the radio went short |
 | `lastCrash` | the last crash from flash. **Check `thisBoot` and `sameFirmware`** before blaming your change |
 | `resetReason` | 1 power-on, 3 software, 4 panic, 5 interrupt watchdog, 6 task watchdog |
@@ -226,7 +328,7 @@ serial console is not - do not confuse them.
 
 ---
 
-## 5. Tools that already exist
+## 6. Tools that already exist
 
 In the knowledge base repository, not here, under `tools/nsc/`:
 
@@ -245,7 +347,7 @@ pointless. The third one is the useful one for an autonomous agent.
 
 ---
 
-## 6. Memory, and why it dominates everything here
+## 7. Memory, and why it dominates everything here
 
 The chip has 512 KB of internal SRAM and 16 MB of PSRAM. **PSRAM is not the
 constraint and flash is not the constraint. Internal SRAM is.**
@@ -280,7 +382,7 @@ sources. Do not raise a task's stack to fit a work buffer - move the buffer.
 
 ---
 
-## 7. Adding a screen
+## 8. Adding a screen
 
 Two routes, and which you want depends on whether you need C++.
 
@@ -290,7 +392,7 @@ finished, read `src/lua/README.md` and `tools/luasim/` for the Lua path, and
 
 ---
 
-## 8. Rules
+## 9. Rules
 
 - **Never flash from an automated tool.** Building and uploading is a human's
   call, at a moment they chose, with the panel in front of them. A tool that can
