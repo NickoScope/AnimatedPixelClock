@@ -41,7 +41,15 @@
 // The most a caller's URL and credential may be. Both live in PSRAM (see
 // nbBegin), so the sizes cost no internal RAM.
 #define NB_URL_MAX     384
-#define NB_AUTH_MAX    128
+// **2 KB, because that is what our credentials actually are.** This was 128,
+// picked as a generous-looking round number for "a bearer token" without
+// looking at one: the rail board's is a JWT and its own buffer is kTokenMax =
+// 2048 (rtt_direct.cpp:100). Every rail request was therefore refused by
+// nbSubmitRequest's length check - silently, because a refusal is the ordinary
+// "wait" signal - and the board sat at polls: 0 for as long as it took someone
+// to compare the two numbers. It lives in PSRAM, so four slots of this cost
+// nothing that is scarce.
+#define NB_AUTH_MAX   2064
 #define NB_HEADER_MAX   48
 // How many response headers one request may keep. Five, because the rail board
 // needs exactly that many: Retry-After plus four rate-limit counters, and

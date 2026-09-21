@@ -434,9 +434,24 @@ bool readStored(char *out, size_t cap, char *kind, size_t kindCap) {
 }
 
 // One request, either step. Fills in everything both have in common.
+// The check that was missing. A credential too long for the broker is refused
+// silently - a refusal is the ordinary "wait" signal - so the board simply
+// never fetches and nothing says why. Let the build say it instead.
+static_assert(kTokenMax + 8 <= NB_AUTH_MAX,
+              "the rail board's bearer does not fit NB_AUTH_MAX: the broker would refuse "
+              "every request and the board would sit at polls: 0 saying nothing");
+
 bool submitRail(const char *url, const char *bearer, bool interactive) {
-  char auth[kTokenMax + 8];
-  snprintf(auth, sizeof(auth), "Bearer %s", bearer);
+  // In PSRAM, not on the stack: "Bearer " plus a 2 KB JWT is 2 KB of the loop
+  // task's 8 KB stack, on a task that already runs the display, the web server
+  // and every module's loop. Taken once and kept, because it is written and
+  // zeroed on every request anyway.
+  static char *auth = nullptr;
+  if (!auth) {
+    auth = static_cast<char *>(heap_caps_calloc(1, kTokenMax + 8, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (!auth) return false;
+  }
+  snprintf(auth, kTokenMax + 8, "Bearer %s", bearer);
   NbRequest req = {};
   req.url = url;
   req.auth = auth;
@@ -449,7 +464,7 @@ bool submitRail(const char *url, const char *bearer, bool interactive) {
   req.collectCount = 5;
   req.timeoutMs = 12000;
   const bool sent = nbSubmitRequest(NB_RAIL, req, interactive);
-  memset(auth, 0, sizeof auth);    // the broker has its own copy
+  memset(auth, 0, kTokenMax + 8);  // the broker has its own copy
   return sent;
 }
 
