@@ -236,25 +236,37 @@ shows. `tools/luasim/photo_to_lua.py` is the same thing by hand.
 
 **Six things about it, each of which cost a try:**
 
-- **256 colours, not sixteen.** The firmware's own `/api/anim/upload` takes
-  PCA1, which is 4 bits a pixel. A photograph through the Lua path gets 256
-  with Floyd-Steinberg, and at 128x64 that is the difference between a picture
-  and a poster.
-- **It fits because it is quantised.** 8,192 pixels as full RGB would be 49,152
-  characters against a 50 KB limit. Two base64 characters an index is 20 KB.
-- **Do not run-length encode it.** It was tried. Dithering is what keeps a face
-  from banding at this size, and it is exactly what destroys runs - 8,192 pixels
-  came out as 7,232 of them, the length character became overhead, and the file
-  went over the limit at 25 KB.
+- **The aspect ratio is the first decision, not the last.** The panel is 2:1 and
+  almost no photograph is. `aspect=fit` (the default) keeps the whole picture
+  undistorted and fills the sides with a blurred darkened copy of itself;
+  `fill` crops to 2:1 and loses the edges; `crop` chooses which part.
+  Until 2026-09-22 this tool simply resized to 128x64, which squashed a
+  1007x1078 portrait **2.14x flat** - and the flattening is not obvious in a
+  thumbnail, only on the wall.
+- **No palette, since the limit became 50 KB.** 8,192 pixels at four base64
+  characters is 32,768, about 35 KB - so the colour itself is written and there
+  is neither quantisation banding nor the dither speckle used to hide it. And it
+  is *cheaper*: `string.byte(row, i, i+3)` returns four characters in one call,
+  so it is two calls into C a pixel where the palette version needed three.
+  `truecolor=false` still gives the 256-colour encoding at about 20 KB.
+- **The panel addresses 174^3 colours, not 16.7 million.** Measured, not
+  assumed: the canvas blits through `drawPixelRGB888` with no 565 step
+  (`lua_px.h:45`) and the HUB75 driver runs 8 bits a channel - but it then puts
+  every channel through a CIE 1931 gamma table whose 256 inputs land on **174
+  distinct outputs**, 82 collapsing onto a neighbour, nearly all in the dark
+  end where inputs 0..4 are all black. So the gain over a palette is real but
+  smallest in the shadows.
+- **Do not run-length encode it.** It was tried, in palette mode. Dithering is
+  what keeps a face from banding at this size, and it is exactly what destroys
+  runs - 8,192 pixels came out as 7,232 of them, the length character became
+  overhead, and the file went over the limit at 25 KB.
 - **Painted once.** The canvas is not cleared between frames, so it is drawn on
   the first frame and never again. Measured on the panel: that frame is 235 ms
   of the 500 a draw is allowed and 229,000 instructions of 2,000,000; every
   frame after it is 4.6 ms, which is the clock and nothing else. `FPS = 2` and
   no higher - there is nothing to animate.
-- **The panel is 2:1 and a portrait is not.** Choose `crop` deliberately or the
-  resize chooses it for you, badly. Fractions of the original.
 - **A little unsharp after the downscale** is worth more than any amount of
-  palette. A face at 128x64 has lost every edge it had.
+  colour. A face at 128x64 has lost every edge it had.
 
 **And a photograph of a person is not a code sample.** It goes in
 `tools/luasim/scripts/private/`, which git ignores and the tools look in. This

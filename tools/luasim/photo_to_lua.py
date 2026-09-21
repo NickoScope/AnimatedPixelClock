@@ -1,14 +1,30 @@
 #!/usr/bin/env python3
 """A photograph into a Lua effect that draws it.
 
-Not ASCII art - the picture itself, at the panel's own 128x64. Three things make
-it fit and make it cheap:
+Not ASCII art - the picture itself, at the panel's own 128x64.
 
-**A palette, as large as will fit.** 8,192 pixels as full RGB would be 49,152
-characters of source against the panel's limit, so the picture is quantised - but to
-256 colours, not to the sixteen the firmware's own animation format allows.
-Two base64 characters an index, Floyd-Steinberg on the way in. At 128x64 that is
-photographic: the eye runs out before the palette does.
+**Aspect first.** The panel is 2:1 and almost no photograph is, so `--aspect`
+decides what happens to the difference: `fit` (the default) keeps the whole
+picture undistorted and fills the sides with a blurred, darkened copy of
+itself; `fill` crops to 2:1 and loses the edges; `stretch` is the old
+behaviour and squashed a 1007x1078 portrait 2.14x flat.
+
+**Then colour.** `--truecolor` (the default since the script limit became
+50 KB) writes the colour itself, four base64 characters a pixel, with no
+palette and no dithering - about 35 KB. `--palette` is the older 256-colour
+dithered encoding at about 20 KB, kept because it is half the size.
+
+What the palette version cost, and why dropping it is worth 15 KB: 256 colours
+band in a sky or a cheek, and the dither that hides the banding is itself
+visible as speckle. The panel can address 174^3 colours - see the note in the
+generated header for where that number comes from - so a palette is throwing
+away a great deal.
+
+The rest is what makes it fit and makes it cheap:
+
+**In palette mode, a palette as large as will fit**: 256 colours, not the
+sixteen the firmware's own animation format allows. Two base64 characters an
+index, Floyd-Steinberg on the way in.
 
 **And no run-length coding**, which was tried and thrown away. Dithering is what
 keeps a face from banding at this size, and dithering is exactly what destroys
@@ -50,19 +66,50 @@ def encode_rows(idx, cols):
     return rows
 
 
+def encode_rows_true(rgb):
+    """Each row as FOUR base64 characters a pixel: 24 bits, the colour itself.
+
+    No palette and no dithering, because with a 50 KB budget neither is needed:
+    8,192 pixels at four characters is 32,768, and the whole file lands near
+    35 KB. What that buys is not a longer palette - it is no palette, so no
+    quantisation error to dither away and none of the dither noise that
+    quantisation then needs.
+    """
+    rows = []
+    for y in range(H):
+        out = []
+        for x in range(W):
+            r, g, b = rgb[y * W + x]
+            v = (r << 16) | (g << 8) | b
+            out.append(ALPHA[(v >> 18) & 63] + ALPHA[(v >> 12) & 63]
+                       + ALPHA[(v >> 6) & 63] + ALPHA[v & 63])
+        rows.append("".join(out))
+    return rows
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("image")
     ap.add_argument("--name", required=True)
     ap.add_argument("--crop", default="", help="l,t,r,b as fractions")
     ap.add_argument("--colors", type=int, default=256,
-                    help="2..256. 256 is photographic at this size and still fits")
+                    help="2..256, palette mode only. Ignored with --truecolor")
+    ap.add_argument("--truecolor", action="store_true", default=None,
+                    help="24-bit colour, four characters a pixel, no palette and "
+                         "no dithering. The default now that a script may be 50 KB")
+    ap.add_argument("--palette", dest="truecolor", action="store_false",
+                    help="the old 256-colour dithered encoding, about 20 KB")
     ap.add_argument("--contrast", type=float, default=1.0)
     ap.add_argument("--saturation", type=float, default=1.0)
     ap.add_argument("--brightness", type=float, default=1.0)
     ap.add_argument("--sharpen", type=float, default=0.0,
                     help="unsharp after the downscale. A face at 128x64 has lost "
                          "every edge it had; a little back is worth a lot")
+    ap.add_argument("--aspect", default="fit", choices=["fit", "fill", "stretch"],
+                    help="fit (default): the whole picture, undistorted, with the "
+                         "sides filled by a blurred copy of itself. fill: crop to "
+                         "the panel's 2:1 and lose the edges. stretch: the old "
+                         "behaviour, which squashed a portrait flat")
     ap.add_argument("--clock", default="br", choices=["br", "bl", "tr", "tl", "none"],
                     help="where the time goes, or none")
     ap.add_argument("--out", default="")
@@ -70,6 +117,8 @@ def main():
 
     if not 2 <= args.colors <= 256:
         sys.exit("--colors must be 2..256")
+    if args.truecolor is None:
+        args.truecolor = True
 
     im = Image.open(args.image).convert("RGB")
     if args.crop:
@@ -83,35 +132,88 @@ def main():
     if args.saturation != 1.0:
         im = ImageEnhance.Color(im).enhance(args.saturation)
 
-    im = im.resize((W, H), Image.LANCZOS)
+    # The panel is 2:1 and almost no photograph is. Resizing straight to 128x64
+    # squashes a portrait flat - a 1007x1078 picture came out compressed 2.14x
+    # vertically, which is what a wide face on the panel actually was.
+    if args.aspect == "stretch":
+        im = im.resize((W, H), Image.LANCZOS)
+    elif args.aspect == "fill":
+        iw, ih = im.size
+        k = max(W / iw, H / ih)
+        im = im.resize((max(W, round(iw * k)), max(H, round(ih * k))), Image.LANCZOS)
+        iw, ih = im.size
+        l, t = (iw - W) // 2, (ih - H) // 2
+        im = im.crop((l, t, l + W, t + H))
+    else:
+        iw, ih = im.size
+        k = min(W / iw, H / ih)
+        fw, fh = max(1, round(iw * k)), max(1, round(ih * k))
+        small = im.resize((fw, fh), Image.LANCZOS)
+        # The bars are the photograph itself, blown up, blurred and darkened -
+        # black bars on a lit panel read as a fault, and this reads as depth.
+        from PIL import ImageFilter  # noqa: PLC0415
+        back = im.resize((W, H), Image.LANCZOS).filter(ImageFilter.GaussianBlur(3))
+        back = ImageEnhance.Brightness(back).enhance(0.45)
+        back.paste(small, ((W - fw) // 2, (H - fh) // 2))
+        im = back
     if args.sharpen > 0:
         from PIL import ImageFilter
         im = im.filter(ImageFilter.UnsharpMask(radius=1,
                                                percent=int(args.sharpen * 100),
                                                threshold=0))
-    # Dithered: at 64 colours a photograph's skin tones band badly without it,
-    # and on a 2 mm pitch the dither is invisible from across a room.
-    q = im.quantize(colors=args.colors, method=Image.MEDIANCUT, dither=Image.FLOYDSTEINBERG)
-    pal = q.getpalette()[: args.colors * 3]
-    idx = list(q.getdata())
+    if args.truecolor:
+        rows = encode_rows_true(list(im.getdata()))
+        palette = ""
+    else:
+        # Dithered: at 64 colours a photograph's skin tones band badly without
+        # it, and on a 2 mm pitch the dither is invisible from across a room.
+        q = im.quantize(colors=args.colors, method=Image.MEDIANCUT,
+                        dither=Image.FLOYDSTEINBERG)
+        pal = q.getpalette()[: args.colors * 3]
+        rows = encode_rows(list(q.getdata()), args.colors)
+        palette = "".join(f"{v:02X}" for v in pal)
 
-    rows = encode_rows(idx, args.colors)
-    palette = "".join(f"{v:02X}" for v in pal)
-    total = sum(len(r) for r in rows)
-
+    if args.truecolor:
+        head = [
+            "-- Generated by tools/luasim/photo_to_lua.py in 24-bit colour: four",
+            "-- base64 characters a pixel, no palette and no dithering. With a 50 KB",
+            "-- budget neither is needed, and dropping them drops the two things that",
+            "-- gave the 256-colour version away - the banding quantisation leaves in",
+            "-- a sky or a cheek, and the speckle the dither then adds to hide it.",
+            "--",
+            "-- It is also CHEAPER per pixel, which is the part that is not obvious.",
+            "-- The old encoding cost three calls into C a pixel: two string.sub to",
+            "-- read the index and one px.pixel. This costs two - a single",
+            "-- string.byte returns all four characters at once - so the fuller",
+            "-- picture paints faster than the 256-colour one did.",
+            "--",
+            "-- How much fuller, measured rather than assumed: the canvas blits",
+            "-- through drawPixelRGB888 with no 565 step (lua_px.h), and the HUB75",
+            "-- driver runs 8 bits a channel. But it then puts every channel through",
+            "-- a CIE 1931 gamma table, and that table maps 256 inputs onto 174",
+            "-- distinct outputs - 82 of them collapse onto a neighbour, nearly all",
+            "-- at the dark end, where inputs 0..4 are all black. So the panel can",
+            "-- address 174^3 = 5,268,024 colours, not 16.7 million, and the gain",
+            "-- over a palette is smallest in the shadows.",
+            "--",
+            "-- Painted on the first frame and never again, because this firmware",
+            "-- does not clear the canvas between frames. After that the effect costs",
+            "-- one text call a second, or nothing at all if the clock is off.",
+        ]
+    else:
+        head = [
+            "-- Generated by tools/luasim/photo_to_lua.py. The picture is quantised to",
+            f"-- {args.colors} colours with Floyd-Steinberg and written two base64",
+            "-- characters a pixel. It is painted on the first frame and never again,",
+            "-- because this firmware does not clear the canvas between frames - so",
+            "-- after that the effect costs one text call a second, or nothing at all",
+            "-- if the clock is off.",
+        ]
     body = [
         "-- @upload-only",
         f"-- {args.name.upper()} - a photograph, drawn once.",
         "--",
-        "-- Generated by tools/luasim/photo_to_lua.py. The picture is quantised to",
-        f"-- {args.colors} colours with Floyd-Steinberg and written two base64",
-        "-- characters a pixel. It is painted on the first frame and never again,",
-        "-- because this firmware does not clear the canvas between frames - so",
-        "-- after that the effect costs one text call a second, or nothing at all",
-        "-- if the clock is off.",
-        "--",
-        "-- The first frame is 8,192 calls into C and takes something like 170 ms of",
-        "-- the 500 ms a draw is allowed. That is the whole cost of the effect.",
+        *head,
         "",
         "PERIOD = 60.0",
         "FPS = 2",
@@ -121,36 +223,69 @@ def main():
     ]
     for r in rows:
         body.append(f'  "{r}",')
+    if args.truecolor:
+        body += [
+            "}",
+            "",
+            "-- Character code -> its six bits. Indexed by BYTE, so the decode below",
+            "-- needs no string work at all beyond the one read.",
+            'local A = "' + ALPHA + '"',
+            "local V = {}",
+            "for i = 1, #A do V[A:byte(i)] = i - 1 end",
+            "",
+            "local byte, pixel = string.byte, px.pixel",
+            "local painted = false",
+            "",
+            "local function paint()",
+            "  for y = 1, #ROWS do",
+            "    local row = ROWS[y]",
+            "    local yy = y - 1",
+            "    local i = 1",
+            "    for x = 0, 127 do",
+            "      -- One call, four characters, 24 bits of colour.",
+            "      local a, b, c, d = byte(row, i, i + 3)",
+            "      pixel(x, yy, V[a] * 4 + (V[b] >> 4),",
+            "            (V[b] & 15) * 16 + (V[c] >> 2),",
+            "            (V[c] & 3) * 64 + V[d])",
+            "      i = i + 4",
+            "    end",
+            "  end",
+            "end",
+            "",
+        ]
+    else:
+        body += [
+            "}",
+            "",
+            "-- The palette, unpacked once at load rather than parsed per pixel.",
+            "local R, G, B = {}, {}, {}",
+            f"for i = 0, {args.colors - 1} do",
+            "  local h = i * 6",
+            "  R[i] = tonumber(PAL:sub(h + 1, h + 2), 16)",
+            "  G[i] = tonumber(PAL:sub(h + 3, h + 4), 16)",
+            "  B[i] = tonumber(PAL:sub(h + 5, h + 6), 16)",
+            "end",
+            "",
+            'local A = "' + ALPHA + '"',
+            "local VAL = {}",
+            "for i = 1, #A do VAL[A:sub(i, i)] = i - 1 end",
+            "",
+            "local painted = false",
+            "",
+            "local function paint()",
+            "  for y = 1, #ROWS do",
+            "    local row = ROWS[y]",
+            "    local yy = y - 1",
+            "    for x = 0, 127 do",
+            "      local i = x * 2 + 1",
+            "      local c = VAL[row:sub(i, i)] * 64 + VAL[row:sub(i + 1, i + 1)]",
+            "      px.pixel(x, yy, R[c], G[c], B[c])",
+            "    end",
+            "  end",
+            "end",
+            "",
+        ]
     body += [
-        "}",
-        "",
-        "-- The palette, unpacked once at load rather than parsed per pixel.",
-        "local R, G, B = {}, {}, {}",
-        f"for i = 0, {args.colors - 1} do",
-        "  local h = i * 6",
-        "  R[i] = tonumber(PAL:sub(h + 1, h + 2), 16)",
-        "  G[i] = tonumber(PAL:sub(h + 3, h + 4), 16)",
-        "  B[i] = tonumber(PAL:sub(h + 5, h + 6), 16)",
-        "end",
-        "",
-        'local A = "' + ALPHA + '"',
-        "local VAL = {}",
-        "for i = 1, #A do VAL[A:sub(i, i)] = i - 1 end",
-        "",
-        "local painted = false",
-        "",
-        "local function paint()",
-        "  for y = 1, #ROWS do",
-        "    local row = ROWS[y]",
-        "    local yy = y - 1",
-        "    for x = 0, 127 do",
-        "      local i = x * 2 + 1",
-        "      local c = VAL[row:sub(i, i)] * 64 + VAL[row:sub(i + 1, i + 1)]",
-        "      px.pixel(x, yy, R[c], G[c], B[c])",
-        "    end",
-        "  end",
-        "end",
-        "",
         "function draw()",
         "  if not painted then",
         "    paint()",
@@ -195,7 +330,8 @@ def main():
         pass
     size = out.stat().st_size
     pct = f", {100 * size // cap}% of the panel's {cap // 1024} KB limit" if cap else ""
-    print(f"{out}  {size} B  ({args.colors} colours, 8192 pixels{pct})")
+    how = "24-bit, no palette" if args.truecolor else f"{args.colors} colours, dithered"
+    print(f"{out}  {size} B  ({how}, {args.aspect}, 8192 pixels{pct})")
 
 
 if __name__ == "__main__":

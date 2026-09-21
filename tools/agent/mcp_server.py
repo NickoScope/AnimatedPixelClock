@@ -1343,7 +1343,20 @@ class PhotoIn(BaseModel):
                                          "panel is 2:1 and a portrait is not, so "
                                          "choose this rather than letting the "
                                          "resize choose it.")
-    colors: int = Field(default=256, ge=2, le=256)
+    truecolor: bool = Field(default=True,
+                            description="24-bit colour, four base64 characters a "
+                                        "pixel, no palette and no dithering - about "
+                                        "35 KB, the default since a script may be "
+                                        "50 KB. False falls back to the 256-colour "
+                                        "dithered encoding at about 20 KB.")
+    aspect: Literal["fit", "fill", "stretch"] = Field(
+        default="fit",
+        description="The panel is 2:1 and almost no photograph is. fit keeps the "
+                    "whole picture undistorted and fills the sides with a blurred "
+                    "darkened copy of itself; fill crops to 2:1 and loses the "
+                    "edges; stretch squashes it and exists only for old scripts.")
+    colors: int = Field(default=256, ge=2, le=256,
+                        description="Palette mode only; ignored when truecolor.")
     sharpen: float = Field(default=0.5, ge=0.0, le=2.0,
                            description="Unsharp after the downscale. A face at "
                                        "128x64 has lost every edge it had.")
@@ -1402,7 +1415,8 @@ async def effect_photo(args: PhotoIn) -> str:
                "--name", args.name, "--colors", str(args.colors),
                "--sharpen", str(args.sharpen), "--saturation", str(args.saturation),
                "--contrast", str(args.contrast), "--brightness", str(args.brightness),
-               "--clock", args.clock, "--out", str(dest)]
+               "--clock", args.clock, "--aspect", args.aspect, "--out", str(dest)]
+        cmd += ["--truecolor"] if args.truecolor else ["--palette"]
         if args.crop:
             cmd += ["--crop", args.crop]
         code, out = _run(cmd, REPO, timeout=180)
