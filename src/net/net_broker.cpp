@@ -135,12 +135,22 @@ uint32_t s_served = 0;
 uint32_t s_failed = 0;
 uint32_t s_stackFreeMin = kStackBytes;
 
-// One TLS client and one HTTPClient for every fetch, constructed once. The
-// mbedTLS record buffers they own are already redirected to PSRAM elsewhere in
-// the firmware; what is saved here is the churn of building and tearing the
-// pair down four different ways.
-WiFiClientSecure *s_tls = nullptr;
-HTTPClient       *s_http = nullptr;
+// **The TLS client is built per request and destroyed before the result is
+// published.** It used to be one pair held from boot, on the theory that
+// reusing them saved churn. Measured on the panel 2026-09-21, that theory cost
+// internal RAM the panel does not have.
+//
+// NickoScope32's NetGate - the same shape of broker, in production for months -
+// made the other choice and wrote down why (netgate.cpp:128-131, :198):
+//
+//     Ns32TlsClient client;   // "Локальный клиент на запрос"
+//     }   // "~HTTPClient/~WiFiClientSecure: TLS-память освобождена ДО seq++"
+//
+// The memory is back before the consumer is ever told the answer is ready, so
+// whatever the consumer does next finds the heap as it was. Session reuse is
+// deferred there as an open question, and it stays deferred here: on a board
+// with 34 KB of internal RAM, holding a session to save a handshake is paying
+// in the only currency that is scarce.
 
 // Deliver an outcome to the caller, exactly once, whatever happened. Every
 // path out of a request goes through here, which is what makes the contract on
@@ -166,11 +176,21 @@ bool runJob(uint8_t who) {
   // silently wrap to something short. Clamp rather than let the truncation be
   // discovered on the wall.
   if (timeout > 65000) timeout = 65000;
+
+  // Both live in this scope and nowhere else. They are small objects on a
+  // stack that is already permanently allocated; what they own on the heap
+  // goes back when they leave scope - which is before runJob returns, and so
+  // before the caller is told anything at all.
+  WiFiClientSecure tlsClient;
+  HTTPClient       httpClient;
+  WiFiClientSecure *const s_tls = &tlsClient;
+  HTTPClient       *const s_http = &httpClient;
+
   // Exactly one of these, on every request, never conditionally: each clears
-  // the other's state, which is what keeps a verifying caller and an insecure
-  // one from contaminating each other on this one shared client. (Nothing here
-  // ever calls setCACertBundle, which would set a flag neither of these
-  // clears.)
+  // the other's state. With a per-request client that is belt and braces
+  // rather than the load-bearing guard it was, but a request that sets
+  // neither would inherit the library's default, which is to verify against
+  // nothing configured - so it stays unconditional.
   if (job.caCert) s_tls->setCACert(job.caCert);
   else            s_tls->setInsecure();
   s_tls->setHandshakeTimeout(kHandshakeTimeoutS);
@@ -178,12 +198,11 @@ bool runJob(uint8_t who) {
   s_http->setConnectTimeout((int32_t)timeout);
   s_http->useHTTP10(true);   // no chunked framing to unpick while parsing the stream
 
-  // **Every exit from here down calls end(), and that is a security property,
-  // not tidiness.** One HTTPClient is reused by four callers in turn, and the
-  // headers it sends accumulate in one String that ONLY end() -> clear()
-  // empties (HTTPClient.cpp:123-128, :1064). Leave by a path that skips end()
-  // and the next caller's request carries the previous caller's Authorization
-  // header to a different host. So: a guard, rather than remembering.
+  // end() on every exit. With a per-request client the old hazard is gone -
+  // accumulated headers cannot outlive the object - but end() also closes the
+  // connection, and leaving that to a destructor running after the caller's
+  // parse has read from a half-closed socket is not something to discover
+  // later. The guard costs nothing and keeps the order explicit.
   struct HttpEnd {
     HTTPClient *h;
     ~HttpEnd() { h->end(); }
@@ -347,17 +366,6 @@ bool nbBegin() {
     return false;
   }
   nbMark("after PSRAM buffers");
-  s_tls = new (std::nothrow) WiFiClientSecure();
-  nbMark("after WiFiClientSecure");
-  s_http = new (std::nothrow) HTTPClient();
-  nbMark("after HTTPClient");
-  if (!s_tls || !s_http) {
-    Serial.println("[nb] no room for the TLS client: the broker stays down");
-    delete s_tls; s_tls = nullptr;
-    delete s_http; s_http = nullptr;
-    heap_caps_free(s_text); s_text = nullptr;
-    return false;
-  }
 
   s_wake = xSemaphoreCreateBinaryStatic(&s_wakeBuf);   // static: cannot fail
   nbInit(&s_q);
@@ -370,8 +378,6 @@ bool nbBegin() {
     // Static creation has nothing to allocate, so this means a bad argument,
     // not a shortage - but say so rather than run on with a dead broker.
     Serial.println("[nb] task create refused: the broker stays down");
-    delete s_tls; s_tls = nullptr;
-    delete s_http; s_http = nullptr;
     heap_caps_free(s_text); s_text = nullptr;
     return false;
   }
