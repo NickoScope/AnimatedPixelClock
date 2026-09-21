@@ -5,6 +5,8 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <Preferences.h>
+
+#include "../control/clock_style.h"   // ctrlToast: the station the knob just picked
 #include <esp_heap_caps.h>
 #include <stddef.h>
 #include <string.h>
@@ -404,6 +406,11 @@ bool railboardSetStation(const char *crs) {
 // headCol, dueCol (strings: palette names, so a reordered palette in a later
 // build still reads the colour chosen). Written 2.5 s after the last change, as
 // src/panel does, and only the fields that differ from what NVS holds.
+// Defined below with the favourites; declared here because railboardBegin and
+// railboardLoop come first in this file.
+static void favLoad();
+static void favSave();
+
 static const char *const RB_NVS       = "rbcfg";
 static const uint32_t    RB_SETTLE_MS = 2500;
 
@@ -498,6 +505,7 @@ void railboardResetSettings() {
 }
 
 void railboardBegin() {
+  favLoad();   // the stations the knob turns through
   loadWebSettings();
   // The prefix without the station, so a change of station needs no new handler.
   if (!mqttBusOnMessage(RB_TOPIC_ROOT, onMessage))
@@ -542,6 +550,7 @@ static bool directArmed() {
 // as at the moment it changes. Sent again on every reconnect: the broker may
 // have lost it, and a repeat of the same value changes nothing.
 void railboardLoop() {
+  favSave();   // deferred, like the settings: a settle before every NVS write
   saveWebSettings();
 #if defined(RAILBOARD_DIRECT_ENABLED)
   int64_t fetchedAt = 0;
@@ -578,7 +587,106 @@ static uint32_t turnElapsedMs(uint32_t nowMs) {
   return (nowMs - (s_view != RB_VIEW_AUTO ? s_viewAt : s_altSince)) % turn;
 }
 
+// --- the stations the knob turns through ------------------------------------
+
+static char    s_fav[RB_FAV_MAX][4] = {};
+static uint8_t s_favN = 0;
+static bool    s_favDirty = false;      // still to be written to NVS
+static uint32_t s_favDirtyAt = 0;
+
+uint8_t railboardFavCount() { return s_favN; }
+const char *railboardFavAt(uint8_t i) { return i < s_favN ? s_fav[i] : nullptr; }
+
+bool railboardSetFavourites(const char *const *crs, uint8_t n) {
+  if (n > RB_FAV_MAX) return false;
+  for (uint8_t i = 0; i < n; i++)
+    if (!railboardValidStation(crs[i])) return false;   // all or nothing
+  memset(s_fav, 0, sizeof(s_fav));
+  for (uint8_t i = 0; i < n; i++) memcpy(s_fav[i], crs[i], 4);
+  s_favN = n;
+  s_favDirty = true;
+  s_favDirtyAt = millis() | 1;
+  return true;
+}
+
+// One NVS key, comma separated: "WAT,VIC,PAD". Eight of them is 31 bytes, and
+// a single string is one key to read, write and clear.
+static void favSave() {
+  if (!s_favDirty || !s_favDirtyAt) return;
+  if (millis() - s_favDirtyAt < RB_SETTLE_MS) return;   // settle, as the settings do
+  char joined[RB_FAV_MAX * 4] = "";
+  for (uint8_t i = 0; i < s_favN; i++) {
+    if (i) strlcat(joined, ",", sizeof(joined));
+    strlcat(joined, s_fav[i], sizeof(joined));
+  }
+  Preferences p;
+  if (!p.begin(RB_NVS, false)) { s_favDirtyAt = millis() | 1; return; }   // try again
+  if (s_favN) p.putString("fav", joined);
+  else if (p.isKey("fav")) p.remove("fav");
+  p.end();
+  s_favDirty = false;
+  s_favDirtyAt = 0;
+}
+
+static void favLoad() {
+  Preferences p;
+  if (!p.begin(RB_NVS, false)) return;
+  if (p.isKey("fav")) {
+    char joined[RB_FAV_MAX * 4] = "";
+    p.getString("fav", joined, sizeof(joined));
+    char *save = nullptr;
+    for (char *t = strtok_r(joined, ",", &save); t && s_favN < RB_FAV_MAX; t = strtok_r(nullptr, ",", &save))
+      if (railboardValidStation(t)) memcpy(s_fav[s_favN++], t, 4);
+  }
+  p.end();
+}
+
+// Which favourite is showing, or RB_FAV_MAX when the live station is not in the
+// list at all - then the first turn starts at the beginning rather than jumping.
+static uint8_t favIndexOfCurrent() {
+  for (uint8_t i = 0; i < s_favN; i++)
+    if (!strcmp(s_fav[i], s_crs)) return i;
+  return RB_FAV_MAX;
+}
+
+// --- the knob ---------------------------------------------------------------
+
+enum : uint8_t { RB_KNOB_OUT = 0, RB_KNOB_LISTS, RB_KNOB_STATION };
+static uint8_t s_knobStop = RB_KNOB_OUT;
+
+bool railboardKnobClick(bool entered) {
+  if (!entered) { s_knobStop = RB_KNOB_LISTS; return true; }
+  // A list with nothing in it has no stop of its own: walking into a stop where
+  // the knob does nothing is worse than not offering it.
+  if (s_knobStop == RB_KNOB_LISTS && s_favN) { s_knobStop = RB_KNOB_STATION; return true; }
+  s_knobStop = RB_KNOB_OUT;
+  return false;
+}
+
+const char *railboardKnobHint() {
+  if (s_knobStop == RB_KNOB_STATION) return "TURN: STATION";
+  if (s_knobStop == RB_KNOB_LISTS)   return "TURN: LISTS";
+  return "TURN: PAGES";
+}
+
+// Turning in the STATION stop changes the station there and then. It is an
+// interactive request in the broker's sense - somebody is standing at the panel
+// waiting for it - so it goes ahead of the scheduled refreshes.
+static void knobStation(int8_t delta) {
+  if (!s_favN) return;
+  const uint8_t cur = favIndexOfCurrent();
+  uint8_t next;
+  if (cur >= RB_FAV_MAX) {
+    next = delta > 0 ? 0 : (uint8_t)(s_favN - 1);
+  } else {
+    next = (uint8_t)((cur + (delta > 0 ? 1 : s_favN - 1)) % s_favN);
+  }
+  railboardSetStation(s_fav[next]);
+  ctrlToast(s_fav[next]);   // the CRS immediately; the full name arrives with the board
+}
+
 void railboardKnob(int8_t delta) {
+  if (s_knobStop == RB_KNOB_STATION) { knobStation(delta); return; }
   static const uint8_t order[] = {RB_VIEW_DEP, RB_VIEW_ARR, RB_VIEW_DIAG};
   const uint32_t nowMs = millis();
   const uint8_t cur = currentView(nowMs);
@@ -967,6 +1075,10 @@ void railboardStatusJson(JsonObject out) {
 
   out["crs"]     = (const char *)s_crs;
   out["station"] = stn[0] ? stn : (const char *)s_crs;
+  // The stations the knob turns through, so the change can be verified by
+  // reading it back rather than trusting the 200 that acknowledged it.
+  { JsonArray f = out["favourites"].to<JsonArray>();
+    for (uint8_t i = 0; i < s_favN; i++) f.add(s_fav[i]); }
   out["named"]   = stn[0] != '\0';               // false: no payload has named it yet
   out["synced"]  = synced;
   out["now"]     = synced ? (uint32_t)now : 0;

@@ -630,6 +630,26 @@ static void handleRailboard() {
     // with any subset of the keys, every key known, every value in range, or
     // a 400 that names the field and nothing changes. Refused, never clamped.
     rbs::Settings next = railboardSettings();
+    // The stations the knob turns through. All or nothing: a list half applied
+    // is worse than one refused, because the knob would then walk through a
+    // mixture of what you asked for and what was there before.
+    JsonVariantConst fav = in["favourites"];
+    bool haveFav = false;
+    const char *favArr[RB_FAV_MAX];
+    uint8_t favN = 0;
+    if (!fav.isNull()) {
+      if (!fav.is<JsonArrayConst>()) REJECT(400, "favourites must be an array of three-letter codes");
+      for (JsonVariantConst v : fav.as<JsonArrayConst>()) {
+        if (favN >= RB_FAV_MAX) REJECT(400, "favourites takes at most eight stations");
+        const char *c = v.as<const char *>();
+        if (!c || !railboardValidStation(c)) REJECT(400, "each favourite must be three capital letters A-Z");
+        favArr[favN++] = c;
+      }
+      haveFav = true;
+    }
+
+    if (haveFav && !railboardSetFavourites(favArr, favN)) REJECT(400, "favourites refused");
+
     const bool haveCfg = !in["config"].isNull();
     if (haveCfg) {
       JsonVariantConst cfg = in["config"];

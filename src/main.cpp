@@ -1043,6 +1043,16 @@ void loop() {
         continue;
       }
 #endif
+#if defined(RAILBOARD_ENABLED)
+      // LISTS, then STATION when a list of stations has been set, then out.
+      // The station stop is skipped entirely when there is none, because a stop
+      // where the knob does nothing is worse than one fewer stop.
+      if (ctrlPage == PAGE_RAILBOARD) {
+        ctrlEntered = railboardKnobClick(ctrlEntered);
+        ctrlToast(railboardKnobHint());
+        continue;
+      }
+#endif
       if (ctrlPageHasControls(ctrlPage)) {
         ctrlEntered = !ctrlEntered;
         ctrlToast(ctrlEntered ? ctrlEnterHint(ctrlPage) : "TURN: PAGES");

@@ -74,6 +74,28 @@ void railboardRender();            // one frame; the caller has cleared the scre
 // round again, and the choice holds the alternation for RB_HOLD_S.
 void railboardKnob(int8_t delta);
 
+// **The knob's stops inside the page**, exactly as the media and market pages
+// do it (main.cpp): a click walks LISTS -> STATION -> out, and what a turn does
+// depends on where you stopped. There is no long press anywhere in this
+// firmware - "held a little too long, it is still a click" - so a second thing
+// to control means another stop, not another gesture.
+//
+// Returns the new "entered" state for ctrlEntered; the hint is what to toast.
+bool        railboardKnobClick(bool entered);
+const char *railboardKnobHint();
+
+// The stations the knob turns through. Up to RB_FAV_MAX of them, kept in NVS,
+// set with POST /api/railboard {"favourites":["WAT","VIC"]}. **Data, not code**:
+// the web portal has no station controls - the owner had them removed on
+// 2026-09-20 - and this needs neither a portal nor a reflash to change.
+//
+// An empty list means the knob's STATION stop simply does nothing, which is the
+// behaviour of every panel that has not been told a list.
+#define RB_FAV_MAX 8
+uint8_t     railboardFavCount();
+const char *railboardFavAt(uint8_t i);          // "WAT", or nullptr
+bool        railboardSetFavourites(const char *const *crs, uint8_t n);
+
 // The same path the MQTT handler takes, for a test or a serial command.
 // Returns false and leaves the current board untouched on anything malformed.
 bool railboardIngest(const char *topic, const char *payload, uint16_t len);
