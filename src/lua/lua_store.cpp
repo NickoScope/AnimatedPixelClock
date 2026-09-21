@@ -112,8 +112,9 @@ void luaStoreInit() {
   if (!LittleFS.exists(LUA_STORE_DIR)) LittleFS.mkdir(LUA_STORE_DIR);
   if (LittleFS.exists(LUA_STORE_TMP)) LittleFS.remove(LUA_STORE_TMP);
   rescan();
+  const uint8_t n = luaStoreCount();
   Serial.printf("[luastore] %u uploaded effect%s, %u B free\n",
-                (unsigned)s_count, s_count == 1 ? "" : "s", (unsigned)luaStoreFreeBytes());
+                (unsigned)n, n == 1 ? "" : "s", (unsigned)luaStoreFreeBytes());
 }
 
 bool   luaStoreUsable()     { return s_usable; }
@@ -125,10 +126,6 @@ uint8_t luaStoreCount() {
   return n;
 }
 
-// The names are returned into per-caller buffers rather than as pointers into
-// s_list: a pointer handed out here could be rewritten by rescan() while the
-// caller was still reading through it. One buffer for each of the two, because
-// the two callers are different tasks.
 namespace {
 bool copyEntry(uint8_t i, Entry *out) {
   portENTER_CRITICAL(&s_mux);
@@ -139,26 +136,22 @@ bool copyEntry(uint8_t i, Entry *out) {
 }
 }  // namespace
 
-const char *luaStoreStem(uint8_t i) {
-  static char held[2][25];
-  static uint8_t turn = 0;
+bool luaStoreStem(uint8_t i, char *out, size_t cap) {
+  if (!out || cap == 0) return false;
   Entry e;
-  if (!copyEntry(i, &e)) return "";
-  char *dst = held[turn ^= 1];
-  strncpy(dst, e.stem, sizeof(held[0]) - 1);
-  dst[sizeof(held[0]) - 1] = '\0';
-  return dst;
+  if (!copyEntry(i, &e)) { out[0] = '\0'; return false; }
+  strncpy(out, e.stem, cap - 1);
+  out[cap - 1] = '\0';
+  return true;
 }
 
-const char *luaStoreName(uint8_t i) {
-  static char held[2][25];
-  static uint8_t turn = 0;
+bool luaStoreName(uint8_t i, char *out, size_t cap) {
+  if (!out || cap == 0) return false;
   Entry e;
-  if (!copyEntry(i, &e)) return "";
-  char *dst = held[turn ^= 1];
-  strncpy(dst, e.name, sizeof(held[0]) - 1);
-  dst[sizeof(held[0]) - 1] = '\0';
-  return dst;
+  if (!copyEntry(i, &e)) { out[0] = '\0'; return false; }
+  strncpy(out, e.name, cap - 1);
+  out[cap - 1] = '\0';
+  return true;
 }
 
 uint32_t luaStoreBytes(uint8_t i) {
@@ -197,8 +190,9 @@ int longOpen(const char *s, size_t len, size_t i) {
   return (j < len && s[j] == '[') ? (int)eq : -1;
 }
 
-// Past the matching close of a long bracket of this level, or len when there is
-// none - which every caller treats as a refusal.
+// Past the matching close of a long bracket of this level, or len + 1 when there
+// is none. Not len: a string that closes on the very last byte of the file ends
+// exactly at len, and returning len for both cases refused it as unterminated.
 size_t longClose(const char *s, size_t len, size_t i, int level) {
   for (; i < len; i++) {
     if (s[i] != ']') continue;
@@ -206,7 +200,7 @@ size_t longClose(const char *s, size_t len, size_t i, int level) {
     while (j < len && s[j] == '=') { eq++; j++; }
     if ((int)eq == level && j < len && s[j] == ']') return j + 1;
   }
-  return len;
+  return len + 1;
 }
 
 inline bool wordChar(char c) { return isalnum((unsigned char)c) || c == '_'; }
@@ -244,7 +238,7 @@ bool luaStoreValidate(const char *src, size_t len, char *err, size_t errlen) {
       const int lvl = (i + 2 < len) ? longOpen(src, len, i + 2) : -1;
       if (lvl >= 0) {
         const size_t after = longClose(src, len, i + 2 + (size_t)lvl + 2, lvl);
-        if (after >= len) {
+        if (after > len) {
           snprintf(err, errlen, "a long comment opened at line %u is never closed", line);
           return false;
         }
@@ -261,7 +255,7 @@ bool luaStoreValidate(const char *src, size_t len, char *err, size_t errlen) {
       const int lvl = longOpen(src, len, i);
       if (lvl >= 0) {
         const size_t after = longClose(src, len, i + (size_t)lvl + 2, lvl);
-        if (after >= len) {
+        if (after > len) {
           snprintf(err, errlen, "a long string opened at line %u is never closed", line);
           return false;
         }
@@ -340,7 +334,11 @@ bool luaStoreValidate(const char *src, size_t len, char *err, size_t errlen) {
     return false;
   }
   if (!sawDraw) {
-    snprintf(err, errlen, "the script defines no draw()");
+    // A word search, not a parse: it catches the script that forgot draw()
+    // entirely, which is the common mistake, and lets `local draw = 1` through.
+    // lua_fx.cpp does the real check after the chunk has run, where a global
+    // called draw either is a function or is not.
+    snprintf(err, errlen, "nothing in the script is called draw");
     return false;
   }
   return true;
@@ -393,7 +391,7 @@ bool luaStoreBegin(const char *stem, char *err, size_t errlen) {
   // A replacement is not a new slot. Only a genuinely new name needs one.
   char path[48];
   pathOf(stem, path, sizeof(path));
-  if (!LittleFS.exists(path) && s_count >= LUA_USER_MAX) {
+  if (!LittleFS.exists(path) && luaStoreCount() >= LUA_USER_MAX) {
     snprintf(err, errlen, "all %d uploaded slots are used; delete one first", LUA_USER_MAX);
     return false;
   }

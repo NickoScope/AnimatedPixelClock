@@ -54,6 +54,18 @@ int main() {
   check("пустой файл", "", false);
   check("слишком большой", std::string(LUA_USER_SRC_MAX + 1, 'x'), false);
 
+  check("длинная строка закрыта последним байтом", "function draw() end\nlocal s = [[ hi ]]", true);
+  check("длинный комментарий закрыт последним байтом", "function draw() end\n--[[ hi ]]", true);
+  check("уровневая закрыта последним байтом", "function draw() end\nlocal s = [==[ hi ]==]", true);
+  check("goto и метки", "function draw() ::top:: goto top end", true);
+  check("CRLF", "function draw()\r\n  px.clear(0,0,0)\r\nend\r\n", true);
+  check("end внутри строки не закрывает блок", "function draw() local s = \"end end end\" end", true);
+  check("-- внутри длинной строки", "local s = [[ -- ]]\nfunction draw() end", true);
+  check("]] внутри кавычек", "local s = \"]]\"\nfunction draw() end", true);
+  check("function как выражение", "local f = function() end\nfunction draw() f() end", true);
+  check("глубокий конструктор таблиц (худший цикл)",
+        "function draw() local t = " + rep("{a=", 20) + "1" + rep("}", 20) + " end", false);
+
   printf("\n%s\n", fails ? "ЕСТЬ ПРОВАЛЫ" : "все случаи как задумано");
   return fails ? 1 : 0;
 }

@@ -955,8 +955,12 @@ static void handleLua() {
   doc["current"] = luaEffectCurrent();
   JsonArray list = doc["effects"].to<JsonArray>();
   for (uint8_t i = 0; i < luaEffectCount(); i++) {
-    const char *name = luaEffectName(i);
-    list.add(name ? name : "");
+    // char[] rather than const char*: ArduinoJson stores a const char* by
+    // pointer and copies a char*, and this name is in a table an upload can
+    // rewrite before the document is serialised.
+    char name[LUA_EFFECT_NAME_CAP];
+    luaEffectName(i, name, sizeof(name));
+    list.add(name);
   }
 #if defined(LUA_STORE_ENABLED)
   // What an uploading tool needs to know before it spends the upload.
@@ -970,8 +974,10 @@ static void handleLua() {
   JsonArray mine = up["scripts"].to<JsonArray>();
   for (uint8_t i = 0; i < luaStoreCount(); i++) {
     JsonObject o = mine.add<JsonObject>();
+    char stem[LUA_STORE_NAME_CAP];
+    luaStoreStem(i, stem, sizeof(stem));
     o["i"] = (uint8_t)(luaEffectCount() - luaStoreCount() + i);
-    o["name"] = luaStoreStem(i);
+    o["name"] = stem;
     o["bytes"] = luaStoreBytes(i);
   }
 #endif
@@ -1027,6 +1033,9 @@ static void handleLuaUploadChunk() {
   } else if (upload.status == UPLOAD_FILE_ABORTED) {
     luaStoreAbort();
     s_luaUpErr = "the upload was cut short";
+    // The done handler may never run for an aborted transfer, and a stale flag
+    // would answer the next request with this message instead of its own.
+    s_luaUpSeen = false;
   }
 }
 
@@ -1054,8 +1063,11 @@ static void handleLuaUploadDone() {
   doc["name"] = s_luaUpName;
   // The index it landed on, so a caller can show it without a second round trip.
   int idx = -1;
-  for (uint8_t i = 0; i < luaStoreCount(); i++)
-    if (s_luaUpName == luaStoreStem(i)) idx = (int)(luaEffectCount() - luaStoreCount() + i);
+  for (uint8_t i = 0; i < luaStoreCount(); i++) {
+    char stem[LUA_STORE_NAME_CAP];
+    luaStoreStem(i, stem, sizeof(stem));
+    if (s_luaUpName == stem) idx = (int)(luaEffectCount() - luaStoreCount() + i);
+  }
   doc["index"] = idx;
   doc["note"] = "no reboot and no flash: select it with POST /api/lua {\"show\": index}";
   String out;

@@ -83,7 +83,7 @@ BENCH_MS = 64.1 - 2.54
 # Kept in step with platformio.ini by hand; the parity run is what would catch
 # them drifting apart, because a script that loads on one and not the other
 # stops being identical.
-CCALLS = 28
+CCALLS = 20
 
 
 def sh(cmd, **kw):

@@ -141,13 +141,23 @@ LuaPxCanvas s_canvas;   // task only
 // An effect is either compiled into the image or uploaded to LittleFS, and
 // everything here addresses the two as one list: the built-in ones first, in
 // the order the generator put them, then whatever was uploaded.
-const char *effectId(int16_t i) {
-  if (i < 0) return "?";
-  if (i < (int16_t)LUA_EFFECT_COUNT) return kLuaEffectScripts[i].id;
+void effectId(int16_t i, char *out, size_t cap) {
+  if (cap == 0) return;
+  out[0] = '\0';
+  if (i < 0) { strncpy(out, "?", cap - 1); out[cap - 1] = '\0'; return; }
+  if (i < (int16_t)LUA_EFFECT_COUNT) {
+    strncpy(out, kLuaEffectScripts[i].id, cap - 1);
+    out[cap - 1] = '\0';
+    return;
+  }
 #if defined(LUA_STORE_ENABLED)
-  return luaStoreStem((uint8_t)(i - LUA_EFFECT_COUNT));
+  if (!luaStoreStem((uint8_t)(i - LUA_EFFECT_COUNT), out, cap)) {
+    strncpy(out, "?", cap - 1);
+    out[cap - 1] = '\0';
+  }
 #else
-  return "?";
+  strncpy(out, "?", cap - 1);
+  out[cap - 1] = '\0';
 #endif
 }
 
@@ -163,6 +173,7 @@ void releaseUser() {
 
 void effectTask(void *) {
   s_canvas.rgb = s_work;
+  char       id[LUA_EFFECT_NAME_CAP] = "?";
   uint32_t   runningWord = 0;
   int16_t    running = -1;
   bool       failed = false;
@@ -178,7 +189,7 @@ void effectTask(void *) {
       if (s_fx.isOpen()) {
         s_fx.close();
         Serial.printf("[luafx] closed %s, heap back to %u B, psram free %u\n",
-                      effectId(running), (unsigned)s_fx.heapBytes(),
+                      id, (unsigned)s_fx.heapBytes(),
                       (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
       }
 #if defined(LUA_STORE_ENABLED)
@@ -189,7 +200,7 @@ void effectTask(void *) {
       failed = false;
       overruns = 0;
       if (running >= 0) {
-        const char *id = effectId(running);
+        effectId(running, id, sizeof(id));
         const char *src = nullptr;
         size_t      srcLen = 0;
         if (running < (int16_t)LUA_EFFECT_COUNT) {
@@ -203,6 +214,20 @@ void effectTask(void *) {
           // for an effect nobody is looking at.
           s_userSrc = luaStoreRead((uint8_t)(running - LUA_EFFECT_COUNT), &srcLen);
           src = s_userSrc;
+          // Checked again on the way out of storage, not only on the way in.
+          // luaStoreFinish validates an upload, but a file can reach /lua
+          // without passing through it - a filesystem image, a firmware rolled
+          // back to a build with a different limit - and the parser must never
+          // see one that has not been measured.
+          if (src) {
+            char why[160];
+            if (!luaStoreValidate(src, srcLen, why, sizeof(why))) {
+              Serial.printf("[luafx] %s refused: %s\n", id, why);
+              publishError(runningWord, why);
+              releaseUser();
+              src = nullptr;
+            }
+          }
         }
 #endif
         memset(s_work, 0, LUA_PX_BYTES);      // luasim starts every run on black
@@ -254,12 +279,12 @@ void effectTask(void *) {
       // The state survives a failed draw: it runs under lua_pcall.
       if (strstr(s_fx.error(), "over the time budget") && ++overruns < kOverrunsAllowed) {
         Serial.printf("[luafx] %s: frame dropped (%u in a row), %s\n",
-                      effectId(running), (unsigned)overruns, s_fx.error());
+                      id, (unsigned)overruns, s_fx.error());
         vTaskDelay(1);
         lastWake = xTaskGetTickCount();
         continue;
       }
-      Serial.printf("[luafx] %s stopped: %s\n", effectId(running), s_fx.error());
+      Serial.printf("[luafx] %s stopped: %s\n", id, s_fx.error());
       publishError(runningWord, s_fx.error());
       s_fx.close();
       failed = true;
@@ -290,7 +315,7 @@ void effectTask(void *) {
       Serial.printf("[luafx] %s: %u frames in %u s (%.1f fps), draw avg %.1f max %.1f ms, "
                     "~%u instr max, heap %u B peak %u B, stack free %u B, psram free %u, "
                     "internal free %u min %u\n",
-                    effectId(running), (unsigned)frames, (unsigned)(kReportMs / 1000),
+                    id, (unsigned)frames, (unsigned)(kReportMs / 1000),
                     frames * 1000.0 / kReportMs, frames ? drawSumUs / 1000.0 / frames : 0.0,
                     drawMaxUs / 1000.0, (unsigned)instrMax, (unsigned)s_fx.heapBytes(),
                     (unsigned)s_fx.heapPeak(), (unsigned)uxTaskGetStackHighWaterMark(nullptr),
@@ -369,12 +394,16 @@ uint8_t luaEffectSlots() {
 #endif
 }
 
-const char *luaEffectName(uint8_t i) {
-  if (i < LUA_EFFECT_COUNT) return kLuaEffectScripts[i].name;
+void luaEffectName(uint8_t i, char *out, size_t cap) {
+  if (!out || cap == 0) return;
+  out[0] = '\0';
+  if (i < LUA_EFFECT_COUNT) {
+    strncpy(out, kLuaEffectScripts[i].name, cap - 1);
+    out[cap - 1] = '\0';
+    return;
+  }
 #if defined(LUA_STORE_ENABLED)
-  return luaStoreName((uint8_t)(i - LUA_EFFECT_COUNT));
-#else
-  return "";
+  luaStoreName((uint8_t)(i - LUA_EFFECT_COUNT), out, cap);
 #endif
 }
 
@@ -438,7 +467,14 @@ void luaEffectsSelect(int16_t index) {
   if (s_seq == 0) s_seq = 1;               // word 0 means "never selected"
   s_wantWord = selWord(s_seq, index);
   if (s_task) xTaskNotifyGive(s_task);
-  if (index >= 0) ctrlToast(luaEffectName((uint8_t)index));   // every way in: knob, carousel, web
+  if (index >= 0) {
+    // ctrlToast keeps the pointer until the banner goes (clock_style.h), so the
+    // text has to outlive this call. This buffer is written only here, and
+    // luaEffectsSelect runs on the loop task alone.
+    static char toast[LUA_EFFECT_NAME_CAP];
+    luaEffectName((uint8_t)index, toast, sizeof(toast));
+    ctrlToast(toast);           // every way in: knob, carousel, web
+  }
 }
 
 void luaEffectsRender() {
@@ -446,7 +482,12 @@ void luaEffectsRender() {
   const int16_t sel = s_selected;
   if (sel < 0) return;
   if (!s_task) {
-    drawMessage("LUA EFFECTS UNAVAILABLE", kLuaEffectScripts[sel].name, "NO PSRAM OR NO TASK - SEE SERIAL");
+    // sel reaches LUA_EFFECT_COUNT + luaStoreCount() - 1 once scripts can be
+    // uploaded, and kLuaEffectScripts holds only the compiled-in ones. Indexing
+    // it here read past the array and printed whatever followed.
+    char nm[LUA_EFFECT_NAME_CAP];
+    luaEffectName((uint8_t)sel, nm, sizeof(nm));
+    drawMessage("LUA EFFECTS UNAVAILABLE", nm, "NO PSRAM OR NO TASK - SEE SERIAL");
     return;
   }
   const uint32_t want = selWord(s_seq, sel);
@@ -467,7 +508,9 @@ void luaEffectsRender() {
   portEXIT_CRITICAL(&s_mux);
 
   if (failed) {
-    drawMessage("LUA ERROR", kLuaEffectScripts[sel].name, err);
+    char nm[LUA_EFFECT_NAME_CAP];
+    luaEffectName((uint8_t)sel, nm, sizeof(nm));   // same out-of-bounds read as above
+    drawMessage("LUA ERROR", nm, err);
   } else if (s_frontWord == want) {
     luaPxBlit(s_front, display);
   } else {

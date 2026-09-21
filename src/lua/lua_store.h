@@ -15,25 +15,26 @@
 // That measurement says no: the panel runs with about 21 KB of free internal
 // heap and a largest block near 12 KB, so a 32 KB internal stack cannot be had.
 //
-// So the depth is bounded instead of the stack being grown, in two places:
+// So the depth is bounded instead of the stack being grown. Two things do it,
+// and it is worth being exact about which carries the weight, because an
+// earlier version of this comment had it backwards.
 //
-//   * LUAI_MAXCCALLS is lowered from Lua's default 200 (llimits.h:254) in
-//     platformio.ini, where the arithmetic is written out in full. Lua's parser
-//     counts its own recursion through
-//     luaE_incCstack and raises "C stack overflow" past the limit, so the
-//     interpreter guards itself - which is more trustworthy than anything
-//     written here. The number is measured from this build's own -fstack-usage
-//     output, not estimated: one level of nesting costs a CYCLE of frames, and
-//     the worst of them, nested `local function`, is 272 bytes a level.
+//   * **The scan below is the load-bearing one.** Nothing reaches the parser
+//     without passing it: luaStoreFinish runs it on the way in, and the load
+//     path runs it again, so a file that arrives in /lua by some other route -
+//     a filesystem image, a rolled-back firmware - is still checked. It counts
+//     BLOCKS as well as brackets, because the expensive nesting has no bracket
+//     in it at all, and it is a small lexer rather than a counter: levelled
+//     long brackets and strings are understood, and every path that cannot make
+//     sense of the source refuses the file. tools/luasim/store_test.py drives
+//     24 cases through it, every one of them a bypass that once worked.
 //
-//   * a scan before the source is ever handed to the parser. It counts BLOCKS
-//     as well as brackets, because the most expensive nesting there is - a
-//     `local function` inside a `local function` - contains no bracket at all,
-//     and a bracket counter measures none of it. It is a small lexer rather
-//     than a counter: it knows levelled long brackets and strings, and every
-//     path that cannot make sense of the source refuses the file rather than
-//     passing it on. It exists for the error message - "nested 17 deep at line
-//     82" tells an author what to change, where "C stack overflow" does not.
+//   * LUAI_MAXCCALLS, lowered from Lua's default 200 (llimits.h:254) in
+//     platformio.ini where the arithmetic is written out, is the backstop. Lua
+//     counts its own recursion through luaE_incCstack and raises a catchable
+//     "C stack overflow" past the limit. It is the second line, not the first:
+//     at the cap alone the worst cycle would not fit the stack, which is why
+//     the scan comes first and is not merely a nicer error message.
 //
 // The source itself is read into PSRAM, never the internal heap.
 // ============================================================
@@ -68,8 +69,18 @@ bool        luaStoreUsable();
 size_t      luaStoreFreeBytes();
 
 uint8_t     luaStoreCount();
-const char *luaStoreStem(uint8_t i);     // "my_effect"; "" past the end
-const char *luaStoreName(uint8_t i);     // "MY EFFECT", as the banner shows it
+
+// Names are copied into the caller's buffer, never returned as a pointer. An
+// earlier version handed out rotating statics and it was wrong twice: two slots
+// are not enough for /api/lua, which asks for every name in one loop, and the
+// two callers are on different tasks, so the rotation itself was a racing
+// read-modify-write. ctrlToast keeps the pointer it is given until the banner
+// goes, which made it worse. Both return false past the end and leave the
+// buffer with an empty string.
+bool luaStoreStem(uint8_t i, char *out, size_t cap);   // "my_effect"
+bool luaStoreName(uint8_t i, char *out, size_t cap);   // "MY EFFECT", as the banner shows it
+#define LUA_STORE_NAME_CAP 25
+
 uint32_t    luaStoreBytes(uint8_t i);
 
 // The source, in PSRAM. NUL-terminated. nullptr when it cannot be read; the

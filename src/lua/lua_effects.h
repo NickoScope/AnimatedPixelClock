@@ -13,6 +13,7 @@
 // guard any call with #if defined(LUA_EFFECTS_ENABLED).
 // ============================================================
 
+#include <stddef.h>
 #include <stdint.h>
 
 #if defined(LUA_EFFECTS_ENABLED) && !defined(NSLUA_ENABLED)
@@ -25,7 +26,11 @@
 uint8_t     luaEffectCount();             // compiled-in plus uploaded; changes at run time
 uint8_t     luaEffectSlots();             // how many pages are reserved, empty ones included
 bool        luaEffectUploaded(uint8_t i); // true when this one came over the air
-const char *luaEffectName(uint8_t i);     // "ROOM RADAR"; "" past the end
+// The name, copied into the caller's buffer. Not a pointer: an uploaded
+// script's name lives in a table that an upload or a delete rewrites, and
+// ctrlToast holds what it is given until the banner goes.
+void        luaEffectName(uint8_t i, char *out, size_t cap);
+#define LUA_EFFECT_NAME_CAP 25
 void        luaEffectShow(uint8_t i);     // make it the page on screen now
 int16_t     luaEffectCurrent();           // -1 when none is showing
 // Step off whatever is running. Deleting an uploaded script moves every index

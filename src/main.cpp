@@ -698,7 +698,13 @@ static bool ctrlPageVisitable(uint8_t page) {
 static const char *ctrlPageName(uint8_t page) {
   if (page >= PAGE_COUNT) return "CARD";
 #if defined(LUA_EFFECTS_ENABLED)
-  if (ctrlLuaEffect(page) >= 0) return luaEffectName((uint8_t)ctrlLuaEffect(page));
+  if (ctrlLuaEffect(page) >= 0) {
+    // Static because the caller keeps the pointer for the banner, and only the
+    // loop task ever reaches here.
+    static char nm[LUA_EFFECT_NAME_CAP];
+    luaEffectName((uint8_t)ctrlLuaEffect(page), nm, sizeof(nm));
+    return nm;
+  }
 #endif
 #if defined(WORLDCLOCK_ENABLED)
   if (page == PAGE_WORLDCLOCK) return "WORLD CLOCK";
