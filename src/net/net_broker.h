@@ -54,6 +54,7 @@ struct NbReply {
                    // 304, an empty 200): getStreamPtr() gives nullptr once the
                    // connection is no longer live. **Always null-check it.**
   bool    tls;     // the failure was in the handshake, not in HTTP
+  const char *header;  // the value of NbRequest::collect, "" when absent
   void   *ctx;     // whatever the caller passed in
 };
 
@@ -73,8 +74,27 @@ typedef bool (*NbParseFn)(const NbReply &reply);
 
 struct NbRequest {
   const char *url;        // copied; NB_URL_MAX including the terminator
-  const char *auth;       // optional Authorization value; copied. NOT logged,
+  const char *auth;       // optional credential value; copied. NOT logged,
                           // NOT echoed, and zeroed when the slot is finished.
+  // Which header `auth` goes in. nullptr means "Authorization", which is what
+  // the rail board's bearer token uses; the flight board's AeroAPI key goes in
+  // "x-apikey" instead. Not copied - a literal. The broker will not invent a
+  // header name, because sending a credential under the wrong one either fails
+  // the call or, worse, leaks it to a server that had no business seeing it.
+  const char *authHeader;
+  // The PEM roots to verify the server against. **NOT copied** - it must be a
+  // static or PROGMEM string that outlives the request, which is what every
+  // caller has. nullptr means setInsecure(), which is what the open, public
+  // endpoints use. The two are mutually exclusive in the library and each
+  // clears the other (WiFiClientSecure.cpp:262-276), so one shared client can
+  // serve a verifying caller and an insecure one in turn without either
+  // leaking into the other - but only because the broker sets one of them on
+  // EVERY request. Do not make that conditional.
+  const char *caCert;
+  // One response header to keep, by name (e.g. "Retry-After"), or nullptr.
+  // Reported back in NbReply::header. One is enough for every caller we have
+  // and it costs nothing when unused.
+  const char *collect;
   uint32_t    timeoutMs;  // 0 takes the broker's default
   NbParseFn   parse;
   void       *ctx;

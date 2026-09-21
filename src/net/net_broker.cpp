@@ -117,9 +117,12 @@ NbText *s_text = nullptr;
 
 // The small part stays internal: sixteen bytes a caller.
 struct NbJob {
-  NbParseFn parse;
-  void     *ctx;
-  uint32_t  timeoutMs;
+  NbParseFn   parse;
+  void       *ctx;
+  const char *caCert;    // not copied: a static/PROGMEM string from the caller
+  const char *authHeader;// likewise; nullptr means "Authorization"
+  const char *collect;   // likewise, a literal header name
+  uint32_t    timeoutMs;
   bool      done;      // an outcome is waiting to be collected
   bool      ok;        // what parse() returned, or false
 };
@@ -156,14 +159,20 @@ bool runJob(uint8_t who) {
   job = s_job[who];
   portEXIT_CRITICAL(&s_mux);
 
-  NbReply reply = {0, nullptr, false, job.ctx};
+  NbReply reply = {0, nullptr, false, "", job.ctx};
 
   uint32_t timeout = job.timeoutMs ? job.timeoutMs : kDefaultTimeoutMs;
   // setTimeout takes a uint16_t, so a caller asking for more than 65 s would
   // silently wrap to something short. Clamp rather than let the truncation be
   // discovered on the wall.
   if (timeout > 65000) timeout = 65000;
-  s_tls->setInsecure();   // as every caller does today; public, non-sensitive data
+  // Exactly one of these, on every request, never conditionally: each clears
+  // the other's state, which is what keeps a verifying caller and an insecure
+  // one from contaminating each other on this one shared client. (Nothing here
+  // ever calls setCACertBundle, which would set a flag neither of these
+  // clears.)
+  if (job.caCert) s_tls->setCACert(job.caCert);
+  else            s_tls->setInsecure();
   s_tls->setHandshakeTimeout(kHandshakeTimeoutS);
   s_http->setTimeout((uint16_t)timeout);
   s_http->setConnectTimeout((int32_t)timeout);
@@ -186,8 +195,11 @@ bool runJob(uint8_t who) {
     reply.code = NB_ERR_BAD_URL;
     return deliver(job, reply);
   }
-  if (s_text[who].auth[0]) s_http->addHeader("Authorization", s_text[who].auth);
+  if (s_text[who].auth[0])
+    s_http->addHeader(job.authHeader ? job.authHeader : "Authorization", s_text[who].auth);
   s_http->addHeader("Accept", "application/json");
+  const char *collect[1] = {job.collect};
+  if (job.collect) s_http->collectHeaders(collect, 1);
 
   // Baseline, because WiFiClientSecure::_lastError is sticky and now SHARED.
   // It is written only by connect(IPAddress,...) - WiFiClientSecure.cpp:142 -
@@ -206,6 +218,13 @@ bool runJob(uint8_t who) {
   const int errBefore = s_tls->lastError(prevErr, sizeof prevErr);
 
   reply.code = s_http->GET();
+  // The String lives until http.end(), which the guard runs after the parse
+  // has returned - so the pointer is valid for exactly as long as the body is.
+  String collected;
+  if (job.collect && reply.code > 0) {
+    collected = s_http->header(job.collect);
+    reply.header = collected.c_str();
+  }
   if (reply.code > 0) {
     // Set for an error status too, so a caller that wants to read the server's
     // explanation can. Never set when code < 0: there is no stream then.
@@ -265,7 +284,7 @@ void brokerTask(void *) {
       portENTER_CRITICAL(&s_mux);
       job = s_job[who];
       portEXIT_CRITICAL(&s_mux);
-      NbReply reply = {NB_ERR_NO_TURN, nullptr, false, job.ctx};
+      NbReply reply = {NB_ERR_NO_TURN, nullptr, false, "", job.ctx};
       dbgLogf("[nb] %u: no network turn within %u ms\n", (unsigned)who,
               (unsigned)NET_LOCK_WAIT_MS);
       ok = deliver(job, reply);
@@ -296,8 +315,29 @@ void brokerTask(void *) {
 
 }  // namespace
 
+// What the broker costs the internal heap, printed as it is spent.
+//
+// It was added on 2026-09-21 to chase an apparent 18 KB loss against the good
+// build. **That comparison was wrong** - one reading was taken right after
+// boot and the other after the panel had been driven through the transport
+// pages, and `largestHeapBlock` on this board falls by more than half over an
+// hour of ordinary use. Measured properly at the same point in the boot, the
+// 8 KB build leaves a largest block of 14,324 B against 23,540 B, which the
+// stack and the held TLS client account for between them.
+//
+// The lines stay, because the question "what does the broker cost" should be
+// answerable from the log rather than by subtracting two readings that may not
+// be comparable - which is how the wrong number was arrived at in the first
+// place.
+static void nbMark(const char *what) {
+  Serial.printf("[nb] cost %-22s free %6u  largest %6u\n", what,
+                (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+}
+
 bool nbBegin() {
   if (s_task) return true;
+  nbMark("before anything");
 
   s_text = static_cast<NbText *>(heap_caps_calloc(NB_CALLER_COUNT, sizeof(NbText),
                                                       MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
@@ -305,8 +345,11 @@ bool nbBegin() {
     Serial.println("[nb] no PSRAM for the request buffers: the broker stays down");
     return false;
   }
+  nbMark("after PSRAM buffers");
   s_tls = new (std::nothrow) WiFiClientSecure();
+  nbMark("after WiFiClientSecure");
   s_http = new (std::nothrow) HTTPClient();
+  nbMark("after HTTPClient");
   if (!s_tls || !s_http) {
     Serial.println("[nb] no room for the TLS client: the broker stays down");
     delete s_tls; s_tls = nullptr;
@@ -331,6 +374,7 @@ bool nbBegin() {
     heap_caps_free(s_text); s_text = nullptr;
     return false;
   }
+  nbMark("after the task");
   Serial.printf("[nb] up: %u B stack in .bss, %u B of request buffers in PSRAM\n",
                 (unsigned)kStackBytes, (unsigned)(NB_CALLER_COUNT * sizeof(NbText)));
   return true;
@@ -351,6 +395,9 @@ bool nbSubmitRequest(uint8_t who, const NbRequest &req, bool interactive) {
   if (!blocked) {
     s_job[who].parse = req.parse;
     s_job[who].ctx = req.ctx;
+    s_job[who].caCert = req.caCert;
+    s_job[who].authHeader = req.authHeader;
+    s_job[who].collect = req.collect;
     s_job[who].timeoutMs = req.timeoutMs;
     s_job[who].ok = false;
     // Under the lock, so the broker can never read half of a URL that the loop
