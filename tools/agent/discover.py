@@ -26,6 +26,7 @@ import re
 import shutil
 import subprocess
 import sys
+import urllib.error
 import urllib.request
 
 SERVICE = "_http._tcp"
@@ -91,9 +92,17 @@ def _browse_avahi(timeout):
     return found
 
 
-def _identify(addr, timeout=4.0):
+def _identify(addr, timeout=8.0):
     """Ask the panel itself. This is what makes a subnet-scan fallback honest:
-    only something that answers /api/info with a version is one of ours."""
+    only something that answers /api/info with a version is one of ours.
+
+    **An HTTP error is still an answer.** `/api/info` is one of the two routes
+    the firmware never refuses, but a panel under load can still fail a request,
+    and every other route answers 503 while it stands aside for a background
+    fetch. Something that sends back a status code is unambiguously there, so it
+    is reported as reachable and busy - not as absent. Getting this wrong makes
+    a working panel disappear from the list exactly when it is being used, which
+    is the worst possible moment."""
     try:
         with urllib.request.urlopen(f"http://{addr}/api/info", timeout=timeout) as r:
             d = json.loads(r.read().decode("utf-8", "replace"))
@@ -101,6 +110,9 @@ def _identify(addr, timeout=4.0):
             return None
         return {"version": d.get("version"), "build": d.get("build"),
                 "name": d.get("deviceName"), "uptime": d.get("uptime")}
+    except urllib.error.HTTPError as e:
+        return {"version": None, "build": None, "name": None, "uptime": None,
+                "busy": True, "http": e.code}
     except Exception:
         return None
 
@@ -128,10 +140,12 @@ def discover(timeout=6.0):
             p["reachable"] = True
             p["version"] = got["version"] or p.get("version")
             p["uptime"] = got.get("uptime")
-            live.append(p)
+            if got.get("busy"):
+                p["busy"] = True
+                p["http"] = got.get("http")
         else:
             p["reachable"] = False
-            live.append(p)
+        live.append(p)
     return live
 
 
@@ -163,7 +177,9 @@ def main():
         if not panels:
             print("no panels found on this network", file=sys.stderr)
         for p in panels:
-            mark = "" if p.get("reachable") else "  (advertised but not answering)"
+            mark = ("" if p.get("reachable") else "  (advertised but not answering)")
+            if p.get("busy"):
+                mark = f"  (busy, HTTP {p.get('http')} - it is there)"
             print(f"  {p.get('mac') or '??':17}  {p['address']:28}  "
                   f"v{p.get('version') or '?':8}  {p['name']}{mark}")
 
