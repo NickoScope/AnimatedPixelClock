@@ -243,19 +243,16 @@ shows. `tools/luasim/photo_to_lua.py` is the same thing by hand.
   Until 2026-09-22 this tool simply resized to 128x64, which squashed a
   1007x1078 portrait **2.14x flat** - and the flattening is not obvious in a
   thumbnail, only on the wall.
-- **No palette, since the limit became 50 KB.** 8,192 pixels at four base64
-  characters is 32,768, about 35 KB - so the colour itself is written and there
-  is neither quantisation banding nor the dither speckle used to hide it. And it
-  is *cheaper*: `string.byte(row, i, i+3)` returns four characters in one call,
-  so it is two calls into C a pixel where the palette version needed three.
-  `truecolor=false` still gives the 256-colour encoding at about 20 KB.
-- **The panel addresses 174^3 colours, not 16.7 million.** Measured, not
-  assumed: the canvas blits through `drawPixelRGB888` with no 565 step
-  (`lua_px.h:45`) and the HUB75 driver runs 8 bits a channel - but it then puts
-  every channel through a CIE 1931 gamma table whose 256 inputs land on **174
-  distinct outputs**, 82 collapsing onto a neighbour, nearly all in the dark
-  end where inputs 0..4 are all black. So the gain over a palette is real but
-  smallest in the shadows.
+- **256 colours, and do not spend more.** `truecolor=true` writes 24-bit colour
+  at 35 KB and the panel **cannot show the difference** - tried on 2026-09-22,
+  plainly different in a PNG and indistinguishable on the hardware. The panel
+  has no colour depth of its own: FM6124 drivers are constant-current sources
+  behind a latch, a LED is on or off, and all greyscale is the ESP32 library's
+  binary-code modulation where **every extra bit halves the refresh rate**. Its
+  own `doc/BuildOptions.md` says that from 64x64 up, 24-bit either flickers or
+  loses the shadows. A CIE 1931 table then maps each channel's 256 inputs onto
+  **174 distinct outputs**, 82 collapsing in the dark end. At 2 mm pitch under
+  GOB epoxy the neighbours blend anyway. See §9's rule: spend bytes on time.
 - **Do not run-length encode it.** It was tried, in palette mode. Dithering is
   what keeps a face from banding at this size, and it is exactly what destroys
   runs - 8,192 pixels came out as 7,232 of them, the length character became
@@ -821,6 +818,14 @@ written, not after it fails on the panel. Section 7 has the detail.
 - **Your configuration lives in your fork, not in a pull request.** Names,
   stations, airports, keys, your own screens: your fork and your NVS. Issues and
   PRs for anything that helps the next person are welcome upstream.
+- **Spend a script's bytes on TIME, not colour.** A bigger budget buys nothing
+  as a richer palette - the panel resolves far less colour than a file can
+  carry, and the arithmetic above says why. It buys duration and motion: more
+  phases, more states, more things that move. A stored full-screen frame at 256
+  colours is 16 KB, so 50 KB is three frames and useless as animation; but
+  `aquarium.lua` is 24 KB of *code* and animates for ever at 15 fps. Shape and
+  movement read at 2 mm pitch. Extra colours do not. `effect_api` carries this
+  rule with its derivation.
 - **Do not trust this file over the source.** It has been wrong before - the
   fx3d entry in section 2 was wrong until 2026-09-21. Where it and the code
   disagree, the code is right and this file needs fixing - please fix it.

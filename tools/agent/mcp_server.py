@@ -1027,6 +1027,41 @@ async def effect_api() -> str:
                                   "panel reports the rate frames actually arrive "
                                   "at rather than the FPS asked for.",
         },
+        "spend the budget on TIME, not colour": {
+            "the rule": "A bigger script buys nothing as a richer palette. It buys "
+                        "duration and motion. Tested on 2026-09-22: a photograph at "
+                        "24-bit colour (35 KB) and the same one at 256 dithered "
+                        "colours (20 KB) are plainly different side by side in a "
+                        "PNG and indistinguishable on the panel.",
+            "why the panel cannot show it": [
+                "The panel has no colour depth of its own. Its FM6124 drivers are "
+                "constant-current sources behind a shift register and a latch: a "
+                "LED is on or off.",
+                "All greyscale is binary-code modulation done by the ESP32 library, "
+                "and EVERY EXTRA BIT HALVES THE REFRESH RATE. That library's own "
+                "doc/BuildOptions.md says that from 64x64 up, full 24-bit either "
+                "flickers or loses the shadows, and that 5-6 bits at high "
+                "resolution make very small difference to the eye.",
+                "A CIE 1931 table then maps each channel's 256 inputs onto 174 "
+                "distinct outputs - 82 collapse onto a neighbour, nearly all in "
+                "the dark end where inputs 0..4 are all black.",
+                "2 mm pitch under GOB epoxy blends neighbouring pixels anyway.",
+            ],
+            "what to spend it on instead": [
+                "MOTION, which is code and costs almost nothing: aquarium.lua is "
+                "24 KB of code and animates for ever at 15 fps. A stored "
+                "full-screen frame at 256 colours is 16 KB, so 50 KB is three "
+                "frames - useless as animation. Procedural motion is the only kind "
+                "that scales here.",
+                "LONGER SEQUENCES: more phases, more states, a story that does not "
+                "repeat. starship.lua spends its bytes on a whole flight.",
+                "SPRITES AND DELTAS if pixels must be stored - a moving 16x16 "
+                "sprite is 512 B at two characters a pixel, so a 50 KB script can "
+                "hold a hundred of them.",
+                "DETAIL THAT MOVES: more fish, more particles, more plants. Shape "
+                "and movement read at 2 mm pitch; extra colours do not.",
+            ],
+        },
         "budgets": {
             "sourceBytes": "50 KB a script, and twelve uploaded scripts at once "
                            "beside the seven compiled in. Both were raised from "
@@ -1343,12 +1378,15 @@ class PhotoIn(BaseModel):
                                          "panel is 2:1 and a portrait is not, so "
                                          "choose this rather than letting the "
                                          "resize choose it.")
-    truecolor: bool = Field(default=True,
-                            description="24-bit colour, four base64 characters a "
-                                        "pixel, no palette and no dithering - about "
-                                        "35 KB, the default since a script may be "
-                                        "50 KB. False falls back to the 256-colour "
-                                        "dithered encoding at about 20 KB.")
+    truecolor: bool = Field(default=False,
+                            description="24-bit colour at four base64 characters a "
+                                        "pixel, about 35 KB. **Leave this false.** "
+                                        "The panel cannot show the difference - it "
+                                        "was tried on 2026-09-22 and the two were "
+                                        "indistinguishable on the hardware while "
+                                        "plainly different in a PNG. effect_api's "
+                                        "'spend the budget on TIME, not colour' has "
+                                        "the reason. 256 dithered colours is 20 KB.")
     aspect: Literal["fit", "fill", "stretch"] = Field(
         default="fit",
         description="The panel is 2:1 and almost no photograph is. fit keeps the "

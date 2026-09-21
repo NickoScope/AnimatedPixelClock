@@ -9,16 +9,29 @@ picture undistorted and fills the sides with a blurred, darkened copy of
 itself; `fill` crops to 2:1 and loses the edges; `stretch` is the old
 behaviour and squashed a 1007x1078 portrait 2.14x flat.
 
-**Then colour.** `--truecolor` (the default since the script limit became
-50 KB) writes the colour itself, four base64 characters a pixel, with no
-palette and no dithering - about 35 KB. `--palette` is the older 256-colour
-dithered encoding at about 20 KB, kept because it is half the size.
+**Then colour, and the answer is 256.** `--palette` is the default: median-cut
+to 256 colours with Floyd-Steinberg, about 20 KB. `--truecolor` writes the
+colour itself at four base64 characters a pixel, about 35 KB - and it is
+**not worth the 15 KB on this hardware.**
 
-What the palette version cost, and why dropping it is worth 15 KB: 256 colours
-band in a sky or a cheek, and the dither that hides the banding is itself
-visible as speckle. The panel can address 174^3 colours - see the note in the
-generated header for where that number comes from - so a palette is throwing
-away a great deal.
+That was tested rather than assumed, on 2026-09-22. Side by side in a PNG the
+true-colour file is visibly cleaner: no banding in a sky, no dither speckle.
+Side by side on the panel the owner could not tell them apart, and the reason
+is in the hardware:
+
+  * The panel has no colour depth of its own. Its FM6124 drivers are constant
+    current sources behind a shift register and a latch - a LED is on or off.
+  * All greyscale is binary-code modulation done by the ESP32 library, and
+    **every extra bit halves the refresh rate**, which is why that library's own
+    BuildOptions.md says that from 64x64 up, full 24-bit either flickers or
+    loses the shadows, and that "using 5-6 bits at high res make very small
+    difference to the human's eye actually".
+  * A CIE 1931 table then maps each channel's 256 inputs onto 174 distinct
+    outputs, 82 of them collapsing in the dark end.
+  * At a 2 mm pitch under GOB epoxy, neighbouring pixels blend anyway.
+
+256 colours chosen per image already land inside what the panel can show.
+**Spend a bigger budget on time, not colour** - see `effect_api`'s note.
 
 The rest is what makes it fit and makes it cheap:
 
@@ -95,10 +108,11 @@ def main():
     ap.add_argument("--colors", type=int, default=256,
                     help="2..256, palette mode only. Ignored with --truecolor")
     ap.add_argument("--truecolor", action="store_true", default=None,
-                    help="24-bit colour, four characters a pixel, no palette and "
-                         "no dithering. The default now that a script may be 50 KB")
+                    help="24-bit colour, four characters a pixel, about 35 KB. Not "
+                         "the default: the panel cannot show the difference - see "
+                         "the note at the top of this file")
     ap.add_argument("--palette", dest="truecolor", action="store_false",
-                    help="the old 256-colour dithered encoding, about 20 KB")
+                    help="256 colours with Floyd-Steinberg, about 20 KB. The default")
     ap.add_argument("--contrast", type=float, default=1.0)
     ap.add_argument("--saturation", type=float, default=1.0)
     ap.add_argument("--brightness", type=float, default=1.0)
@@ -118,7 +132,7 @@ def main():
     if not 2 <= args.colors <= 256:
         sys.exit("--colors must be 2..256")
     if args.truecolor is None:
-        args.truecolor = True
+        args.truecolor = False
 
     im = Image.open(args.image).convert("RGB")
     if args.crop:
