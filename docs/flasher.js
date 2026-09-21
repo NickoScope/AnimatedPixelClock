@@ -1,10 +1,18 @@
 // AnimatedPixelClock Web Flasher - client logic.
 // Builds an ESP Web Tools manifest on the fly for the chosen board and keeps the
-// install button, specs and board photo in sync. Two boards, two firmware
-// images: the ESP32-S3 Super Mini (4MB) and the ESP32-S3-WROOM devkit (16MB),
-// both driving the 128x64 HUB75 matrix.
+// install button, specs and board photo in sync. Three boards, three firmware
+// images: the Waveshare ESP32-S3-RGB-Matrix (32MB), the ESP32-S3 Super Mini
+// (4MB) and the ESP32-S3-WROOM devkit (16MB), all driving the 128x64 HUB75
+// matrix.
 
 const BOARDS = {
+  waveshare: {
+    label: 'Waveshare ESP32-S3-RGB-Matrix (32MB)',
+    chipFamily: 'ESP32-S3',
+    firmware: 'waveshare',              // AnimatedPixelClock-waveshare-<ver>-Full.bin
+    board: 'Waveshare ESP32-S3-RGB-Matrix (WROOM-2 N32R16V)',
+    note: 'The HUB75 driver board with the controller on it: 32MB octal flash and 16MB octal PSRAM, and a HUB75 socket instead of jumper wires. Its module needs an octal-flash bootloader - a 16MB devkit image written to this board installs cleanly and then fails to boot every time, so pick this entry and not the WROOM one. Flashes over its native USB-C port.',
+  },
   supermini: {
     label: 'ESP32-S3-Zero / Super Mini (4MB, USB-C)',
     chipFamily: 'ESP32-S3',
@@ -21,7 +29,7 @@ const BOARDS = {
   },
 };
 
-const DEFAULT_BOARD = 'supermini';
+const DEFAULT_BOARD = 'waveshare';
 const DISPLAY = 'HUB75 · 128×64 RGB';
 
 let _version = null;

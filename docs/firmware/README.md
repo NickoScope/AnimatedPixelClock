@@ -7,8 +7,16 @@ commit, push, or publish a GitHub Release.
 
 | File ID | PlatformIO environment | Hardware |
 | --- | --- | --- |
+| `waveshare` | `matrix-waveshare-rgb` | Waveshare ESP32-S3-RGB-Matrix (WROOM-2 N32R16V), 32 MB octal flash + 16 MB octal PSRAM, native USB |
 | `supermini` | `matrix-s3` | ESP32-S3-Zero / Super Mini, 4 MB, native USB |
 | `wroom` | `matrix-s3-wroom` | ESP32-S3-WROOM-1 N16R8, 16 MB, USB-UART |
+
+The `waveshare` image is not interchangeable with `wroom`. That module carries
+octal flash and needs a bootloader built for it; the 16 MB devkit image writes
+cleanly to this board and then dies in `do_core_init` on every boot, right
+after "Octal Flash Mode Enabled". Packaging checks the flash size declared in
+each bootloader header against the board, so a mislabelled image is rejected
+here rather than discovered on a wall.
 
 The `supermini` filename is retained for compatibility; it also covers the
 Waveshare ESP32-S3-Zero. Choose the image for your board and flash size.

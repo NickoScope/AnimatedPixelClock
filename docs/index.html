@@ -50,10 +50,10 @@
 
           <nav class="rail-links" aria-label="Project links">
             <div class="rail-label">Project</div>
-            <a href="https://github.com/Keralots/AnimatedPixelClock" target="_blank" rel="noopener">github</a>
-            <a href="https://github.com/Keralots/AnimatedPixelClock#readme" target="_blank" rel="noopener">docs</a>
-            <a href="https://github.com/Keralots/AnimatedPixelClock/issues" target="_blank" rel="noopener">report a bug</a>
-            <a href="https://github.com/Keralots/AnimatedPixelClock/blob/main/docs/HUB75_WIRING.md" target="_blank" rel="noopener">wiring guide</a>
+            <a href="https://github.com/NickoScope/AnimatedPixelClock" target="_blank" rel="noopener">github</a>
+            <a href="https://github.com/NickoScope/AnimatedPixelClock#readme" target="_blank" rel="noopener">docs</a>
+            <a href="https://github.com/NickoScope/AnimatedPixelClock/issues" target="_blank" rel="noopener">report a bug</a>
+            <a href="https://github.com/NickoScope/AnimatedPixelClock/blob/main/docs/HUB75_WIRING.md" target="_blank" rel="noopener">wiring guide</a>
           </nav>
 
           <div class="rail-foot">
@@ -87,7 +87,7 @@
           <ul class="checklist">
             <li><strong>Desktop Chrome or Edge.</strong> Web Serial doesn't run on Firefox, Safari, or mobile.</li>
             <li><strong>A real data USB cable.</strong> Power-only cables are silent killers - the port simply won't show up.</li>
-            <li><strong>An ESP32-S3 board.</strong> A compact 4MB board (Waveshare ESP32-S3-Zero or an ESP32-S3 Super Mini, run off one USB-C charger) or the full-size WROOM devkit - pick yours in step 01. The firmware drives 2× 64×64 HUB75E panels chained into one 128×64 matrix - see the <a href="https://github.com/Keralots/AnimatedPixelClock/blob/main/docs/HUB75_WIRING.md" target="_blank" rel="noopener">wiring guide</a> for the pin map and power notes.</li>
+            <li><strong>An ESP32-S3 board.</strong> A compact 4MB board (Waveshare ESP32-S3-Zero or an ESP32-S3 Super Mini, run off one USB-C charger) or the full-size WROOM devkit - pick yours in step 01. The firmware drives 2× 64×64 HUB75E panels chained into one 128×64 matrix - see the <a href="https://github.com/NickoScope/AnimatedPixelClock/blob/main/docs/HUB75_WIRING.md" target="_blank" rel="noopener">wiring guide</a> for the pin map and power notes.</li>
             <li><strong>Stuck in a connect / disconnect loop?</strong> Hold <code>BOOT</code>, plug in USB while holding, then release. Or hold <code>BOOT</code>, tap <code>RESET</code>, then let go of both.</li>
             <li><strong>Nothing else on the serial port.</strong> Close Arduino IDE, PlatformIO Monitor, and the serial monitor below before flashing.</li>
           </ul>
@@ -252,7 +252,7 @@
             </div>
           </div>
 
-          <p class="hint">Stats travel over UDP on port <code>4210</code> and refresh every few seconds - both configurable in the app. Get it from the <a href="https://github.com/Keralots/AnimatedPixelClock" target="_blank" rel="noopener">project repo</a>.</p>
+          <p class="hint">Stats travel over UDP on port <code>4210</code> and refresh every few seconds - both configurable in the app. Get it from the <a href="https://github.com/NickoScope/AnimatedPixelClock" target="_blank" rel="noopener">project repo</a>.</p>
         </section>
 
         <!-- ────────── 04 Serial monitor ────────── -->
@@ -279,11 +279,11 @@
         </section>
 
         <footer class="footer">
-          <span>AnimatedPixelClock - open-source ESP32-S3 RGB matrix clock.</span>
+          <span>AnimatedPixelClock - open-source ESP32-S3 RGB matrix clock. This build is the <a href="https://github.com/NickoScope/AnimatedPixelClock" target="_blank" rel="noopener">NickoScope fork</a>, based on <a href="https://github.com/Keralots/AnimatedPixelClock" target="_blank" rel="noopener">Keralots/AnimatedPixelClock</a>.</span>
           <span>
-            <a href="https://github.com/Keralots/AnimatedPixelClock" target="_blank" rel="noopener">source</a>
+            <a href="https://github.com/NickoScope/AnimatedPixelClock" target="_blank" rel="noopener">source</a>
             &nbsp;·&nbsp;
-            <a href="https://github.com/Keralots/AnimatedPixelClock/issues" target="_blank" rel="noopener">report a bug</a>
+            <a href="https://github.com/NickoScope/AnimatedPixelClock/issues" target="_blank" rel="noopener">report a bug</a>
           </span>
         </footer>
       </main>
