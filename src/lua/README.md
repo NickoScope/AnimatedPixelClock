@@ -1,8 +1,9 @@
 # Lua effects on the panel
 
 The scripts in [`tools/luasim/scripts/`](../../tools/luasim/scripts) run on the
-panel, each as a page of its own: **MINECRAFT, ROOM RADAR, SNAKE CLOCK, TETRIS
-CLOCK**. The knob walks the clock styles, then each effect, then the other
+panel, each as a page of its own: **FOOTBALL CLOCK, MINECRAFT, ROOM RADAR,
+SNAKE CLOCK, SNOOKER CLOCK, TETRIS CLOCK** - six, and `LUA_EFFECT_COUNT` in
+`lua_effects_scripts.h` is the authority. The knob walks the clock styles, then each effect, then the other
 pages; the carousel walks them the same way and gives each its slot. The
 banner names an effect however you arrive at it — knob, carousel or web.
 
@@ -74,12 +75,12 @@ actually arriving, so a slow effect is not blitted three times per frame. The
 Lua page skips the frame clear: the blit writes every pixel, and a clear would
 only flash black.
 
-**The stack is internal RAM, 16 KB.** The Watch put its Lua task's stack in
+**The stack is internal RAM, 12 KB** (`kStackBytes`, `lua_effects.cpp:63`). The Watch put its Lua task's stack in
 PSRAM; that does not carry over. It runs IDF 5.x; arduino-esp32 2.0.17 is built
 with `CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY` unset (`tools/sdk/esp32s3/sdkconfig`),
 and in its `libfreertos.a` `xTaskCreateStaticPinnedToCore` asserts
 `xPortcheckValidStackMem`, which only calls the internal-memory TCB check.
-16 KB rather than the bench's 32 KB because the scripts are compiled in, never
+12 KB rather than the bench's 32 KB because the scripts are compiled in, never
 uploaded, so the parser never meets a hostile nesting depth; on the host they
 used under 3 KB above the harness. If scripts ever arrive at run time, go back
 to 32 KB and measure the internal heap first.
@@ -140,7 +141,7 @@ comes on top. Nothing here has run on the panel yet.
 ## Cost
 
 Against the same env at `bb55814`: **+48 832 B flash** (34 190 B of it the
-four embedded scripts' source), **+480 B static RAM**. At run time: 16 KB of internal heap
+four embedded scripts' source), **+480 B static RAM**. At run time: 12 KB of internal heap
 for the task's stack, 4 × 24 576 B of PSRAM for the buffers, and the effect's
 Lua heap in PSRAM while its page is up.
 
@@ -148,7 +149,7 @@ Lua heap in PSRAM while its page is up.
 
 The task prints what to read:
 
-- `[luafx] N effects, task on core 0 with 16384 B stack (internal free A -> B)` at boot.
+- `[luafx] N effects, task on core 0 with 12288 B stack (internal free A -> B)` at boot.
 - `[luafx] open <id>: ok in X ms, ~I instr, heap H B, ... stack free S B` per visit.
 - Every 30 s on an effect: frames and fps achieved, draw avg/max ms, heap and
   peak, stack free, PSRAM free, internal heap free and minimum.
@@ -156,7 +157,7 @@ The task prints what to read:
 What those should answer: each effect's real frame time and fps (room_radar is
 the one at risk); whether the full-panel blit tears or flickers at the DMA's
 84 Hz — if it does, `display.waitForScanCompletion()` before the blit is the
-first thing to try; the internal heap minimum with the 16 KB stack taken;
+first thing to try; the internal heap minimum with the 12 KB stack taken;
 the stack high-water mark; and that PSRAM returns to its start value after
 leaving an effect.
 

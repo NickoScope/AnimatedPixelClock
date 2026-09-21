@@ -510,11 +510,159 @@ sources. Do not raise a task's stack to fit a work buffer - move the buffer.
 
 ## 8. Adding a screen
 
-Two routes, and which you want depends on whether you need C++.
+Two routes. **Take the Lua one unless you need C++** - it is a single file, it
+previews on your laptop, and the whole loop up to the flash needs no hardware.
 
-*(This section is written from a survey of the source in progress; until it is
-finished, read `src/lua/README.md` and `tools/luasim/` for the Lua path, and
-`src/clocks/` for a small C++ page to copy.)*
+### a. A Lua effect
+
+One effect is one persistent `lua_State` on its own task, drawing into a
+128x64 RGB888 canvas in PSRAM that the render task blits to the panel.
+
+**The contract** (`src/lua/lua_fx.cpp:120-143`):
+
+| | required? |
+|---|---|
+| global `function draw()` | **yes** - absent and the load fails with "the script defines no draw()" |
+| global `PERIOD`, a number > 0 | optional, default 60.0. **Read once, at load** - changing it inside `draw()` does nothing |
+| global `FPS` | optional, default 20, clamped to 1..30 |
+
+The chunk body runs once at load; build your tables and precomputed grids there.
+`draw()` is then called once a frame with no arguments.
+
+**The canvas is not cleared between frames.** It is zeroed once when the effect
+opens and never again (`src/lua/lua_effects.cpp:164`). Call `px.clear()`
+yourself for a clean frame - or leave it out and get trails for nothing.
+
+**There is no clock in milliseconds.** No `sys`, no `os.time`, no `os.clock`;
+`io`, `os`, `debug` and `package` are not compiled in, and `coroutine` is
+compiled but deliberately not opened, because a new thread starts with a fresh
+hook count and would escape the instruction budget
+(`src/lua/nslua_sandbox.cpp:80-84`). Time comes from `px.t()` and `px.now()`.
+
+`px.t()` is the animation phase in `[0,1)`, aligned to the epoch - so at
+`PERIOD=60` it is the second hand, and a clock effect lands its change exactly
+on the minute.
+
+**The budgets are real and they are enforced** (`src/lua/lua_fx.h:39-45`):
+
+| | |
+|---|---|
+| load instructions | 20,000,000 |
+| draw instructions | 2,000,000 |
+| load deadline | 3,000 ms |
+| draw deadline | 500 ms |
+| Lua heap | 4 MiB, from PSRAM |
+| task stack | 12 KiB **internal** RAM (`lua_effects.cpp:63`) |
+
+A `draw()` over the *time* budget is dropped rather than fatal, up to three in a
+row; the fourth stops the effect. Anything else - syntax, runtime, instruction
+budget, heap - stops it at once.
+
+**The whole API in one call:** the MCP server's `effect_api` tool returns the
+`px` table, the `presence` table, the environment and every budget as one
+object. Otherwise `src/lua/lua_px.cpp:300-305` is the list, and
+`tools/luasim/scripts/demo.lua` exercises every call and is the intended
+template.
+
+**The loop, which needs hardware only at the end:**
+
+```bash
+$EDITOR tools/luasim/scripts/my_effect.lua     # [A-Za-z0-9_] only in the name
+cd tools/luasim && make
+./luasim scripts/my_effect.lua 40 out.raw --start 12:34
+python3 render.py out.raw out.gif 6            # look at it
+python3 fx_parity.py                           # the REAL budgets, on your Mac
+cd ../.. && python3 tools/luasim/gen_effects.py
+#   then a person builds and flashes
+```
+
+`luasim` compiles the *same vendored Lua 5.4.8* against a host copy of `px`, so
+what it draws is what the panel draws - but it does **not** enforce the budgets,
+ignores `PERIOD` and `FPS`, and has no `presence` table. `fx_parity.py` is the
+one that does: it builds the firmware's own `lua_fx.cpp`, `lua_px.cpp` and
+sandbox for the host, applies the panel's real limits, compares frames byte for
+byte against luasim at four clocks, and prints each script's instruction counts,
+heap peak and C stack used. Run it before you believe a script is finished.
+
+The file name is not cosmetic: `gen_effects.py:59-60` refuses anything outside
+`[A-Za-z0-9_]`, and the on-panel name is the stem with underscores as spaces,
+upper-cased - `football_clock.lua` becomes `FOOTBALL CLOCK`. The generator also
+runs in the pre-commit hook with `--check`, so a stale header blocks a commit.
+
+**There is no upload route.** Scripts are compiled into `.rodata`; `POST
+/api/lua` takes only `show`. The 12 KB stack is sized on that assumption
+(`lua_effects.cpp:55-62`) - if scripts ever arrive at run time it has to go back
+to 32 KB.
+
+### b. A C++ page
+
+Not a class, not a registry, not a vtable: a module directory plus six edits in
+`src/main.cpp`. The world clock is the smallest complete example - 85 lines of
+header, 465 of drawing - and copying it is the intended way in.
+
+**The only mandatory function** is `void <module>Render();` - draw one frame,
+now. The caller has already cleared the screen and will flip the buffer.
+
+**Its six touch points in `main.cpp`**, all guarded by the module's build flag:
+
+| | |
+|---|---|
+| `:99-101` | the page enum entry, `PAGE_WORLDCLOCK` |
+| `:163` | the include |
+| `:186-188` | `panelPageSeconds()` - the carousel slot, 20 s here |
+| `:270-273` | `getOptimalRefreshRate()` - the page's own frame rate, 10 Hz here |
+| `:684-686` | `ctrlPageName()` - the banner and toast name |
+| `:734-736` | `panelPageKey()` - maps the page to `PANEL_KEY_WORLD` |
+| `:1350-1353` | the render dispatch |
+
+And outside it: a `PanelPageKey` in `src/panel/panel.h:40-54`, the `route()`
+line and handler in `src/web/web_panel.cpp`, a word added to
+`panelWebFeatures()`, and the flag in `platformio.ini`.
+
+**`PanelPageKey` is append-only.** The switches are bits in the NVS `pages`
+value, so a key inserted in the middle moves every bit after it and silently
+rearranges what the owner had switched on. The enum says so at
+`src/panel/panel.h:45-47`; believe it. Skipping the key entirely gives
+`PANEL_KEY_NONE`, which means "always visited, cannot be switched off".
+
+**Knob handling is optional and three-layered:** `ctrlPageHasControls()` makes a
+click *enter* the page, `ctrlEnterHint()` is the toast text ("TURN: AIRPORT"),
+and the knob block in `loop()` (`main.cpp:1032-1070`) dispatches the click and
+the rotation. The yacht radar is the cleanest example of a page with controls
+and a lifecycle - `yachtRadarBegin()` / `yachtRadarStop()` open and close a
+network task as the page is entered and left.
+
+**Drawing.** `extern MatrixDisplay display;` from `src/display/display.h`, which
+is an `Adafruit_GFX` with panel-native RGB888 overloads beside the RGB565 ones:
+`drawPixelRGB888`, `fillScreenRGB888`, `drawFastHLine/VLine`, `fillRect`. What
+the codebase actually leans on, by count: `fillRect` 199, `drawPixel` 190,
+`setCursor` 132, `print` 111, `setTextSize` 68, `color565` 66.
+
+Three things to know before your first frame:
+
+- **`display.getBuffer()` always returns `nullptr`** (`matrix_display.h:84`).
+  There is no readable framebuffer; you cannot read a pixel back. That is
+  exactly why the Lua path keeps its own canvas in PSRAM.
+- **`setTextSize` and `setFont` are sticky global state.** The clock styles
+  leave the size at 3 or 4. Any page that draws text must set every text
+  attribute it depends on and restore `setFont(NULL)` on the way out -
+  `lua_effects.cpp:275` and `:293` do exactly this, with the comment saying why.
+- One custom font ships: `PicopixelFB` (`src/fonts/picopixel_fb.h`), stock
+  Adafruit Picopixel with the `U` given a flat bottom, because at 2 mm pitch the
+  stock `U` reads as `V` across a room.
+
+**Every module header `#error`s on a missing prerequisite** - the world clock
+needs `CONTROL_ENCODER_ENABLED`, presence needs `MQTT_BUS_ENABLED` *and*
+`LUA_EFFECTS_ENABLED`. Follow that pattern; a page that silently half-exists is
+worse than one that refuses to compile.
+
+### c. Before you write either one
+
+Do the arithmetic. Internal RAM is the binding constraint on this board: the
+HUB75 DMA framebuffer takes 131,072 bytes of it, which is why about 19-24 KB of
+heap is all there is, and `largestHeapBlock` is usually under 14 KB. A page that
+wants a contiguous buffer needs to be checked against that number before it is
+written, not after it fails on the panel. Section 7 has the detail.
 
 ---
 
