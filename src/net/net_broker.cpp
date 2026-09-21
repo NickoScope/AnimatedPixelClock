@@ -97,7 +97,11 @@ const uint32_t kBodyCap[NB_CALLER_COUNT] = {
   // it is PSRAM. Measure it and cut it once there are readings.
   4 * 1024,   // NB_WORLDCLOCK  - migrated 2026-09-21
   0,          // NB_RAIL        - not yet; its own buffer is 1.5 MB today
-  0,          // NB_FLIGHT      - not yet; its own buffer is 192 KB today
+  // Its own per-fetch buffer is 192 KB, and this mirrors it exactly so that
+  // migrating changes nothing about which bodies are accepted. Inherited, not
+  // measured: the board was at its daily API cap on 2026-09-21 and could not
+  // be asked. It reports `bytes` on every call, so cut this from readings.
+  192 * 1024, // NB_FLIGHT      - migrated 2026-09-21
 };
 
 // The stack and the task block are .bss, not the heap. That is the whole point:

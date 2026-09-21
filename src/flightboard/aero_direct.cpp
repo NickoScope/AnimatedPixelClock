@@ -7,6 +7,9 @@
 #include <Preferences.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
+#include <atomic>
+
+#include "../net/net_broker.h"
 #include <esp_heap_caps.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -92,6 +95,9 @@ struct Outcome {
 
 portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 bool     s_running = false;             // under s_mux
+// The broker path's own bookkeeping, loop task only.
+bool     s_nbWaiting = false;
+uint32_t s_nbSeq = 0;
 bool     s_ready   = false;             // under s_mux
 Outcome  s_done;                        // under s_mux
 Job      s_job;                         // written by the loop before the task starts, read by the task
@@ -320,6 +326,60 @@ void keepSample(const uint8_t *body, size_t len, const char *arrayKey) {
   portEXIT_CRITICAL(&s_mux);
 }
 
+// Everything from "the body is in a buffer" onwards, shared by the broker path
+// and the fallback task. It runs on whichever of them is doing the work - on
+// the broker path that is the loop task, where a JSON parse is an ordinary
+// loop-side cost and the broker's own stack never has to be big enough for it.
+void consumeBody(Outcome &o, const Job &j, const char *body, size_t len) {
+  const char *arrayKey = j.kind == JOB_LIST ? aero::listName((aero::List)j.list) : "flights";
+  keepSample((const uint8_t *)body, len, arrayKey);
+  CappedPsram alloc(kJsonCap);
+  JsonDocument filter(&alloc), doc(&alloc);
+  if (j.kind == JOB_LIST) aero::listFilter(filter, (aero::List)j.list);
+  else                    aero::trackFilter(filter);
+  const DeserializationError e = deserializeJson(doc, body, len,
+                                                 DeserializationOption::Filter(filter),
+                                                 DeserializationOption::NestingLimit(10));
+  o.jsonPeak = (uint32_t)alloc.peak();
+  noteHeap(o);
+  if (e == DeserializationError::NoMemory) {
+    o.state = ST_NOMEM;
+  } else if (e) {
+    o.state = ST_BAD;
+  } else if (j.kind == JOB_LIST) {
+    o.state = aero::parseList(doc.as<JsonVariantConst>(), (aero::List)j.list, s_tmpList) ? ST_OK : ST_BAD;
+    o.more = s_tmpList->more;
+  } else {
+    o.state = aero::pickTrack(doc.as<JsonVariantConst>(), j.now, j.added, &s_tmpTrack) ? ST_OK : ST_BAD;
+  }
+}
+
+// The key and the URL, built where the request is submitted rather than inside
+// the fetch. Returns false with o.state set when there is nothing to ask for.
+// `key` is the caller's buffer and the caller zeroes it the moment the broker
+// has taken its copy.
+bool buildRequest(const Job &j, Outcome &o, char *url, size_t urlCap, char *key, size_t keyCap) {
+  key[0] = '\0';
+  {
+    Preferences p;
+    if (p.begin(kKeyNs, true)) {
+      if (p.isKey("key")) p.getString("key", key, keyCap);
+      p.end();
+    }
+  }
+  if (!key[0]) { o.state = ST_NOKEY; return false; }
+  char path[200];
+  const bool built = j.kind == JOB_LIST
+      ? aero::listQuery(j.icao, (aero::List)j.list, j.now, path, sizeof(path))
+      : aero::trackQuery(j.ident, j.now, path, sizeof(path));
+  if (!built || snprintf(url, urlCap, "%s%s", kBase, path) >= (int)urlCap) {
+    o.state = ST_BAD;
+    memset(key, 0, keyCap);
+    return false;
+  }
+  return true;
+}
+
 void runCall(Outcome &o) {
   const Job &j = o.job;
   char *key = static_cast<char *>(heap_caps_calloc(1, kKeyMax, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
@@ -377,31 +437,8 @@ void runCall(Outcome &o) {
           const size_t len = readBody(http, body, kBodyMax, &big);
           noteHeap(o);
           o.bodyBytes = (uint32_t)len;
-          if (big) {
-            o.state = ST_BIG;
-          } else {
-            const char *arrayKey = j.kind == JOB_LIST ? aero::listName((aero::List)j.list) : "flights";
-            keepSample(body, len, arrayKey);
-            CappedPsram alloc(kJsonCap);
-            JsonDocument filter(&alloc), doc(&alloc);
-            if (j.kind == JOB_LIST) aero::listFilter(filter, (aero::List)j.list);
-            else                    aero::trackFilter(filter);
-            const DeserializationError e = deserializeJson(doc, (const char *)body, len,
-                                                           DeserializationOption::Filter(filter),
-                                                           DeserializationOption::NestingLimit(10));
-            o.jsonPeak = (uint32_t)alloc.peak();
-            noteHeap(o);
-            if (e == DeserializationError::NoMemory) {
-              o.state = ST_NOMEM;
-            } else if (e) {
-              o.state = ST_BAD;
-            } else if (j.kind == JOB_LIST) {
-              o.state = aero::parseList(doc.as<JsonVariantConst>(), (aero::List)j.list, s_tmpList) ? ST_OK : ST_BAD;
-              o.more = s_tmpList->more;
-            } else {
-              o.state = aero::pickTrack(doc.as<JsonVariantConst>(), j.now, j.added, &s_tmpTrack) ? ST_OK : ST_BAD;
-            }
-          }
+          if (big) o.state = ST_BIG;
+          else     consumeBody(o, j, (const char *)body, len);
         } else {
           const String ra = http.header("Retry-After");
           o.retryS = ra.length() ? (uint32_t)ra.toInt() : 0;
@@ -595,6 +632,43 @@ void aeroDirectLoop(const AeroWant &w) {
     dropLists();
   }
 
+  // The broker path's answer. It arrives in a PSRAM mailbox and is turned into
+  // an Outcome here, on the loop task, so everything below - take(), the
+  // budget, the trackers - is reached by exactly the same road as before.
+  if (s_nbWaiting) {
+    NbMailbox *mb = nbMailbox(NB_FLIGHT);
+    if (mb) {
+      const uint32_t seq = mb->seq.load(std::memory_order_acquire);
+      if (seq != s_nbSeq) {
+        s_nbSeq = seq;
+        s_nbWaiting = false;
+        Outcome o;
+        memset(&o, 0, sizeof(o));
+        o.job = s_job;
+        o.heapBefore = o.heapMin = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+        o.http = (int16_t)mb->code;
+        o.bodyBytes = mb->bodyLen;
+        o.retryS = mb->header[0][0] ? (uint32_t)atoi(mb->header[0]) : 0;
+        if (mb->code == 200 && mb->bodyLen) {
+          consumeBody(o, s_job, mb->body, mb->bodyLen);
+        } else if (mb->code == NB_ERR_TRUNC) {
+          o.state = ST_BIG;
+        } else if (mb->code < 0) {
+          o.state = (mb->code == NB_ERR_NO_TURN) ? ST_LOWMEM : ST_NET;
+        } else {
+          o.state = (mb->code == 401 || mb->code == 403) ? ST_AUTH
+                  : mb->code == 429                      ? ST_RATE
+                  : (mb->code == 400 || mb->code == 404) ? ST_REFUSED
+                                                         : ST_HTTP;
+        }
+        portENTER_CRITICAL(&s_mux);
+        s_running = false;
+        portEXIT_CRITICAL(&s_mux);
+        take(o, nowMs);
+      }
+    }
+  }
+
   bool running, ready;
   Outcome done;
   portENTER_CRITICAL(&s_mux);
@@ -651,8 +725,12 @@ void aeroDirectLoop(const AeroWant &w) {
     if (j.kind == JOB_TRACK) s_trk[j.slot].nextAt = now + 3600;
     return;
   }
-  if (heap_caps_get_free_size(MALLOC_CAP_INTERNAL) < kMinInternalFree ||
-      heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) < kStackBytes + 1024) {
+  // Only the fallback path needs a contiguous block; the broker has no task to
+  // create. This is the 13,312 B threshold that the measurements of 2026-09-21
+  // kept running into, and migrating is what removes it rather than easing it.
+  if (!nbReady(NB_FLIGHT) &&
+      (heap_caps_get_free_size(MALLOC_CAP_INTERNAL) < kMinInternalFree ||
+       heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) < kStackBytes + 1024)) {
     s_blocked = ST_LOWMEM;
     s_holdUntilMs = (nowMs + kLowMemS * 1000UL) | 1;
     return;
@@ -677,7 +755,42 @@ void aeroDirectLoop(const AeroWant &w) {
   portENTER_CRITICAL(&s_mux);
   s_running = true;
   portEXIT_CRITICAL(&s_mux);
-  if (xTaskCreatePinnedToCore(callTask, "aerocall", kStackBytes, nullptr, kPriority, nullptr, kCore) != pdPASS) {
+  if (nbReady(NB_FLIGHT)) {
+    // No task, so no contiguous 13 KB to find at a moment nobody chose - which
+    // is what this board's own guard above was there to check for, and why it
+    // is skipped on this path.
+    char url[260];
+    char key[kKeyMax];
+    Outcome pre;
+    memset(&pre, 0, sizeof(pre));
+    pre.job = j;
+    if (!buildRequest(j, pre, url, sizeof(url), key, sizeof(key))) {
+      portENTER_CRITICAL(&s_mux);
+      s_running = false;
+      portEXIT_CRITICAL(&s_mux);
+      take(pre, nowMs);          // the call stays counted: never undercount
+      return;
+    }
+    NbRequest req = {};
+    req.url = url;
+    req.auth = key;
+    req.authHeader = "x-apikey";   // AeroAPI's own scheme, not Authorization
+    req.caCert = kAeroRootsPem;    // this board verifies its server; do not drop it
+    req.collect[0] = "Retry-After";
+    req.collectCount = 1;
+    req.timeoutMs = 12000;
+    const bool sent = nbSubmitRequest(NB_FLIGHT, req, false);
+    memset(key, 0, sizeof key);    // the broker has its own copy now
+    if (sent) {
+      s_nbWaiting = true;
+    } else {
+      portENTER_CRITICAL(&s_mux);
+      s_running = false;
+      portEXIT_CRITICAL(&s_mux);
+      s_blocked = ST_TASK;
+      s_holdUntilMs = (nowMs + kErrorS[0] * 1000UL) | 1;
+    }
+  } else if (xTaskCreatePinnedToCore(callTask, "aerocall", kStackBytes, nullptr, kPriority, nullptr, kCore) != pdPASS) {
     portENTER_CRITICAL(&s_mux);
     s_running = false;
     portEXIT_CRITICAL(&s_mux);
