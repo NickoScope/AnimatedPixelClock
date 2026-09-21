@@ -57,7 +57,18 @@ import panel as P  # noqa: E402
 REPO = Path(__file__).resolve().parents[2]
 LUASIM = REPO / "tools" / "luasim"
 SCRIPTS = LUASIM / "scripts"
+# Personal photographs turned into screens go here instead, because this
+# repository is public. The tools look in both; git ignores the second.
+PRIVATE = SCRIPTS / "private"
 GALLERY = REPO / "gallery"
+
+
+def _find(name, from_gallery=False):
+    """Where a script by this name is: the gallery, or scripts/, or private/."""
+    if from_gallery:
+        return GALLERY / f"{name}.lua"
+    a = SCRIPTS / f"{name}.lua"
+    return a if a.exists() else (PRIVATE / f"{name}.lua")
 
 mcp = FastMCP("ledmatrix")
 
@@ -1049,7 +1060,7 @@ async def effect_preview(args: PreviewIn) -> str:
         see the effect.
     """
     try:
-        src = (GALLERY if args.from_gallery else SCRIPTS) / f"{args.name}.lua"
+        src = _find(args.name, args.from_gallery)
         if not src.exists():
             if args.from_gallery:
                 have = ", ".join(sorted(p.stem for p in GALLERY.glob("*.lua"))) or "nothing"
@@ -1206,7 +1217,7 @@ async def effect_upload(args: UploadIn) -> str:
         "uploaded": {"count", "slots", "fsFree"}}
     """
     try:
-        src = (GALLERY if args.from_gallery else SCRIPTS) / f"{args.name}.lua"
+        src = _find(args.name, args.from_gallery)
         if not src.exists():
             if args.from_gallery:
                 have = ", ".join(sorted(p.stem for p in GALLERY.glob("*.lua"))) or "nothing"
@@ -1228,18 +1239,24 @@ async def effect_upload(args: UploadIn) -> str:
         out = {"ok": True, "name": args.name, "bytes": len(data), "index": idx}
         if args.show and isinstance(idx, int) and idx >= 0:
             P.post(a, "/api/lua", {"show": idx})
-            hz = None
+            # Whether it is running is whether the panel says it is selected -
+            # not whether the frame rate is above the 2 Hz floor. A still
+            # photograph asks for FPS = 2 and gets exactly that, and the older
+            # check called it a failure every time.
+            cur, hz = None, None
             for _ in range(5):
                 time.sleep(1.0)
+                cur = P.get(a, "/api/lua").get("current")
                 hz = (P.get(a, "/api/panel").get("now") or {}).get("hz")
-                if hz and hz > 2:
+                if cur == idx:
                     break
-            out["showing"] = bool(hz and hz > 2)
+            out["showing"] = (cur == idx)
             out["hz"] = hz
             if not out["showing"]:
-                out["note"] = ("Stored, but the panel is not reporting a frame rate "
-                               "above the 2 Hz floor. Read panel_log - it is the "
-                               "only place the Lua error text appears.")
+                out["note"] = ("Stored, but the panel is showing effect "
+                               f"{cur} rather than {idx}. If it failed to load, "
+                               "panel_log is the only place the Lua error text "
+                               "appears.")
         listing = P.get(a, "/api/lua")
         out["uploaded"] = listing.get("uploaded")
         return json.dumps(out, ensure_ascii=False, indent=2)

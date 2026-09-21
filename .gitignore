@@ -48,3 +48,8 @@ tools/luasim/*.gif
 tools/luasim/*.png
 tools/luasim/*.raw
 gallery/*.raw
+
+# Personal photographs turned into screens. This repository is public and a
+# photograph of someone's family is not a code sample: scripts written from one
+# live here, the tools look here as well as in scripts/, and git does not.
+tools/luasim/scripts/private/
