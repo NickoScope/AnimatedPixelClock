@@ -49,7 +49,19 @@ namespace {
 //
 // NetGate's equivalent task is 16 KB and its own ADD-62 v1.4 records that 8 KB
 // proved sufficient over 24 h of uptime; that finding was never applied there.
-const uint32_t kStackBytes = 8 * 1024;
+// **Raised to 10 KB on 2026-09-21**, on the audit's reasoning rather than on a
+// percentage. Two measured figures: 4,052 B free of 8,192 on the weather fetch
+// (setInsecure) and 2,412 B on the rail board's (a real certificate chain). So
+// verifying one chain costs 1,640 B - 68% of what was left - and the depth of
+// that chain is the SERVER's to change, at a CA rotation, without a reflash.
+// Two of the four consumers have never been measured at all, and one of them
+// (the flight board) verifies a different chain.
+//
+// The 2 KB is affordable now and was not before: this branch removes the 9 KB
+// and 13 KB transient task stacks that used to compete for the same contiguous
+// internal block, which is the competition that forced 12 KB down to 8 in the
+// first place.
+const uint32_t kStackBytes = 10 * 1024;
 
 // Core 0, below the Lua effect task, exactly where the four fetch tasks ran:
 // the Arduino loop and the HUB75 DMA refresh live on core 1.
@@ -437,6 +449,7 @@ void brokerTask(void *) {
       tag = s_job[who].tag;
       portEXIT_CRITICAL(&s_mux);
       s_mb[who].bodyLen = 0;
+      s_mb[who].headers = 0;   // symmetrical with runJob, which sets it at :214
       for (uint8_t i = 0; i < NB_COLLECT_MAX; i++) s_mb[who].header[i][0] = '\0';
       // Symmetrical with runJob: the previous answer's bytes do not linger in
       // a mailbox whose header and length say it is empty.
@@ -479,7 +492,17 @@ bool nbBegin() {
     return false;
   }
 
-  memset(s_mb, 0, sizeof s_mb);
+  // Field by field rather than memset: NbMailbox holds a std::atomic now, and
+  // memset over a non-trivial type is a real diagnostic, not noise. It is
+  // harmless here - this runs before the task exists - but pruning a true
+  // warning teaches you to skim the next one.
+  for (uint8_t i = 0; i < NB_CALLER_COUNT; i++) {
+    s_mb[i].seq.store(0, std::memory_order_relaxed);
+    s_mb[i].code = 0; s_mb[i].tag = 0; s_mb[i].durationMs = 0;
+    s_mb[i].bodyLen = 0; s_mb[i].bodyCap = 0; s_mb[i].body = nullptr;
+    s_mb[i].headers = 0;
+    for (uint8_t k = 0; k < NB_COLLECT_MAX; k++) s_mb[i].header[k][0] = '\0';
+  }
   uint32_t mailboxBytes = 0;
   for (uint8_t i = 0; i < NB_CALLER_COUNT; i++) {
     if (!kBodyCap[i]) continue;   // not migrated: no mailbox, submits refused
@@ -521,6 +544,12 @@ bool nbBegin() {
 }
 
 bool nbUp() { return s_task != nullptr; }
+
+bool nbAllMigrated() {
+  for (uint8_t i = 0; i < NB_CALLER_COUNT; i++)
+    if (!nbReady(i)) return false;
+  return true;
+}
 
 bool nbReady(uint8_t who) {
   return s_task && who < NB_CALLER_COUNT && s_mb[who].body && s_mb[who].bodyCap;
@@ -591,6 +620,7 @@ void nbGetStats(NbStats *out) {
 bool nbBegin() { return false; }
 bool nbUp() { return false; }
 bool nbReady(uint8_t) { return false; }
+bool nbAllMigrated() { return false; }
 NbMailbox *nbMailbox(uint8_t) { return nullptr; }
 bool nbSubmitRequest(uint8_t, const NbRequest &, bool) { return false; }
 bool nbPending(uint8_t) { return false; }

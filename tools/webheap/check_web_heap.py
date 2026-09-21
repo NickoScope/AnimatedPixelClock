@@ -39,8 +39,16 @@ static void checkTooTight() {
   is(webHeapTooTight(11866, false), false, "broker down: exactly the sum is enough");
   is(webHeapTooTight(24564, false), false, "broker down: a good boot is fine");
 
+  // Named for what it now takes: not "the broker is running" but "every
+  // consumer is on it". The audit of 2026-09-21 pointed out that these ten
+  // checks tested the function and not what was passed to it, and that the
+  // caller was passing nbUp() - true even when one caller's mailbox had failed
+  // and that module was still creating a 9 KB task. The checks could not have
+  // caught it, and saying so here is the only honest fix available to a unit
+  // test: the predicate is the caller's to get right.
+  //
   // The relationship, which is the part that would rot silently if either
-  // constant moved: the broker being up can only ever ALLOW more, never less.
+  // constant moved: all-migrated can only ever ALLOW more, never less.
   for (uint32_t b = 0; b < 30000; b += 97)
     if (webHeapTooTight(b, true) && !webHeapTooTight(b, false)) {
       is(false, true, "broker up is never stricter than broker down");

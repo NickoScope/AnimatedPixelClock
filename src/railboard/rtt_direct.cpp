@@ -151,6 +151,8 @@ uint8_t  s_nbStep = RB_NONE;
 uint32_t s_nbSeq = 0;
 bool     s_nbUseAccess = false;      // which token the board request carried
 bool     s_nbExchanged = false;      // an exchange has already been tried this round
+bool     s_nbCfgAccess = false;      // the owner configured kind="access" - NOT s_kind,
+                                     // which is only what a successful fetch taught us
 Outcome  s_nbOut;                    // built across the steps, handed to take() at the end
 bool         s_ready   = false;     // under s_mux
 Outcome      s_done;                // under s_mux
@@ -422,7 +424,7 @@ bool exchange(const char *stored, Outcome &o) {
 // steps: a secret kept in a buffer between two passes of loop() is a secret
 // waiting to be read by something else.
 bool readStored(char *out, size_t cap, char *kind, size_t kindCap) {
-  out[0] = '\0';
+  memset(out, 0, cap);            // not just out[0]: a failure must leave nothing behind
   if (kind) kind[0] = '\0';
   Preferences p;
   if (p.begin(kNvsNs, true)) {
@@ -430,7 +432,9 @@ bool readStored(char *out, size_t cap, char *kind, size_t kindCap) {
     if (kind && p.isKey("kind")) p.getString("kind", kind, kindCap);
     p.end();
   }
-  return out[0] != '\0';
+  if (out[0]) return true;
+  memset(out, 0, cap);
+  return false;
 }
 
 // One request, either step. Fills in everything both have in common.
@@ -441,17 +445,30 @@ static_assert(kTokenMax + 8 <= NB_AUTH_MAX,
               "the rail board's bearer does not fit NB_AUTH_MAX: the broker would refuse "
               "every request and the board would sit at polls: 0 saying nothing");
 
-bool submitRail(const char *url, const char *bearer, bool interactive) {
-  // In PSRAM, not on the stack: "Bearer " plus a 2 KB JWT is 2 KB of the loop
-  // task's 8 KB stack, on a task that already runs the display, the web server
-  // and every module's loop. Taken once and kept, because it is written and
-  // zeroed on every request anyway.
+// "Bearer " plus the token, in PSRAM, written where it is used.
+//
+// **Every one of these used to be a 2,048-byte array on the loop task's
+// stack**, and there were three of them - here, in submitBoard, and in the
+// starter. Measured from the object file, the reachable depth inside this one
+// module was 4,784 B of an 8,192-byte stack, 58%, before loop() itself and
+// before the JSON parse that now also runs there. The comment on this function
+// explained why a 2 KB JWT must not sit on that stack while its own callers
+// did exactly that.
+//
+// So the token is read out of NVS straight into this buffer, behind the
+// prefix, and never exists on a stack at all.
+char *railAuthBuf() {
   static char *auth = nullptr;
   if (!auth) {
     auth = static_cast<char *>(heap_caps_calloc(1, kTokenMax + 8, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-    if (!auth) return false;
+    if (auth) memcpy(auth, "Bearer ", 7);
   }
-  snprintf(auth, kTokenMax + 8, "Bearer %s", bearer);
+  return auth;
+}
+
+bool submitRail(const char *url, bool interactive) {
+  char *auth = railAuthBuf();
+  if (!auth || !auth[7]) return false;
   NbRequest req = {};
   req.url = url;
   req.auth = auth;
@@ -464,28 +481,33 @@ bool submitRail(const char *url, const char *bearer, bool interactive) {
   req.collectCount = 5;
   req.timeoutMs = 12000;
   const bool sent = nbSubmitRequest(NB_RAIL, req, interactive);
-  memset(auth, 0, kTokenMax + 8);  // the broker has its own copy
+  memset(auth + 7, 0, kTokenMax + 1);   // the broker has its own copy; the prefix stays
   return sent;
 }
 
 bool submitBoard(bool useAccess) {
-  char stored[kTokenMax];
-  if (!readStored(stored, sizeof stored, nullptr, 0)) return false;
+  char *auth = railAuthBuf();
+  if (!auth) return false;
+  if (useAccess) {
+    // The access token is already in PSRAM; there is nothing to read from NVS
+    // and no reason to touch it. The old code read the stored token here and
+    // then did not use it.
+    if (!s_access || !s_access[0]) return false;
+    strlcpy(auth + 7, s_access, kTokenMax + 1);
+  } else if (!readStored(auth + 7, kTokenMax, nullptr, 0)) {
+    return false;
+  }
   char query[80], url[160];
   rtt::buildQuery(s_taskCrs, time(nullptr), true, query, sizeof(query));
   snprintf(url, sizeof(url), "%s%s", kLocationUrl, query);
   s_nbUseAccess = useAccess;
-  const bool sent = submitRail(url, useAccess ? s_access : stored, false);
-  memset(stored, 0, sizeof stored);
-  return sent;
+  return submitRail(url, false);
 }
 
 bool submitToken() {
-  char stored[kTokenMax];
-  if (!readStored(stored, sizeof stored, nullptr, 0)) return false;
-  const bool sent = submitRail(kTokenUrl, stored, false);
-  memset(stored, 0, sizeof stored);
-  return sent;
+  char *auth = railAuthBuf();
+  if (!auth || !readStored(auth + 7, kTokenMax, nullptr, 0)) return false;
+  return submitRail(kTokenUrl, false);
 }
 
 void runFetch(Outcome &o) {
@@ -693,11 +715,25 @@ bool rttDirectLoop(const char *crs, rtt::Lists *out, int64_t *fetchedAt) {
         const int32_t code = mb->code;
         Outcome &o = s_nbOut;
         o.http = (int16_t)code;
-        o.retryS  = mb->header[0][0] ? (int32_t)atoi(mb->header[0]) : -1;
-        o.leftDay = mb->header[1][0] ? (int32_t)atoi(mb->header[1]) : -1;
-        o.limitDay = mb->header[2][0] ? (int32_t)atoi(mb->header[2]) : -1;
-        o.leftHour = mb->header[3][0] ? (int32_t)atoi(mb->header[3]) : -1;
-        o.leftMinute = mb->header[4][0] ? (int32_t)atoi(mb->header[4]) : -1;
+        // **Exactly keepQuota's semantics, and it has to be exactly.**
+        //
+        // `retryS` is uint32_t, unlike the other four. Writing -1 into it makes
+        // it 4,294,967,295, and nextDelayS's ST_RATE branch tests `!o.retryS`
+        // to mean "the server did not say" - so a 429 with no Retry-After
+        // would back off by the upper clamp, an hour, instead of the fifteen
+        // minutes it has always used. Zero is the "did not say" value here.
+        //
+        // And the four counters ACCUMULATE across the steps rather than being
+        // written every time. A fetch is two or three requests; if the board's
+        // reply carries no rate-limit headers, what the token exchange said a
+        // moment ago is still the truth. Overwriting them with -1 loses it, and
+        // nextDelayS picks the whole refresh interval out of those four - so
+        // the board would stop slowing down as the daily budget ran out.
+        if (mb->header[0][0]) { const int32_t v = atoi(mb->header[0]); if (v > 0) o.retryS = (uint32_t)v; }
+        if (mb->header[1][0]) o.leftDay    = atoi(mb->header[1]);
+        if (mb->header[2][0]) o.limitDay   = atoi(mb->header[2]);
+        if (mb->header[3][0]) o.leftHour   = atoi(mb->header[3]);
+        if (mb->header[4][0]) o.leftMinute = atoi(mb->header[4]);
         bool finished = true;
         if (s_nbStep == RB_TOKEN) {
           if (code == 200 && mb->bodyLen && parseTokenBody(o, mb->body, mb->bodyLen)) {
@@ -711,10 +747,12 @@ bool rttDirectLoop(const char *crs, rtt::Lists *out, int64_t *fetchedAt) {
           } else if (code == NB_ERR_TRUNC) {
             o.state = ST_BIG;
           } else if (o.state == ST_IDLE) {
-            o.state = code == NB_ERR_NO_TURN ? ST_LOWMEM : ST_NET;
+            o.state = code > 0            ? ST_HTTP            // as failure() gave it
+                    : code == NB_ERR_NO_TURN ? ST_LOWMEM
+                                             : ST_NET;
           }
         } else {   // RB_BOARD
-          if (code == 401 && !s_nbExchanged && s_kind != KIND_ACCESS) {
+          if (code == 401 && !s_nbExchanged && !s_nbCfgAccess) {
             // The stored token used as an access token, or one RTT no longer
             // takes: exchange once and ask again. Exactly the fallback path's
             // rule, spread over two passes of loop() instead of two calls.
@@ -741,6 +779,11 @@ bool rttDirectLoop(const char *crs, rtt::Lists *out, int64_t *fetchedAt) {
         }
         if (finished) {
           s_nbStep = RB_NONE;
+          // The loop task's high-water, not a fetch task's - that is where the
+          // parse runs now, and it is the stack that got tight. Reported under
+          // the same name so /api/railboard keeps answering the question it
+          // always answered: how close did this come to the edge.
+          o.stackFree = uxTaskGetStackHighWaterMark(nullptr);
           o.fetchedAt = time(nullptr);
           o.kind = s_kind;
           o.validUntil = s_kind == KIND_REFRESH ? s_accessUntil : 0;
@@ -817,17 +860,24 @@ bool rttDirectLoop(const char *crs, rtt::Lists *out, int64_t *fetchedAt) {
     // No task, so no contiguous 10 KB to find first - which is what the guard
     // above was checking, and why it is skipped on this path.
     memset(&s_nbOut, 0, sizeof(s_nbOut));
+    // As fetchTask does: -1 is "the server has not told us", and the accumulate
+    // above depends on starting from it rather than from a zeroed struct.
+    s_nbOut.leftDay = s_nbOut.limitDay = s_nbOut.leftHour = s_nbOut.leftMinute = -1;
     s_nbOut.heapBefore = s_nbOut.heapMin = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
     memcpy(s_nbOut.crs, s_taskCrs, sizeof(s_nbOut.crs));
     s_nbExchanged = false;
-    char stored[kTokenMax], kind[16];
-    const bool have = readStored(stored, sizeof stored, kind, sizeof kind);
-    memset(stored, 0, sizeof stored);
+    // Into the PSRAM buffer, not a 2 KB array on this stack: the starter only
+    // needs to know THAT a token exists and what kind it is, and the submit
+    // below will want it there anyway.
+    char kind[16];
+    char *auth = railAuthBuf();
+    const bool have = auth && readStored(auth + 7, kTokenMax, kind, sizeof kind);
     bool sent = false;
     if (!have) {
       s_nbOut.state = ST_NOTOKEN;
     } else {
       const bool cfgRefresh = !strcmp(kind, "refresh");
+      s_nbCfgAccess = !strcmp(kind, "access");   // the setting, read once per fetch
       const bool useAccess = s_access && s_access[0] && time(nullptr) < s_accessUntil - kTokenMarginS;
       if (cfgRefresh && !useAccess) { sent = submitToken(); if (sent) s_nbStep = RB_TOKEN; }
       else                          { sent = submitBoard(useAccess); if (sent) s_nbStep = RB_BOARD; }

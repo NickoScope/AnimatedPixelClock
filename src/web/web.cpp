@@ -1356,7 +1356,7 @@ static bool webRefuseBig() {
   // TLS handshake, which is the one moment this exists to prevent.
   // Either the network is busy, or the memory from the last client has not
   // come back yet. Both mean the same thing to a big response: wait your turn.
-  if (netLockBusy() || webHeapTooTight(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL), nbUp())) {
+  if (netLockBusy() || webHeapTooTight(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL), nbAllMigrated())) {
     s_webRefused++;
     netMarkHttp();
     server.sendHeader("Retry-After", "1");

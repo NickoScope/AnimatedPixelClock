@@ -661,6 +661,10 @@ void aeroDirectLoop(const AeroWant &w) {
                   : (mb->code == 400 || mb->code == 404) ? ST_REFUSED
                                                          : ST_HTTP;
         }
+        // The loop task's high-water: that is where the parse runs now, so it
+        // is the stack that can get tight. Reported under the same name so
+        // /api/flightboard keeps answering the question it always answered.
+        o.stackFree = uxTaskGetStackHighWaterMark(nullptr);
         portENTER_CRITICAL(&s_mux);
         s_running = false;
         portEXIT_CRITICAL(&s_mux);

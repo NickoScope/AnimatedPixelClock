@@ -150,6 +150,15 @@ bool nbBegin();
 // Is the broker running at all?
 bool nbUp();
 
+// Is EVERY consumer on the broker? The portal's heap reserve asks this, not
+// nbUp(): the reserve exists for modules that still create their own fetch
+// task, and a module does that when nbReady() is false for it - which is not
+// the same as the broker being down. nbBegin deliberately supports "the broker
+// is up but one caller's mailbox could not be allocated", and in that state
+// that caller still starts a 9-13 KB task while the portal would be keeping
+// room only for the radio.
+bool nbAllMigrated();
+
 // Has this caller been migrated - that is, does it have a mailbox? A consumer
 // whose body size has not been measured yet has no mailbox and is refused, so
 // the migration state of each module is one table in net_broker.cpp rather
