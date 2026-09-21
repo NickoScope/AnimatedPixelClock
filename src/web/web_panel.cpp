@@ -1060,6 +1060,18 @@ static void handleLuaUploadChunk() {
       strncpy(kept, err, sizeof(kept) - 1);
       kept[sizeof(kept) - 1] = 0;
       s_luaUpErr = kept;
+    } else if (luaEffectCurrent() >= (int16_t)(luaEffectCount() - luaStoreCount())) {
+      // An uploaded script is on screen, and the file under one of them has
+      // just changed. Reopen it: without this, replacing the script that is
+      // showing left the chunk compiled from the OLD file running, so a new
+      // version looked identical until you left the page and came back. It was
+      // reported from the sofa, which is the only place it is visible.
+      //
+      // Reloading whichever uploaded effect is showing, rather than only the
+      // one replaced, is deliberate and cheap: an upload can add a slot and
+      // renumber the ones above it, so the index on screen may already mean a
+      // different file. The reopen is one file read.
+      luaEffectsReload();
     }
   } else if (upload.status == UPLOAD_FILE_ABORTED) {
     luaStoreAbort();

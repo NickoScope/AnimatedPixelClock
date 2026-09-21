@@ -1543,6 +1543,12 @@ async def effect_upload(args: UploadIn) -> str:
     tells it that a draw() will fit the 2,000,000-instruction frame budget until
     it is already running, and a script that blows it shows LUA ERROR on a wall.
 
+    **Replacing the script that is on screen takes effect at once.** It did not
+    until 2026-09-22: uploading over the running effect left the chunk compiled
+    from the old file running, and the new version only appeared after leaving
+    the page and coming back. The firmware now reopens the showing effect after
+    any upload, so there is no dance to do here - upload and look.
+
     Returns:
         {"ok": true, "name": "...", "index": N, "showing": bool, "hz": N,
         "uploaded": {"count", "slots", "fsFree"}}

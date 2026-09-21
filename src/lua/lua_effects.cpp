@@ -443,6 +443,26 @@ int16_t luaEffectCurrent() { return s_selected; }
 
 void luaEffectStop() { luaEffectsSelect(-1); }
 
+// Reopen whatever is showing, even though the index has not changed.
+//
+// luaEffectsSelect returns early when the index is the same, which is right for
+// a knob and wrong for an upload: replacing the file behind the effect that is
+// on screen left the previously compiled chunk running, so a new script looked
+// like the old one until you left the page and came back. The effect task keys
+// its reload off the whole word, sequence AND index, so bumping the sequence is
+// all it takes - the task sees `want != runningWord`, closes, and reads the
+// file again.
+//
+// This is also the delete case. Removing a script renumbers the slots after it,
+// so the index on screen can silently come to mean a different file.
+void luaEffectsReload() {
+  if (s_selected < 0) return;
+  s_seq = (s_seq + 1) & 0x00FFFFFF;
+  if (s_seq == 0) s_seq = 1;
+  s_wantWord = selWord(s_seq, s_selected);
+  if (s_task) xTaskNotifyGive(s_task);
+}
+
 uint32_t luaEffectsStackFreeMin() {
   // uxTaskGetStackHighWaterMark is in words on some ports and bytes on Xtensa;
   // ESP-IDF's FreeRTOS returns bytes here, which is what the boot line already

@@ -172,6 +172,15 @@ anything that would help the next person.
 
 ### 4. A new screen needs no flash
 
+**Replacing one that is on screen takes effect at once.** Until 2026-09-22 it
+did not: `luaEffectsSelect` returns early when the index has not changed, which
+is right for a knob and wrong for an upload, so the chunk compiled from the old
+file kept running and a new version looked identical until you left the page
+and came back. `luaEffectsReload()` now bumps the sequence word the effect task
+keys its reload off, and the upload path calls it whenever an uploaded script
+is showing.
+
+
 Since 2026-09-21 a Lua effect can be sent to a running panel and shown straight
 away. Four uploaded scripts fit beside the compiled-in ones, they survive a
 firmware update, and the whole loop is one MCP call:

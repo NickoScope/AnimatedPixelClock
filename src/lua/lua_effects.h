@@ -37,6 +37,9 @@ int16_t     luaEffectCurrent();           // -1 when none is showing
 // above it, so the selection has to be dropped rather than left pointing at a
 // slot that now holds something else.
 void        luaEffectStop();
+// Reopen what is on screen without changing which one it is: after an upload
+// replaces the running script, or after a delete renumbers the slots.
+void        luaEffectsReload();
 
 // The effect task's stack high-water mark, in bytes still free at its worst.
 // Exposed because this firmware's whole case for running uploaded scripts is an
