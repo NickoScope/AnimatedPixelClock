@@ -1,0 +1,226 @@
+{
+ "success": true,
+ "page": 13,
+ "showing": false,
+ "airport": 1,
+ "dir": "alt",
+ "side": "dep",
+ "altS": 10,
+ "airports": [
+  {
+   "id": 0,
+   "code": "LFMD",
+   "iata": "CEQ",
+   "name": "CANNES",
+   "tz": "Europe/Paris",
+   "kind": "builtin"
+  },
+  {
+   "id": 1,
+   "code": "LFMN",
+   "iata": "NCE",
+   "name": "NICE",
+   "tz": "Europe/Paris",
+   "kind": "builtin"
+  },
+  {
+   "id": 2,
+   "code": "LFPG",
+   "iata": "CDG",
+   "name": "PARIS CDG",
+   "tz": "Europe/Paris",
+   "kind": "builtin"
+  },
+  {
+   "id": 3,
+   "code": "EGLL",
+   "iata": "LHR",
+   "name": "LONDON",
+   "tz": "Europe/London",
+   "kind": "builtin"
+  },
+  {
+   "id": 4,
+   "code": "EDDF",
+   "iata": "FRA",
+   "name": "FRANKFURT",
+   "tz": "Europe/Berlin",
+   "kind": "builtin"
+  },
+  {
+   "id": 5,
+   "code": "EHAM",
+   "iata": "AMS",
+   "name": "AMSTERDAM",
+   "tz": "Europe/Amsterdam",
+   "kind": "builtin"
+  }
+ ],
+ "limits": {
+  "custom": 6,
+  "name": 12,
+  "namePx": 56,
+  "track": 3,
+  "advance": [
+   2,
+   2,
+   4,
+   6,
+   4,
+   4,
+   5,
+   2,
+   3,
+   3,
+   4,
+   4,
+   3,
+   4,
+   2,
+   4,
+   4,
+   3,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   2,
+   3,
+   3,
+   4,
+   3,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   2,
+   4,
+   4,
+   4,
+   6,
+   5,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   6,
+   4,
+   4,
+   4,
+   3,
+   4,
+   3,
+   4,
+   4,
+   3,
+   4,
+   4,
+   4,
+   4,
+   4,
+   3,
+   4,
+   4,
+   2,
+   3,
+   4,
+   3,
+   6,
+   4,
+   4,
+   4,
+   4,
+   3,
+   4,
+   3,
+   4,
+   4,
+   6,
+   4,
+   4,
+   4,
+   4,
+   2,
+   4,
+   5
+  ]
+ },
+ "board": {},
+ "direct": {
+  "built": true,
+  "key": true,
+  "state": "WAITING",
+  "fetching": false,
+  "calls": 0,
+  "fails": 0,
+  "budget": {
+   "floor_min": 15,
+   "day_cap": 30,
+   "month_cap": 900
+  },
+  "bounds": {
+   "floor_min": [
+    5,
+    240
+   ],
+   "day_cap": [
+    0,
+    1000
+   ],
+   "month_cap": [
+    0,
+    20000
+   ]
+  },
+  "usage": {
+   "today": 30,
+   "month": 214,
+   "total": 214,
+   "boardDayCap": 30,
+   "usdPerCall": 0.005,
+   "usdToday": 0.15,
+   "usdMonth": 1.07,
+   "usdMonthCap": 4.5,
+   "dayEndsInS": 10821,
+   "spacingS": 7
+  },
+  "lists": [
+   {
+    "name": "arrivals",
+    "have": false
+   },
+   {
+    "name": "scheduled_arrivals",
+    "have": false
+   },
+   {
+    "name": "departures",
+    "have": false
+   },
+   {
+    "name": "scheduled_departures",
+    "have": false
+   }
+  ]
+ },
+ "tracked": [],
+ "mqtt": {
+  "configured": true,
+  "connected": true,
+  "status": "AEROAPI"
+ }
+}

@@ -1,0 +1,219 @@
+{
+ "success": true,
+ "now": {
+  "page": 1,
+  "key": "lua",
+  "name": "FOOTBALL CLOCK",
+  "notify": false,
+  "style": 0,
+  "styleName": "MARIO",
+  "entered": false,
+  "hz": 20,
+  "off": false,
+  "mode": "clock",
+  "lua": 0,
+  "time": "22:59"
+ },
+ "carousel": {
+  "enabled": true,
+  "idleS": 165,
+  "slotS": 60,
+  "allStyles": true,
+  "running": true,
+  "holdS": 0,
+  "pageS": 35,
+  "secs": 60,
+  "nextS": 25
+ },
+ "pages": [
+  {
+   "i": 0,
+   "key": "clock",
+   "name": "CLOCK",
+   "on": true
+  },
+  {
+   "i": 1,
+   "key": "lua",
+   "name": "FOOTBALL CLOCK",
+   "on": true
+  },
+  {
+   "i": 2,
+   "key": "lua",
+   "name": "LA GIOCONDA",
+   "on": true
+  },
+  {
+   "i": 3,
+   "key": "lua",
+   "name": "MINECRAFT",
+   "on": true
+  },
+  {
+   "i": 4,
+   "key": "lua",
+   "name": "ROOM RADAR",
+   "on": true
+  },
+  {
+   "i": 5,
+   "key": "lua",
+   "name": "SNAKE CLOCK",
+   "on": true
+  },
+  {
+   "i": 6,
+   "key": "lua",
+   "name": "SNOOKER CLOCK",
+   "on": true
+  },
+  {
+   "i": 7,
+   "key": "lua",
+   "name": "TETRIS CLOCK",
+   "on": true
+  },
+  {
+   "i": 8,
+   "key": "lua",
+   "name": "CANNES",
+   "on": true
+  },
+  {
+   "i": 9,
+   "key": "lua",
+   "name": "PB FERRARI",
+   "on": true
+  },
+  {
+   "i": 10,
+   "key": "lua",
+   "name": "PB RED HAT",
+   "on": true
+  },
+  {
+   "i": 11,
+   "key": "lua",
+   "name": "STARSHIP",
+   "on": true
+  },
+  {
+   "i": 12,
+   "key": "world",
+   "name": "WORLD CLOCK",
+   "on": true
+  },
+  {
+   "i": 13,
+   "key": "flights",
+   "name": "FLIGHTS",
+   "on": true
+  },
+  {
+   "i": 14,
+   "key": "trains",
+   "name": "TRAINS",
+   "on": true
+  },
+  {
+   "i": 15,
+   "key": "market",
+   "name": "MARKETS",
+   "on": true
+  },
+  {
+   "i": 16,
+   "key": "market",
+   "name": "TICKER",
+   "on": true
+  },
+  {
+   "i": 17,
+   "key": "market",
+   "name": "PORTFOLIO",
+   "on": true
+  },
+  {
+   "i": 18,
+   "key": "market",
+   "name": "HOLDINGS",
+   "on": true
+  },
+  {
+   "i": 19,
+   "key": "yachts",
+   "name": "YACHTS",
+   "on": false
+  },
+  {
+   "i": 20,
+   "key": "media",
+   "name": "MEDIA",
+   "on": true
+  }
+ ],
+ "cardsOn": true,
+ "styles": [
+  {
+   "id": 0,
+   "name": "MARIO"
+  },
+  {
+   "id": 1,
+   "name": "STANDARD"
+  },
+  {
+   "id": 2,
+   "name": "LARGE"
+  },
+  {
+   "id": 3,
+   "name": "SPACE INVADERS"
+  },
+  {
+   "id": 5,
+   "name": "ARKANOID"
+  },
+  {
+   "id": 6,
+   "name": "PAC-MAN"
+  },
+  {
+   "id": 7,
+   "name": "SNAKE"
+  },
+  {
+   "id": 8,
+   "name": "TETRIS"
+  },
+  {
+   "id": 10,
+   "name": "ASTEROIDS"
+  },
+  {
+   "id": 11,
+   "name": "DINO"
+  },
+  {
+   "id": 12,
+   "name": "MATRIX RAIN"
+  },
+  {
+   "id": 14,
+   "name": "WEATHER"
+  },
+  {
+   "id": 15,
+   "name": "BOMBERMAN"
+  },
+  {
+   "id": 16,
+   "name": "TRON"
+  },
+  {
+   "id": 9,
+   "name": "CUSTOM ROTATION"
+  }
+ ]
+}

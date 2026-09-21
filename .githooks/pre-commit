@@ -100,6 +100,20 @@ if git diff --cached --name-only | grep -qE '^(tools/luasim/gen_effects\.py|tool
   }
 fi
 
+# What a panel should stop showing when there is no broker behind it. That
+# branch cannot be exercised on the panel we have - its broker works, which is
+# the other branch - so it runs against a stub serving a real panel's captured
+# answers. It stays honest because this runs: the version before it named one
+# of the four market pages it switched off, and switched all four off over a
+# broker that was merely restarting. Offline: stdlib only.
+if git diff --cached --name-only | grep -qE '^tools/agent/(bringup\.py|tests/)'; then
+  python3 tools/agent/tests/test_bringup_no_ha.py || {
+    echo
+    echo "pre-commit: the no-Home-Assistant bring-up test failed (see above)."
+    exit 1
+  }
+fi
+
 # The checks an uploaded Lua script has to pass before the parser sees it. Every
 # refusal case in that test is a defect this project shipped or nearly shipped -
 # a bracket counter that returned true on an unterminated comment, and one that

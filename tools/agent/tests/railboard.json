@@ -1,0 +1,136 @@
+{
+ "success": true,
+ "page": 14,
+ "showing": false,
+ "crs": "",
+ "station": "",
+ "favourites": [],
+ "named": true,
+ "synced": true,
+ "now": 1790024379,
+ "list": "arr",
+ "knob": "auto",
+ "diag": false,
+ "diagCfg": false,
+ "select": {},
+ "cfg": {
+  "rows": 8,
+  "switch_s": 10,
+  "level": 100,
+  "stale_s": 80,
+  "row_color": "amber",
+  "head_color": "white",
+  "due_color": "green",
+  "due_min": 3,
+  "clock_seconds": true,
+  "from": "web",
+  "haHave": true,
+  "saved": true,
+  "bounds": {
+   "rows": [
+    1,
+    8
+   ],
+   "switch_s": [
+    3,
+    600
+   ],
+   "level": [
+    10,
+    100
+   ],
+   "stale_s": [
+    30,
+    3600
+   ],
+   "due_min": [
+    0,
+    15
+   ],
+   "colors": [
+    {
+     "name": "amber",
+     "hex": "#ff9600"
+    },
+    {
+     "name": "yellow",
+     "hex": "#ffd600"
+    },
+    {
+     "name": "orange",
+     "hex": "#ff6000"
+    },
+    {
+     "name": "white",
+     "hex": "#ffffff"
+    },
+    {
+     "name": "green",
+     "hex": "#30e840"
+    },
+    {
+     "name": "cyan",
+     "hex": "#00d6e8"
+    }
+   ]
+  }
+ },
+ "source": "none",
+ "haShadowed": 0,
+ "direct": {
+  "built": true,
+  "token": true,
+  "kind": "refresh-exchanged",
+  "validUntil": 1790025143,
+  "fetching": false,
+  "state": "OK",
+  "polls": 5,
+  "fails": 0,
+  "http": 200,
+  "fetchedAgo": 210,
+  "okAgo": 210,
+  "nextIn": 0,
+  "interval": 120,
+  "left": 8923,
+  "limit": 9000,
+  "leftHour": 746,
+  "leftMinute": 30,
+  "floor": 900,
+  "retry": 0,
+  "bytes": 25919,
+  "services": 23,
+  "jsonPeak": 11843,
+  "heapBefore": 21896,
+  "heapMin": 21524,
+  "stackFree": 4232,
+  "skips": {
+   "seen": 23,
+   "notCall": 0,
+   "notPassenger": 0,
+   "noEvent": 13,
+   "noAdvertised": 0,
+   "callType": 0,
+   "outsideWindow": 5,
+   "firstSched": 1790023620,
+   "now": 1790024168
+  },
+  "sample": "\"services\":[{\"temporalData\":{\"arrival\":{\"scheduleInternal\":\"2026-09-21T21:44:00\",\"scheduleAdvertised\":\"2026-09-21T21:45:00\",\"realtimeActual\":\"2026-09-21T21:47:00\",\"realtimeInternalLateness\":2,\"realtimeAdvertisedLateness\":2,\"isCancelled\":false},\"departure\":{\"scheduleInternal\":\"2026-09-21T21:47:00\",\"scheduleAdvertised\":\"2026-09-21T21:47:00\",\"realtimeActual\":\"2026-09-21T21:48:00\",\"realtimeInternalLateness\":0,\"realtimeAdvertisedLateness\":0,\"isCancelled\":false},\"scheduledCallType\":\"ADVERTISED_OPEN\",\"realtimeCallType\":\"ADVERTISED_OPEN\",\"displayAs\":\"CALL\",\"isInterpolated\":false},\"locationMetadata\":{\"platform\":{\"planned\":\"8\",\"actual\":\"8\"},\"numberOfVehicles\":3,\"allocationIndex\":0},\"scheduleMetadata\":{\"uniqueIdentity\":\"gb-nr:G15151:2026-09-21\",\"namespace\":\"gb-nr\",\"identity\":\"G15151\",\"departureDate\":\"2026-09-21\",\"operator\":{\"code\":\"GW\",\"name\":\"Great Western Railway\"},\"modeType\":\"TRAIN\",\"inPassenger"
+ },
+ "dep": {},
+ "arr": {},
+ "ha": {
+  "have": true,
+  "at": 1789406040,
+  "code": 401,
+  "err": "AUTH",
+  "retry": 0,
+  "left": ""
+ },
+ "refused": 0,
+ "jsonPeak": 1124,
+ "mqtt": {
+  "configured": true,
+  "connected": true,
+  "status": "NO DATA"
+ }
+}

@@ -18,10 +18,18 @@ panel with no broker shows those pages empty and the carousel dwells on them for
 fifteen seconds each. So: probe, and switch off what has no source. Nothing is
 turned off that has a direct key of its own.
 
+**And one case it refuses to decide.** A broker that is *configured but not
+connected* is not a panel without Home Assistant - it is a broker that is down,
+restarting, or slower to connect than the panel was to boot. Switching pages off
+over that turns a two-minute outage into a setting somebody has to find and
+undo. That case is reported and left alone; --force-no-ha if the broker really
+is gone for good.
+
     python3 bringup.py                          # what is here, and what it needs
     python3 bringup.py --mac <MAC> --name X     # name it, then settle the pages
     python3 bringup.py --mac <MAC> --check      # read-only: say what would change
     python3 bringup.py --mac <MAC> --name X --keep-ha   # leave the pages alone
+    python3 bringup.py --mac <MAC> --name X --force-no-ha  # broker configured but gone
 
 Exit codes match the rest of the agent tooling: 0 done, 2 bad arguments, 3 a
 person must decide (no name given, or several panels and none chosen), 4 the
@@ -125,20 +133,43 @@ def probe(host):
 
 
 def page_state(panel):
-    """key -> {on, name, i} for the pages /api/panel reports."""
+    """key -> {on, name, names, i} for the pages /api/panel reports.
+
+    **Several pages can share one key**, and on a full build four of them do:
+    MARKETS, TICKER, PORTFOLIO and HOLDINGS are all `market`. The firmware
+    stores one enable BIT per key, not per page (src/panel/panel.cpp:414), so
+    switching off `market` switches off all four - which is right, and is why
+    this keeps every name rather than the last one to be read. Reporting one
+    name for four pages tells a person three lies about their own panel.
+    """
     out = {}
     for p in (panel or {}).get("pages", []):
-        out[p.get("key")] = {"on": p.get("on"), "name": p.get("name"), "i": p.get("i")}
+        st = out.setdefault(p.get("key"),
+                            {"on": False, "name": p.get("name"), "names": [], "i": p.get("i")})
+        st["names"].append(p.get("name"))
+        if p.get("on"):
+            st["on"] = True
+    for st in out.values():
+        st["name"] = ", ".join(n for n in st["names"] if n)
     return out
 
 
 def plan_ha(pr):
-    """What to switch off, and the reason for each. Empty when HA is there."""
+    """What to switch off, and the reason for each. Empty when HA is there.
+
+    Returns (todo, why, blocked). `blocked` is the case this deliberately will
+    NOT act on: a broker that is configured but not connected right now. That
+    is not "no Home Assistant" - it is a broker that is down, restarting, or
+    simply slower to connect than a panel is to boot, and switching four pages
+    off over it would turn a two-minute outage into a setting a person has to
+    find and undo. Say it, and let them decide.
+    """
     mqtt = pr.get("mqtt") or {}
     if mqtt.get("connected"):
-        return [], "MQTT connected: nothing to switch off"
-    why = ("no broker is configured" if not mqtt.get("configured")
-           else f"a broker is configured but not connected ({mqtt.get('status')})")
+        return [], "MQTT connected: nothing to switch off", False
+    blocked = bool(mqtt.get("configured"))
+    why = ("no broker is configured" if not blocked
+           else f"a broker IS configured but is not connected right now ({mqtt.get('status')})")
     pages = page_state(pr.get("panel"))
     todo = []
     for key, reason in MQTT_ONLY.items():
@@ -154,7 +185,7 @@ def plan_ha(pr):
         if pr["direct"].get(key):
             continue          # it has its own key: leave it
         todo.append((key, st["name"], "neither MQTT nor a direct key of its own"))
-    return todo, why
+    return todo, why, blocked
 
 
 def main():
@@ -164,6 +195,9 @@ def main():
     ap.add_argument("--name", help="the name to give it (letters, digits, hyphen; starts with a letter; <=31)")
     ap.add_argument("--check", action="store_true", help="read-only: say what would change")
     ap.add_argument("--keep-ha", action="store_true", help="do not switch off the MQTT pages")
+    ap.add_argument("--force-no-ha", action="store_true",
+                    help="switch the pages off even though a broker is configured but "
+                         "not connected. Without this, that case is left to a person")
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args()
 
@@ -233,10 +267,11 @@ def main():
             print("  Повторите вызов с --name <имя>:")
             print("    буквы, цифры и дефис, начинается с буквы, до 31 знака")
             print(f"    сейчас: {current}")
-        todo, why = plan_ha(pr)
+        todo, why, blocked = plan_ha(pr)
         out("name_needed", False, "a name is required and was not given",
-            mac=mac, address=host, current_name=current,
-            mqtt=mqtt, would_disable=[t[0] for t in todo], ha_reason=why)
+            mac=mac, address=host, current_name=current, mqtt=mqtt,
+            would_disable=[t[0] for t in todo], ha_reason=why,
+            ha_decision_is_a_persons=blocked)
         return 3
 
     if not NAME_RE.match(args.name):
@@ -268,10 +303,19 @@ def main():
         actions.append(f"переименована {current} -> {args.name}")
 
     # --- Home Assistant --------------------------------------------------
-    todo, why = plan_ha(pr)
+    todo, why, blocked = plan_ha(pr)
     if args.keep_ha:
         if todo:
             actions.append(f"страницы оставлены как есть по --keep-ha ({why})")
+    elif blocked and todo and not args.force_no_ha:
+        # A broker that is down is not a panel without Home Assistant. Refuse,
+        # and name both ways out.
+        actions.append(f"страницы НЕ тронуты: {why}")
+        actions.append("  это похоже на упавший или ещё не поднявшийся брокер, а не на "
+                       "панель без Home Assistant")
+        actions.append("  почините брокер и запустите снова - или, если Home Assistant "
+                       "тут действительно больше нет, повторите с --force-no-ha")
+        warnings.append("решение о страницах оставлено человеку: брокер настроен, но не на связи")
     elif not todo:
         actions.append(why)
     else:

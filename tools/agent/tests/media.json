@@ -1,0 +1,34 @@
+{
+ "success": true,
+ "page": 20,
+ "showing": false,
+ "ready": true,
+ "dev": "aabbcc",
+ "root": "nickoscope_matrix/aabbcc/media/",
+ "handler": true,
+ "subscribed": true,
+ "selected": "",
+ "selSent": true,
+ "selSaved": true,
+ "bridge": "online",
+ "staleS": 150,
+ "synced": true,
+ "volPending": -1,
+ "refused": 0,
+ "lastRefusal": "",
+ "jsonPeak": 1985,
+ "cmds": {
+  "sent": 0,
+  "failed": 0,
+  "last": "",
+  "lastOk": false
+ },
+ "np": {},
+ "players": {},
+ "favs": {},
+ "mqtt": {
+  "configured": true,
+  "connected": true,
+  "status": "NO DATA"
+ }
+}
