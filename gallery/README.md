@@ -20,6 +20,42 @@ the panel.
 
 ---
 
+## AQUARIUM
+
+![Aquarium](preview/aquarium.png)
+
+A lit freshwater tank. Five species, each drawn from its own silhouette and its
+own shading rather than a recoloured lozenge: a goldfish with a six-rayed veil
+tail, an angelfish whose height comes from swept fins and two trailing
+filaments, tiger barbs in amber with black bars and red fins, guppies with a
+different tail each, and a shoal of neons carrying that one electric blue line
+along the flank. Three vertical segments a column - back, flank, belly - plus a
+sheen where the lamp catches the back, which is what makes a body look round
+instead of flat.
+
+**It reads the room, and slowly.** `presence` is the same MTR-1 feed ROOM RADAR
+draws, over MQTT from Home Assistant. Every reaction is a low-pass in *seconds*:
+about six to turn toward somebody who walks in, a second and a half to scatter
+from a fast movement, half a minute to settle again, forty-five seconds of an
+empty room before the tank dims and goes to sleep. Because the constants are in
+seconds and not frames, the behaviour is the same at 15 fps and at 4.
+
+Two rules were learned the hard way and are the whole difference between this
+and a screensaver:
+
+- **The room nudges a heading; it never tows a fish.** Making the person's
+  position the target dragged the whole tank after them like iron filings. The
+  fish swims its own route and presence bends it by 18%.
+- **There is glass on all four sides.** Nothing is ever off screen. This is an
+  aquarium, not a window on the sea.
+
+Bubbles leave the airstone in the corner and nowhere else; one starting in open
+water is the tell of a drawn tank.
+
+*24.1 KB, within 500 bytes of the panel's limit · ~48,000 instructions a frame - 15 fps*
+
+---
+
 ## LA GIOCONDA
 
 ![La Gioconda](preview/la_gioconda.png)
