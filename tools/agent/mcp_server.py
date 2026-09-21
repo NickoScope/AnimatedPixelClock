@@ -76,7 +76,7 @@ DEFAULT_PANEL = os.environ.get("LEDMATRIX_PANEL") or None
 
 PanelArg = Annotated[str | None, Field(
     default=None,
-    description="Which panel: a MAC (90:E5:B1:D2:0E:C8), a device name "
+    description="Which panel: a MAC (AA:BB:CC:00:11:22), a device name "
                 "(NickoSha-64x128), or an address. Omit when there is only one "
                 "on the network; with several, omitting it returns the list to "
                 "choose from rather than guessing.")]

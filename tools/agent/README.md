@@ -78,7 +78,7 @@ one panel on the network you can leave it out. With several, leaving it out
 returns the list and asks which - it never guesses. To stop being asked:
 
 ```bash
-claude mcp add ledmatrix --scope user --env LEDMATRIX_PANEL=90:E5:B1:D2:0E:C8 -- ...
+claude mcp add ledmatrix --scope user --env LEDMATRIX_PANEL=AA:BB:CC:00:11:22 -- ...
 ```
 
 ---

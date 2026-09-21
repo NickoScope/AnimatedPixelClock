@@ -19,11 +19,11 @@ firmware advertises over mDNS (`src/network/network.cpp:232-236`):
 ```bash
 python3 tools/agent/discover.py            # every panel on this network, one line each
 python3 tools/agent/discover.py --json     # the same, for a tool to read
-python3 tools/agent/discover.py --mac 90:E5:B1:D2:0E:C8   # just that one's address
+python3 tools/agent/discover.py --mac AA:BB:CC:00:11:22   # just that one's address
 ```
 
 ```
-  90:E5:B1:D2:0E:C8  NickoSha-64x128.local   v2.5.0   NickoSha-64x128
+  AA:BB:CC:00:11:22  NickoSha-64x128.local   v2.5.0   NickoSha-64x128
 ```
 
 It works from macOS (`dns-sd`) and Linux (`avahi-browse`), and it confirms every
@@ -36,7 +36,7 @@ that is a decision for the caller or a person, not a failure. Pass `--mac` to
 name one.
 
 ```bash
-PANEL=$(python3 tools/agent/discover.py --mac 90:E5:B1:D2:0E:C8) || exit
+PANEL=$(python3 tools/agent/discover.py --mac AA:BB:CC:00:11:22) || exit
 curl -s "http://$PANEL/api/info"
 ```
 
@@ -114,7 +114,7 @@ Then read it back from the panel itself, and re-find it by MAC - the name
 changed, the MAC did not:
 
 ```bash
-python3 tools/agent/discover.py --mac 90:E5:B1:D2:0E:C8
+python3 tools/agent/discover.py --mac AA:BB:CC:00:11:22
 ```
 
 ### 2. No Home Assistant? Switch off what has nothing behind it.

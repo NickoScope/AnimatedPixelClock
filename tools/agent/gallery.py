@@ -7,7 +7,7 @@ upload route the MCP server's effect_upload uses; this is the hand version.
 
     python3 tools/agent/gallery.py list
     python3 tools/agent/gallery.py show starship
-    python3 tools/agent/gallery.py show cannes --mac 90:E5:B1:D2:0E:C8
+    python3 tools/agent/gallery.py show cannes --mac AA:BB:CC:00:11:22
     python3 tools/agent/gallery.py add my_effect      # from tools/luasim/scripts
     python3 tools/agent/gallery.py remove starship    # from the panel, not here
 
