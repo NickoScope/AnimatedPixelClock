@@ -48,6 +48,8 @@
 #define NB_ERR_NO_TURN  (-101)   // never got the network's turn in time
 #define NB_ERR_BAD_URL  (-102)   // the URL was refused before a connection
 #define NB_ERR_TRUNC    (-103)   // the body did not fit the mailbox; it is cut
+#define NB_ERR_TIMEOUT  (-104)   // the transfer did not finish within the deadline
+#define NB_ERR_SHORT    (-105)   // the server declared more bytes than it sent
 
 // Where a caller's answer lands.
 //
@@ -55,7 +57,17 @@
 // it; only the loop task reads it. The broker fills every field and THEN
 // increments `seq` - that increment is the release point, and a consumer that
 // sees a new `seq` is guaranteed to see the payload that belongs to it. Read
-// `seq`, act, and do not read it again until you have finished with the body.
+// `seq` ONCE into a local, act, and do not read it again until you have
+// finished with the body.
+//
+// **And do not submit again until you have finished with the body.** That is
+// the real invariant, and it is stronger than "do not re-read seq": the broker
+// writes into this same buffer as soon as it takes this caller's next request,
+// so a consumer that parses across several passes of loop(), or that submits
+// from a different task than the one that reads, will have the bytes rewritten
+// underneath it. One slot per caller makes the broker unable to start a second
+// request without a new submit, so the rule is enforceable by the caller alone
+// - but only if the caller keeps it.
 // This is NetGate's `ng_mailbox_t` (netgate.h:87-97) with wider length fields,
 // because two of our consumers deal in bodies far larger than its 64 KB.
 struct NbMailbox {
@@ -64,7 +76,8 @@ struct NbMailbox {
   volatile uint32_t tag;         // whatever the caller put in NbRequest::tag
   volatile uint32_t durationMs;
   volatile uint32_t bodyLen;
-  uint32_t          bodyCap;
+  uint32_t          bodyCap;     // the buffer's size; USABLE length is one less,
+                                 // because a byte is kept for the terminator
   char             *body;        // PSRAM, always NUL-terminated
   char              header[NB_HEADER_MAX];   // the collected header, "" if none
 };

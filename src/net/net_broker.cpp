@@ -12,10 +12,22 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <freertos/task.h>
+#include <atomic>
 #include <string.h>
 
 #include "../debug/dbg_log.h"
 #include "../network/net_lock.h"
+#include "nb_sink.h"
+
+// **A comment is not a defence.** HTTPClient::beginInternal carries
+// log_v("url: %s"), and the weather, rail and flight URLs carry their API keys
+// in the query string. At CORE_DEBUG_LEVEL 4 or above that line is compiled in
+// and every key this broker fetches with goes to the cable - and, with the
+// remote log switched on, over the network. platformio.ini says so in prose
+// next to the flag; this makes the build refuse instead.
+#if defined(CORE_DEBUG_LEVEL) && CORE_DEBUG_LEVEL >= 4
+#error "CORE_DEBUG_LEVEL >= 4 compiles HTTPClient's log_v(\"url: %s\"), which would print API keys. Lower it, or strip the keys from the URLs first."
+#endif
 
 namespace {
 
@@ -157,18 +169,17 @@ class NbSink : public Stream {
 
   NbSink(char *b, uint32_t c) : buf(b), cap(c) {}
 
+  // Both go through nbSinkTake (nb_sink.h), which is where the arithmetic
+  // lives and where the host test exercises it.
   size_t write(uint8_t b) override {
-    if (cap < 2 || len >= cap - 1) { truncated = true; return 0; }
+    if (!nbSinkTake(cap, len, 1, &truncated)) return 0;
     buf[len++] = (char)b;
     return 1;
   }
   size_t write(const uint8_t *data, size_t size) override {
-    if (cap < 2) { truncated = true; return 0; }
-    const size_t room = (size_t)(cap - 1) - len;
-    const size_t n = size < room ? size : room;
-    if (n) { memcpy(buf + len, data, n); len += (uint32_t)n; }
-    if (n < size) truncated = true;
-    return n;   // a short write stops writeToStream by itself
+    const uint32_t n = nbSinkTake(cap, len, (uint32_t)size, &truncated);
+    if (n) { memcpy(buf + len, data, n); len += n; }
+    return n;
   }
   // A sink only writes; the read half of Stream is not used.
   int available() override { return 0; }
@@ -179,11 +190,12 @@ class NbSink : public Stream {
 
 // Do one fetch on the broker task. The network's turn is already held by the
 // caller. Returns the code that goes in the mailbox.
-int32_t runJob(uint8_t who, NbMailbox &mb) {
+int32_t runJob(uint8_t who, NbMailbox &mb, uint32_t *tagOut) {
   NbJob job;
   portENTER_CRITICAL(&s_mux);
   job = s_job[who];
   portEXIT_CRITICAL(&s_mux);
+  *tagOut = job.tag;   // taken under the lock with the rest, not re-read later
 
   mb.bodyLen = 0;
   mb.header[0] = '\0';
@@ -202,6 +214,10 @@ int32_t runJob(uint8_t who, NbMailbox &mb) {
     // answer is published, so the consumer never acts on a heap this request is
     // still holding. NetGate makes the same choice and says why at
     // netgate.cpp:128 and :198.
+    // **Declaration order is load-bearing.** Destruction runs in reverse, so
+    // ~HTTPClient (which calls _client->stop(), HTTPClient.cpp:107-110) runs
+    // while `tls` is still alive. Swap these two lines and that stop() lands
+    // on a destroyed object.
     WiFiClientSecure tls;
     HTTPClient http;
 
@@ -214,6 +230,7 @@ int32_t runJob(uint8_t who, NbMailbox &mb) {
     http.setTimeout((uint16_t)timeout);
     http.setConnectTimeout((int32_t)timeout);
     http.setReuse(false);
+    http.useHTTP10(true);   // no chunked framing, so reading it ourselves is correct
 
     if (!http.begin(tls, s_text[who].url)) {
       // Not logged with the URL: it carries an API key for two of the boards.
@@ -228,11 +245,65 @@ int32_t runJob(uint8_t who, NbMailbox &mb) {
 
       code = http.GET();
       if (code > 0 && mb.body && mb.bodyCap) {
+        // **We read the body ourselves, and the deadline is ours.**
+        //
+        // HTTPClient::writeToStream() is the obvious way to do this and it is
+        // what NetGate uses - the library decodes framing and we just take the
+        // bytes. But writeToStreamDataBlock (HTTPClient.cpp:1380-1458) is
+        //
+        //     while (connected() && (len > 0 || len == -1)) {
+        //         if (_client->available()) { ... } else { delay(1); }
+        //     }
+        //
+        // with no deadline of any kind. setTimeout() does not help: it sets
+        // SO_RCVTIMEO, the expired recv returns EAGAIN, mbedtls turns that into
+        // WANT_READ, and connected() stays true. A server that sends its
+        // headers and then goes quiet without closing holds that loop for ever.
+        //
+        // That was survivable when every module ran its own throwaway task. It
+        // is not now: this is the only task, it holds the network lock for the
+        // whole fetch, and the three modules that have not migrated wait on
+        // that same lock. One silent host would take the panel's whole
+        // outbound network with it, quietly - the task watchdog would not fire,
+        // because delay(1) yields. (NetGate's answer is a 30 s task watchdog
+        // that panics and restarts the chip. On something that lives on a wall
+        // I would rather fail one fetch than reboot.)
+        //
+        // So: HTTP/1.0, which means no chunked framing and a plain read is
+        // correct, and a loop that gives up on time.
+        const int32_t declared = (int32_t)http.getSize();
+        WiFiClient *stream = http.getStreamPtr();
         NbSink sink(mb.body, mb.bodyCap);
-        const int written = http.writeToStream(&sink);
+        const uint32_t deadline = millis() + timeout;
+        bool timedOut = false;
+        uint8_t chunk[256];   // the broker's stack is already permanently taken
+        while (stream) {
+          if (declared >= 0 && (int32_t)sink.len >= declared) break;
+          const int avail = stream->available();
+          if (avail > 0) {
+            size_t want = (size_t)avail;
+            if (want > sizeof chunk) want = sizeof chunk;
+            const int got = stream->read(chunk, want);
+            if (got > 0) {
+              sink.write(chunk, (size_t)got);
+              if (sink.truncated) break;
+              continue;                 // more may be waiting; do not sleep yet
+            }
+          }
+          if (!stream->connected() && stream->available() <= 0) break;
+          // Unsigned arithmetic, compared as signed: wrap-safe, and never a
+          // comparison against an absolute deadline value.
+          if ((int32_t)(millis() - deadline) >= 0) { timedOut = true; break; }
+          vTaskDelay(pdMS_TO_TICKS(5));
+        }
         mb.bodyLen = sink.len;
         truncated = sink.truncated;
-        if (written < 0 && sink.len == 0 && code == HTTP_CODE_OK) code = HTTPC_ERROR_READ_TIMEOUT;
+        // Every way this can end badly gets its own code, and none of them is
+        // allowed to keep a 200. A body cut short reported as success is the
+        // exact fault this whole path exists to prevent.
+        if (truncated)                                     code = NB_ERR_TRUNC;
+        else if (timedOut)                                 code = NB_ERR_TIMEOUT;
+        else if (declared >= 0 && (int32_t)sink.len < declared) code = NB_ERR_SHORT;
       }
       // Read before end(): the header table is cleared with the connection.
       if (job.collect) {
@@ -245,12 +316,10 @@ int32_t runJob(uint8_t who, NbMailbox &mb) {
   }   // the TLS client's memory is back here, before anything is published
 
   if (mb.body && mb.bodyCap) mb.body[mb.bodyLen] = '\0';
-  // Truncation is reported, never silent. A caller parsing a body cut mid-object
-  // gets a parse error and blames the server; this says who really did it.
-  if (truncated) {
+  // Truncation is reported, never silent. A caller parsing a body cut
+  // mid-object gets a parse error and blames the server; this says who did it.
+  if (truncated)
     dbgLogf("[nb] %u: body did not fit %u B - truncated\n", (unsigned)who, (unsigned)mb.bodyCap);
-    code = NB_ERR_TRUNC;
-  }
   if (code < 0 && code != NB_ERR_BAD_URL && code != NB_ERR_TRUNC)
     dbgLogf("[nb] %u: transport %d\n", (unsigned)who, (int)code);
   else if (code > 0 && code != HTTP_CODE_OK)
@@ -260,11 +329,25 @@ int32_t runJob(uint8_t who, NbMailbox &mb) {
 
 // Fill every field, then bump seq. That order is the contract: a consumer that
 // sees a new seq is guaranteed the payload that belongs to it.
-void publish(uint8_t who, int32_t code, uint32_t startMs) {
+//
+// **The fence is load-bearing, and `volatile` is not enough for it.** The
+// scalar fields are volatile, so the compiler will not reorder them against
+// each other - but the payload is not: the body arrives by memcpy inside
+// NbSink and the header by strncpy, and the standard permits moving ordinary
+// writes across a volatile access. Today nothing moves, by luck: opaque calls
+// sit in between. A release fence makes it a property of the code instead.
+//
+// The hardware side needs nothing extra, and that is worth recording because
+// it is not true of the older chip: the ESP32-S3 has a cache shared by both
+// cores (TRM 4.3.3.2), and ESP-IDF states that PSRAM accessed through pointers
+// is coherent without esp_cache_msync - that call is for DMA, which never
+// touches this buffer. On the original ESP32 the answer would be different.
+void publish(uint8_t who, int32_t code, uint32_t tag, uint32_t startMs) {
   NbMailbox &mb = s_mb[who];
   mb.code = code;
-  mb.tag = s_job[who].tag;
+  mb.tag = tag;
   mb.durationMs = millis() - startMs;
+  std::atomic_thread_fence(std::memory_order_release);   // payload, THEN seq
   mb.seq = mb.seq + 1;
 }
 
@@ -297,16 +380,23 @@ void brokerTask(void *) {
     if (who >= NB_CALLER_COUNT) continue;
 
     const uint32_t startMs = millis();
+    uint32_t tag = 0;
     int32_t code;
     if (net.held()) {
-      code = runJob(who, s_mb[who]);
+      code = runJob(who, s_mb[who], &tag);
     } else {
       // Reported, never silently re-queued: a caller watching its mailbox must
       // always get an answer, or it sits busy until a reboot.
       dbgLogf("[nb] %u: no network turn within %u ms\n", (unsigned)who,
               (unsigned)NET_LOCK_WAIT_MS);
+      portENTER_CRITICAL(&s_mux);
+      tag = s_job[who].tag;
+      portEXIT_CRITICAL(&s_mux);
       s_mb[who].bodyLen = 0;
       s_mb[who].header[0] = '\0';
+      // Symmetrical with runJob: the previous answer's bytes do not linger in
+      // a mailbox whose header and length say it is empty.
+      if (s_mb[who].body && s_mb[who].bodyCap) s_mb[who].body[0] = '\0';
       code = NB_ERR_NO_TURN;
     }
 
@@ -318,7 +408,7 @@ void brokerTask(void *) {
     // while it is still on air.
     memset(s_text[who].auth, 0, sizeof s_text[who].auth);   // the token does not linger
 
-    publish(who, code, startMs);
+    publish(who, code, tag, startMs);
 
     portENTER_CRITICAL(&s_mux);
     if (freeMin < s_stackFreeMin) s_stackFreeMin = freeMin;

@@ -18,9 +18,16 @@
 #include <stdint.h>
 
 // One slot per consumer, so a module can never be crowded out by another's
-// backlog, and a second request from the same module replaces its own pending
-// one rather than queueing behind it. A refresh that has been overtaken by a
-// newer refresh of the same thing is worthless.
+// backlog.
+//
+// **On "a second request replaces its own pending one":** nbSubmit below does
+// implement that, and the host test covers it, but the firmware never reaches
+// it - nbSubmitRequest (net_broker.cpp) refuses any caller whose slot is not
+// NB_EMPTY, so a module with something already queued is told to wait instead.
+// The rule is kept here rather than deleted because the refusal is the
+// conservative half of the same idea and the replacement is what we would want
+// if a caller ever needed to supersede its own stale request; but the firmware
+// today does not, and the comment should not claim otherwise.
 enum NbCaller : uint8_t { NB_WEATHER, NB_WORLDCLOCK, NB_RAIL, NB_FLIGHT, NB_CALLER_COUNT };
 
 // What a slot is doing.
@@ -111,13 +118,21 @@ static inline void nbFinish(NbQueue *q) {
 
 // How long the slot on the wire has been there, for the diagnostics.
 //
-// **It is not a deadline, and an earlier draft of this comment claimed it
-// was.** What actually bounds a request is the HTTP client's own connect,
-// read and TLS-handshake timeouts, set by the broker per request - and those
-// bound each *step*, not the transfer as a whole, so a host dribbling a byte
-// every few seconds holds the wire for longer than any of them. A real
-// deadline would mean closing the socket from a second task while this one is
-// inside mbedTLS, which is not safe. So this reports; it does not enforce.
+// **This reports; it does not enforce** - and it never did, though an earlier
+// draft of this comment claimed otherwise.
+//
+// The enforcing is done where the bytes are read: net_broker.cpp reads the
+// body itself, against a deadline of the request's own timeout, and gives up
+// with NB_ERR_TIMEOUT rather than waiting for a silent server for ever. That
+// had to be built by hand because HTTPClient::writeToStreamDataBlock has no
+// deadline at all - it loops on connected() with delay(1) - and an unbounded
+// read in a single permanent task that holds the network lock would take the
+// whole panel's outbound network with it.
+//
+// What is still NOT done anywhere is cancelling from outside: no other task
+// closes this one's socket, because doing that while this one sits inside
+// mbedTLS is not safe. So the bound is the reader's own, and this figure is
+// for looking at.
 static inline uint32_t nbOnAirMs(const NbQueue *q, uint32_t nowMs) {
   return nbBusy(q) ? (uint32_t)(nowMs - q->slot[q->onAir].queuedMs) : 0;
 }

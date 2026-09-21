@@ -4,6 +4,7 @@ import subprocess, sys, tempfile, os, pathlib
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 SRC = r'''
 #include "net/nb_queue.h"
+#include "net/nb_sink.h"
 #include <cstdio>
 static int failed = 0, checks = 0;
 static void eq(uint32_t got, uint32_t want, const char *what) {
@@ -14,7 +15,45 @@ static void is(bool got, bool want, const char *what) {
   checks++;
   if (got != want) { failed++; printf("FAIL %s\n", what); }
 }
+// ---- nb_sink.h: the mailbox's bounds arithmetic --------------------------
+// Added 2026-09-21 because the audit pointed out that the mailbox rework had
+// shipped with no host test at all - and this is the part of it where an
+// off-by-one is a memcpy past the end of a PSRAM buffer, which on this chip
+// does not fault, it quietly corrupts whatever is next.
+static void checkSink() {
+  bool t;
+  // No room for even a terminator.
+  t = false; is(nbSinkTake(0, 0, 10, &t) == 0 && t, true, "cap 0 takes nothing and says so");
+  t = false; is(nbSinkTake(1, 0, 10, &t) == 0 && t, true, "cap 1 is terminator only");
+  // cap 2 holds exactly one byte.
+  t = false; is(nbSinkTake(2, 0, 1, &t) == 1 && !t, true, "cap 2 takes one byte cleanly");
+  t = false; is(nbSinkTake(2, 0, 5, &t) == 1 && t, true, "cap 2 takes one of five, truncates");
+  t = false; is(nbSinkTake(2, 1, 1, &t) == 0 && t, true, "cap 2 already full takes nothing");
+  // Exactly filling the usable length is NOT truncation - the boundary that
+  // matters, because getting it wrong either loses a byte or writes one too many.
+  t = false; is(nbSinkTake(100, 0, 99, &t) == 99 && !t, true, "exactly cap-1 is not truncation");
+  t = false; is(nbSinkTake(100, 0, 100, &t) == 99 && t, true, "cap bytes truncates by one");
+  t = false; is(nbSinkTake(100, 99, 1, &t) == 0 && t, true, "full at cap-1 takes nothing more");
+  // Two blocks across the boundary - the shape a socket actually delivers.
+  t = false;
+  uint32_t len = 0;
+  len += nbSinkTake(100, len, 60, &t);
+  is(len == 60 && !t, true, "first block of 60 fits");
+  len += nbSinkTake(100, len, 60, &t);
+  is(len == 99 && t, true, "second block fills to cap-1 and truncates");
+  // The invariant the memcpy depends on, over every small case there is.
+  bool everOver = false;
+  for (uint32_t cap = 2; cap < 40 && !everOver; cap++)
+    for (uint32_t l = 0; l <= cap - 1 && !everOver; l++)
+      for (uint32_t sz = 0; sz < 50; sz++) {
+        bool tt = false;
+        if (l + nbSinkTake(cap, l, sz, &tt) > cap - 1) { everOver = true; break; }
+      }
+  is(everOver, false, "room is never exceeded, every cap/len/size under 40");
+}
+
 int main() {
+  checkSink();
   NbQueue q; nbInit(&q);
 
   // Empty
