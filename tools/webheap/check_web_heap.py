@@ -16,7 +16,41 @@ static void eq(uint32_t got, uint32_t want, const char *what) {
   checks++;
   if (got != want) { failed++; printf("FAIL %s: got %u want %u\n", what, got, want); }
 }
+// ---- webHeapTooTight: whether the portal answers at all -------------------
+// Added 2026-09-21. This function had ZERO coverage: 51 checks in this file and
+// not one of them touched the line that decides whether the web portal serves a
+// page or returns 503. It went unnoticed until the reserve it applies outlived
+// the thing it was protecting.
+static void checkTooTight() {
+  // Broker up: no module starts a fetch task any more, so the only thing that
+  // must be left room is the radio's 1,626 B DMA buffer.
+  is(webHeapTooTight(0, true), true, "broker up: nothing free is too tight");
+  is(webHeapTooTight(1625, true), true, "broker up: one below the radio's need is too tight");
+  is(webHeapTooTight(1626, true), false, "broker up: exactly the radio's need is enough");
+  is(webHeapTooTight(8692, true), false,
+     "broker up: the measured unlucky boot (8,692 B) still serves the portal");
+  is(webHeapTooTight(24564, true), false, "broker up: a good boot is fine");
+
+  // Broker down: every module creates its own task again, so the old combined
+  // line is the right one.
+  is(webHeapTooTight(8692, false), true,
+     "broker down: 8,692 B must refuse - the rail board's 10 KB task could not start");
+  is(webHeapTooTight(11865, false), true, "broker down: one below the sum is too tight");
+  is(webHeapTooTight(11866, false), false, "broker down: exactly the sum is enough");
+  is(webHeapTooTight(24564, false), false, "broker down: a good boot is fine");
+
+  // The relationship, which is the part that would rot silently if either
+  // constant moved: the broker being up can only ever ALLOW more, never less.
+  for (uint32_t b = 0; b < 30000; b += 97)
+    if (webHeapTooTight(b, true) && !webHeapTooTight(b, false)) {
+      is(false, true, "broker up is never stricter than broker down");
+      return;
+    }
+  is(true, true, "broker up is never stricter than broker down, across the range");
+}
+
 int main() {
+  checkTooTight();
   // The age arithmetic, including the millis() wrap - the half that lives on the
   // panel and used to be unreachable from here.
   eq(webHeapFailAgeMs(5000, 1000), 4000, "plain elapsed");

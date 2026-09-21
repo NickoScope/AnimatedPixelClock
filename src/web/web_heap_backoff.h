@@ -71,17 +71,34 @@ static inline uint32_t webHeapStreakNow(uint32_t streak, uint32_t sinceLastRefus
 // 2026-09-20, from 30,712 B to 1,268 B in six steps, every one of them "during
 // web server", with nothing but a browser holding the portal open.
 //
-// The line is what the other two consumers need to be able to start at all:
-// 1,626 B for the Wi-Fi task's DMA receive buffer, and 10,240 B for the rail
-// board's fetch (a 9 KB task stack plus a kilobyte, rtt_direct.cpp). Below the
-// sum of those, a large response would be taking the last piece either of them
-// could have used, so it waits instead. The small diagnostics are never
-// refused, whatever this says.
-#define WEB_HEAP_KEEP_FOR_OTHERS (1626UL + 10240UL)
+// The line is what the other consumers need to be able to start at all.
+//
+// **The radio's share, always.** 1,626 B for the Wi-Fi task's DMA receive
+// buffer - the allocation that was measured failing, repeatedly, on the night
+// the portal took the panel off the network.
+#define WEB_HEAP_KEEP_FOR_RADIO  1626UL
 
-// True when a large response would leave the radio and a fetch with nothing.
-static inline bool webHeapTooTight(uint32_t largestFreeBlock) {
-  return largestFreeBlock < WEB_HEAP_KEEP_FOR_OTHERS;
+// **The fetch's share, only while a module might still start its own task.**
+// 10,240 B is the rail board's 9 KB stack plus a kilobyte (rtt_direct.cpp).
+//
+// Once every consumer fetches through the broker this is reserving room for
+// something that never happens: the broker's stack is in .bss, taken at link
+// time, and no module creates a fetch task at all. Measured 2026-09-21, one
+// boot in seven leaves a largest block of 8,692 B - below the old combined
+// line, so the portal refused everything, on a panel where nothing whatsoever
+// needed that 10 KB. The reservation outlived the thing it protected.
+//
+// It is still right when the broker is down, because then every module does
+// create its own task again. So it is a parameter, not a constant.
+#define WEB_HEAP_KEEP_FOR_FETCH  10240UL
+#define WEB_HEAP_KEEP_FOR_OTHERS (WEB_HEAP_KEEP_FOR_RADIO + WEB_HEAP_KEEP_FOR_FETCH)
+
+// True when a large response would leave the radio - and, when modules still
+// start their own fetch tasks, a fetch - with nothing. `brokerUp` says whether
+// anything can still ask for a task-sized contiguous block.
+static inline bool webHeapTooTight(uint32_t largestFreeBlock, bool brokerUp) {
+  const uint32_t keep = brokerUp ? WEB_HEAP_KEEP_FOR_RADIO : WEB_HEAP_KEEP_FOR_OTHERS;
+  return largestFreeBlock < keep;
 }
 
 // True while the portal should refuse large responses: the radio failed
