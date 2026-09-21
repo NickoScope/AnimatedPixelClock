@@ -1,15 +1,22 @@
 # An SDK for this panel, and an MCP server that wraps it
 
-Four files, and between them everything an AI agent needs to find a panel on
-your network, drive it, see what is actually happening inside it, and write new
-screens for it.
+Five files, and between them everything an AI agent needs to bring a panel up,
+find it on your network, drive it, see what is actually happening inside it, and
+write new screens for it.
 
 | file | what it is |
 |---|---|
 | `discover.py` | finds every panel on the network by MAC. Standalone CLI, and the thing everything else resolves addresses through |
 | `bringup.py` | a new panel: asks for a name, sets it, switches off the pages that have no source without Home Assistant |
 | `panel.py` | the transport. One place that knows how this firmware really behaves |
-| `mcp_server.py` | eighteen MCP tools over stdio. This is what you register with Claude Code, Codex or anything else that speaks MCP |
+| `gallery.py` | the `gallery/` screens, and any of them onto a running panel in about a second |
+| `mcp_server.py` | twenty-three MCP tools over stdio. This is what you register with Claude Code, Codex or anything else that speaks MCP |
+
+**This SDK is the source of truth for working with a panel.** Where a fact about
+driving one has to live in exactly one place, it lives here - as a tool that
+returns it - and `AGENTS.md` points at it rather than keeping its own copy that
+drifts. `panel_bringup`, `effect_api` and `effect_photo` are written that way on
+purpose: they are documents you can call.
 
 Nothing here has a flashing tool, and nothing here will get one. Building and
 uploading is a person's call, at a moment they chose, with the panel in front of
@@ -78,6 +85,12 @@ claude mcp add ledmatrix --scope user --env LEDMATRIX_PANEL=90:E5:B1:D2:0E:C8 --
 
 ## The tools
 
+**Bringing one up**
+- `panel_bringup` - a bare board to a panel on the network: which environment
+  belongs to which module, the memory-type trap that kills a Waveshare board on
+  every boot, and the two steps that are the person's, not yours. **There is no
+  flashing tool here and there will not be one.**
+
 **Finding**
 - `panel_list` - every panel on this network, by MAC
 
@@ -97,7 +110,23 @@ claude mcp add ledmatrix --scope user --env LEDMATRIX_PANEL=90:E5:B1:D2:0E:C8 --
 - `effect_write` - put a script in `tools/luasim/scripts/`
 - `effect_preview` - run it in the reference simulator and get a GIF. No hardware needed
 - `effect_check` - run every script through the firmware's real runtime and budgets, on your Mac
-- `effect_install` - regenerate the effect table. Then a **person** builds and flashes
+
+**Putting one on a panel, with no flash at all**
+- `effect_upload` - a script onto a running panel over the air, into one of four
+  slots. `from_gallery=true` takes it straight out of `gallery/`
+- `gallery_list` - what is in `gallery/`, with sizes and previews
+- `effect_delete` - free a slot
+- `effect_install` - regenerate the compiled-in effect table. This one is the old
+  path: after it a **person** builds and flashes
+
+**A photograph**
+- `effect_photo` - a real photograph on the panel, one call: crop, enhance,
+  quantise to 256 colours with Floyd-Steinberg, two base64 characters a pixel,
+  upload, show. Not ASCII art - the picture itself, painted once because the
+  canvas is never cleared between frames. The rule and every knob are in the
+  tool's own description; `tools/luasim/photo_to_lua.py` is the same thing by
+  hand. **A photograph of a person does not go in the repository** - keep those
+  in `tools/luasim/scripts/private/`, which is gitignored
 
 Every mutating tool reads the state back and compares. It reports `changed` and
 `already` as different outcomes, because an "ok" that only means "nothing needed

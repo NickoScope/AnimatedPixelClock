@@ -112,6 +112,107 @@ def _validate(path):
 
 
 # =========================================================================
+#  Bringing a panel up
+# =========================================================================
+
+@mcp.tool(
+    name="panel_bringup",
+    annotations={"title": "A bare board to a panel on the network", "readOnlyHint": True})
+async def panel_bringup() -> str:
+    """From a board with nothing on it to a panel these tools can talk to.
+
+    Every other tool here starts at a panel that already runs this firmware and
+    is already on the network. This one is the part before that, and it is the
+    one part an agent does not finish alone: **you build, a person uploads.**
+
+    Read it before offering to set up a new panel. Two of the four steps belong
+    to the person, and saying so up front is the difference between help and a
+    dead board on a wall.
+
+    Returns: a JSON object with the build environments, the traps, the two steps
+    that are the person's, and what to do once the panel answers.
+    """
+    return json.dumps({
+        "rule": "You build. A person uploads, with the panel in front of them. "
+                "A tool that can reflash a wall-mounted device without a witness "
+                "is how a bad build becomes an outage nobody saw start. This "
+                "server has no flash tool and will not grow one.",
+        "1_pick_the_environment": {
+            "why": "By the MODULE, never by the board's marketing name. The wrong "
+                   "memory type flashes cleanly and then dies every boot.",
+            "environments": {
+                "matrix-waveshare-rgb": {
+                    "board": "Waveshare ESP32-S3-RGB-Matrix (ESP32-S3-WROOM-2-N32R16V)",
+                    "memory": "32 MB octal flash + 16 MB octal PSRAM, memory_type opi_opi",
+                    "trap": "qio_opi - correct for the WROOM-1 builds - was set here "
+                            "until the hardware arrived on 2026-09-14: the image "
+                            "uploaded, then every boot died in do_core_init with "
+                            "flash_ret != ESP_OK right after 'Octal Flash Mode "
+                            "Enabled'. The symptom looks like a dead board and is not.",
+                    "source": "platformio.ini:85-94",
+                },
+                "matrix-s3-wroom": {
+                    "board": "ESP32-S3-WROOM-1 N16R8 devkit",
+                    "memory": "16 MB flash + 8 MB PSRAM",
+                    "trap": "pins upload_port and monitor_port to COM9 "
+                            "(platformio.ini:72-73) - a Windows machine that is not "
+                            "yours. Always pass --upload-port.",
+                },
+                "matrix-s3": {
+                    "board": "ESP32-S3-Zero, Super Mini and other compact 4 MB boards",
+                    "memory": "4 MB, no PSRAM",
+                    "trap": "native USB, no USB-UART chip. If the first flash is not "
+                            "detected, BOOT held while the cable goes in.",
+                },
+            },
+            "wiring_first": "Each has a -bringup twin (matrix-waveshare-rgb-bringup "
+                            "and so on) that builds bringup/hello_matrix.cpp instead "
+                            "of the firmware: six test patterns, for proving the HUB75 "
+                            "wiring before a real image goes on.",
+        },
+        "2_build_then_hand_over": {
+            "yours": "pio run -e matrix-waveshare-rgb",
+            "theirs": "pio run -e matrix-waveshare-rgb -t upload "
+                      "--upload-port /dev/cu.usbmodem1101",
+            "before_either": "Do the arithmetic on paper. Compare largestHeapBlock "
+                             "against what each module needs contiguous. A build that "
+                             "passes this may still be wrong; one that fails it is "
+                             "certainly wrong, and the check costs nothing.",
+        },
+        "3_the_network_is_theirs_too": {
+            "ap": "With no saved credentials the panel opens an open access point "
+                  "PixelClock-Setup (src/config/user_config.h:25) with a captive "
+                  "portal at 192.168.4.1.",
+            "improv": "Improv-Serial over the same USB cable does it without the AP; "
+                      "that is what the web flasher at the project page uses.",
+            "hard_rule": "A person types their own Wi-Fi password. Never ask for it, "
+                         "never type it, never write it to a file.",
+        },
+        "4_then_you_take_over": {
+            "find_it": "panel_list - by MAC over mDNS. Never hard-code an address.",
+            "name_it": "panel_rename, and ASK the person for the name. Every panel "
+                       "out of a flash calls itself whatever the build's default was; "
+                       "two on one network advertise the same mDNS name. The name is "
+                       "what they will type for the rest of the panel's life, so an "
+                       "agent does not invent it.",
+            "no_home_assistant": "panel_capabilities says whether a broker is behind "
+                                 "it. With none, switch off the pages that have "
+                                 "nothing to draw - presence, media, the MQTT-only "
+                                 "boards - with panel_enable_page, rather than "
+                                 "leaving a person a carousel of empty screens.",
+            "the_fork": "Their configuration lives in their fork and their NVS, never "
+                        "in a pull request. Issues and PRs upstream for anything that "
+                        "helps the next person.",
+        },
+        "ota_afterwards": "Once it is on the network the firmware updates over Wi-Fi "
+                          "and the cable is done with - but that is still a person's "
+                          "call, and after any OTA wait for ota.state to read 'valid' "
+                          "before a reboot, or the image rolls back and you are "
+                          "testing the old firmware believing it is the new one.",
+    }, indent=2)
+
+
+# =========================================================================
 #  Finding a panel
 # =========================================================================
 

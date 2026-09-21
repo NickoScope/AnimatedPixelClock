@@ -47,7 +47,32 @@ Everything below writes `$PANEL`, and never an address.
 ## Bringing a new panel to life
 
 A panel arriving fresh needs three things, in this order, before anything else
-is worth doing with it.
+is worth doing with it - and before all three, if the board has never been
+flashed, step 0.
+
+### 0. A board with nothing on it
+
+Everything else in this file is an HTTP call, which means it starts at a panel
+that is already running this firmware and already on the network. Getting it
+there is the one part you do not do alone: **you build, a person uploads**, and
+a person types their own Wi-Fi password.
+
+**The SDK owns this, not this file.** `panel_bringup` in
+`tools/agent/mcp_server.py` is the full version and the one that is kept
+current: every build environment with the module it belongs to, the memory-type
+trap that kills a Waveshare board on every boot, the two steps that are the
+person's, and what to do the moment the panel first answers.
+
+Call the tool if this server is registered; read it in the source if it is not -
+it is one function and it is plain data.
+
+The short of it: pick the environment by the **module**, never by the board's
+marketing name - `matrix-waveshare-rgb` for the WROOM-2-N32R16V here,
+`matrix-s3-wroom` for the 16 MB devkit, `matrix-s3` for the 4 MB boards. Build
+it, hand over the upload command with an explicit `--upload-port`, and let the
+person bring it onto their network.
+
+Once `discover.py` sees it, you are at step 1 and everything below works.
 
 ### 1. A name. Asked for, never invented.
 

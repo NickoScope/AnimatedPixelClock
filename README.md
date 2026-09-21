@@ -410,7 +410,15 @@ pio run -e matrix-s3-wroom -t upload
 
 # Compact 4MB boards (ESP32-S3 Super Mini, Waveshare ESP32-S3-Zero)
 pio run -e matrix-s3 -t upload
+
+# Waveshare ESP32-S3-RGB-Matrix (WROOM-2-N32R16V, 32MB octal flash + 16MB octal PSRAM)
+pio run -e matrix-waveshare-rgb -t upload
 ```
+
+The Waveshare RGB-Matrix board needs `opi_opi`, not the `qio_opi` the WROOM-1
+builds use: with quad flash set the image uploads and then every boot dies in
+`do_core_init` right after "Octal Flash Mode Enabled". `platformio.ini` has it
+right - the note is here because the symptom looks like a dead board.
 
 Omit `-t upload` to build only. The WROOM environment currently sets upload and
 monitor ports to `COM9`; change them in [`platformio.ini`](platformio.ini) or
