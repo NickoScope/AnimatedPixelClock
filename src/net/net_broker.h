@@ -27,7 +27,7 @@
 
 #include "nb_queue.h"
 
-class Stream;
+class WiFiClient;
 
 // The most a caller's URL and authorization header may be. Weather builds a
 // 320-byte URL today, which is the longest of the four; the header carries a
@@ -48,11 +48,21 @@ class Stream;
 // JsonDocument, exactly as it does today - and does not keep the pointer.
 struct NbReply {
   int     code;    // HTTP status, or a negative error: HTTPClient's, or the two above
-  Stream *body;    // the body, including an error page. nullptr whenever code
-                   // is negative - AND possibly nullptr for a positive one too,
-                   // when the server answered without a body and closed (204,
-                   // 304, an empty 200): getStreamPtr() gives nullptr once the
-                   // connection is no longer live. **Always null-check it.**
+  // The body, including an error page. nullptr whenever code is negative - AND
+  // possibly nullptr for a positive one too, when the server answered without
+  // a body and closed (204, 304, an empty 200): getStreamPtr() gives nullptr
+  // once the connection is no longer live. **Always null-check it.**
+  //
+  // A WiFiClient rather than a Stream, and that is not decoration: the boards
+  // that read a whole body into a PSRAM buffer loop on `connected()` to tell
+  // "the server has finished" from "nothing has arrived yet", and Stream has
+  // no such method. A WiFiClient is a Stream, so a caller that just wants to
+  // hand it to deserializeJson still can.
+  WiFiClient *body;
+  // What the server declared, or -1 when it did not. The buffering callers
+  // size their read against it and refuse a body too large for the buffer,
+  // rather than discovering the overflow half way through.
+  int32_t contentLength;
   bool    tls;     // the failure was in the handshake, not in HTTP
   const char *header;  // the value of NbRequest::collect, "" when absent
   void   *ctx;     // whatever the caller passed in

@@ -159,7 +159,7 @@ bool runJob(uint8_t who) {
   job = s_job[who];
   portEXIT_CRITICAL(&s_mux);
 
-  NbReply reply = {0, nullptr, false, "", job.ctx};
+  NbReply reply = {0, nullptr, -1, false, "", job.ctx};
 
   uint32_t timeout = job.timeoutMs ? job.timeoutMs : kDefaultTimeoutMs;
   // setTimeout takes a uint16_t, so a caller asking for more than 65 s would
@@ -229,6 +229,7 @@ bool runJob(uint8_t who) {
     // Set for an error status too, so a caller that wants to read the server's
     // explanation can. Never set when code < 0: there is no stream then.
     reply.body = s_http->getStreamPtr();
+    reply.contentLength = (int32_t)s_http->getSize();
     if (reply.code != HTTP_CODE_OK) dbgLogf("[nb] %u: HTTP %d\n", (unsigned)who, reply.code);
   } else {
     char err[64] = {0};
@@ -284,7 +285,7 @@ void brokerTask(void *) {
       portENTER_CRITICAL(&s_mux);
       job = s_job[who];
       portEXIT_CRITICAL(&s_mux);
-      NbReply reply = {NB_ERR_NO_TURN, nullptr, false, "", job.ctx};
+        NbReply reply = {NB_ERR_NO_TURN, nullptr, -1, false, "", job.ctx};
       dbgLogf("[nb] %u: no network turn within %u ms\n", (unsigned)who,
               (unsigned)NET_LOCK_WAIT_MS);
       ok = deliver(job, reply);
