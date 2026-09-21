@@ -43,6 +43,10 @@
 #define NB_URL_MAX     384
 #define NB_AUTH_MAX    128
 #define NB_HEADER_MAX   48
+// How many response headers one request may keep. Five, because the rail board
+// needs exactly that many: Retry-After plus four rate-limit counters, and
+// dropping any of them would mean guessing at the budget it is given.
+#define NB_COLLECT_MAX   5
 
 // Failures that happen before, or instead of, an HTTP status. Outside
 // HTTPClient's own range, which runs -1 to -11.
@@ -91,7 +95,11 @@ struct NbMailbox {
   uint32_t          bodyCap;     // the buffer's size; USABLE length is one less,
                                  // because a byte is kept for the terminator
   char             *body;        // PSRAM, always NUL-terminated
-  char              header[NB_HEADER_MAX];   // the collected header, "" if none
+  // The collected headers, in the order they were asked for; each "" if the
+  // server did not send it. Index with the same position used in
+  // NbRequest::collect.
+  char              header[NB_COLLECT_MAX][NB_HEADER_MAX];
+  uint8_t           headers;     // how many were asked for
 };
 
 struct NbRequest {
@@ -108,9 +116,11 @@ struct NbRequest {
   // PROGMEM string that outlives the request. nullptr means setInsecure(),
   // which is what the open public endpoints use.
   const char *caCert;
-  // One response header to keep, by name (e.g. "Retry-After"), or nullptr.
-  // It arrives in NbMailbox::header.
-  const char *collect;
+  // Response headers to keep, by name, e.g. {"Retry-After", "X-RateLimit-Remaining-Day"}.
+  // Not copied - literals. They arrive in NbMailbox::header at the same index.
+  // nullptr entries and anything past `collectCount` are ignored.
+  const char *collect[NB_COLLECT_MAX];
+  uint8_t     collectCount;
   uint32_t    tag;        // handed back untouched; use it to tell one of your
                           // own requests from another (which city, which page)
   // 0 takes the broker's default. **This is a deadline on the whole transfer,

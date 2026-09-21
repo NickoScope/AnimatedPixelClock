@@ -93,7 +93,9 @@ const uint32_t kBodyCap[NB_CALLER_COUNT] = {
   // a cap that is too small becomes NB_ERR_TRUNC on the day open-meteo adds a
   // field. It comes down when there are several readings to come down to.
   8 * 1024,   // NB_WEATHER     - migrated 2026-09-21
-  0,          // NB_WORLDCLOCK  - not yet; size it from a measured body
+  // freeipapi's json is a couple of hundred bytes; 4 KB is many times that and
+  // it is PSRAM. Measure it and cut it once there are readings.
+  4 * 1024,   // NB_WORLDCLOCK  - migrated 2026-09-21
   0,          // NB_RAIL        - not yet; its own buffer is 1.5 MB today
   0,          // NB_FLIGHT      - not yet; its own buffer is 192 KB today
 };
@@ -138,7 +140,8 @@ NbText *s_text = nullptr;
 struct NbJob {
   const char *caCert;     // not copied: a static/PROGMEM string from the caller
   const char *authHeader; // likewise; nullptr means "Authorization"
-  const char *collect;    // likewise, a literal header name
+  const char *collect[NB_COLLECT_MAX];   // likewise, literal header names
+  uint8_t     collectCount;
   uint32_t    tag;
   uint32_t    timeoutMs;
 };
@@ -198,7 +201,8 @@ int32_t runJob(uint8_t who, NbMailbox &mb, uint32_t *tagOut) {
   *tagOut = job.tag;   // taken under the lock with the rest, not re-read later
 
   mb.bodyLen = 0;
-  mb.header[0] = '\0';
+  mb.headers = job.collectCount;
+  for (uint8_t i = 0; i < NB_COLLECT_MAX; i++) mb.header[i][0] = '\0';
   if (mb.body && mb.bodyCap) mb.body[0] = '\0';
 
   uint32_t timeout = job.timeoutMs ? job.timeoutMs : kDefaultTimeoutMs;
@@ -254,8 +258,12 @@ int32_t runJob(uint8_t who, NbMailbox &mb, uint32_t *tagOut) {
       // chunked framing - forbidden by RFC 7230 3.3.1, which is not the same
       // as impossible - is caught rather than having its raw frame markers
       // parked in the mailbox under a 200.
-      const char *collect[2] = {"Transfer-Encoding", job.collect};
-      http.collectHeaders(collect, job.collect ? 2 : 1);
+      // Transfer-Encoding first, always, then whatever the caller asked for.
+      const char *collect[NB_COLLECT_MAX + 1] = {"Transfer-Encoding"};
+      uint8_t n = 1;
+      for (uint8_t i = 0; i < job.collectCount && i < NB_COLLECT_MAX; i++)
+        if (job.collect[i]) collect[n++] = job.collect[i];
+      http.collectHeaders(collect, n);
 
       code = http.GET();
       if (code > 0 && http.header("Transfer-Encoding").length()) {
@@ -328,10 +336,11 @@ int32_t runJob(uint8_t who, NbMailbox &mb, uint32_t *tagOut) {
         else if (declared >= 0 && (int32_t)sink.len < declared) code = NB_ERR_SHORT;
       }
       // Read before end(): the header table is cleared with the connection.
-      if (job.collect) {
-        const String value = http.header(job.collect);
-        strncpy(mb.header, value.c_str(), sizeof(mb.header) - 1);
-        mb.header[sizeof(mb.header) - 1] = '\0';
+      for (uint8_t i = 0; i < job.collectCount && i < NB_COLLECT_MAX; i++) {
+        if (!job.collect[i]) continue;
+        const String value = http.header(job.collect[i]);
+        strncpy(mb.header[i], value.c_str(), NB_HEADER_MAX - 1);
+        mb.header[i][NB_HEADER_MAX - 1] = '\0';
       }
       http.end();
     }
@@ -418,7 +427,7 @@ void brokerTask(void *) {
       tag = s_job[who].tag;
       portEXIT_CRITICAL(&s_mux);
       s_mb[who].bodyLen = 0;
-      s_mb[who].header[0] = '\0';
+      for (uint8_t i = 0; i < NB_COLLECT_MAX; i++) s_mb[who].header[i][0] = '\0';
       // Symmetrical with runJob: the previous answer's bytes do not linger in
       // a mailbox whose header and length say it is empty.
       if (s_mb[who].body && s_mb[who].bodyCap) s_mb[who].body[0] = '\0';
@@ -522,7 +531,8 @@ bool nbSubmitRequest(uint8_t who, const NbRequest &req, bool interactive) {
   if (!blocked) {
     s_job[who].caCert = req.caCert;
     s_job[who].authHeader = req.authHeader;
-    s_job[who].collect = req.collect;
+    s_job[who].collectCount = req.collectCount < NB_COLLECT_MAX ? req.collectCount : NB_COLLECT_MAX;
+    for (uint8_t i = 0; i < NB_COLLECT_MAX; i++) s_job[who].collect[i] = req.collect[i];
     s_job[who].tag = req.tag;
     s_job[who].timeoutMs = req.timeoutMs;
     // Under the lock, so the broker can never read half of a URL the loop task

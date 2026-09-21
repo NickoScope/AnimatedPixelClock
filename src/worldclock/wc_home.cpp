@@ -20,6 +20,8 @@
 #include <esp_heap_caps.h>
 #include "../network/net_turns.h"
 #include "../network/network.h"
+#include <atomic>
+#include "../net/net_broker.h"
 #include "../util/psram_json.h"
 
 
@@ -163,6 +165,44 @@ static void decide() {
   zoneHome();
 }
 
+// Everything downstream of "we have the JSON", shared by the broker path and
+// the fallback task so the two cannot drift apart.
+static bool ipParseInto(JsonDocument &doc, WcCity &c) {
+  c.lat = doc["latitude"] | NAN;
+  c.lon = doc["longitude"] | NAN;
+  worldClockFitName(doc["cityName"] | "", c.name, sizeof(c.name));
+  const char *iana  = doc["timeZones"][0] | "";
+  const char *posix = tzdbPosix(iana);
+  if (!posix) return false;
+  strncpy(c.posix, posix, sizeof(c.posix) - 1);
+  strncpy(c.iana, iana, sizeof(c.iana) - 1);
+  return worldClockCheck(c) == nullptr;
+}
+
+// The broker path. The answer is already in PSRAM and this runs on the loop
+// task, so nothing here needs a task of its own. Returns true when an answer
+// was collected, whatever it said.
+static uint32_t s_ipSeq = 0;
+static bool ipCollect() {
+  NbMailbox *mb = nbMailbox(NB_WORLDCLOCK);
+  if (!mb) return false;
+  const uint32_t seq = mb->seq.load(std::memory_order_acquire);
+  if (seq == s_ipSeq) return false;
+  s_ipSeq = seq;
+  bool ok = false;
+  WcCity c;
+  memset(&c, 0, sizeof(c));
+  if (mb->code == HTTP_CODE_OK && mb->bodyLen) {
+    JsonDocument doc(psramJson());
+    if (!deserializeJson(doc, mb->body, mb->bodyLen)) ok = ipParseInto(doc, c);
+  }
+  Serial.printf("World clock: IP location code %ld, %s\n", (long)mb->code,
+                ok ? c.name : "not used");
+  if (ok) s_ipCity = c;
+  s_ipState = ok ? IP_DONE : IP_FAILED;
+  return true;
+}
+
 static void ipTask(void *) {
   WcCity c;
   memset(&c, 0, sizeof(c));
@@ -178,18 +218,7 @@ static void ipTask(void *) {
       const int code = http.GET();
       if (code == HTTP_CODE_OK) {
         JsonDocument doc(psramJson());   // the location lookup
-        if (!deserializeJson(doc, http.getStream())) {
-          c.lat = doc["latitude"] | NAN;
-          c.lon = doc["longitude"] | NAN;
-          worldClockFitName(doc["cityName"] | "", c.name, sizeof(c.name));
-          const char *iana  = doc["timeZones"][0] | "";
-          const char *posix = tzdbPosix(iana);
-          if (posix) {
-            strncpy(c.posix, posix, sizeof(c.posix) - 1);
-            strncpy(c.iana, iana, sizeof(c.iana) - 1);
-            ok = worldClockCheck(c) == nullptr;
-          }
-        }
+        if (!deserializeJson(doc, http.getStream())) ok = ipParseInto(doc, c);
       }
       Serial.printf("World clock: IP location HTTP %d, %s\n", code, ok ? c.name : "not used");
       http.end();
@@ -246,6 +275,8 @@ void wcHomeTick() {
     decide();
   }
 
+  ipCollect();   // unconditional: an answer must always be taken
+
   // One lookup per boot, once NTP has proved the way out works, and only when
   // nothing better will ever answer.
   if (s_ipState == IP_IDLE && !locationSet() && WiFi.status() == WL_CONNECTED && time(nullptr) > 1700000000 &&
@@ -255,8 +286,17 @@ void wcHomeTick() {
     // count the first time round.
     if (wcYieldToPortal()) return;
     s_ipState = IP_RUNNING;
-    // Core 0 and 8 KB, as the weather task that does the same HTTPS and JSON work.
-    if (xTaskCreatePinnedToCore(ipTask, "wcHomeIp", 8192, nullptr, 0, nullptr, 0) != pdPASS) s_ipState = IP_FAILED;
+    if (nbReady(NB_WORLDCLOCK)) {
+      // No task to create, so no contiguous 9 KB to find at a moment nobody
+      // chose. This lookup runs once per boot, so it is never interactive.
+      NbRequest req = {};
+      req.url = IP_URL;
+      req.timeoutMs = 10000;
+      if (!nbSubmitRequest(NB_WORLDCLOCK, req, false)) s_ipState = IP_IDLE;   // try again next pass
+    } else {
+      // Core 0 and 8 KB, as the weather task that does the same HTTPS and JSON work.
+      if (xTaskCreatePinnedToCore(ipTask, "wcHomeIp", 8192, nullptr, 0, nullptr, 0) != pdPASS) s_ipState = IP_FAILED;
+    }
   }
 }
 

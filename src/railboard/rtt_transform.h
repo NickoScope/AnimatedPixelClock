@@ -17,9 +17,27 @@
 
 namespace rtt {
 
-// The window and grace the package uses (lookback_min, window_min, grace_s).
-static const uint16_t kLookbackMin = 30;
-static const uint16_t kWindowMin   = 90;
+// The window the request asks for: from `now - kLookbackMin`, lasting
+// kWindowMin. So these two together say how much past and how much future.
+//
+// **Measured at London Waterloo, 2026-09-21: 110 services, 120,619 B of body -
+// to fill eight rows on the screen.** The board shows 8 departures and 8
+// arrivals; everything else is downloaded, parsed and thrown away, and that
+// body is the largest single thing the panel's network path handles.
+//
+// The lookback is there so a train that has already left but is still shown as
+// delayed does not vanish from the board. Thirty minutes of that at a station
+// with a train every two minutes is about fifteen services of pure history.
+// Ten minutes covers the same case: a service more than ten minutes past its
+// time and still on the platform is an exception, not a timetable.
+//
+// The forward reach is deliberately NOT cut here. It is `kWindowMin -
+// kLookbackMin` = 60 minutes, exactly as before, because that is what decides
+// whether a quiet station can fill eight rows at all - Waterloo would still
+// manage on twenty minutes, a branch line would not. Cutting history costs
+// nothing that is ever displayed; cutting reach costs rows.
+static const uint16_t kLookbackMin = 10;
+static const uint16_t kWindowMin   = 70;
 static const uint16_t kGraceS      = 60;
 
 // RFC 3339 date-time to UTC epoch seconds: "Z" or a +hh:mm / -hh:mm / +hhmm

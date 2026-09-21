@@ -84,7 +84,15 @@ static void testTimes() {
   CHECK(!std::strcmp(buf, "2026-09-14T13:05:07Z"));
   char q[96];
   rtt::buildQuery("GLD", 1789391107, true, q, sizeof(q));
-  CHECK(!std::strcmp(q, "code=GLD&timeFrom=2026-09-14T12:35:07Z&timeWindow=90"));
+  // 13:05:07 minus a ten-minute lookback, window 70. Changed 2026-09-21 from
+  // -30/90: the board shows eight rows and Waterloo was sending 110 services
+  // and 120,619 B to fill them, most of it already-departed history.
+  CHECK(!std::strcmp(q, "code=GLD&timeFrom=2026-09-14T12:55:07Z&timeWindow=70"));
+  // The relationship, which is what actually matters and which the literal
+  // above would not catch if both constants moved together: the FORWARD reach
+  // is what decides whether a quiet station can fill the board, and it must
+  // stay at an hour. Cutting history is free; cutting reach costs rows.
+  CHECK(rtt::kWindowMin - rtt::kLookbackMin == 60);
   rtt::buildQuery("GLD", 0, false, q, sizeof(q));
   CHECK(!std::strcmp(q, "code=GLD"));
 }
