@@ -1,1 +1,3 @@
 .store_test
+.validate
+.validate_runner.cpp

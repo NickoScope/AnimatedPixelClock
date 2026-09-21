@@ -85,6 +85,20 @@ def _pick(panel):
     return P.resolve(panel or DEFAULT_PANEL)
 
 
+def _validate(path):
+    """What the panel would say, from the panel's own code compiled for the host.
+
+    tools/luasim/validate.py builds src/lua/lua_store.cpp against small stubs, so
+    the rules never drift from the device's. None when the check could not run -
+    a missing compiler is not a reason to refuse a script."""
+    try:
+        sys.path.insert(0, str(LUASIM))
+        import validate as V  # noqa: PLC0415
+        return V.check(path)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 # =========================================================================
 #  Finding a panel
 # =========================================================================
@@ -489,12 +503,29 @@ async def panel_effects(panel: PanelArg = None) -> str:
     Effects are compiled into the image, not uploaded, so this list is fixed
     until someone flashes. `current` is -1 when no effect page is showing.
 
-    Returns: {"ok": true, "effects": ["FOOTBALL CLOCK", ...], "current": N}
+    Returns:
+        {"ok": true, "effects": [{"i", "name", "uploaded", "bytes"}],
+        "current": N, "slots": {"used", "free"}, "stackFreeMin": N}
     """
     try:
         p = _pick(panel)
         d = P.get(p["address"], "/api/lua")
-        return _ok(effects=d.get("effects"), current=d.get("current"))
+        up = d.get("uploaded") or {}
+        built = up.get("builtIn", len(d.get("effects") or []))
+        by_i = {x["i"]: x for x in (up.get("scripts") or [])}
+        out = []
+        for i, name in enumerate(d.get("effects") or []):
+            row = {"i": i, "name": name, "uploaded": i >= built}
+            if i in by_i:
+                row["file"] = by_i[i]["name"]
+                row["bytes"] = by_i[i]["bytes"]
+            out.append(row)
+        return _ok(effects=out, current=d.get("current"),
+                   slots={"used": up.get("count", 0),
+                          "free": max(0, up.get("slots", 0) - up.get("count", 0))},
+                   stackFreeMin=d.get("stackFreeMin"),
+                   note=("An uploaded effect can be replaced or deleted from here; "
+                         "a compiled-in one is part of the firmware."))
     except Exception as e:  # noqa: BLE001
         return _say(e)
 
@@ -816,6 +847,52 @@ async def effect_api() -> str:
                              "no heap_free(). No os.time, no os.clock. Time comes only "
                              "from px.t() and px.now().",
         },
+        "numbers": {
+            "WARNING": "This Lua is built with LUA_32BITS. lua_Integer is int32 "
+                       "and lua_Number is a SINGLE-PRECISION float - about 7 "
+                       "decimal digits. Both differ from desktop Lua and both "
+                       "bite silently.",
+            "math.maxinteger": 2147483647,
+            "what breaks": "The textbook LCG, `seed = (seed * 1103515245 + "
+                           "12345) % 2147483648`, overflows int32 and collapses. "
+                           "It cost this project an effect that launched eighty-"
+                           "one fireworks from two positions in two colours and "
+                           "looked deliberate. Use xorshift32, which is built "
+                           "for exactly this width:\n"
+                           "  local seed = 0x2A1F3B7D\n"
+                           "  local function rnd()\n"
+                           "    seed = seed ~ (seed << 13)\n"
+                           "    seed = seed ~ (seed >> 17)\n"
+                           "    seed = seed ~ (seed << 5)\n"
+                           "    return (seed & 0x7FFFFFFF) / 2147483648.0\n"
+                           "  end",
+            "do not use math.random": "it is seeded differently in the simulator "
+                                      "and on the panel, so fx_parity cannot "
+                                      "compare the two. Carry your own generator.",
+            "float precision": "px.t() is clamped at 0.99999994 for this reason. "
+                               "Accumulating a small step in a float over "
+                               "thousands of frames will drift; derive from "
+                               "px.t() or a frame counter instead.",
+        },
+        "cost": {
+            "what a frame really costs": "The Lua-to-C crossing, not the work "
+                                         "inside px.*. A full-screen pass is "
+                                         "5,760 px.blend calls and measured 119 "
+                                         "ms a frame on the panel; halving it to "
+                                         "a checkerboard changed nothing, "
+                                         "because the effect task shares core 0 "
+                                         "with Wi-Fi and was being preempted, "
+                                         "not computing.",
+            "measure, do not guess": "GET /api/lua reports stackFreeMin, and the "
+                                     "effect task logs frames, draw avg/max ms, "
+                                     "instructions and heap every 30 s to "
+                                     "/api/log. Turn the log on, watch one "
+                                     "report, then optimise.",
+            "budget in practice": "a draw of 120 ms against a 500 ms cap is "
+                                  "fine; what it costs is frame rate, and the "
+                                  "panel reports the rate frames actually arrive "
+                                  "at rather than the FPS asked for.",
+        },
         "budgets": {
             "loadInstructions": 20_000_000,
             "drawInstructions": 2_000_000,
@@ -839,6 +916,12 @@ async def effect_api() -> str:
 
 class WriteIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    embed: bool = Field(default=False,
+                        description="Compile it into the firmware image instead "
+                                    "of sending it over the air. Almost never "
+                                    "what you want: it needs a build and a flash "
+                                    "that only a person can do. Default false, "
+                                    "which marks the script @upload-only.")
     name: str = Field(pattern=r"^[A-Za-z0-9_]{1,40}$",
                       description="File stem. Letters, digits and underscore only - the "
                                   "generator enforces this. Becomes the on-panel name "
@@ -869,13 +952,28 @@ async def effect_write(args: WriteIn) -> str:
         if dest.exists() and not args.overwrite:
             return (f"{dest} already exists. Pass overwrite=true to replace it, or "
                     "choose another name.")
-        if "function draw()" not in args.source and "draw =" not in args.source:
-            return ("This script defines no global draw(), so the panel would refuse "
-                    "to load it. Add `function draw() ... end` and try again.")
-        dest.write_text(args.source, encoding="utf-8")
-        return _ok(path=str(dest), bytes=len(args.source.encode()),
+        src = args.source
+        if not args.embed and "@upload-only" not in src[:400]:
+            # Scripts in this directory are either compiled into the image or
+            # only ever uploaded, and the generator has to be told which. Without
+            # the marker a pre-commit hook demands the header be regenerated for
+            # every experiment left lying here.
+            src = "-- @upload-only\n" + src
+        dest.write_text(src, encoding="utf-8")
+
+        # The panel's own checks, run here so a refusal costs nothing and reads
+        # exactly as it would have from the device.
+        verdict = _validate(dest)
+        if verdict and not verdict["ok"]:
+            return (f"Written to {dest}, but the panel would refuse it:\n  "
+                    f"{verdict['error']}\n\nFix it and write again. Nothing was "
+                    "uploaded.")
+        return _ok(path=str(dest), bytes=len(src.encode()),
                    panel_name=args.name.replace("_", " ").upper(),
-                   next="effect_preview to look at it, then effect_check for the budgets")
+                   embed=args.embed,
+                   accepted_by_panel_rules=bool(verdict and verdict["ok"]),
+                   next="effect_preview to look at it, effect_check for the budgets, "
+                        "then effect_upload to put it on a panel")
     except Exception as e:  # noqa: BLE001
         return _say(e)
 
@@ -886,7 +984,43 @@ class PreviewIn(BaseModel):
     frames: int = Field(default=40, ge=1, le=600)
     start: str | None = Field(default=None, pattern=r"^\d{1,2}:\d{2}$",
                               description="Clock the simulator starts at, HH:MM.")
-    animated: bool = Field(default=True, description="GIF when true, a single PNG when false.")
+    animated: bool = Field(default=True, description="GIF when true, stills when false.")
+    sheet: int = Field(default=0, ge=0, le=12,
+                       description="Instead of a GIF, lay out this many stills "
+                                   "spread evenly across the run. The most useful "
+                                   "way to judge an effect that changes slowly - "
+                                   "a GIF of the first 40 frames shows one moment "
+                                   "of a fireworks display and none of its range.")
+    scale: int = Field(default=6, ge=1, le=12)
+
+
+def _contact_sheet(raw, out, frames, count, scale):
+    """Stills spread across the run, laid out two to a row.
+
+    Written because judging an effect from a GIF of its opening frames is how
+    three evenings went here: a fireworks display looks empty for its first
+    second and a clock face looks identical for its first minute."""
+    try:
+        from PIL import Image  # noqa: PLC0415
+    except ImportError:
+        return ("A contact sheet needs Pillow: pip install Pillow, or ask for a "
+                "GIF instead with sheet=0.")
+    W, H, sz = 128, 64, 128 * 64 * 3
+    data = raw.read_bytes()
+    have = len(data) // sz
+    if have == 0:
+        return "The simulator produced no frames."
+    picks = [min(have - 1, int(i * (have - 1) / max(1, count - 1))) for i in range(count)]
+    ims = [Image.frombytes("RGB", (W, H), data[f * sz:(f + 1) * sz])
+           .resize((W * scale, H * scale), Image.NEAREST) for f in picks]
+    w, h = ims[0].size
+    cols = 2 if count > 1 else 1
+    rows = (count + cols - 1) // cols
+    sheet = Image.new("RGB", (w * cols + 8 * (cols - 1), h * rows + 8 * (rows - 1)), (18, 18, 22))
+    for i, im in enumerate(ims):
+        sheet.paste(im, ((i % cols) * (w + 8), (i // cols) * (h + 8)))
+    sheet.save(out)
+    return None
 
 
 def _run(cmd, cwd, timeout=300):
@@ -927,8 +1061,15 @@ async def effect_preview(args: PreviewIn) -> str:
         code, out = _run(cmd, LUASIM)
         if code != 0:
             return f"The script failed in the simulator:\n{out[-2000:]}"
+        if args.sheet:
+            img = LUASIM / f"{args.name}_sheet.png"
+            msg = _contact_sheet(raw, img, args.frames, args.sheet, args.scale)
+            if msg:
+                return msg
+            return _ok(image=str(img), frames=args.frames, stills=args.sheet,
+                       note="Spread across the whole run, so a slow effect shows its range.")
         img = LUASIM / f"{args.name}.{'gif' if args.animated else 'png'}"
-        code, out = _run(["python3", "render.py", raw.name, img.name, "6"], LUASIM)
+        code, out = _run(["python3", "render.py", raw.name, img.name, str(args.scale)], LUASIM)
         if code != 0:
             return f"render.py failed:\n{out[-2000:]}"
         return _ok(image=str(img), frames=args.frames,
@@ -944,7 +1085,7 @@ async def effect_preview(args: PreviewIn) -> str:
     name="effect_check",
     annotations={"title": "Measure an effect against the panel's budgets",
                  "readOnlyHint": True})
-async def effect_check(quick: bool = False) -> str:
+async def effect_check(quick: bool = False, only: str | None = None) -> str:
     """Run every script through the firmware's own runtime, on this machine.
 
     `fx_parity.py` compiles the real `lua_fx.cpp`, `lua_px.cpp` and the sandbox
@@ -960,12 +1101,25 @@ async def effect_check(quick: bool = False) -> str:
 
     Args:
         quick: parity only, skip the measurements.
+        only: a script's stem - the report is filtered to it, which is what you
+              want while iterating on one effect. The run itself still covers
+              every script, because a divergence in another is worth knowing
+              about before it is blamed on yours.
 
     Returns: the tool's own report as text.
     """
     try:
         cmd = ["python3", "fx_parity.py"] + (["--quick"] if quick else [])
         code, out = _run(cmd, LUASIM, timeout=900)
+        if only:
+            keep = [ln for ln in out.splitlines()
+                    if only in ln or "negative control" in ln or "parity against" in ln]
+            # the measurement line and the panel estimate under it
+            lines = out.splitlines()
+            for i, ln in enumerate(lines):
+                if ln.strip().startswith(only) and "panel estimate" in "".join(lines[i:i + 2]):
+                    keep += lines[i:i + 2]
+            out = "\n".join(dict.fromkeys(keep))
         return json.dumps({"ok": code == 0, "exit": code, "report": out[-8000:]},
                           ensure_ascii=False, indent=2)
     except subprocess.TimeoutExpired:
@@ -1023,6 +1177,11 @@ async def effect_upload(args: UploadIn) -> str:
         src = SCRIPTS / f"{args.name}.lua"
         if not src.exists():
             return f"No script at {src}. Write it with effect_write first."
+        verdict = _validate(src)
+        if verdict and not verdict["ok"]:
+            return (f"The panel would refuse this, so it was not sent:\n  "
+                    f"{verdict['error']}\n\nChecked here with the panel's own "
+                    "code, so the message is the one it would have given.")
         data = src.read_bytes()
         p = _pick(args.panel)
         a = p["address"]
