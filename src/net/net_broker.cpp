@@ -19,15 +19,35 @@
 
 namespace {
 
-// **12 KB, and why that number for now.** It is the largest of the four stacks
-// it replaces (the flight board's; weather 8, world clock 8, rail 9), so no
-// caller can be worse off than it is today. It is deliberately NOT tightened
-// yet: the rail board's stack was cut from 12 KB to 9 only after three agreeing
-// high-water readings, and the broker has no readings at all. It prints its own
-// high-water mark on every fetch (`[nb]` lines, and nbGetStats for the
-// diagnostics page); the number comes down when there is a distribution to cut
-// it from, not before.
-const uint32_t kStackBytes = 12 * 1024;
+// **8 KB, from a measurement rather than from the largest of four.**
+//
+// This was 12 KB - the largest of the stacks it replaces - chosen so that no
+// caller could be worse off. That reasoning was wrong in a way the panel
+// proved on 2026-09-20: taking 12 KB into .bss cut the largest contiguous
+// internal block from 16,372 B to 9,716, below what the flight board requires
+// before it will even attempt a fetch. A number picked for safety made the
+// board unusable.
+//
+// The figure below comes from the closest analogue there is - the rail board's
+// own fetch task, which does the same work this one does: TLS handshake,
+// HTTPClient, and the consumer's parse straight off the socket. Four readings
+// of its high-water mark, 2026-09-20 and 2026-09-21:
+//
+//     used 5,984 · 6,136 · 6,152 · 6,160 B     (spread 176 B over four)
+//
+// The last was taken through /api/railboard with a 9,216 B stack, leaving
+// 3,056 B free. 8,192 B therefore carries the measured peak plus about 2 KB -
+// a slightly tighter margin than the rail board keeps, on a task that reports
+// its own high-water on every fetch so the margin is watched rather than
+// assumed. If `stackFreeMin` in /api/info ever approaches zero, this is where
+// to look, and `nsc status` is how to see it.
+//
+// **What 8 KB does NOT fix.** It is not enough on its own: the flight board's
+// threshold is 13,312 B against a largest block of 16,372, so barely 3 KB of
+// contiguity is available while that board still starts its own task. The
+// broker has to take the flight board's fetch over before it can pay for
+// itself - see docs/32-net-broker.md.
+const uint32_t kStackBytes = 8 * 1024;
 
 // Core 0, below the Lua effect task, exactly where the four fetch tasks run
 // today: the Arduino loop and the HUB75 DMA refresh live on core 1.
