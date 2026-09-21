@@ -918,6 +918,49 @@ async def effect_api() -> str:
             "on failure": 'the panel draws "LUA ERROR" and the text goes to the log '
                           "only. No HTTP route returns it.",
         },
+        "photographs": {
+            "the tool": "effect_photo - an image file straight onto a panel. It "
+                        "crops, quantises, writes the script, runs the panel's "
+                        "own checks and uploads. Do not hand-write one of these.",
+            "why not an animation": "The firmware's own /api/anim/upload takes "
+                                    "PCA1, which is 4 bits a pixel - sixteen "
+                                    "colours. A photograph through the Lua path "
+                                    "gets 256, and at 128x64 that is the "
+                                    "difference between a picture and a poster.",
+            "how it fits": "8,192 pixels as full RGB would be 49,152 characters "
+                           "against a 24 KB limit. Quantised to 256 with "
+                           "Floyd-Steinberg it is two base64 characters a pixel "
+                           "= 20 KB, which fits with room for the code.",
+            "do NOT run-length encode it": "It was tried. Dithering is what "
+                                           "keeps a face from banding at this "
+                                           "size and it is exactly what destroys "
+                                           "runs - 8,192 pixels came out as "
+                                           "7,232 runs, the length character was "
+                                           "overhead, and the file went to 25 KB "
+                                           "and over the limit.",
+            "paint once": "The canvas is not cleared between frames, so a "
+                          "photograph is painted on the first frame and never "
+                          "again. Measured: that frame is 235 ms of the 500 "
+                          "allowed; every frame after it is 4.6 ms, which is the "
+                          "clock and nothing else. Set FPS = 2 and no higher - "
+                          "there is nothing to animate.",
+            "the aspect": "the panel is 2:1. A portrait cropped to it loses the "
+                          "top of the head or the bottom of the frame, so choose "
+                          "the crop deliberately rather than letting the resize "
+                          "choose it. --crop takes fractions of the original.",
+            "a face at 128x64": "has lost every edge it had. A little unsharp "
+                                "after the downscale is worth more than any "
+                                "amount of palette.",
+            "somebody's family is not a code sample": "A photograph of a person "
+                                                      "goes in "
+                                                      "tools/luasim/scripts/private/, "
+                                                      "which is gitignored. The "
+                                                      "tools look there; the "
+                                                      "public repository does "
+                                                      "not. Never put one in "
+                                                      "gallery/ without being "
+                                                      "asked to.",
+        },
         "installing": "Scripts are compiled into the firmware image. Write with "
                       "effect_write, look at it with effect_preview, measure it with "
                       "effect_check, generate the header with effect_install - then a "
@@ -1156,6 +1199,111 @@ class UploadIn(BaseModel):
                                   "name with underscores as spaces, upper-cased.")
     show: bool = Field(default=True, description="Put it on screen once it is stored.")
     panel: str | None = None
+
+
+class PhotoIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    image: str = Field(description="Path to the image file on this machine.")
+    name: str = Field(pattern=r"^[A-Za-z0-9_]{1,24}$",
+                      description="What to call it on the panel.")
+    crop: str | None = Field(default=None, pattern=r"^[\d.]+,[\d.]+,[\d.]+,[\d.]+$",
+                             description="left,top,right,bottom as fractions of the "
+                                         "original, e.g. 0.13,0.26,0.92,0.68. The "
+                                         "panel is 2:1 and a portrait is not, so "
+                                         "choose this rather than letting the "
+                                         "resize choose it.")
+    colors: int = Field(default=256, ge=2, le=256)
+    sharpen: float = Field(default=0.5, ge=0.0, le=2.0,
+                           description="Unsharp after the downscale. A face at "
+                                       "128x64 has lost every edge it had.")
+    saturation: float = Field(default=1.1, ge=0.0, le=3.0)
+    contrast: float = Field(default=1.0, ge=0.0, le=3.0)
+    brightness: float = Field(default=1.0, ge=0.0, le=3.0)
+    clock: Literal["br", "bl", "tr", "tl", "none"] = Field(default="br")
+    private: bool = Field(default=True,
+                          description="Keep the script out of the public "
+                                      "repository. True by default, because a "
+                                      "photograph of a person is not a code "
+                                      "sample. Set false only for something that "
+                                      "belongs in the open.")
+    upload: bool = Field(default=True)
+    panel: str | None = None
+
+
+@mcp.tool(
+    name="effect_photo",
+    annotations={"title": "A photograph onto a panel", "readOnlyHint": False,
+                 "destructiveHint": False, "idempotentHint": True,
+                 "openWorldHint": True})
+async def effect_photo(args: PhotoIn) -> str:
+    """An image file onto a panel, as a photograph rather than as ASCII art.
+
+    One call does the whole thing: crop, quantise to 256 colours with
+    Floyd-Steinberg, write the Lua, run the panel's own checks, upload, show.
+
+    **256 colours, not the sixteen** the firmware's own animation format allows -
+    the picture goes through the Lua path instead, and at 128x64 that is the
+    difference between a picture and a poster. It is painted on the first frame
+    and never again, because the canvas is not cleared between frames: that
+    frame costs 235 ms of the 500 a draw is allowed, and every frame after it is
+    4.6 ms of clock.
+
+    **The panel is 2:1 and a portrait is not.** Pass `crop` deliberately;
+    without it the resize squashes the picture to fit. Fractions of the
+    original, left,top,right,bottom.
+
+    **A photograph of a person stays out of the public repository** unless you
+    are told otherwise - `private` is true by default and the script lands in
+    tools/luasim/scripts/private/, which git ignores.
+
+    Returns:
+        {"ok": true, "script": "...", "bytes": N, "index": N, "showing": bool}
+    """
+    try:
+        img = Path(args.image).expanduser()
+        if not img.exists():
+            return f"No image at {img}"
+        dest_dir = PRIVATE if args.private else SCRIPTS
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest = dest_dir / f"{args.name}.lua"
+
+        cmd = ["python3", str(LUASIM / "photo_to_lua.py"), str(img),
+               "--name", args.name, "--colors", str(args.colors),
+               "--sharpen", str(args.sharpen), "--saturation", str(args.saturation),
+               "--contrast", str(args.contrast), "--brightness", str(args.brightness),
+               "--clock", args.clock, "--out", str(dest)]
+        if args.crop:
+            cmd += ["--crop", args.crop]
+        code, out = _run(cmd, REPO, timeout=180)
+        if code != 0 or not dest.exists():
+            return f"The conversion failed:\n{out[-1500:]}"
+
+        verdict = _validate(dest)
+        if verdict and not verdict["ok"]:
+            return (f"Written to {dest}, but the panel would refuse it:\n  "
+                    f"{verdict['error']}\n\nFewer colours would make it smaller.")
+
+        res = {"ok": True, "script": str(dest), "bytes": dest.stat().st_size,
+               "private": args.private, "note": out.strip()[-200:]}
+        if not args.upload:
+            res["next"] = "effect_upload to put it on a panel"
+            return json.dumps(res, ensure_ascii=False, indent=2)
+
+        p = _pick(args.panel)
+        a = p["address"]
+        r = P.post_file(a, "/api/lua/upload?name=" + urllib.parse.quote(args.name),
+                        "script", f"{args.name}.lua", dest.read_bytes())
+        if not r or not r.get("success"):
+            return f"The panel refused it: {(r or {}).get('error', 'no answer')}"
+        idx = r.get("index")
+        res["index"] = idx
+        if isinstance(idx, int) and idx >= 0:
+            P.post(a, "/api/lua", {"show": idx})
+            time.sleep(2.0)
+            res["showing"] = (P.get(a, "/api/lua").get("current") == idx)
+        return json.dumps(res, ensure_ascii=False, indent=2)
+    except Exception as e:  # noqa: BLE001
+        return _say(e)
 
 
 @mcp.tool(

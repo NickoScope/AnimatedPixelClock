@@ -191,6 +191,46 @@ Origin and are unaffected.
 
 ---
 
+### 5. A photograph on the panel
+
+One call, and it is a photograph rather than ASCII art:
+
+```
+effect_photo  image=/path/to/photo.jpg  name=my_photo  crop=0.0,0.02,1.0,0.478
+```
+
+It crops, quantises, writes the Lua, runs the panel's own checks, uploads and
+shows. `tools/luasim/photo_to_lua.py` is the same thing by hand.
+
+**Six things about it, each of which cost a try:**
+
+- **256 colours, not sixteen.** The firmware's own `/api/anim/upload` takes
+  PCA1, which is 4 bits a pixel. A photograph through the Lua path gets 256
+  with Floyd-Steinberg, and at 128x64 that is the difference between a picture
+  and a poster.
+- **It fits because it is quantised.** 8,192 pixels as full RGB would be 49,152
+  characters against a 24 KB limit. Two base64 characters an index is 20 KB.
+- **Do not run-length encode it.** It was tried. Dithering is what keeps a face
+  from banding at this size, and it is exactly what destroys runs - 8,192 pixels
+  came out as 7,232 of them, the length character became overhead, and the file
+  went over the limit at 25 KB.
+- **Painted once.** The canvas is not cleared between frames, so it is drawn on
+  the first frame and never again. Measured on the panel: that frame is 235 ms
+  of the 500 a draw is allowed and 229,000 instructions of 2,000,000; every
+  frame after it is 4.6 ms, which is the clock and nothing else. `FPS = 2` and
+  no higher - there is nothing to animate.
+- **The panel is 2:1 and a portrait is not.** Choose `crop` deliberately or the
+  resize chooses it for you, badly. Fractions of the original.
+- **A little unsharp after the downscale** is worth more than any amount of
+  palette. A face at 128x64 has lost every edge it had.
+
+**And a photograph of a person is not a code sample.** It goes in
+`tools/luasim/scripts/private/`, which git ignores and the tools look in. This
+repository is public. Nothing of the kind goes in `gallery/` unless the owner
+asks for it.
+
+---
+
 ### The whole of 1 and 2 in one command
 
 ```bash
