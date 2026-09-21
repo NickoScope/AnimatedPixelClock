@@ -33,6 +33,7 @@
 // URL and the credential live in PSRAM and the queue is four fixed slots, so
 // the queue costs almost no internal RAM at all.
 
+#include <atomic>
 #include <stdint.h>
 
 #include "nb_queue.h"
@@ -49,7 +50,11 @@
 #define NB_ERR_BAD_URL  (-102)   // the URL was refused before a connection
 #define NB_ERR_TRUNC    (-103)   // the body did not fit the mailbox; it is cut
 #define NB_ERR_TIMEOUT  (-104)   // the transfer did not finish within the deadline
-#define NB_ERR_SHORT    (-105)   // the server declared more bytes than it sent
+// The server declared more bytes than it sent. **Only detectable when it
+// declared a length at all**: without Content-Length the end of the body IS
+// the close of the connection, so a connection cut short is indistinguishable
+// from a normal ending. That is HTTP, not a gap here.
+#define NB_ERR_SHORT    (-105)
 
 // Where a caller's answer lands.
 //
@@ -71,7 +76,14 @@
 // This is NetGate's `ng_mailbox_t` (netgate.h:87-97) with wider length fields,
 // because two of our consumers deal in bodies far larger than its 64 KB.
 struct NbMailbox {
-  volatile uint32_t seq;         // ++ on every completion, success or not
+  // Atomic rather than volatile, and that is the difference between meaning it
+  // and getting away with it. A pair of fences around a volatile only
+  // synchronises-with by accident of the compiler; a release store and an
+  // acquire load on an atomic say it. On this target it is lock-free and the
+  // same width, so it costs nothing. Store it with
+  // seq.store(v, std::memory_order_release) and read it with
+  // seq.load(std::memory_order_acquire) - nothing else.
+  std::atomic<uint32_t> seq;     // ++ on every completion, success or not
   volatile int32_t  code;        // HTTP status, or one of the negatives above
   volatile uint32_t tag;         // whatever the caller put in NbRequest::tag
   volatile uint32_t durationMs;
@@ -101,7 +113,11 @@ struct NbRequest {
   const char *collect;
   uint32_t    tag;        // handed back untouched; use it to tell one of your
                           // own requests from another (which city, which page)
-  uint32_t    timeoutMs;  // 0 takes the broker's default
+  // 0 takes the broker's default. **This is a deadline on the whole transfer,
+  // not on one step of it** - it changed meaning when the broker started
+  // reading the body itself. For weather's 746 B the distinction is academic;
+  // for the rail board, whose own buffer is 1.5 MB, it is not.
+  uint32_t    timeoutMs;
 };
 
 // Create the task. Called once from setup(), before the heap has been used by

@@ -240,11 +240,28 @@ int32_t runJob(uint8_t who, NbMailbox &mb, uint32_t *tagOut) {
       if (s_text[who].auth[0])
         http.addHeader(job.authHeader ? job.authHeader : "Authorization", s_text[who].auth);
       http.addHeader("Accept", "application/json");
-      const char *collect[1] = {job.collect};
-      if (job.collect) http.collectHeaders(collect, 1);
+      // **HTTP/1.0 took the library's Accept-Encoding away with it.**
+      // HTTPClient only sends `Accept-Encoding: identity;q=1,chunked;q=0.1,*;q=0`
+      // when _useHTTP10 is false (HTTPClient.cpp:1216-1218), so without this
+      // line the broker asks for nothing in particular - and RFC 7231 5.3.4
+      // says a request with no Accept-Encoding accepts any coding at all. A
+      // server that chose to gzip would hand us a matching Content-Length, the
+      // read loop would copy the compressed bytes, nothing would look wrong,
+      // and the mailbox would hold a binary blob under a 200. That is the same
+      // failure as the truncated-body-as-200 above, arriving by another door.
+      http.addHeader("Accept-Encoding", "identity");
+      // Transfer-Encoding is collected so a server that answers HTTP/1.0 with
+      // chunked framing - forbidden by RFC 7230 3.3.1, which is not the same
+      // as impossible - is caught rather than having its raw frame markers
+      // parked in the mailbox under a 200.
+      const char *collect[2] = {"Transfer-Encoding", job.collect};
+      http.collectHeaders(collect, job.collect ? 2 : 1);
 
       code = http.GET();
-      if (code > 0 && mb.body && mb.bodyCap) {
+      if (code > 0 && http.header("Transfer-Encoding").length()) {
+        dbgLogf("[nb] %u: chunked answer to an HTTP/1.0 request, refusing\n", (unsigned)who);
+        code = HTTPC_ERROR_ENCODING;
+      } else if (code > 0 && mb.body && mb.bodyCap) {
         // **We read the body ourselves, and the deadline is ours.**
         //
         // HTTPClient::writeToStream() is the obvious way to do this and it is
@@ -273,6 +290,11 @@ int32_t runJob(uint8_t who, NbMailbox &mb, uint32_t *tagOut) {
         // correct, and a loop that gives up on time.
         const int32_t declared = (int32_t)http.getSize();
         WiFiClient *stream = http.getStreamPtr();
+        // getStreamPtr() answers nullptr once the connection has gone. With a
+        // declared length that is caught below as NB_ERR_SHORT; without one,
+        // the loop would simply not run and an empty body would go out under a
+        // 200. Only a declared length of exactly zero is genuinely empty.
+        if (!stream && declared != 0) code = HTTPC_ERROR_NOT_CONNECTED;
         NbSink sink(mb.body, mb.bodyCap);
         const uint32_t deadline = millis() + timeout;
         bool timedOut = false;
@@ -330,12 +352,13 @@ int32_t runJob(uint8_t who, NbMailbox &mb, uint32_t *tagOut) {
 // Fill every field, then bump seq. That order is the contract: a consumer that
 // sees a new seq is guaranteed the payload that belongs to it.
 //
-// **The fence is load-bearing, and `volatile` is not enough for it.** The
+// **The ordering is load-bearing, and `volatile` is not enough for it.** The
 // scalar fields are volatile, so the compiler will not reorder them against
 // each other - but the payload is not: the body arrives by memcpy inside
 // NbSink and the header by strncpy, and the standard permits moving ordinary
-// writes across a volatile access. Today nothing moves, by luck: opaque calls
-// sit in between. A release fence makes it a property of the code instead.
+// writes across a volatile access. `seq` is therefore a std::atomic and this
+// is a release store, which is a guarantee rather than a habit of one compiler
+// on one target.
 //
 // The hardware side needs nothing extra, and that is worth recording because
 // it is not true of the older chip: the ESP32-S3 has a cache shared by both
@@ -347,8 +370,10 @@ void publish(uint8_t who, int32_t code, uint32_t tag, uint32_t startMs) {
   mb.code = code;
   mb.tag = tag;
   mb.durationMs = millis() - startMs;
-  std::atomic_thread_fence(std::memory_order_release);   // payload, THEN seq
-  mb.seq = mb.seq + 1;
+  // The release store publishes everything written above it, including the
+  // memcpy into the body and the strncpy into the header, neither of which is
+  // volatile. The consumer's acquire load pairs with it.
+  mb.seq.store(mb.seq.load(std::memory_order_relaxed) + 1, std::memory_order_release);
 }
 
 void brokerTask(void *) {

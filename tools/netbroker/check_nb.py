@@ -41,15 +41,26 @@ static void checkSink() {
   is(len == 60 && !t, true, "first block of 60 fits");
   len += nbSinkTake(100, len, 60, &t);
   is(len == 99 && t, true, "second block fills to cap-1 and truncates");
-  // The invariant the memcpy depends on, over every small case there is.
+  // A len past the end - the case that would wrap (cap-1)-len to about four
+  // billion and run the memcpy off the end of the buffer. The audit of
+  // 2026-09-21 pointed out that the old sweep stopped exactly at the
+  // precondition, so the one input that mattered was never offered.
+  t = false; is(nbSinkTake(10, 10, 5, &t) == 0 && t, true, "len == cap takes nothing");
+  t = false; is(nbSinkTake(10, 99, 5, &t) == 0 && t, true, "len far past cap takes nothing");
+  t = false; is(nbSinkTake(10, 9, 5, &t) == 0 && t, true, "len == cap-1 is already full");
+  // size 0 is not truncation: nothing was dropped.
+  t = false; is(nbSinkTake(10, 0, 0, &t) == 0 && !t, true, "size 0 is not truncation");
+  t = false; is(nbSinkTake(0, 0, 0, &t) == 0 && !t, true, "size 0 on cap 0 is not truncation");
+  // The invariant the memcpy depends on, now swept PAST the precondition too.
   bool everOver = false;
-  for (uint32_t cap = 2; cap < 40 && !everOver; cap++)
-    for (uint32_t l = 0; l <= cap - 1 && !everOver; l++)
+  for (uint32_t cap = 0; cap < 40 && !everOver; cap++)
+    for (uint32_t l = 0; l < cap + 4 && !everOver; l++)
       for (uint32_t sz = 0; sz < 50; sz++) {
         bool tt = false;
-        if (l + nbSinkTake(cap, l, sz, &tt) > cap - 1) { everOver = true; break; }
+        const uint32_t n = nbSinkTake(cap, l, sz, &tt);
+        if (n && (uint64_t)l + n > (uint64_t)cap - 1) { everOver = true; break; }
       }
-  is(everOver, false, "room is never exceeded, every cap/len/size under 40");
+  is(everOver, false, "room never exceeded for any cap/len/size, len past the end included");
 }
 
 int main() {

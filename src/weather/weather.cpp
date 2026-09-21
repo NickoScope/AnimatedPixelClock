@@ -38,8 +38,8 @@
 
 static WeatherData published = {};
 static portMUX_TYPE weatherMux = portMUX_INITIALIZER_UNLOCKED;
-// fetchBusy marks "a fetch is out". On the broker path only the loop task ever
-// touches it or nextFetchMs - it is set at submit and cleared when
+// fetchBusy marks "a fetch is out". On the broker path only the loop task
+// ever touches it or nextFetchMs - set at submit, cleared when
 // weatherCollect() takes the answer, which is strictly simpler than what follows. On the fallback path
 // it is set by loop() before the task starts and cleared by the task last,
 // after it has written nextFetchMs; loop() reads nextFetchMs only while
@@ -168,11 +168,11 @@ static bool weatherCollect(bool *ok) {
   *ok = false;
   NbMailbox *mb = nbMailbox(NB_WEATHER);
   if (!mb) return false;
-  const uint32_t seq = mb->seq;        // read once - into a local, literally
+  // Read once, into a local, with the acquire that pairs with the broker's
+  // release store: having seen this seq, everything written before it is
+  // visible here.
+  const uint32_t seq = mb->seq.load(std::memory_order_acquire);
   if (seq == s_weatherSeq) return false;
-  // Pairs with the release fence in the broker's publish(): having seen the
-  // new seq, everything written before it is visible here.
-  std::atomic_thread_fence(std::memory_order_acquire);
   s_weatherSeq = seq;
   if (mb->code != HTTP_CODE_OK || !mb->bodyLen) {
     Serial.printf("Weather fetch failed: code %ld\n", (long)mb->code);
