@@ -7,7 +7,7 @@ write new screens for it.
 | file | what it is |
 |---|---|
 | `discover.py` | finds every panel on the network by MAC. Standalone CLI, and the thing everything else resolves addresses through |
-| `bringup.py` | a new panel: asks for a name, sets it, switches off the pages that have no source without Home Assistant |
+| `bringup.py` | a new panel: asks for a name, sets it, switches off the pages that have no source without Home Assistant. It will not make that call over a broker that is merely down |
 | `panel.py` | the transport. One place that knows how this firmware really behaves |
 | `gallery.py` | the `gallery/` screens, and any of them onto a running panel in about a second |
 | `mcp_server.py` | twenty-three MCP tools over stdio. This is what you register with Claude Code, Codex or anything else that speaks MCP |
@@ -131,6 +131,34 @@ claude mcp add ledmatrix --scope user --env LEDMATRIX_PANEL=90:E5:B1:D2:0E:C8 --
 Every mutating tool reads the state back and compares. It reports `changed` and
 `already` as different outcomes, because an "ok" that only means "nothing needed
 doing" is not a verification.
+
+---
+
+## Testing the branch you cannot reach
+
+`tools/agent/tests/` holds a panel's own captured answers and a stub that
+serves them, so the branches a live panel cannot show you still run. It is how
+the no-Home-Assistant path in `bringup.py` was first executed at all - the panel
+here has a working broker, so that path had never run on anything.
+
+```bash
+python3 tools/agent/tests/test_bringup_no_ha.py
+```
+
+Five cases: no broker, a broker configured but down, direct API keys instead of
+a broker, a working broker, `--keep-ha`. The pre-commit hook runs them whenever
+`tools/agent/` changes. The fixtures are real answers with every MAC, address,
+topic, station and now-playing scrubbed - this repository is public.
+
+Two defects it caught the first time it ran, both worth knowing about when you
+write the next tool against `/api/panel`:
+
+- **Several pages share one key.** Four of them are `market`. The firmware
+  stores one enable bit per KEY, not per page, so `{"enable":{"key":"market"}}`
+  takes all four. A dict keyed by page key keeps the last one read, and then
+  your report names one page while four go dark.
+- **`connected: false` is not "no Home Assistant".** A broker restarting looks
+  exactly like a broker that was never there, for about ten seconds.
 
 ---
 
