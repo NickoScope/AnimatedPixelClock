@@ -6,6 +6,7 @@
 // Not embedded:
 //   demo.lua: a test card for the px.* API, not something to hang on a wall
 //   world_clock.lua: already a native page drawing the same picture (src/worldclock, WORLDCLOCK_ENABLED); a second copy would show twice in the rotation
+//   sent over the air instead, marked @upload-only: cannes.lua
 
 #include <stdint.h>
 
