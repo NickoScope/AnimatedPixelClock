@@ -96,7 +96,13 @@ const uint32_t kBodyCap[NB_CALLER_COUNT] = {
   // freeipapi's json is a couple of hundred bytes; 4 KB is many times that and
   // it is PSRAM. Measure it and cut it once there are readings.
   4 * 1024,   // NB_WORLDCLOCK  - migrated 2026-09-21
-  0,          // NB_RAIL        - not yet; its own buffer is 1.5 MB today
+  // **Measured**, panel 2026-09-21: London Waterloo, 110 services, 120,619 B -
+  // and that was before the request stopped asking for half an hour of history
+  // (rtt_transform.h), which should take roughly a third off. 256 KB is twice
+  // the largest body ever seen at one of the busiest stations in the country,
+  // and NB_ERR_TRUNC makes a miss loud rather than silent. The board's own
+  // per-fetch buffer was 1.5 MB, a figure nothing ever justified.
+  256 * 1024, // NB_RAIL        - migrated 2026-09-21
   // Its own per-fetch buffer is 192 KB, and this mirrors it exactly so that
   // migrating changes nothing about which bodies are accepted. Inherited, not
   // measured: the board was at its daily API cap on 2026-09-21 and could not

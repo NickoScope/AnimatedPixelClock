@@ -7,6 +7,9 @@
 #include <Preferences.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
+#include <atomic>
+
+#include "../net/net_broker.h"
 #include <esp_heap_caps.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -136,6 +139,19 @@ DirectDiag   s_diag;
 const size_t kSampleMax = 900;
 char        *s_sample = nullptr;        // PSRAM, allocated on the first 200
 bool         s_running = false;     // under s_mux
+
+// --- the broker path's state machine, loop task only ------------------------
+//
+// A fetch here can be up to three requests: exchange the stored refresh token
+// for an access token, fetch the board, and - if the board answers 401 - do
+// both again once. On a task that was three blocking calls in a row; on the
+// broker each is a separate submit, so the sequence lives here instead.
+enum : uint8_t { RB_NONE = 0, RB_TOKEN, RB_BOARD };
+uint8_t  s_nbStep = RB_NONE;
+uint32_t s_nbSeq = 0;
+bool     s_nbUseAccess = false;      // which token the board request carried
+bool     s_nbExchanged = false;      // an exchange has already been tried this round
+Outcome  s_nbOut;                    // built across the steps, handed to take() at the end
 bool         s_ready   = false;     // under s_mux
 Outcome      s_done;                // under s_mux
 rtt::Lists  *s_result  = nullptr;   // PSRAM; the task writes it, the loop reads it once s_ready
@@ -319,6 +335,67 @@ uint8_t failure(const Reply &r) {
 }
 
 // GET /api/get_access_token with the stored token. True with s_access filled.
+// The token reply, from a buffer. Shared by the broker path and the fallback
+// exchange() so the two cannot drift. Writes s_access on success.
+bool parseTokenBody(Outcome &o, const char *body, size_t len) {
+  CappedPsram alloc(16 * 1024, true);
+  JsonDocument filter(&alloc), doc(&alloc);
+  rtt::tokenFilter(filter);
+  const DeserializationError e = deserializeJson(doc, body, len, DeserializationOption::Filter(filter));
+  int64_t until = 0;
+  wipeAccess();
+  if (!e && rtt::accessToken(doc.as<JsonVariantConst>(), s_access, kTokenMax, &until)) {
+    const int64_t now = time(nullptr);
+    s_accessUntil = until > now ? until : now + kTokenAssumeS;
+    s_kind = KIND_REFRESH;
+    o.validUntil = s_accessUntil;
+    return true;
+  }
+  o.state = e == DeserializationError::NoMemory ? ST_NOMEM : ST_BAD;
+  return false;
+}
+
+// The board reply, from a buffer. Same sharing, same reason.
+void consumeBoard(Outcome &o, const char *body, size_t len, bool useAccess) {
+  o.bodyBytes = (uint32_t)len;
+  if (!s_sample) s_sample = static_cast<char *>(heap_caps_calloc(1, kSampleMax + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  if (s_sample) {
+    static const char kKey[] = "\"services\"";
+    size_t from = 0;
+    for (size_t at = 0; at + sizeof(kKey) - 1 <= len; at++)
+      if (!memcmp(body + at, kKey, sizeof(kKey) - 1)) { from = at; break; }
+    size_t n = len - from;
+    if (n > kSampleMax) n = kSampleMax;
+    portENTER_CRITICAL(&s_mux);
+    memcpy(s_sample, body + from, n);
+    s_sample[n] = '\0';
+    portEXIT_CRITICAL(&s_mux);
+  }
+  CappedPsram alloc(kJsonCap, false);
+  JsonDocument filter(&alloc), doc(&alloc);
+  rtt::locationFilter(filter);
+  const DeserializationError e = deserializeJson(doc, body, len,
+                                                 DeserializationOption::Filter(filter),
+                                                 DeserializationOption::NestingLimit(12));
+  o.jsonPeak = (uint32_t)alloc.peak();
+  noteHeap(o);
+  if (e == DeserializationError::NoMemory) {
+    o.state = ST_NOMEM;
+  } else if (e || !rtt::transform(doc.as<JsonVariantConst>(), time(nullptr), s_taskCrs, s_result)) {
+    o.state = ST_BAD;
+  } else {
+    o.services = s_result->seen;
+    o.state = ST_OK;
+    const DirectDiag dg = {s_result->seen, s_result->skipDisp, s_result->skipPax, s_result->noEvent,
+                           s_result->noSched, s_result->skipCall, s_result->skipTime,
+                           s_result->firstT, s_result->firstNow};
+    portENTER_CRITICAL(&s_mux);
+    s_diag = dg;
+    portEXIT_CRITICAL(&s_mux);
+  }
+  if (o.state == ST_OK && !useAccess && s_kind == KIND_UNKNOWN) s_kind = KIND_ACCESS;
+}
+
 bool exchange(const char *stored, Outcome &o) {
   uint8_t *body = static_cast<uint8_t *>(heap_caps_malloc(kTokenBodyMax, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
   if (!body) { o.state = ST_NOMEM; return false; }
@@ -328,23 +405,7 @@ bool exchange(const char *stored, Outcome &o) {
   o.http = (int16_t)r.code;
   bool ok = false;
   if (r.code == 200 && !r.big) {
-    CappedPsram alloc(16 * 1024, true);
-    {
-      JsonDocument filter(&alloc), doc(&alloc);
-      rtt::tokenFilter(filter);
-      const DeserializationError e = deserializeJson(doc, (const char *)body, r.len, DeserializationOption::Filter(filter));
-      int64_t until = 0;
-      wipeAccess();
-      if (!e && rtt::accessToken(doc.as<JsonVariantConst>(), s_access, kTokenMax, &until)) {
-        const int64_t now = time(nullptr);
-        s_accessUntil = until > now ? until : now + kTokenAssumeS;
-        s_kind = KIND_REFRESH;
-        o.validUntil = s_accessUntil;
-        ok = true;
-      } else {
-        o.state = e == DeserializationError::NoMemory ? ST_NOMEM : ST_BAD;
-      }
-    }
+    ok = parseTokenBody(o, (const char *)body, r.len);
   } else if (r.code == 401 || r.code == 403) {
     wipeAccess();
     s_kind  = KIND_REFUSED;          // the stored token itself is not accepted
@@ -355,6 +416,61 @@ bool exchange(const char *stored, Outcome &o) {
   memset(body, 0, kTokenBodyMax);    // it held the access token
   heap_caps_free(body);
   return ok;
+}
+
+// The stored token, read fresh from NVS each time rather than held across the
+// steps: a secret kept in a buffer between two passes of loop() is a secret
+// waiting to be read by something else.
+bool readStored(char *out, size_t cap, char *kind, size_t kindCap) {
+  out[0] = '\0';
+  if (kind) kind[0] = '\0';
+  Preferences p;
+  if (p.begin(kNvsNs, true)) {
+    if (p.isKey("token")) p.getString("token", out, cap);
+    if (kind && p.isKey("kind")) p.getString("kind", kind, kindCap);
+    p.end();
+  }
+  return out[0] != '\0';
+}
+
+// One request, either step. Fills in everything both have in common.
+bool submitRail(const char *url, const char *bearer, bool interactive) {
+  char auth[kTokenMax + 8];
+  snprintf(auth, sizeof(auth), "Bearer %s", bearer);
+  NbRequest req = {};
+  req.url = url;
+  req.auth = auth;
+  req.caCert = kRttRootsPem;       // this board verifies its server
+  req.collect[0] = "Retry-After";
+  req.collect[1] = "X-RateLimit-Remaining-Day";
+  req.collect[2] = "X-RateLimit-Limit-Day";
+  req.collect[3] = "X-RateLimit-Remaining-Hour";
+  req.collect[4] = "X-RateLimit-Remaining-Minute";
+  req.collectCount = 5;
+  req.timeoutMs = 12000;
+  const bool sent = nbSubmitRequest(NB_RAIL, req, interactive);
+  memset(auth, 0, sizeof auth);    // the broker has its own copy
+  return sent;
+}
+
+bool submitBoard(bool useAccess) {
+  char stored[kTokenMax];
+  if (!readStored(stored, sizeof stored, nullptr, 0)) return false;
+  char query[80], url[160];
+  rtt::buildQuery(s_taskCrs, time(nullptr), true, query, sizeof(query));
+  snprintf(url, sizeof(url), "%s%s", kLocationUrl, query);
+  s_nbUseAccess = useAccess;
+  const bool sent = submitRail(url, useAccess ? s_access : stored, false);
+  memset(stored, 0, sizeof stored);
+  return sent;
+}
+
+bool submitToken() {
+  char stored[kTokenMax];
+  if (!readStored(stored, sizeof stored, nullptr, 0)) return false;
+  const bool sent = submitRail(kTokenUrl, stored, false);
+  memset(stored, 0, sizeof stored);
+  return sent;
 }
 
 void runFetch(Outcome &o) {
@@ -550,6 +666,79 @@ bool rttDirectLoop(const char *crs, rtt::Lists *out, int64_t *fetchedAt) {
   const uint32_t nowMs = millis();
   bool handed = false;
 
+  // The broker path. Each step's answer arrives in the mailbox and is turned
+  // into the next step - or into the Outcome that the code below already knows
+  // how to handle, by exactly the road it always took.
+  if (s_nbStep != RB_NONE) {
+    NbMailbox *mb = nbMailbox(NB_RAIL);
+    if (mb) {
+      const uint32_t seq = mb->seq.load(std::memory_order_acquire);
+      if (seq != s_nbSeq) {
+        s_nbSeq = seq;
+        const int32_t code = mb->code;
+        Outcome &o = s_nbOut;
+        o.http = (int16_t)code;
+        o.retryS  = mb->header[0][0] ? (int32_t)atoi(mb->header[0]) : -1;
+        o.leftDay = mb->header[1][0] ? (int32_t)atoi(mb->header[1]) : -1;
+        o.limitDay = mb->header[2][0] ? (int32_t)atoi(mb->header[2]) : -1;
+        o.leftHour = mb->header[3][0] ? (int32_t)atoi(mb->header[3]) : -1;
+        o.leftMinute = mb->header[4][0] ? (int32_t)atoi(mb->header[4]) : -1;
+        bool finished = true;
+        if (s_nbStep == RB_TOKEN) {
+          if (code == 200 && mb->bodyLen && parseTokenBody(o, mb->body, mb->bodyLen)) {
+            // Token in hand: now the board itself, with it.
+            if (submitBoard(true)) { s_nbStep = RB_BOARD; finished = false; }
+            else                   o.state = ST_TASK;
+          } else if (code == 401 || code == 403) {
+            wipeAccess();
+            s_kind  = KIND_REFUSED;        // the stored token itself is refused
+            o.state = ST_AUTH;
+          } else if (code == NB_ERR_TRUNC) {
+            o.state = ST_BIG;
+          } else if (o.state == ST_IDLE) {
+            o.state = code == NB_ERR_NO_TURN ? ST_LOWMEM : ST_NET;
+          }
+        } else {   // RB_BOARD
+          if (code == 401 && !s_nbExchanged && s_kind != KIND_ACCESS) {
+            // The stored token used as an access token, or one RTT no longer
+            // takes: exchange once and ask again. Exactly the fallback path's
+            // rule, spread over two passes of loop() instead of two calls.
+            if (s_nbUseAccess) wipeAccess();
+            s_nbExchanged = true;
+            if (submitToken()) { s_nbStep = RB_TOKEN; finished = false; }
+            else               o.state = ST_AUTH;
+          } else if (code == 204) {
+            rtt::emptyLists(s_taskCrs, s_result);
+            o.state = ST_OK;
+          } else if (code == 200 && mb->bodyLen) {
+            consumeBoard(o, mb->body, mb->bodyLen, s_nbUseAccess);
+          } else if (code == NB_ERR_TRUNC) {
+            o.state = ST_BIG;
+          } else if (code == 401 || code == 403) {
+            o.state = ST_AUTH;
+          } else if (code == 429) {
+            o.state = ST_RATE;
+          } else if (code < 0) {
+            o.state = code == NB_ERR_NO_TURN ? ST_LOWMEM : ST_NET;
+          } else {
+            o.state = ST_HTTP;
+          }
+        }
+        if (finished) {
+          s_nbStep = RB_NONE;
+          o.fetchedAt = time(nullptr);
+          o.kind = s_kind;
+          o.validUntil = s_kind == KIND_REFRESH ? s_accessUntil : 0;
+          portENTER_CRITICAL(&s_mux);
+          s_done = o;
+          s_ready = true;
+          s_running = false;
+          portEXIT_CRITICAL(&s_mux);
+        }
+      }
+    }
+  }
+
   bool running, ready;
   Outcome done;
   portENTER_CRITICAL(&s_mux);
@@ -597,8 +786,9 @@ bool rttDirectLoop(const char *crs, rtt::Lists *out, int64_t *fetchedAt) {
     }
     yieldingSince = 0; }
   if (netLockBusy()) { s_nextAtMs = nowMs + 2000UL; return handed; }         // another fetch is on the network
-  if (heap_caps_get_free_size(MALLOC_CAP_INTERNAL) < kMinInternalFree ||
-      heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) < kStackBytes + 1024) {
+  if (!nbReady(NB_RAIL) &&
+      (heap_caps_get_free_size(MALLOC_CAP_INTERNAL) < kMinInternalFree ||
+       heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) < kStackBytes + 1024)) {
     s_blocked  = ST_LOWMEM;
     s_nextAtMs = nowMs + kErrorS[0] * 1000UL;
     return handed;
@@ -608,7 +798,35 @@ bool rttDirectLoop(const char *crs, rtt::Lists *out, int64_t *fetchedAt) {
   portENTER_CRITICAL(&s_mux);
   s_running = true;
   portEXIT_CRITICAL(&s_mux);
-  if (xTaskCreatePinnedToCore(fetchTask, "rttfetch", kStackBytes, nullptr, kPriority, nullptr, kCore) != pdPASS) {
+  if (nbReady(NB_RAIL)) {
+    // No task, so no contiguous 10 KB to find first - which is what the guard
+    // above was checking, and why it is skipped on this path.
+    memset(&s_nbOut, 0, sizeof(s_nbOut));
+    s_nbOut.heapBefore = s_nbOut.heapMin = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+    memcpy(s_nbOut.crs, s_taskCrs, sizeof(s_nbOut.crs));
+    s_nbExchanged = false;
+    char stored[kTokenMax], kind[16];
+    const bool have = readStored(stored, sizeof stored, kind, sizeof kind);
+    memset(stored, 0, sizeof stored);
+    bool sent = false;
+    if (!have) {
+      s_nbOut.state = ST_NOTOKEN;
+    } else {
+      const bool cfgRefresh = !strcmp(kind, "refresh");
+      const bool useAccess = s_access && s_access[0] && time(nullptr) < s_accessUntil - kTokenMarginS;
+      if (cfgRefresh && !useAccess) { sent = submitToken(); if (sent) s_nbStep = RB_TOKEN; }
+      else                          { sent = submitBoard(useAccess); if (sent) s_nbStep = RB_BOARD; }
+      if (!sent) s_nbOut.state = ST_TASK;
+    }
+    if (!sent) {
+      s_nbStep = RB_NONE;
+      portENTER_CRITICAL(&s_mux);
+      s_running = false;
+      portEXIT_CRITICAL(&s_mux);
+      s_blocked  = s_nbOut.state;
+      s_nextAtMs = nowMs + kErrorS[0] * 1000UL;
+    }
+  } else if (xTaskCreatePinnedToCore(fetchTask, "rttfetch", kStackBytes, nullptr, kPriority, nullptr, kCore) != pdPASS) {
     portENTER_CRITICAL(&s_mux);
     s_running = false;
     portEXIT_CRITICAL(&s_mux);
