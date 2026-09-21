@@ -743,6 +743,48 @@ async def effect_api() -> str:
             "px.blend(x,y,r,g,b,a)": "a is alpha, a number",
             "px.glow(cx,cy,rad,r,g,b[,amp])": "amp defaults to 1.0",
         },
+        "text": {
+            "font": "PicopixelFB, and it is the only one. Stock Adafruit Picopixel "
+                    "with the U given a flat bottom, because at 2 mm pitch the stock "
+                    "U reads as V across a room.",
+            "range": "0x20..0x7E. **px.text folds lowercase onto uppercase** "
+                     "(lua_px.cpp:202), so 'a' and 'A' draw the same ink - a ramp or "
+                     "a palette built on letter case has half as many shapes as it "
+                     "looks like it has.",
+            "glyph box": "at most 3 px wide and 5 tall for the usual characters; "
+                         "W, M, #, N, & and a few others are 4-5 wide.",
+            "yAdvance": 7,
+            "where the ink lands": "px.text(x, y, ...) puts the baseline at y+6 and "
+                                   "the ink of a normal 5-tall glyph at rows y+2 "
+                                   "through y+6. So to fill a cell whose top row is "
+                                   "R, call px.text(x, R-2, ...).",
+            "advance": "per glyph, NOT monospace: 2 px for . : I ! | ', 3 for ` , ; "
+                       "< > ( ) [ ], 4 for most, 5-6 for W M # N &. px.width(s) sums "
+                       "them. For a fixed grid, place each character yourself rather "
+                       "than letting the advance do it.",
+            "tiling": "glyph ink is exactly 5 rows, so rows placed 5 px apart tile "
+                      "with no gap and no overlap; 6 px apart leaves one row of air.",
+        },
+        "character graphics": {
+            "the cell idiom": "px.rect(x, y, w, h, r, g, b, true) then px.text over "
+                              "it gives a cell with a background colour AND a "
+                              "foreground colour - the pair that asciicker's AnsiCell "
+                              "carries. Two colours and a glyph hold far more than "
+                              "one colour and a brightness ramp.",
+            "which way round": "for a picture, glyph ink is the lighter colour on a "
+                               "darker fill. For something that must read as a SHAPE "
+                               "- a digit, a bar - do the opposite: fill with the "
+                               "bright colour and lay a sparse dark glyph over it. No "
+                               "ASCII glyph is solid, so a shape built out of glyph "
+                               "ink comes out as a scatter of dots.",
+            "never leave a cell blank": "a flat area with no glyph turns the whole "
+                                        "thing back into a colour mosaic. Give it a "
+                                        "character whose ink coverage matches its "
+                                        "brightness, and part the two colours around "
+                                        "the cell's own mean so the level does not "
+                                        "shift.",
+            "worked example": "tools/luasim/scripts/la_gioconda.lua",
+        },
         "presence": {
             "available": "only on a build with PRESENCE_ENABLED; detect it with "
                          'local RAD = rawget(_G, "presence")',
