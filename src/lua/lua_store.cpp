@@ -1,6 +1,8 @@
-#include "lua_store.h"
-
+// The guard comes first: lua_store.h #errors without LUA_EFFECTS_ENABLED, and
+// the bench environments inherit LUA_STORE_ENABLED while unflagging the
+// effects. Including the header unconditionally broke both of their builds.
 #if defined(LUA_STORE_ENABLED)
+#include "lua_store.h"
 
 #include <LittleFS.h>
 #include <esp_heap_caps.h>
@@ -16,6 +18,12 @@ struct Entry {
 Entry   s_list[LUA_USER_MAX];
 uint8_t s_count = 0;
 bool    s_usable = false;
+
+// rescan() runs on the loop task, from an upload or a delete; luaStoreStem(),
+// luaStoreName() and luaStoreRead() run on the effect task on core 0. Without
+// this the reader could be inside an entry while the writer zeroes the count
+// and overwrites it - and open the wrong file, or a half-written name.
+portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 
 File     s_up;
 char     s_upStem[25];
@@ -42,11 +50,25 @@ void displayName(const char *stem, char *out, size_t cap) {
 }
 
 void rescan() {
-  s_count = 0;
-  if (!s_usable) return;
+  // Built aside and published in one critical section, so a reader never sees
+  // a list that is half rebuilt. The filesystem walk itself is far too slow to
+  // hold a spinlock across.
+  Entry   fresh[LUA_USER_MAX];
+  uint8_t kept = 0;
+  if (!s_usable) {
+    portENTER_CRITICAL(&s_mux);
+    s_count = 0;
+    portEXIT_CRITICAL(&s_mux);
+    return;
+  }
   File dir = LittleFS.open(LUA_STORE_DIR);
-  if (!dir || !dir.isDirectory()) return;
-  for (File f = dir.openNextFile(); f && s_count < LUA_USER_MAX; f = dir.openNextFile()) {
+  if (!dir || !dir.isDirectory()) {
+    portENTER_CRITICAL(&s_mux);
+    s_count = 0;
+    portEXIT_CRITICAL(&s_mux);
+    return;
+  }
+  for (File f = dir.openNextFile(); f && kept < LUA_USER_MAX; f = dir.openNextFile()) {
     if (f.isDirectory()) continue;
     const char *p = f.name();
     const char *slash = strrchr(p, '/');
@@ -59,13 +81,17 @@ void rescan() {
     memcpy(stem, p, sn);
     stem[sn] = '\0';
     if (!validStem(stem)) continue;
-    Entry &e = s_list[s_count];
+    Entry &e = fresh[kept];
     strncpy(e.stem, stem, sizeof(e.stem) - 1);
     e.stem[sizeof(e.stem) - 1] = '\0';
     displayName(e.stem, e.name, sizeof(e.name));
     e.bytes = (uint32_t)f.size();
-    s_count++;
+    kept++;
   }
+  portENTER_CRITICAL(&s_mux);
+  memcpy(s_list, fresh, sizeof(Entry) * kept);
+  s_count = kept;
+  portEXIT_CRITICAL(&s_mux);
 }
 
 void pathOf(const char *stem, char *out, size_t cap) {
@@ -92,15 +118,111 @@ void luaStoreInit() {
 
 bool   luaStoreUsable()     { return s_usable; }
 size_t luaStoreFreeBytes()  { return s_usable ? (LittleFS.totalBytes() - LittleFS.usedBytes()) : 0; }
-uint8_t luaStoreCount()     { return s_count; }
+uint8_t luaStoreCount() {
+  portENTER_CRITICAL(&s_mux);
+  const uint8_t n = s_count;
+  portEXIT_CRITICAL(&s_mux);
+  return n;
+}
 
-const char *luaStoreStem(uint8_t i) { return i < s_count ? s_list[i].stem : ""; }
-const char *luaStoreName(uint8_t i) { return i < s_count ? s_list[i].name : ""; }
-uint32_t    luaStoreBytes(uint8_t i) { return i < s_count ? s_list[i].bytes : 0; }
+// The names are returned into per-caller buffers rather than as pointers into
+// s_list: a pointer handed out here could be rewritten by rescan() while the
+// caller was still reading through it. One buffer for each of the two, because
+// the two callers are different tasks.
+namespace {
+bool copyEntry(uint8_t i, Entry *out) {
+  portENTER_CRITICAL(&s_mux);
+  const bool ok = i < s_count;
+  if (ok) *out = s_list[i];
+  portEXIT_CRITICAL(&s_mux);
+  return ok;
+}
+}  // namespace
+
+const char *luaStoreStem(uint8_t i) {
+  static char held[2][25];
+  static uint8_t turn = 0;
+  Entry e;
+  if (!copyEntry(i, &e)) return "";
+  char *dst = held[turn ^= 1];
+  strncpy(dst, e.stem, sizeof(held[0]) - 1);
+  dst[sizeof(held[0]) - 1] = '\0';
+  return dst;
+}
+
+const char *luaStoreName(uint8_t i) {
+  static char held[2][25];
+  static uint8_t turn = 0;
+  Entry e;
+  if (!copyEntry(i, &e)) return "";
+  char *dst = held[turn ^= 1];
+  strncpy(dst, e.name, sizeof(held[0]) - 1);
+  dst[sizeof(held[0]) - 1] = '\0';
+  return dst;
+}
+
+uint32_t luaStoreBytes(uint8_t i) {
+  Entry e;
+  return copyEntry(i, &e) ? e.bytes : 0;
+}
 
 // --- the checks -----------------------------------------------------------
+//
+// This is a lexer, not a bracket counter, and the first version of it was a
+// bracket counter - which the audit broke in two ways worth recording:
+//
+//   * it stopped at an unterminated `--[[` and returned TRUE, so a file that
+//     never closed its comment was ACCEPTED. The header promised the opposite.
+//   * it did not know levelled long brackets, so `[=[ )))) ]=]` was scanned as
+//     code and the stray closers pushed the counter back down. Depth measured
+//     below depth real.
+//
+// And it was measuring the wrong thing. Lua's parser calls enterlevel from
+// subexpr, statement and restassign (lparser.c:1262, 1846, 1384), so a nested
+// block costs a level with no bracket in sight - and the most expensive cycle
+// of all, nested `local function`, is exactly that: statement 96 + body 144 +
+// statlist 32 = 272 bytes a level, all of it invisible to brackets.
+//
+// So both are counted, and every path that cannot make sense of the source
+// refuses it.
+
+namespace {
+
+// Is there a long bracket at i - `[[`, `[=[`, `[==[` ...? Returns its level, or
+// -1. A bare `[` is indexing and is not one.
+int longOpen(const char *s, size_t len, size_t i) {
+  if (s[i] != '[') return -1;
+  size_t j = i + 1, eq = 0;
+  while (j < len && s[j] == '=') { eq++; j++; }
+  return (j < len && s[j] == '[') ? (int)eq : -1;
+}
+
+// Past the matching close of a long bracket of this level, or len when there is
+// none - which every caller treats as a refusal.
+size_t longClose(const char *s, size_t len, size_t i, int level) {
+  for (; i < len; i++) {
+    if (s[i] != ']') continue;
+    size_t j = i + 1, eq = 0;
+    while (j < len && s[j] == '=') { eq++; j++; }
+    if ((int)eq == level && j < len && s[j] == ']') return j + 1;
+  }
+  return len;
+}
+
+inline bool wordChar(char c) { return isalnum((unsigned char)c) || c == '_'; }
+
+// A keyword at i, on its own rather than inside an identifier.
+bool wordAt(const char *s, size_t len, size_t i, const char *kw) {
+  const size_t n = strlen(kw);
+  if (i + n > len || memcmp(s + i, kw, n) != 0) return false;
+  if (i > 0 && wordChar(s[i - 1])) return false;
+  return i + n == len || !wordChar(s[i + n]);
+}
+
+}  // namespace
 
 bool luaStoreValidate(const char *src, size_t len, char *err, size_t errlen) {
+  if (!src) { snprintf(err, errlen, "no source"); return false; }
   if (len == 0) { snprintf(err, errlen, "the file is empty"); return false; }
   if (len > LUA_USER_SRC_MAX) {
     snprintf(err, errlen, "%u B is over the %u B a script may be",
@@ -108,57 +230,118 @@ bool luaStoreValidate(const char *src, size_t len, char *err, size_t errlen) {
     return false;
   }
 
-  // A script with no draw() cannot run, and lua_fx would refuse it after
-  // spending the load budget. Saying so here costs nothing.
-  if (!strstr(src, "draw")) {
-    snprintf(err, errlen, "the script defines no draw()");
-    return false;
-  }
+  int  brackets = 0, blocks = 0, worst = 0;
+  bool sawDraw = false;
+  unsigned line = 1;
 
-  // Bracket depth. Strings and comments are skipped so an honest script is not
-  // refused for the brackets inside a message; anything missed can only refuse
-  // a file that would have been fine, never admit one that would not.
-  int depth = 0, worst = 0;
-  size_t line = 1;
   for (size_t i = 0; i < len; i++) {
     const char c = src[i];
+
     if (c == '\n') { line++; continue; }
+
+    // Comments, short and long, before anything else reads a '-'.
     if (c == '-' && i + 1 < len && src[i + 1] == '-') {
-      if (i + 3 < len && src[i + 2] == '[' && src[i + 3] == '[') {      // --[[ ... ]]
-        const char *e = strstr(src + i + 4, "]]");
-        if (!e) break;
-        i = (size_t)(e - src) + 1;
+      const int lvl = (i + 2 < len) ? longOpen(src, len, i + 2) : -1;
+      if (lvl >= 0) {
+        const size_t after = longClose(src, len, i + 2 + (size_t)lvl + 2, lvl);
+        if (after >= len) {
+          snprintf(err, errlen, "a long comment opened at line %u is never closed", line);
+          return false;
+        }
+        for (size_t k = i; k < after; k++) if (src[k] == '\n') line++;
+        i = after - 1;
       } else {
-        while (i < len && src[i] != '\n') i++;
-        line++;
+        while (i + 1 < len && src[i + 1] != '\n') i++;
       }
       continue;
     }
+
+    // Long strings.
+    {
+      const int lvl = longOpen(src, len, i);
+      if (lvl >= 0) {
+        const size_t after = longClose(src, len, i + (size_t)lvl + 2, lvl);
+        if (after >= len) {
+          snprintf(err, errlen, "a long string opened at line %u is never closed", line);
+          return false;
+        }
+        for (size_t k = i; k < after; k++) if (src[k] == '\n') line++;
+        i = after - 1;
+        continue;
+      }
+    }
+
+    // Quoted strings. An escape takes the next byte with it; a newline inside
+    // one is a syntax error in Lua, and refusing here says so earlier.
     if (c == '"' || c == '\'') {
       const char q = c;
-      for (i++; i < len && src[i] != q; i++) if (src[i] == '\\') i++;
-      continue;
-    }
-    if (c == '[' && i + 1 < len && src[i + 1] == '[') {                 // [[ long string ]]
-      const char *e = strstr(src + i + 2, "]]");
-      if (!e) break;
-      i = (size_t)(e - src) + 1;
-      continue;
-    }
-    if (c == '(' || c == '[' || c == '{') {
-      depth++;
-      if (depth > worst) worst = depth;
-      if (depth > LUA_USER_DEPTH_MAX) {
-        snprintf(err, errlen,
-                 "brackets nested %d deep at line %u; this panel takes %d. The "
-                 "effect task has a 12 KB stack and Lua's parser recurses with "
-                 "the nesting",
-                 depth, (unsigned)line, LUA_USER_DEPTH_MAX);
+      size_t j = i + 1;
+      for (; j < len && src[j] != q; j++) {
+        if (src[j] == '\n') {
+          snprintf(err, errlen, "a string on line %u runs past the end of the line", line);
+          return false;
+        }
+        if (src[j] == '\\') j++;
+      }
+      if (j >= len) {
+        snprintf(err, errlen, "a string opened at line %u is never closed", line);
         return false;
       }
-    } else if (c == ')' || c == ']' || c == '}') {
-      if (depth > 0) depth--;
+      i = j;
+      continue;
     }
+
+    if (c == '(' || c == '[' || c == '{') {
+      brackets++;
+    } else if (c == ')' || c == ']' || c == '}') {
+      if (--brackets < 0) {
+        snprintf(err, errlen, "a closing bracket at line %u has nothing to close", line);
+        return false;
+      }
+    } else if (wordChar(c)) {
+      // `for`/`while` are not counted: their own `do` opens the block, and
+      // counting both would refuse honest code. `if` closes with `end`,
+      // `repeat` with `until`. This mapping is exact, not conservative.
+      if (wordAt(src, len, i, "do") || wordAt(src, len, i, "if") ||
+          wordAt(src, len, i, "function") || wordAt(src, len, i, "repeat")) {
+        blocks++;
+      } else if (wordAt(src, len, i, "end") || wordAt(src, len, i, "until")) {
+        if (--blocks < 0) {
+          snprintf(err, errlen, "an `%s` at line %u closes a block that was never opened",
+                   wordAt(src, len, i, "end") ? "end" : "until", line);
+          return false;
+        }
+      } else if (wordAt(src, len, i, "draw")) {
+        sawDraw = true;
+      }
+      while (i + 1 < len && wordChar(src[i + 1])) i++;   // past the identifier
+      continue;
+    }
+
+    const int depth = brackets + blocks;
+    if (depth > worst) worst = depth;
+    if (depth > LUA_USER_DEPTH_MAX) {
+      snprintf(err, errlen,
+               "nested %d deep at line %u; this panel takes %d. Lua's parser "
+               "recurses with the nesting and the effect task has a 12 KB stack",
+               depth, line, LUA_USER_DEPTH_MAX);
+      return false;
+    }
+  }
+
+  if (brackets != 0) {
+    snprintf(err, errlen, "%d bracket%s left open at the end of the file",
+             brackets, brackets == 1 ? "" : "s");
+    return false;
+  }
+  if (blocks != 0) {
+    snprintf(err, errlen, "%d block%s left open at the end of the file",
+             blocks, blocks == 1 ? "" : "s");
+    return false;
+  }
+  if (!sawDraw) {
+    snprintf(err, errlen, "the script defines no draw()");
+    return false;
   }
   return true;
 }
@@ -167,9 +350,10 @@ bool luaStoreValidate(const char *src, size_t len, char *err, size_t errlen) {
 
 char *luaStoreRead(uint8_t i, size_t *lenOut) {
   if (lenOut) *lenOut = 0;
-  if (i >= s_count) return nullptr;
+  Entry e;
+  if (!copyEntry(i, &e)) return nullptr;
   char path[48];
-  pathOf(s_list[i].stem, path, sizeof(path));
+  pathOf(e.stem, path, sizeof(path));
   File f = LittleFS.open(path, "r");
   if (!f) return nullptr;
   const size_t n = f.size();
@@ -251,14 +435,28 @@ bool luaStoreFinish(char *err, size_t errlen) {
   heap_caps_free(buf);
   if (!ok) { LittleFS.remove(LUA_STORE_TMP); return false; }
 
-  char path[48];
+  // The old copy is only destroyed once the new one is safely in place. The
+  // other order - remove then rename - loses the script outright when the
+  // rename fails, which on a full filesystem is exactly when it will.
+  char path[48], old[56];
   pathOf(s_upStem, path, sizeof(path));
-  if (LittleFS.exists(path)) LittleFS.remove(path);
+  const bool replacing = LittleFS.exists(path);
+  snprintf(old, sizeof(old), "%s.old", path);
+  if (replacing) {
+    LittleFS.remove(old);
+    if (!LittleFS.rename(path, old)) {
+      LittleFS.remove(LUA_STORE_TMP);
+      snprintf(err, errlen, "could not set the old script aside");
+      return false;
+    }
+  }
   if (!LittleFS.rename(LUA_STORE_TMP, path)) {
+    if (replacing) LittleFS.rename(old, path);      // put it back
     LittleFS.remove(LUA_STORE_TMP);
     snprintf(err, errlen, "could not store the script");
     return false;
   }
+  if (replacing) LittleFS.remove(old);
   rescan();
   Serial.printf("[luastore] %s.lua stored, %u B\n", s_upStem, (unsigned)got);
   return true;

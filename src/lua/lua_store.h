@@ -17,20 +17,23 @@
 //
 // So the depth is bounded instead of the stack being grown, in two places:
 //
-//   * LUAI_MAXCCALLS is lowered from Lua's default 200 (llimits.h:254) to
-//     LUA_CCALLS_MAX below. Lua's parser counts its own recursion through
+//   * LUAI_MAXCCALLS is lowered from Lua's default 200 (llimits.h:254) in
+//     platformio.ini, where the arithmetic is written out in full. Lua's parser
+//     counts its own recursion through
 //     luaE_incCstack and raises "C stack overflow" past the limit, so the
 //     interpreter guards itself - which is more trustworthy than anything
-//     written here. The arithmetic: the built-in effects leave at least 7 KB of
-//     the 12 KB stack free, a parser frame on Xtensa is of the order of 120
-//     bytes, and 40 levels is therefore about 4.8 KB - inside the margin.
+//     written here. The number is measured from this build's own -fstack-usage
+//     output, not estimated: one level of nesting costs a CYCLE of frames, and
+//     the worst of them, nested `local function`, is 272 bytes a level.
 //
-//   * a cheap scan before the source is ever handed to the parser, which
-//     refuses a file that is too big or too deeply bracketed. It exists for the
-//     error message: "nested too deeply" tells an author what to change, where
-//     "C stack overflow" tells them nothing. A string or comment containing a
-//     bracket can only make it refuse something it need not have - never the
-//     reverse - and that is the right way round.
+//   * a scan before the source is ever handed to the parser. It counts BLOCKS
+//     as well as brackets, because the most expensive nesting there is - a
+//     `local function` inside a `local function` - contains no bracket at all,
+//     and a bracket counter measures none of it. It is a small lexer rather
+//     than a counter: it knows levelled long brackets and strings, and every
+//     path that cannot make sense of the source refuses the file rather than
+//     passing it on. It exists for the error message - "nested 17 deep at line
+//     82" tells an author what to change, where "C stack overflow" does not.
 //
 // The source itself is read into PSRAM, never the internal heap.
 // ============================================================
@@ -51,9 +54,11 @@
 // panel so far, is about 9 KB with its whole picture embedded as a table.
 #define LUA_USER_SRC_MAX (24U * 1024U)
 
-// Bracket nesting refused beyond this. Chosen well below LUA_CCALLS_MAX so the
-// clear error arrives first; nothing written by hand comes close.
-#define LUA_USER_DEPTH_MAX 32
+// Combined bracket and block nesting refused beyond this. Chosen well below the
+// LUAI_MAXCCALLS the interpreter enforces, so the clear error arrives first;
+// nothing written by hand comes close - the deepest script in this repository
+// reaches 6.
+#define LUA_USER_DEPTH_MAX 16
 
 #define LUA_STORE_DIR "/lua"
 #define LUA_STORE_TMP "/lua/upload.tmp"
@@ -84,4 +89,8 @@ void luaStoreAbort();
 
 // Everything the checks above would refuse, without writing anything. Exposed
 // so a tool can be told why before it spends the upload.
+//
+// `src` must be NUL-terminated at src[len]; the scan reads no further than len
+// but the contract is written down here because it is not obvious from the
+// signature.
 bool luaStoreValidate(const char *src, size_t len, char *err, size_t errlen);

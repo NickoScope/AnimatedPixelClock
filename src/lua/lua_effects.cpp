@@ -219,8 +219,16 @@ void effectTask(void *) {
           Serial.printf("[luafx] %s\n", s_fx.error());
           publishError(runningWord, s_fx.error());
           failed = true;
+#if defined(LUA_STORE_ENABLED)
+          releaseUser();   // nothing will run: give the PSRAM back now
+#endif
         } else {
           s_fps = s_fx.fps();
+#if defined(LUA_STORE_ENABLED)
+          // The chunk is compiled and the state owns it; the text is finished
+          // with. Up to 24 KB of PSRAM back for as long as the effect runs.
+          releaseUser();
+#endif
         }
         s_frameGapMs = 0;
         reportAt = millis() + kReportMs;

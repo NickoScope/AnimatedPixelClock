@@ -43,6 +43,7 @@ import json
 import os
 import subprocess
 import sys
+import urllib.parse
 import time
 from pathlib import Path
 from typing import Annotated, Literal
@@ -1018,7 +1019,7 @@ async def effect_upload(args: UploadIn) -> str:
         data = src.read_bytes()
         p = _pick(args.panel)
         a = p["address"]
-        r = P.post_file(a, f"/api/lua/upload?name={args.name}", "script",
+        r = P.post_file(a, "/api/lua/upload?name=" + urllib.parse.quote(args.name), "script",
                         f"{args.name}.lua", data)
         if not r or not r.get("success"):
             return (f"The panel refused it: {(r or {}).get('error', 'no answer')}")

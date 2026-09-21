@@ -115,9 +115,8 @@ struct OpenCtx {
   lua_Number   fps;
 };
 
-// Everything that can raise runs under the pcall: opening libraries allocates,
-// and reading a global can reach an __index a script put on _G.
-int openProtected(lua_State *L) {
+// Opening the libraries allocates, so it runs under a pcall of its own.
+int libsProtected(lua_State *L) {
   OpenCtx *c = static_cast<OpenCtx *>(lua_touserdata(L, 1));
   nslua_sandbox_open(L);
   luaPxOpen(L, c->canvas);
@@ -129,9 +128,15 @@ int openProtected(lua_State *L) {
   // files of this directory and must keep matching luasim pixel for pixel.
   presenceLuaOpen(L);
 #endif
-  // Mode "t": source text only. The bytecode loader is not safe against
-  // hostile input (see nslua.cpp).
-  if (luaL_loadbufferx(L, c->src, c->len, c->chunk, "t") != LUA_OK) return lua_error(L);
+  return 0;
+}
+
+// The chunk body, and the globals it left behind. Reading a global can reach an
+// __index a script put on _G, so this is protected too - but it is shallow, and
+// it is no longer the deepest thing on the stack.
+int bodyProtected(lua_State *L) {
+  OpenCtx *c = static_cast<OpenCtx *>(lua_touserdata(L, 1));
+  lua_pushvalue(L, 2);                 // the loaded chunk
   lua_call(L, 0, 0);
   if (lua_getglobal(L, "draw") != LUA_TFUNCTION) return luaL_error(L, "the script defines no draw()");
   lua_pop(L, 1);
@@ -171,10 +176,52 @@ bool LuaFx::open(const char *name, const char *src, size_t len, LuaPxCanvas *can
   snprintf(chunk, sizeof(chunk), "=%s", name);
   OpenCtx ctx = {src, len, chunk, canvas, 60.0, (lua_Number)LUA_FX_DEFAULT_FPS};
   arm(limits.loadInstructions, limits.loadMs);
+
   lua_pushcfunction(L, nslua_message_handler);
-  lua_pushcfunction(L, openProtected);
+  lua_pushcfunction(L, libsProtected);
   lua_pushlightuserdata(L, &ctx);
-  const int status = lua_pcall(L, 1, 0, 1);
+  int status = lua_pcall(L, 1, 0, 1);
+  if (status != LUA_OK) {
+    lua_sethook(L, nullptr, 0, 0);
+    takeError(status);
+    close();
+    return false;
+  }
+  lua_settop(L, 0);
+
+  // The parse is the deepest C recursion this runtime ever performs - Lua's
+  // parser descends with the source's nesting - and it is deliberately NOT
+  // wrapped in a pcall of ours. Two things follow, and on a 12 KB task stack
+  // both of them matter:
+  //
+  //   * the frames a pcall puts above it (lua_pcallk, luaD_pcall,
+  //     luaD_rawrunprotected, callnoyield, ccall, precall, precallC and the
+  //     protected function itself) are not there, which is over 400 bytes of
+  //     prologue the parser does not have to pay for;
+  //   * with no errfunc set, a syntax error throws straight out instead of
+  //     running nslua_message_handler, and that handler calls luaL_traceback,
+  //     whose own frame is 448 bytes - spent at maximum depth, because Lua
+  //     calls the handler before it unwinds (ldebug.c, luaG_errormsg).
+  //
+  // Nothing is lost by it: lua_load protects itself through luaD_protectedparser,
+  // it returns a status rather than raising, and a traceback of a syntax error
+  // has no call stack to show anyway.
+  //
+  // Mode "t": source text only. The bytecode loader is not safe against
+  // hostile input (see nslua.cpp).
+  status = luaL_loadbufferx(L, ctx.src, ctx.len, ctx.chunk, "t");
+  if (status != LUA_OK) {
+    lua_sethook(L, nullptr, 0, 0);
+    takeError(status);
+    close();
+    return false;
+  }
+
+  lua_pushcfunction(L, nslua_message_handler);   // 2
+  lua_pushcfunction(L, bodyProtected);           // 3
+  lua_pushlightuserdata(L, &ctx);                // 4
+  lua_pushvalue(L, 1);                           // 5: the chunk
+  status = lua_pcall(L, 2, 0, 2);
   lua_sethook(L, nullptr, 0, 0);
   if (status != LUA_OK) {
     takeError(status);

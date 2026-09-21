@@ -933,9 +933,13 @@ static void handleLua() {
       const char *stem = in["delete"];
       if (!stem || !*stem) REJECT(400, "delete wants the uploaded script's name");
       if (!luaStoreDelete(stem)) REJECT(404, "no uploaded script by that name");
-      // It may have been the one on screen, and its slot has just moved under
-      // every index above it. Step off rather than leave a stale selection.
+      // Every index above the one removed has just moved down, so the page the
+      // panel is on now means a different script. Dropping only the selection
+      // is not enough: loop() re-selects from ctrlPage on its very next pass
+      // (main.cpp, luaEffectsSelect(ctrlLuaEffect(ctrlPage))) and would quietly
+      // start whatever slid into that slot. Leave the page itself.
       luaEffectStop();
+      panelShowPage(0);   // the clock, which is always page 0 and always there
     }
 #else
     if (hasDel) REJECT(400, "this build stores no uploaded scripts");
@@ -982,6 +986,10 @@ static void handleLua() {
 // task watchdog has to be fed per chunk or the board reboots mid-upload.
 static const char *s_luaUpErr = nullptr;
 static String      s_luaUpName;
+// A POST with no file part never reaches the chunk handler at all, and without
+// this the done handler would answer success with the name and index left over
+// from the previous upload.
+static bool        s_luaUpSeen = false;
 
 static void handleLuaUploadChunk() {
   HTTPUpload &upload = server.upload();
@@ -989,6 +997,10 @@ static void handleLuaUploadChunk() {
   char err[160];
   if (upload.status == UPLOAD_FILE_START) {
     s_luaUpErr = nullptr;
+    s_luaUpSeen = true;
+    // The name comes from the query string. A multipart field cannot be read
+    // here: WebServer merges _postArgs into _currentArgs only after the whole
+    // form is parsed (Parsing.cpp), which is long after UPLOAD_FILE_START.
     s_luaUpName = server.arg("name");
     if (!s_luaUpName.length()) {
       s_luaUpName = upload.filename;
@@ -1021,6 +1033,15 @@ static void handleLuaUploadChunk() {
 static void handleLuaUploadDone() {
   server.sendHeader("Access-Control-Allow-Origin", "*");
   JsonDocument doc(&s_alloc);
+  if (!s_luaUpSeen) {
+    doc["success"] = false;
+    doc["error"] = "the request carried no file: send the script as a multipart part";
+    String out;
+    serializeJson(doc, out);
+    server.send(400, "application/json", out);
+    return;
+  }
+  s_luaUpSeen = false;
   if (s_luaUpErr) {
     doc["success"] = false;
     doc["error"] = s_luaUpErr;
