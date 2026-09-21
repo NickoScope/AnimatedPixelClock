@@ -14,7 +14,8 @@ or through the MCP server, which is the same thing an agent would do:
 effect_upload  name=starship  from_gallery=true
 ```
 
-A panel holds **four** uploaded effects at once beside the seven compiled in.
+A panel holds **twelve** uploaded effects at once, up to 50 KB each, beside
+the seven compiled in.
 `tools/agent/gallery.py list` says what is here; `panel_effects` says what is on
 the panel.
 

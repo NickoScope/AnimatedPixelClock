@@ -112,8 +112,9 @@ claude mcp add ledmatrix --scope user --env LEDMATRIX_PANEL=AA:BB:CC:00:11:22 --
 - `effect_check` - run every script through the firmware's real runtime and budgets, on your Mac
 
 **Putting one on a panel, with no flash at all**
-- `effect_upload` - a script onto a running panel over the air, into one of four
-  slots. `from_gallery=true` takes it straight out of `gallery/`
+- `effect_upload` - a script onto a running panel over the air, into one of
+  twelve slots, up to 50 KB each. `from_gallery=true` takes it straight out of
+  `gallery/`
 - `gallery_list` - what is in `gallery/`, with sizes and previews
 - `effect_delete` - free a slot
 - `effect_install` - regenerate the compiled-in effect table. This one is the old

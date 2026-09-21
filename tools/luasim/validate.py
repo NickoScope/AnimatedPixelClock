@@ -26,6 +26,11 @@ import sys
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
 SRC = ROOT / "src" / "lua" / "lua_store.cpp"
+# The header too, and this is not a detail: every limit this tool enforces -
+# the size cap, the depth cap - is a #define in the header, not in the .cpp.
+# Watching only the .cpp meant raising LUA_USER_SRC_MAX left a cached binary
+# happily rejecting scripts by the old number, which is a checker that lies.
+HDR = ROOT / "src" / "lua" / "lua_store.h"
 RUNNER = HERE / ".validate_runner.cpp"
 BIN = HERE / ".validate"
 
@@ -55,8 +60,9 @@ int main(int argc, char **argv) {
 
 
 def build():
-    if BIN.exists() and BIN.stat().st_mtime > SRC.stat().st_mtime and \
-       BIN.stat().st_mtime > pathlib.Path(__file__).stat().st_mtime:
+    newest = max(SRC.stat().st_mtime, HDR.stat().st_mtime,
+                 pathlib.Path(__file__).stat().st_mtime)
+    if BIN.exists() and BIN.stat().st_mtime > newest:
         return True
     RUNNER.write_text(RUNNER_SRC)
     r = subprocess.run(

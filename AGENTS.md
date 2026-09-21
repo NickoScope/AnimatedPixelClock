@@ -197,7 +197,7 @@ curl -X POST -H 'Content-Type: application/json' -d '{"delete":"my_effect"}' "ht
 `GET /api/lua` reports `uploaded{count,slots,builtIn,maxBytes,maxDepth,fsFree,scripts}`
 and `stackFreeMin`.
 
-**What the panel refuses, and why it is not fussiness.** Over 24 KB; nothing
+**What the panel refuses, and why it is not fussiness.** Over 50 KB; nothing
 called `draw`; blocks and brackets nested deeper than 16. That last one is the
 interesting one: the effect task has a 12 KB stack and Lua's parser recurses
 with the source's nesting at up to 384 bytes a level, so depth is the one thing
@@ -241,7 +241,7 @@ shows. `tools/luasim/photo_to_lua.py` is the same thing by hand.
   with Floyd-Steinberg, and at 128x64 that is the difference between a picture
   and a poster.
 - **It fits because it is quantised.** 8,192 pixels as full RGB would be 49,152
-  characters against a 24 KB limit. Two base64 characters an index is 20 KB.
+  characters against a 50 KB limit. Two base64 characters an index is 20 KB.
 - **Do not run-length encode it.** It was tried. Dithering is what keeps a face
   from banding at this size, and it is exactly what destroys runs - 8,192 pixels
   came out as 7,232 of them, the length character became overhead, and the file

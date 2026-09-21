@@ -1050,7 +1050,7 @@ async def effect_api() -> str:
                                     "gets 256, and at 128x64 that is the "
                                     "difference between a picture and a poster.",
             "how it fits": "8,192 pixels as full RGB would be 49,152 characters "
-                           "against a 24 KB limit. Quantised to 256 with "
+                           "against a 50 KB limit. Quantised to 256 with "
                            "Floyd-Steinberg it is two base64 characters a pixel "
                            "= 20 KB, which fits with room for the code.",
             "do NOT run-length encode it": "It was tried. Dithering is what "
@@ -1462,7 +1462,7 @@ async def effect_upload(args: UploadIn) -> str:
     is why it exists: write, preview, measure, upload, watch it run.
 
     The panel takes it seriously before it accepts it. A script is refused if it
-    is over 24 KB, if nothing in it is called draw, or if its blocks and
+    is over 50 KB, if nothing in it is called draw, or if its blocks and
     brackets nest deeper than 16. That is not tidiness: the effect task has a
     12 KB stack and Lua's parser recurses with the source's nesting, at up to
     384 bytes a level. Blocks count as well as brackets, because the expensive
@@ -1581,7 +1581,7 @@ async def effect_install() -> str:
 
     **It does not reach the panel**, and since effect_upload exists there is
     rarely a reason to want it: use this only for a script that should ship with
-    the firmware rather than live in one of the four uploaded slots. The image
+    the firmware rather than live in one of the twelve uploaded slots. The image
     still has to be built and flashed, and that is a person's call with the
     panel in front of them. This server has no flashing tool and will not get
     one.

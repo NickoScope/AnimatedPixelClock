@@ -62,11 +62,40 @@
 // How many uploaded scripts the panel will hold. Each one is a page, and the
 // pages are an enum fixed at build time, so the slots are reserved whether or
 // not anything is in them; an empty one is simply not visitable.
-#define LUA_USER_MAX 4
+//
+// Raised from 4 on 2026-09-22, with the arithmetic done rather than guessed.
+// What a slot actually costs:
+//
+//   * 56 bytes of INTERNAL RAM in s_list[], permanently (lua_store.cpp:18 -
+//     Entry is two 25-byte names and a uint32, padded). 4 slots were 224 B;
+//     12 are 672. **+448 B of the roughly 21 KB free internal heap**, and that
+//     heap is this board's scarce one - it is the only real price here.
+//   * the same 56 bytes again in rescan()'s `fresh[]`, on the LOOP TASK's
+//     8 KB stack, but only while a rescan runs. 672 B of frame is well inside
+//     the -Wstack-usage=2048 ratchet this build enforces.
+//   * one entry in the page enum (main.cpp), which ctrlPageVisitable() hides
+//     while the slot is empty.
+//
+// What a slot does NOT cost: PSRAM (a script's buffer is allocated at the
+// file's real size when it loads, and freed when the effect closes) and disk
+// (LittleFS had 20.3 MB free with four scripts on it).
+#define LUA_USER_MAX 12
 
-// The largest script accepted. la_gioconda, the biggest thing written for this
-// panel so far, is about 9 KB with its whole picture embedded as a table.
-#define LUA_USER_SRC_MAX (24U * 1024U)
+// The largest script accepted. Raised from 24 KB on 2026-09-22: aquarium.lua
+// reached 24,059 B of the old 24,576 and the next change to it would have had
+// to buy its space by deleting prose.
+//
+// This one is free in internal RAM. Both buffers that hold a whole script -
+// the read-back that luaStoreFinish validates and the one luaStoreRead hands
+// the parser - are heap_caps_malloc(n + 1, MALLOC_CAP_SPIRAM) at the file's
+// REAL size, not at this cap, and PSRAM has 15.6 MB free. Twelve full 50 KB
+// scripts are 600 KB of a 20.3 MB filesystem.
+//
+// What it does cost is parse time on the effect task: a 20 KB photograph
+// script opens in about 40 ms, so 50 KB is of the order of 100 ms, inside the
+// 500 ms a draw is allowed. Nesting depth, not length, is what bounds the
+// parser's C stack, and that is LUA_USER_DEPTH_MAX and LUAI_MAXCCALLS below.
+#define LUA_USER_SRC_MAX (50U * 1024U)
 
 // Combined bracket and block nesting refused beyond this. Chosen well below the
 // LUAI_MAXCCALLS the interpreter enforces, so the clear error arrives first;
