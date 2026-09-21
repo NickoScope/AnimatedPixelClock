@@ -1,5 +1,6 @@
 // The broker. See net_broker.h for what it is for, nb_queue.h for whose turn
-// it is, and docs/32-net-broker.md in the knowledge base for how we got here.
+// it is, and docs/32-net-broker.md in the knowledge base for how we got here
+// and which parts are NetGate's.
 #include "net_broker.h"
 
 #if defined(NET_BROKER_ENABLED)
@@ -11,7 +12,6 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <freertos/task.h>
-#include <new>
 #include <string.h>
 
 #include "../debug/dbg_log.h"
@@ -22,111 +22,117 @@ namespace {
 // **8 KB, from a measurement rather than from the largest of four.**
 //
 // This was 12 KB - the largest of the stacks it replaces - chosen so that no
-// caller could be worse off. That reasoning was wrong in a way the panel
-// proved on 2026-09-20: taking 12 KB into .bss cut the largest contiguous
-// internal block from 16,372 B to 9,716, below what the flight board requires
-// before it will even attempt a fetch. A number picked for safety made the
-// board unusable.
+// caller could be worse off. That reasoning was wrong in a way the panel proved
+// on 2026-09-20: taking 12 KB into .bss cut the largest contiguous internal
+// block from 16,372 B to 9,716, below what the flight board requires before it
+// will even attempt a fetch. A number picked for safety made the board unusable.
 //
-// The figure below comes from the closest analogue there is - the rail board's
-// own fetch task, which does the same work this one does: TLS handshake,
-// HTTPClient, and the consumer's parse straight off the socket. Four readings
-// of its high-water mark, 2026-09-20 and 2026-09-21:
+// 8,192 B comes from the rail board's own fetch task, which did the same work:
+// four readings of its high-water mark, 5,984 / 6,136 / 6,152 / 6,160 B, a
+// spread of 176 B. Since the parse moved off this task onto loop(), the measured
+// use here is lower still - 4,052 B of 8,192 on the weather fetch, read from
+// /api/info on 2026-09-21 - and, more to the point, it no longer depends on what
+// any consumer's parser does. That is what the mailbox buys: the number below is
+// now a property of this file.
 //
-//     used 5,984 · 6,136 · 6,152 · 6,160 B     (spread 176 B over four)
-//
-// The last was taken through /api/railboard with a 9,216 B stack, leaving
-// 3,056 B free. 8,192 B therefore carries the measured peak plus about 2 KB -
-// a slightly tighter margin than the rail board keeps, on a task that reports
-// its own high-water on every fetch so the margin is watched rather than
-// assumed. If `stackFreeMin` in /api/info ever approaches zero, this is where
-// to look, and `nsc status` is how to see it.
-//
-// **What 8 KB does NOT fix.** It is not enough on its own: the flight board's
-// threshold is 13,312 B against a largest block of 16,372, so barely 3 KB of
-// contiguity is available while that board still starts its own task. The
-// broker has to take the flight board's fetch over before it can pay for
-// itself - see docs/32-net-broker.md.
+// NetGate's equivalent task is 16 KB and its own ADD-62 v1.4 records that 8 KB
+// proved sufficient over 24 h of uptime; that finding was never applied there.
 const uint32_t kStackBytes = 8 * 1024;
 
-// Core 0, below the Lua effect task, exactly where the four fetch tasks run
-// today: the Arduino loop and the HUB75 DMA refresh live on core 1.
+// Core 0, below the Lua effect task, exactly where the four fetch tasks ran:
+// the Arduino loop and the HUB75 DMA refresh live on core 1.
 //
-// Priority 1, not 0, and the difference matters now. The four fetch tasks ran
-// at 0 - tskIDLE_PRIORITY - which was harmless because each lived for one
-// fetch and died. This one never dies, and a permanent task sharing IDLE0's
-// priority shares it with the task that feeds the watchdog. Every path in its
-// loop blocks, so it does not starve anything; one above idle simply removes
-// the question.
+// Priority 1, not 0. The four fetch tasks ran at 0 - tskIDLE_PRIORITY - which
+// was harmless because each lived for one fetch and died. This one never dies,
+// and a permanent task sharing IDLE0's priority shares it with the task that
+// feeds the watchdog. Every path in its loop blocks, so it starves nothing;
+// one above idle simply removes the question. (NetGate's netTask is also 1.)
 const UBaseType_t kPriority = 1;
 const BaseType_t  kCore     = 0;
 
 // Long enough for a slow origin on a busy evening, short enough that one dead
 // host does not hold the other three for a visible time. The rail board used
 // 12 s against its own API and the weather 10 s; this is the larger, so no
-// caller gets a shorter deadline than it has today.
+// caller gets a shorter deadline than it had.
 const uint32_t kDefaultTimeoutMs = 12000;
 // Seconds, and a separate figure: the library's own default is 120 s, which is
 // two minutes of one caller holding the wire before anything is even sent.
 const int kHandshakeTimeoutS = 12;
 
 // How long the task sleeps when there is nothing to do. It is woken by
-// nbSubmitRequest, so this is only a backstop - nothing waits on it in normal
-// use.
+// nbSubmitRequest, so this is only a backstop.
 const uint32_t kIdleWaitMs = 1000;
 
-// The stack and the task block are .bss, not the heap. That is the whole
-// point: taken at link time, so they can never fail to be allocated at the
-// worst moment, and never leave a hole behind when the fetch ends. FreeRTOS in
-// arduino-esp32 2.0.17 is built without CONFIG_FREERTOS_TASK_CREATE_ALLOW_EXT_MEM,
-// and xTaskCreateStaticPinnedToCore asserts the stack is internal memory -
-// .bss is internal, so this satisfies it (portVALID_STACK_MEM -> the port's
-// xPortcheckValidStackMem, portmacro.h:742; the same note is in src/lua/README.md).
+// **How big each caller's mailbox is, and what a zero means.**
+//
+// A zero is "this module has not migrated yet": it has no mailbox, and
+// nbSubmitRequest refuses it. So the migration state of the whole thing is this
+// one table rather than four modules' worth of half-remembered state.
+//
+// A number here has to be earned by a measurement of the real bodies that
+// module receives - the panel reports `bodyBytes` on both transport boards -
+// because a cap too small silently becomes NB_ERR_TRUNC and a cap too large is
+// PSRAM held from boot for nothing. Weather's open-meteo reply with the fields
+// we ask for runs well under 2 KB; 8 KB is four times that.
+const uint32_t kBodyCap[NB_CALLER_COUNT] = {
+  // 8 KB against a measured body of 746 B (panel, 2026-09-21: "[nb] 0: code
+  // 200, 746 B in 1255 ms"). Deliberately NOT cut to fit that: one sample is
+  // not a distribution, this lives in PSRAM where it costs nothing scarce, and
+  // a cap that is too small becomes NB_ERR_TRUNC on the day open-meteo adds a
+  // field. It comes down when there are several readings to come down to.
+  8 * 1024,   // NB_WEATHER     - migrated 2026-09-21
+  0,          // NB_WORLDCLOCK  - not yet; size it from a measured body
+  0,          // NB_RAIL        - not yet; its own buffer is 1.5 MB today
+  0,          // NB_FLIGHT      - not yet; its own buffer is 192 KB today
+};
+
+// The stack and the task block are .bss, not the heap. That is the whole point:
+// taken at link time, so they can neither fail to be allocated at the worst
+// moment nor leave a hole when a fetch ends. FreeRTOS in arduino-esp32 2.0.17 is
+// built without CONFIG_FREERTOS_TASK_CREATE_ALLOW_EXT_MEM, and
+// xTaskCreateStaticPinnedToCore asserts the stack is internal memory - .bss is
+// internal, so this satisfies it (portVALID_STACK_MEM -> the port's
+// xPortcheckValidStackMem, portmacro.h:742).
 //
 // **On the units, because the header contradicts itself.** task.h documents
 // ulStackDepth as "the number of bytes. Note that this differs from vanilla
 // FreeRTOS", and then documents pxStackBuffer as needing "at least ulStackDepth
-// indexes". Both are true at once and neither is a trap: this port defines
-// portSTACK_TYPE as uint8_t (portmacro.h:80), so a StackType_t IS a byte and an
-// index IS a byte. The expression below is therefore the same number either way
-// - it is written with the sizeof so that it stays correct if that ever changes.
+// indexes". Both are true at once: this port defines portSTACK_TYPE as uint8_t
+// (portmacro.h:80), so a StackType_t IS a byte and an index IS a byte.
 //
-// Aligned to 16 because a uint8_t array has an alignment of one, and the port
+// Aligned to 16 because a uint8_t array has an alignment of one and the port
 // rounds the stack top DOWN to portBYTE_ALIGNMENT (16): an unaligned buffer
-// silently loses up to fifteen bytes off the top. Not a fault, but this way the
-// 12,288 B the map reports is the 12,288 B the task actually gets.
+// silently loses up to fifteen bytes off the top.
 StackType_t  s_stack[kStackBytes / sizeof(StackType_t)] __attribute__((aligned(16)));
 StaticTask_t s_tcb;
 TaskHandle_t s_task = nullptr;
 
 // The wake-up is a semaphore of our own rather than the task's notification.
 // A task has exactly one notification slot in this build
-// (configTASK_NOTIFICATION_ARRAY_ENTRIES is 1, FreeRTOSConfig.h:253), several
-// IDF drivers signal completion through direct-to-task notifications, and a
-// caller's parse() runs on THIS task - so a driver used inside a parse could
-// eat the broker's own wake-up and leave requests waiting for the 1 s backstop.
-// Static, so it is .bss like the stack and cannot fail to be created.
+// (configTASK_NOTIFICATION_ARRAY_ENTRIES is 1, FreeRTOSConfig.h:253) and several
+// IDF drivers signal completion through direct-to-task notifications, so
+// anything this task calls could eat its wake-up. Static, so it is .bss like the
+// stack and cannot fail to be created.
 StaticSemaphore_t s_wakeBuf;
 SemaphoreHandle_t s_wake = nullptr;
 
-// What a caller asked for. The strings are in PSRAM - they are touched only by
-// the loop task and the broker task, never by DMA and never as a stack - so
-// four generous buffers cost nothing where it is scarce.
+// What a caller asked for. The strings are in PSRAM - touched only by the loop
+// task and the broker task, never by DMA and never as a stack - so four generous
+// buffers cost nothing where it is scarce.
 struct NbText { char url[NB_URL_MAX]; char auth[NB_AUTH_MAX]; };
 NbText *s_text = nullptr;
 
-// The small part stays internal: sixteen bytes a caller.
+// The small part stays internal: a few bytes a caller.
 struct NbJob {
-  NbParseFn   parse;
-  void       *ctx;
-  const char *caCert;    // not copied: a static/PROGMEM string from the caller
-  const char *authHeader;// likewise; nullptr means "Authorization"
-  const char *collect;   // likewise, a literal header name
+  const char *caCert;     // not copied: a static/PROGMEM string from the caller
+  const char *authHeader; // likewise; nullptr means "Authorization"
+  const char *collect;    // likewise, a literal header name
+  uint32_t    tag;
   uint32_t    timeoutMs;
-  bool      done;      // an outcome is waiting to be collected
-  bool      ok;        // what parse() returned, or false
 };
 NbJob s_job[NB_CALLER_COUNT];
+
+NbMailbox s_mb[NB_CALLER_COUNT];
 
 NbQueue      s_q;
 portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
@@ -135,141 +141,138 @@ uint32_t s_served = 0;
 uint32_t s_failed = 0;
 uint32_t s_stackFreeMin = kStackBytes;
 
-// **The TLS client is built per request and destroyed before the result is
-// published.** It used to be one pair held from boot, on the theory that
-// reusing them saved churn. Measured on the panel 2026-09-21, that theory cost
-// internal RAM the panel does not have.
-//
-// NickoScope32's NetGate - the same shape of broker, in production for months -
-// made the other choice and wrote down why (netgate.cpp:128-131, :198):
-//
-//     Ns32TlsClient client;   // "Локальный клиент на запрос"
-//     }   // "~HTTPClient/~WiFiClientSecure: TLS-память освобождена ДО seq++"
-//
-// The memory is back before the consumer is ever told the answer is ready, so
-// whatever the consumer does next finds the heap as it was. Session reuse is
-// deferred there as an open question, and it stays deferred here: on a board
-// with 34 KB of internal RAM, holding a session to save a handshake is paying
-// in the only currency that is scarce.
+// Where the body goes. HTTPClient::writeToStream() decodes chunked framing and
+// content-length itself and pushes the decoded bytes here, which is why this
+// exists instead of a hand-rolled read loop on available()/connected(). Both of
+// our transport boards still have such a loop, and a truncated response is
+// exactly the kind of fault they hide. NetGate reached the same conclusion - its
+// NgSink is netgate.cpp:81-103 - and this is that, with 32-bit lengths, because
+// two of our consumers deal in bodies far past its 64 KB.
+class NbSink : public Stream {
+ public:
+  char    *buf;
+  uint32_t cap;
+  uint32_t len = 0;
+  bool     truncated = false;
 
-// Deliver an outcome to the caller, exactly once, whatever happened. Every
-// path out of a request goes through here, which is what makes the contract on
-// NbParseFn true rather than aspirational.
-bool deliver(const NbJob &job, NbReply &reply) {
-  return job.parse ? job.parse(reply) : (reply.code == HTTP_CODE_OK);
-}
+  NbSink(char *b, uint32_t c) : buf(b), cap(c) {}
+
+  size_t write(uint8_t b) override {
+    if (cap < 2 || len >= cap - 1) { truncated = true; return 0; }
+    buf[len++] = (char)b;
+    return 1;
+  }
+  size_t write(const uint8_t *data, size_t size) override {
+    if (cap < 2) { truncated = true; return 0; }
+    const size_t room = (size_t)(cap - 1) - len;
+    const size_t n = size < room ? size : room;
+    if (n) { memcpy(buf + len, data, n); len += (uint32_t)n; }
+    if (n < size) truncated = true;
+    return n;   // a short write stops writeToStream by itself
+  }
+  // A sink only writes; the read half of Stream is not used.
+  int available() override { return 0; }
+  int read() override { return -1; }
+  int peek() override { return -1; }
+  void flush() override {}
+};
 
 // Do one fetch on the broker task. The network's turn is already held by the
-// caller: taking it here would mean the slot sat marked on-air for the whole
-// wait, and an interactive request arriving a millisecond later would queue
-// behind a wait it has nothing to do with.
-bool runJob(uint8_t who) {
+// caller. Returns the code that goes in the mailbox.
+int32_t runJob(uint8_t who, NbMailbox &mb) {
   NbJob job;
   portENTER_CRITICAL(&s_mux);
   job = s_job[who];
   portEXIT_CRITICAL(&s_mux);
 
-  NbReply reply = {0, nullptr, -1, false, "", job.ctx};
+  mb.bodyLen = 0;
+  mb.header[0] = '\0';
+  if (mb.body && mb.bodyCap) mb.body[0] = '\0';
 
   uint32_t timeout = job.timeoutMs ? job.timeoutMs : kDefaultTimeoutMs;
   // setTimeout takes a uint16_t, so a caller asking for more than 65 s would
-  // silently wrap to something short. Clamp rather than let the truncation be
-  // discovered on the wall.
+  // silently wrap to something short.
   if (timeout > 65000) timeout = 65000;
 
-  // Both live in this scope and nowhere else. They are small objects on a
-  // stack that is already permanently allocated; what they own on the heap
-  // goes back when they leave scope - which is before runJob returns, and so
-  // before the caller is told anything at all.
-  WiFiClientSecure tlsClient;
-  HTTPClient       httpClient;
-  WiFiClientSecure *const s_tls = &tlsClient;
-  HTTPClient       *const s_http = &httpClient;
+  int32_t code = 0;
+  bool truncated = false;
+  {
+    // Both live in this scope and nowhere else, and that is deliberate: what
+    // they own on the heap goes back when they leave it, which is before the
+    // answer is published, so the consumer never acts on a heap this request is
+    // still holding. NetGate makes the same choice and says why at
+    // netgate.cpp:128 and :198.
+    WiFiClientSecure tls;
+    HTTPClient http;
 
-  // Exactly one of these, on every request, never conditionally: each clears
-  // the other's state. With a per-request client that is belt and braces
-  // rather than the load-bearing guard it was, but a request that sets
-  // neither would inherit the library's default, which is to verify against
-  // nothing configured - so it stays unconditional.
-  if (job.caCert) s_tls->setCACert(job.caCert);
-  else            s_tls->setInsecure();
-  s_tls->setHandshakeTimeout(kHandshakeTimeoutS);
-  s_http->setTimeout((uint16_t)timeout);
-  s_http->setConnectTimeout((int32_t)timeout);
-  s_http->useHTTP10(true);   // no chunked framing to unpick while parsing the stream
+    // Exactly one of these, on every request, never conditionally. A request
+    // that set neither would inherit whatever the library was left in.
+    if (job.caCert) tls.setCACert(job.caCert);
+    else            tls.setInsecure();
+    tls.setHandshakeTimeout(kHandshakeTimeoutS);
 
-  // end() on every exit. With a per-request client the old hazard is gone -
-  // accumulated headers cannot outlive the object - but end() also closes the
-  // connection, and leaving that to a destructor running after the caller's
-  // parse has read from a half-closed socket is not something to discover
-  // later. The guard costs nothing and keeps the order explicit.
-  struct HttpEnd {
-    HTTPClient *h;
-    ~HttpEnd() { h->end(); }
-  } httpEnd{s_http};
+    http.setTimeout((uint16_t)timeout);
+    http.setConnectTimeout((int32_t)timeout);
+    http.setReuse(false);
 
-  if (!s_http->begin(*s_tls, s_text[who].url)) {
-    // Not logged with the URL: it carries an API key for two of the boards.
-    dbgLogf("[nb] %u: the URL was refused before connecting\n", (unsigned)who);
-    reply.code = NB_ERR_BAD_URL;
-    return deliver(job, reply);
+    if (!http.begin(tls, s_text[who].url)) {
+      // Not logged with the URL: it carries an API key for two of the boards.
+      dbgLogf("[nb] %u: the URL was refused before connecting\n", (unsigned)who);
+      code = NB_ERR_BAD_URL;
+    } else {
+      if (s_text[who].auth[0])
+        http.addHeader(job.authHeader ? job.authHeader : "Authorization", s_text[who].auth);
+      http.addHeader("Accept", "application/json");
+      const char *collect[1] = {job.collect};
+      if (job.collect) http.collectHeaders(collect, 1);
+
+      code = http.GET();
+      if (code > 0 && mb.body && mb.bodyCap) {
+        NbSink sink(mb.body, mb.bodyCap);
+        const int written = http.writeToStream(&sink);
+        mb.bodyLen = sink.len;
+        truncated = sink.truncated;
+        if (written < 0 && sink.len == 0 && code == HTTP_CODE_OK) code = HTTPC_ERROR_READ_TIMEOUT;
+      }
+      // Read before end(): the header table is cleared with the connection.
+      if (job.collect) {
+        const String value = http.header(job.collect);
+        strncpy(mb.header, value.c_str(), sizeof(mb.header) - 1);
+        mb.header[sizeof(mb.header) - 1] = '\0';
+      }
+      http.end();
+    }
+  }   // the TLS client's memory is back here, before anything is published
+
+  if (mb.body && mb.bodyCap) mb.body[mb.bodyLen] = '\0';
+  // Truncation is reported, never silent. A caller parsing a body cut mid-object
+  // gets a parse error and blames the server; this says who really did it.
+  if (truncated) {
+    dbgLogf("[nb] %u: body did not fit %u B - truncated\n", (unsigned)who, (unsigned)mb.bodyCap);
+    code = NB_ERR_TRUNC;
   }
-  if (s_text[who].auth[0])
-    s_http->addHeader(job.authHeader ? job.authHeader : "Authorization", s_text[who].auth);
-  s_http->addHeader("Accept", "application/json");
-  const char *collect[1] = {job.collect};
-  if (job.collect) s_http->collectHeaders(collect, 1);
+  if (code < 0 && code != NB_ERR_BAD_URL && code != NB_ERR_TRUNC)
+    dbgLogf("[nb] %u: transport %d\n", (unsigned)who, (int)code);
+  else if (code > 0 && code != HTTP_CODE_OK)
+    dbgLogf("[nb] %u: HTTP %d\n", (unsigned)who, (int)code);
+  return code;
+}
 
-  // Baseline, because WiFiClientSecure::_lastError is sticky and now SHARED.
-  // It is written only by connect(IPAddress,...) - WiFiClientSecure.cpp:142 -
-  // and never cleared: not by stop(), not at the start of a connect. Two
-  // consequences, both of which would make this log lie:
-  //   * on SUCCESS it is set to start_ssl_client's return, which is the socket
-  //     descriptor (ssl_client.cpp) - a positive number, not zero, so every
-  //     later failure would report a handshake error that did not happen;
-  //   * connect(const char *host,...) returns 0 on a DNS failure WITHOUT
-  //     touching it, so a name that does not resolve would report whatever the
-  //     previous fetch left - and with one client serving four consumers, that
-  //     is another module's error against this module's host.
-  // So: a real handshake failure is negative AND different from what was there
-  // before this request.
-  char prevErr[64];
-  const int errBefore = s_tls->lastError(prevErr, sizeof prevErr);
-
-  reply.code = s_http->GET();
-  // The String lives until http.end(), which the guard runs after the parse
-  // has returned - so the pointer is valid for exactly as long as the body is.
-  String collected;
-  if (job.collect && reply.code > 0) {
-    collected = s_http->header(job.collect);
-    reply.header = collected.c_str();
-  }
-  if (reply.code > 0) {
-    // Set for an error status too, so a caller that wants to read the server's
-    // explanation can. Never set when code < 0: there is no stream then.
-    reply.body = s_http->getStreamPtr();
-    reply.contentLength = (int32_t)s_http->getSize();
-    if (reply.code != HTTP_CODE_OK) dbgLogf("[nb] %u: HTTP %d\n", (unsigned)who, reply.code);
-  } else {
-    char err[64] = {0};
-    const int errAfter = s_tls->lastError(err, sizeof err);
-    reply.tls = errAfter < 0 && errAfter != errBefore;
-    dbgLogf("[nb] %u: HTTP %d%s%s\n", (unsigned)who, reply.code,
-            reply.tls ? " tls: " : "", reply.tls ? err : "");
-  }
-
-  const bool ok = deliver(job, reply);
-  // end() is the guard's job; stop() is ours, because the session is not kept:
-  // four different hosts take turns on this one client.
-  s_tls->stop();
-  return ok;
+// Fill every field, then bump seq. That order is the contract: a consumer that
+// sees a new seq is guaranteed the payload that belongs to it.
+void publish(uint8_t who, int32_t code, uint32_t startMs) {
+  NbMailbox &mb = s_mb[who];
+  mb.code = code;
+  mb.tag = s_job[who].tag;
+  mb.durationMs = millis() - startMs;
+  mb.seq = mb.seq + 1;
 }
 
 void brokerTask(void *) {
   for (;;) {
-    // Look without committing. Nothing is marked on-air yet, so the wait for
-    // the network's turn below cannot make a later interactive request queue
-    // behind it.
+    // Look without committing. Nothing is marked on-air yet, so the wait for the
+    // network's turn below cannot make a later interactive request queue behind
+    // a wait it has nothing to do with.
     portENTER_CRITICAL(&s_mux);
     uint8_t who = nbPick(&s_q, millis());
     portEXIT_CRITICAL(&s_mux);
@@ -278,15 +281,15 @@ void brokerTask(void *) {
       continue;
     }
 
-    // Still interlocked with the three modules that have not moved over yet,
-    // and it waits rather than gives up: while they still start their own
-    // fetch tasks, a broker that refused the moment one of them held the lock
-    // would simply never fetch. When the last one is migrated this lock has no
-    // other holder and goes with it.
+    // Still interlocked with the three modules that have not moved over yet, and
+    // it waits rather than gives up: while they still start their own fetch
+    // tasks, a broker that refused the moment one of them held the lock would
+    // simply never fetch. When the last one migrates this lock has no other
+    // holder and goes with it.
     NetLockGuard net(NET_LOCK_WAIT_MS);
 
     // Pick again: the wait may have been long, and an interactive request that
-    // arrived during it deserves to win the turn it would have won anyway.
+    // arrived during it deserves the turn it would have won anyway.
     portENTER_CRITICAL(&s_mux);
     who = nbPick(&s_q, millis());
     if (who < NB_CALLER_COUNT) nbStart(&s_q, who);
@@ -294,78 +297,71 @@ void brokerTask(void *) {
     if (who >= NB_CALLER_COUNT) continue;
 
     const uint32_t startMs = millis();
-    bool ok;
+    int32_t code;
     if (net.held()) {
-      ok = runJob(who);
+      code = runJob(who, s_mb[who]);
     } else {
-      // Report it rather than silently re-queue: a caller waiting on nbTake()
-      // must always get an answer, or it sits busy until a reboot.
-      NbJob job;
-      portENTER_CRITICAL(&s_mux);
-      job = s_job[who];
-      portEXIT_CRITICAL(&s_mux);
-        NbReply reply = {NB_ERR_NO_TURN, nullptr, -1, false, "", job.ctx};
+      // Reported, never silently re-queued: a caller watching its mailbox must
+      // always get an answer, or it sits busy until a reboot.
       dbgLogf("[nb] %u: no network turn within %u ms\n", (unsigned)who,
               (unsigned)NET_LOCK_WAIT_MS);
-      ok = deliver(job, reply);
+      s_mb[who].bodyLen = 0;
+      s_mb[who].header[0] = '\0';
+      code = NB_ERR_NO_TURN;
     }
-    const uint32_t tookMs = millis() - startMs;
 
     // In ESP-IDF's FreeRTOS port a task's stack depth is given in bytes, and
-    // this returns the smallest amount that was ever still free, in bytes too.
+    // this returns the smallest amount ever still free, in bytes too.
     const uint32_t freeMin = (uint32_t)uxTaskGetStackHighWaterMark(nullptr);
 
-    // Outside the critical section: 128 B of PSRAM, and nobody may write to
-    // this slot while it is still on air.
+    // Outside the critical section: PSRAM, and nobody may write to this slot
+    // while it is still on air.
     memset(s_text[who].auth, 0, sizeof s_text[who].auth);   // the token does not linger
 
+    publish(who, code, startMs);
+
     portENTER_CRITICAL(&s_mux);
-    s_job[who].done = true;
-    s_job[who].ok = ok;
     if (freeMin < s_stackFreeMin) s_stackFreeMin = freeMin;
     s_served++;
-    if (!ok) s_failed++;
+    if (code != HTTP_CODE_OK) s_failed++;
     nbFinish(&s_q);
     portEXIT_CRITICAL(&s_mux);
 
-    dbgLogf("[nb] %u: %s in %u ms, stack low-water %u B free\n", (unsigned)who,
-            ok ? "ok" : "failed", (unsigned)tookMs, (unsigned)freeMin);
+    dbgLogf("[nb] %u: code %d, %u B in %u ms, stack low-water %u B free\n",
+            (unsigned)who, (int)code, (unsigned)s_mb[who].bodyLen,
+            (unsigned)s_mb[who].durationMs, (unsigned)freeMin);
   }
 }
 
 }  // namespace
 
-// What the broker costs the internal heap, printed as it is spent.
-//
-// It was added on 2026-09-21 to chase an apparent 18 KB loss against the good
-// build. **That comparison was wrong** - one reading was taken right after
-// boot and the other after the panel had been driven through the transport
-// pages, and `largestHeapBlock` on this board falls by more than half over an
-// hour of ordinary use. Measured properly at the same point in the boot, the
-// 8 KB build leaves a largest block of 14,324 B against 23,540 B, which the
-// stack and the held TLS client account for between them.
-//
-// The lines stay, because the question "what does the broker cost" should be
-// answerable from the log rather than by subtracting two readings that may not
-// be comparable - which is how the wrong number was arrived at in the first
-// place.
-static void nbMark(const char *what) {
-  Serial.printf("[nb] cost %-22s free %6u  largest %6u\n", what,
-                (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
-                (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
-}
-
 bool nbBegin() {
   if (s_task) return true;
-  nbMark("before anything");
 
   s_text = static_cast<NbText *>(heap_caps_calloc(NB_CALLER_COUNT, sizeof(NbText),
-                                                      MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+                                                  MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
   if (!s_text) {
     Serial.println("[nb] no PSRAM for the request buffers: the broker stays down");
     return false;
   }
-  nbMark("after PSRAM buffers");
+
+  memset(s_mb, 0, sizeof s_mb);
+  uint32_t mailboxBytes = 0;
+  for (uint8_t i = 0; i < NB_CALLER_COUNT; i++) {
+    if (!kBodyCap[i]) continue;   // not migrated: no mailbox, submits refused
+    s_mb[i].body = static_cast<char *>(heap_caps_malloc(kBodyCap[i],
+                                       MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (!s_mb[i].body) {
+      // One caller losing its mailbox is not fatal to the others: it keeps its
+      // own fetch path, which is exactly what nbReady() is for.
+      Serial.printf("[nb] no PSRAM for mailbox %u (%u B): that caller keeps its own path\n",
+                    (unsigned)i, (unsigned)kBodyCap[i]);
+      continue;
+    }
+    s_mb[i].bodyCap = kBodyCap[i];
+    s_mb[i].body[0] = '\0';
+    mailboxBytes += kBodyCap[i];
+  }
 
   s_wake = xSemaphoreCreateBinaryStatic(&s_wakeBuf);   // static: cannot fail
   nbInit(&s_q);
@@ -378,37 +374,44 @@ bool nbBegin() {
     // Static creation has nothing to allocate, so this means a bad argument,
     // not a shortage - but say so rather than run on with a dead broker.
     Serial.println("[nb] task create refused: the broker stays down");
+    for (uint8_t i = 0; i < NB_CALLER_COUNT; i++) {
+      heap_caps_free(s_mb[i].body); s_mb[i].body = nullptr; s_mb[i].bodyCap = 0;
+    }
     heap_caps_free(s_text); s_text = nullptr;
     return false;
   }
-  nbMark("after the task");
-  Serial.printf("[nb] up: %u B stack in .bss, %u B of request buffers in PSRAM\n",
-                (unsigned)kStackBytes, (unsigned)(NB_CALLER_COUNT * sizeof(NbText)));
+  Serial.printf("[nb] up: %u B stack in .bss, %u B of mailboxes and %u B of request buffers in PSRAM\n",
+                (unsigned)kStackBytes, (unsigned)mailboxBytes,
+                (unsigned)(NB_CALLER_COUNT * sizeof(NbText)));
   return true;
 }
 
 bool nbUp() { return s_task != nullptr; }
 
+bool nbReady(uint8_t who) {
+  return s_task && who < NB_CALLER_COUNT && s_mb[who].body && s_mb[who].bodyCap;
+}
+
+NbMailbox *nbMailbox(uint8_t who) {
+  if (!s_task || who >= NB_CALLER_COUNT || !s_mb[who].body) return nullptr;
+  return &s_mb[who];
+}
+
 bool nbSubmitRequest(uint8_t who, const NbRequest &req, bool interactive) {
-  if (!s_task || who >= NB_CALLER_COUNT || !req.url) return false;
+  if (!nbReady(who) || !req.url) return false;
   if (strlen(req.url) >= NB_URL_MAX) return false;
   if (req.auth && strlen(req.auth) >= NB_AUTH_MAX) return false;
 
   portENTER_CRITICAL(&s_mux);
-  // An uncollected outcome is not overwritten: collect it, then ask again.
-  // Otherwise a caller that submits twice in a row loses the first answer and
-  // waits a whole refresh interval to find out.
-  const bool blocked = s_job[who].done || s_q.slot[who].state == NB_ONAIR;
+  const bool blocked = s_q.slot[who].state != NB_EMPTY;
   if (!blocked) {
-    s_job[who].parse = req.parse;
-    s_job[who].ctx = req.ctx;
     s_job[who].caCert = req.caCert;
     s_job[who].authHeader = req.authHeader;
     s_job[who].collect = req.collect;
+    s_job[who].tag = req.tag;
     s_job[who].timeoutMs = req.timeoutMs;
-    s_job[who].ok = false;
-    // Under the lock, so the broker can never read half of a URL that the loop
-    // task is still writing.
+    // Under the lock, so the broker can never read half of a URL the loop task
+    // is still writing.
     strlcpy(s_text[who].url, req.url, NB_URL_MAX);
     if (req.auth) strlcpy(s_text[who].auth, req.auth, NB_AUTH_MAX);
     else s_text[who].auth[0] = '\0';
@@ -427,17 +430,6 @@ bool nbPending(uint8_t who) {
   const bool p = s_q.slot[who].state != NB_EMPTY;
   portEXIT_CRITICAL(&s_mux);
   return p;
-}
-
-bool nbTake(uint8_t who, bool *ok) {
-  if (!s_task || who >= NB_CALLER_COUNT) return false;
-  portENTER_CRITICAL(&s_mux);
-  const bool had = s_job[who].done;
-  const bool res = s_job[who].ok;
-  s_job[who].done = false;
-  portEXIT_CRITICAL(&s_mux);
-  if (had && ok) *ok = res;
-  return had;
 }
 
 void nbGetStats(NbStats *out) {
@@ -459,14 +451,14 @@ void nbGetStats(NbStats *out) {
 
 #else   // !NET_BROKER_ENABLED
 
-// The broker is not built in. Every caller keeps its own path; nbBegin() says
-// so once, and a submit is simply refused - callers test the return value and
-// fall back, so nothing changes for a build without the flag.
+// The broker is not built in. Every caller keeps its own path; nbUp() says so
+// and a submit is simply refused, so nothing changes for a build without it.
 bool nbBegin() { return false; }
 bool nbUp() { return false; }
+bool nbReady(uint8_t) { return false; }
+NbMailbox *nbMailbox(uint8_t) { return nullptr; }
 bool nbSubmitRequest(uint8_t, const NbRequest &, bool) { return false; }
 bool nbPending(uint8_t) { return false; }
-bool nbTake(uint8_t, bool *) { return false; }
 void nbGetStats(NbStats *out) { if (out) *out = NbStats{NB_CALLER_COUNT, 0, 0, 0, 0, 0}; }
 
 #endif

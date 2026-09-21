@@ -113,14 +113,9 @@ static void weatherBuildUrl(char *url, size_t cap) {
 // The response, read straight off the socket into a PSRAM document, again in
 // one place for both paths. It runs on whichever task did the fetching, and
 // touches nothing but `published`, under `published`'s own spinlock.
-static bool weatherParse(Stream &body) {
-  JsonDocument doc(psramJson());   // the forecast
-  DeserializationError err = deserializeJson(doc, body);
-  if (err) {
-    Serial.printf("Weather JSON error: %s\n", err.c_str());
-    return false;
-  }
-
+// Everything downstream of "we have valid JSON", shared by both paths so they
+// cannot drift apart.
+static bool weatherPublish(JsonDocument &doc) {
   JsonObject current = doc["current"];
   JsonObject daily = doc["daily"];
   if (current.isNull() || daily.isNull()) return false;
@@ -147,13 +142,39 @@ static bool weatherParse(Stream &body) {
   return true;
 }
 
-// What the broker calls, on the broker task, while the body is still open.
-static bool weatherNbParse(const NbReply &r) {
-  if (r.code != HTTP_CODE_OK || !r.body) {
-    Serial.printf("Weather fetch failed: HTTP %d\n", r.code);
+// The broker path's parse: a NUL-terminated body already in PSRAM.
+static bool weatherParse(const char *body, size_t len) {
+  JsonDocument doc(psramJson());
+  const DeserializationError err = deserializeJson(doc, body, len);
+  if (err) {
+    Serial.printf("Weather JSON error: %s\n", err.c_str());
     return false;
   }
-  return weatherParse(*r.body);
+  return weatherPublish(doc);
+}
+
+// The last mailbox sequence this module has acted on. Loop task only.
+static uint32_t s_weatherSeq = 0;
+
+// The broker path: the body is already in PSRAM and this runs on the loop
+// task, so the parse is an ordinary loop-side cost like any other, and the
+// broker's own stack never has to be big enough to hold it.
+// Returns whether an answer arrived at all; *ok says whether THIS answer was
+// good. The two are separate on purpose: `published.valid` may still be true
+// from an earlier success, so deciding the back-off from it would give a failed
+// fetch the ten-minute interval instead of the one-minute retry.
+static bool weatherCollect(bool *ok) {
+  *ok = false;
+  NbMailbox *mb = nbMailbox(NB_WEATHER);
+  if (!mb || mb->seq == s_weatherSeq) return false;   // nothing new
+  s_weatherSeq = mb->seq;                             // read once, then act
+  if (mb->code != HTTP_CODE_OK || !mb->bodyLen) {
+    Serial.printf("Weather fetch failed: code %ld\n", (long)mb->code);
+    return true;                                      // answered, badly
+  }
+  *ok = weatherParse(mb->body, mb->bodyLen);
+  if (!*ok) Serial.println("Weather: the body did not parse");
+  return true;
 }
 
 static bool fetchWeather() {
@@ -174,9 +195,16 @@ static bool fetchWeather() {
     return false;
   }
 
-  const bool ok = weatherParse(http.getStream());
+  // The fallback path still streams, because it has no mailbox to stream into.
+  // It shares everything downstream of the JSON with the broker path.
+  JsonDocument doc(psramJson());
+  const DeserializationError err = deserializeJson(doc, http.getStream());
   http.end();
-  return ok;
+  if (err) {
+    Serial.printf("Weather JSON error: %s\n", err.c_str());
+    return false;
+  }
+  return weatherPublish(doc);
 }
 
 static void weatherFetchTask(void*) {
@@ -202,7 +230,7 @@ void weatherLoop() {
   // page has since left the screen, or fetchBusy would never clear and this
   // module would go quiet until a reboot.
   { bool ok = false;
-    if (nbTake(NB_WEATHER, &ok)) {
+    if (weatherCollect(&ok)) {
       nextFetchMs = millis() + (ok ? WEATHER_FETCH_INTERVAL_MS : WEATHER_RETRY_INTERVAL_MS);
       fetchBusy = false;
     } }
@@ -236,7 +264,7 @@ void weatherLoop() {
   // (no PSRAM for its buffers), and a module whose only path is the broker
   // would then go silent until a reboot - a worse failure than the one the
   // broker exists to fix. The old path costs flash, which is not scarce here.
-  if (nbUp()) {
+  if (nbReady(NB_WEATHER)) {
     // Neither of the two checks below is needed here, and that is the point of
     // the broker: there is no task to create, so there is no 9 KB contiguous
     // internal block to find first, and no reason to stand down because someone
@@ -248,7 +276,6 @@ void weatherLoop() {
     NbRequest req = {};
     req.url = url;
     req.timeoutMs = 10000;   // as this module has always used
-    req.parse = weatherNbParse;
     const bool interactive = fetchKick;
     fetchBusy = true;
     if (nbSubmitRequest(NB_WEATHER, req, interactive)) {

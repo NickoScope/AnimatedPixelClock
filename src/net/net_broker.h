@@ -1,5 +1,6 @@
 #pragma once
-// One task owns the outbound socket. Everybody else asks it.
+// One task owns the outbound socket. Everybody else asks it, and collects the
+// answer from its own mailbox on the loop task.
 //
 // The problem, measured on the panel 2026-09-20 and written up in the knowledge
 // base as docs/32-net-broker.md: four modules each start their own fetch task
@@ -11,108 +12,87 @@
 // Each is transient, so nothing shows as leaked - and each needs its stack as
 // one **contiguous** internal block at whatever moment it happens to want it.
 // That is the failure we kept hitting: the rail board refusing to fetch while
-// 30,828 B were free, because it was 524 B short of a contiguous 13 KB. Adding
-// a browser on the portal to that mix is what takes the panel off the network.
+// 30,828 B were free, because it was 524 B short of a contiguous 13 KB.
 //
-// So: one task, created at boot while the heap is still whole, with its stack
-// in .bss - not on the heap at all, so it can neither fail to be allocated nor
-// leave a hole when it is freed. Four callers, one slot each, one at a time on
-// the wire. The peak internal demand of a fetch drops from 12-16 KB needing
-// contiguity to the TLS session's own couple of kilobytes.
+// **The shape is NetGate's**, from NickoScope32 v1B Main-S3 v33.64.0 (ADD-62),
+// which solved the same problem on the same family of chip and has been in
+// production for months. What we took and what we did not is in
+// docs/32-net-broker.md. The three load-bearing pieces:
 //
-// What this does NOT change: the request bodies and the JSON still cost what
-// they cost. They are in PSRAM already.
+//   1. One permanent task, its stack taken at boot, no transient tasks at all.
+//   2. The TLS client is built per request and destroyed BEFORE the answer is
+//      published, so the memory is back before the consumer can act on it.
+//   3. **The body is copied into the caller's PSRAM mailbox and parsed later,
+//      on the loop task.** The broker never runs consumer code. That is what
+//      makes its stack a bounded, knowable quantity rather than a hostage to
+//      whatever the deepest consumer's parser happens to need.
+//
+// Where we differ from NetGate, deliberately: its queue copies a ~1 KB job
+// struct by value into a FreeRTOS queue, twelve slots, about 12 KB of internal
+// RAM - its own ADD-62 admits that blew the budget roughly fivefold. Here the
+// URL and the credential live in PSRAM and the queue is four fixed slots, so
+// the queue costs almost no internal RAM at all.
 
 #include <stdint.h>
 
 #include "nb_queue.h"
 
-class WiFiClient;
+// The most a caller's URL and credential may be. Both live in PSRAM (see
+// nbBegin), so the sizes cost no internal RAM.
+#define NB_URL_MAX     384
+#define NB_AUTH_MAX    128
+#define NB_HEADER_MAX   48
 
-// The most a caller's URL and authorization header may be. Weather builds a
-// 320-byte URL today, which is the longest of the four; the header carries a
-// bearer token for the rail board. Both live in PSRAM (see nbBegin), so the
-// sizes cost no internal RAM and there is no reason to be mean with them.
-#define NB_URL_MAX   384
-#define NB_AUTH_MAX  128
-
-// Two failures that happen before HTTP is reached at all, so they cannot
-// collide with HTTPClient's own error codes (which run -1 to -11).
+// Failures that happen before, or instead of, an HTTP status. Outside
+// HTTPClient's own range, which runs -1 to -11.
 #define NB_ERR_NO_TURN  (-101)   // never got the network's turn in time
 #define NB_ERR_BAD_URL  (-102)   // the URL was refused before a connection
+#define NB_ERR_TRUNC    (-103)   // the body did not fit the mailbox; it is cut
 
-// What the broker hands to the caller's parse function.
+// Where a caller's answer lands.
 //
-// **`body` is live.** It is the open socket, valid only while the call is on
-// the stack; the caller reads what it needs - typically straight into a PSRAM
-// JsonDocument, exactly as it does today - and does not keep the pointer.
-struct NbReply {
-  int     code;    // HTTP status, or a negative error: HTTPClient's, or the two above
-  // The body, including an error page. nullptr whenever code is negative - AND
-  // possibly nullptr for a positive one too, when the server answered without
-  // a body and closed (204, 304, an empty 200): getStreamPtr() gives nullptr
-  // once the connection is no longer live. **Always null-check it.**
-  //
-  // A WiFiClient rather than a Stream, and that is not decoration: the boards
-  // that read a whole body into a PSRAM buffer loop on `connected()` to tell
-  // "the server has finished" from "nothing has arrived yet", and Stream has
-  // no such method. A WiFiClient is a Stream, so a caller that just wants to
-  // hand it to deserializeJson still can.
-  WiFiClient *body;
-  // What the server declared, or -1 when it did not. The buffering callers
-  // size their read against it and refuse a body too large for the buffer,
-  // rather than discovering the overflow half way through.
-  int32_t contentLength;
-  bool    tls;     // the failure was in the handshake, not in HTTP
-  const char *header;  // the value of NbRequest::collect, "" when absent
-  void   *ctx;     // whatever the caller passed in
+// **Single producer, single consumer, no lock.** Only the broker task writes
+// it; only the loop task reads it. The broker fills every field and THEN
+// increments `seq` - that increment is the release point, and a consumer that
+// sees a new `seq` is guaranteed to see the payload that belongs to it. Read
+// `seq`, act, and do not read it again until you have finished with the body.
+// This is NetGate's `ng_mailbox_t` (netgate.h:87-97) with wider length fields,
+// because two of our consumers deal in bodies far larger than its 64 KB.
+struct NbMailbox {
+  volatile uint32_t seq;         // ++ on every completion, success or not
+  volatile int32_t  code;        // HTTP status, or one of the negatives above
+  volatile uint32_t tag;         // whatever the caller put in NbRequest::tag
+  volatile uint32_t durationMs;
+  volatile uint32_t bodyLen;
+  uint32_t          bodyCap;
+  char             *body;        // PSRAM, always NUL-terminated
+  char              header[NB_HEADER_MAX];   // the collected header, "" if none
 };
-
-// **Runs on the broker task, not on loop().** It has to: the body is only on
-// the wire during the call. So it may touch only what a fetch task touches
-// today - its own module's published data, under that module's own lock. The
-// loop side learns the request is over through nbTake().
-//
-// **The contract, and it is kept literally.** It is called EXACTLY ONCE for
-// every accepted request, whatever the outcome - including the two failures
-// above, where `code` is negative and `body` is nullptr. So a caller has one
-// place to handle everything, and can never be left without an answer. What it
-// returns IS the outcome nbTake() reports: return false on a code you do not
-// want treated as a success. Check `code`, and null-check `body` as well - a
-// positive code does not promise one.
-typedef bool (*NbParseFn)(const NbReply &reply);
 
 struct NbRequest {
   const char *url;        // copied; NB_URL_MAX including the terminator
   const char *auth;       // optional credential value; copied. NOT logged,
-                          // NOT echoed, and zeroed when the slot is finished.
+                          // NOT echoed, and zeroed when the request is done.
   // Which header `auth` goes in. nullptr means "Authorization", which is what
   // the rail board's bearer token uses; the flight board's AeroAPI key goes in
   // "x-apikey" instead. Not copied - a literal. The broker will not invent a
   // header name, because sending a credential under the wrong one either fails
-  // the call or, worse, leaks it to a server that had no business seeing it.
+  // the call or, worse, leaks it to a server with no business seeing it.
   const char *authHeader;
-  // The PEM roots to verify the server against. **NOT copied** - it must be a
-  // static or PROGMEM string that outlives the request, which is what every
-  // caller has. nullptr means setInsecure(), which is what the open, public
-  // endpoints use. The two are mutually exclusive in the library and each
-  // clears the other (WiFiClientSecure.cpp:262-276), so one shared client can
-  // serve a verifying caller and an insecure one in turn without either
-  // leaking into the other - but only because the broker sets one of them on
-  // EVERY request. Do not make that conditional.
+  // The PEM roots to verify the server against. **NOT copied** - a static or
+  // PROGMEM string that outlives the request. nullptr means setInsecure(),
+  // which is what the open public endpoints use.
   const char *caCert;
   // One response header to keep, by name (e.g. "Retry-After"), or nullptr.
-  // Reported back in NbReply::header. One is enough for every caller we have
-  // and it costs nothing when unused.
+  // It arrives in NbMailbox::header.
   const char *collect;
+  uint32_t    tag;        // handed back untouched; use it to tell one of your
+                          // own requests from another (which city, which page)
   uint32_t    timeoutMs;  // 0 takes the broker's default
-  NbParseFn   parse;
-  void       *ctx;
 };
 
 // Create the task. Called once from setup(), before the heap has been used by
-// anything transient. Returns false if the PSRAM request storage or the TLS
-// client could not be had.
+// anything transient.
 //
 // **A caller must not assume this succeeded.** Ask nbUp() and keep your own
 // fetch path for when it is false - a module whose only path is the broker
@@ -120,23 +100,28 @@ struct NbRequest {
 // failure than the one the broker exists to fix. Weather shows the shape.
 bool nbBegin();
 
-// Is the broker actually running? The one thing a caller must branch on.
+// Is the broker running at all?
 bool nbUp();
+
+// Has this caller been migrated - that is, does it have a mailbox? A consumer
+// whose body size has not been measured yet has no mailbox and is refused, so
+// the migration state of each module is one table in net_broker.cpp rather
+// than something to remember.
+bool nbReady(uint8_t who);
 
 // Ask for a fetch. `interactive` means a person is waiting on it - the owner
 // changed the station, picked a city - and it goes ahead of scheduled work.
-// False when this caller already has one on the wire, or the broker is not up.
+// False when this caller already has one queued or on the wire, when it has no
+// mailbox, or when the broker is not up. **False is "wait", not "it broke"**:
+// the caller tries again on its own schedule.
 bool nbSubmitRequest(uint8_t who, const NbRequest &req, bool interactive);
 
 // Is this caller's request still queued or on the wire?
 bool nbPending(uint8_t who);
 
-// Collect the outcome, once. Returns false while there is nothing to collect.
-// `ok` is what the parse function returned - always, since it is always called
-// (or, for a caller that passed none, whether the status was 200). Called from
-// loop(): this is where a caller sets its next refresh time and clears its own
-// busy flag.
-bool nbTake(uint8_t who, bool *ok);
+// This caller's mailbox, or nullptr if it has none. The pointer is stable for
+// the life of the firmware; the contents are not.
+NbMailbox *nbMailbox(uint8_t who);
 
 // For the diagnostics page. `onAir` is NB_CALLER_COUNT when the wire is idle.
 struct NbStats {
