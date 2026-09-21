@@ -5,14 +5,42 @@ ESP32-S3**, and at everything needed to drive it, watch it and add screens to
 it. This file is what an agent arriving cold needs; it is kept honest, and where
 it is unsure it says so.
 
-**A running panel answers on your network.** Everything below is an HTTP call to
-it. There is no authentication - it is a device on a home LAN.
+**A running panel answers on your network**, from any machine on it. Everything
+below is an HTTP call. There is no authentication - it is a device on a home LAN.
 
-    PANEL=192.168.4.62        # the IP moves; NickoScope-64x128.local also resolves,
-                              # but mDNS costs ~5 s per request on macOS. Use the IP.
+### Find it first. Never hard-code an address.
 
-Find it again if the IP moved: `curl -s -m2 http://<ip>/api/info` across the
-subnet, or resolve the mDNS name once and cache the address.
+A panel's IP comes from the router and moves. What does not move is the MAC the
+firmware advertises over mDNS (`src/network/network.cpp:232-236`):
+
+    _http._tcp  port 80
+    TXT: model=AnimatedPixelClock  version=<firmware>  mac=<the chip's>
+
+```bash
+python3 tools/agent/discover.py            # every panel on this network, one line each
+python3 tools/agent/discover.py --json     # the same, for a tool to read
+python3 tools/agent/discover.py --mac 90:E5:B1:D2:0E:C8   # just that one's address
+```
+
+```
+  90:E5:B1:D2:0E:C8  NickoScope-64x128.local   v2.5.0   NickoScope-64x128
+```
+
+It works from macOS (`dns-sd`) and Linux (`avahi-browse`), and it confirms every
+advertisement by asking the panel itself - a stale mDNS record for a panel that
+has gone is worse than no answer, because you would go on to talk to nothing.
+
+**With several panels on one network, identify them by MAC, not by address.**
+`discover.py` exits **3** when it finds more than one and nobody said which:
+that is a decision for the caller or a person, not a failure. Pass `--mac` to
+name one.
+
+```bash
+PANEL=$(python3 tools/agent/discover.py --mac 90:E5:B1:D2:0E:C8) || exit
+curl -s "http://$PANEL/api/info"
+```
+
+Everything below writes `$PANEL`, and never an address.
 
 ---
 
