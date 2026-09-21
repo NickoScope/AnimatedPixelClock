@@ -1028,6 +1028,15 @@ async def effect_api() -> str:
                                   "at rather than the FPS asked for.",
         },
         "budgets": {
+            "sourceBytes": "50 KB a script, and twelve uploaded scripts at once "
+                           "beside the seven compiled in. Both were raised from "
+                           "24 KB and four on 2026-09-22; `panel_effects` reports "
+                           "what THIS panel's firmware says, and that reading beats "
+                           "this line if they ever disagree.",
+            "nestingDepth": "16 levels of brackets and blocks, which is what the "
+                            "panel checks before its parser ever sees the file - "
+                            "length is cheap and depth is not, because Lua's parser "
+                            "recurses with it on a 12 KB task stack.",
             "loadInstructions": 20_000_000,
             "drawInstructions": 2_000_000,
             "loadMs": 3000,

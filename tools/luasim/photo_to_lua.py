@@ -5,7 +5,7 @@ Not ASCII art - the picture itself, at the panel's own 128x64. Three things make
 it fit and make it cheap:
 
 **A palette, as large as will fit.** 8,192 pixels as full RGB would be 49,152
-characters of source against a 24 KB limit, so the picture is quantised - but to
+characters of source against the panel's limit, so the picture is quantised - but to
 256 colours, not to the sixteen the firmware's own animation format allows.
 Two base64 characters an index, Floyd-Steinberg on the way in. At 128x64 that is
 photographic: the eye runs out before the palette does.
@@ -181,9 +181,21 @@ def main():
     out = pathlib.Path(args.out) if args.out else \
         pathlib.Path(__file__).resolve().parent / "scripts" / f"{args.name}.lua"
     out.write_text("\n".join(body))
-    print(f"{out}  {out.stat().st_size} B  "
-          f"({args.colors} colours, 8192 pixels, "
-          f"{100 * out.stat().st_size // 24576}% of the panel's limit)")
+    # The limit comes from the firmware header through validate.py, never from a
+    # number typed here. This line said "% of 24576" until the cap was raised to
+    # 50 KB and then quietly reported nonsense - a tool that measures against a
+    # remembered constant measures nothing.
+    cap = 0
+    try:
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+        import validate as V  # noqa: PLC0415
+        v = V.check(out)
+        cap = (v or {}).get("maxBytes", 0)
+    except Exception:  # noqa: BLE001
+        pass
+    size = out.stat().st_size
+    pct = f", {100 * size // cap}% of the panel's {cap // 1024} KB limit" if cap else ""
+    print(f"{out}  {size} B  ({args.colors} colours, 8192 pixels{pct})")
 
 
 if __name__ == "__main__":
