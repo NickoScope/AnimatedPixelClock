@@ -138,6 +138,59 @@ you hit that this file should have warned you about - open an issue or send a
 PR. What stays in your fork is your configuration; what comes back upstream is
 anything that would help the next person.
 
+### 4. A new screen needs no flash
+
+Since 2026-09-21 a Lua effect can be sent to a running panel and shown straight
+away. Four uploaded scripts fit beside the compiled-in ones, they survive a
+firmware update, and the whole loop is one MCP call:
+
+```bash
+python3 tools/luasim/gen_effects.py --help   # (the compiled-in route, rarely wanted now)
+```
+
+```
+effect_api  ->  effect_write  ->  effect_preview  ->  effect_check  ->  effect_upload
+                                                                        ^ on the panel,
+                                                                          no build
+```
+
+Over HTTP directly:
+
+```bash
+curl -X POST -F "script=@my_effect.lua" "http://$PANEL/api/lua/upload?name=my_effect"
+curl -X POST -H 'Content-Type: application/json' -d '{"show":7}' "http://$PANEL/api/lua"
+curl -X POST -H 'Content-Type: application/json' -d '{"delete":"my_effect"}' "http://$PANEL/api/lua"
+```
+
+`GET /api/lua` reports `uploaded{count,slots,builtIn,maxBytes,maxDepth,fsFree,scripts}`
+and `stackFreeMin`.
+
+**What the panel refuses, and why it is not fussiness.** Over 24 KB; nothing
+called `draw`; blocks and brackets nested deeper than 16. That last one is the
+interesting one: the effect task has a 12 KB stack and Lua's parser recurses
+with the source's nesting at up to 384 bytes a level, so depth is the one thing
+a script can spend that the instruction and time budgets do not see. Blocks
+count as well as brackets - `local function` inside `local function` is the
+expensive kind and has no bracket in it.
+
+**`pcall` and `xpcall` are not in the sandbox.** A nested pcall costs 560 bytes
+of C stack a level, and `local function f() pcall(f) end` is three lines that no
+reading of the source can recognise as deep. An effect is a draw loop and its
+failures are caught around `draw()` anyway.
+
+Measured on the panel, 2026-09-21: the deepest script it will accept leaves
+**6,684 bytes of the 12,288 free** - read it yourself from `stackFreeMin`. A
+760,000-instruction effect that loads for 874 ms sets no new low, because stack
+depth follows nesting and not work.
+
+**The two routes that carry code refuse a foreign `Origin`.** Nothing on this
+panel is authenticated and that stays the posture - but `multipart/form-data`
+is CORS-safelisted, so without it any page in your browser could POST a script
+to the panel's address with no preflight. `curl` and the agent tools send no
+Origin and are unaffected.
+
+---
+
 ### The whole of 1 and 2 in one command
 
 ```bash

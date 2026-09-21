@@ -141,9 +141,12 @@ void setupWebServer() {
  server.addHandler(&s_uriRecorder);   // first, so it sees every request
  // WebServer keeps only the request headers it is told to collect, in one list
  // that each call replaces: If-None-Match for the page, Content-Type for the
- // Panel routes' readBody().
- static const char* kHeaders[] = {"If-None-Match", "Content-Type"};
- server.collectHeaders(kHeaders, 2);
+ // Panel routes' readBody(), Origin for the two routes that accept executable
+ // code (web_panel.cpp, originIsForeign). A header not in this list reads as
+ // absent, and a guard that asks for one that was never collected is a guard
+ // that never fires - which is how the Origin check shipped doing nothing.
+ static const char* kHeaders[] = {"If-None-Match", "Content-Type", "Origin"};
+ server.collectHeaders(kHeaders, 3);
  // Arduino's getSketchSize verifies the entire flash image. Cache it before
  // rendering starts, never repeat it in the five-second /api/info poll.
  runningFirmwareBytes = ESP.getSketchSize();

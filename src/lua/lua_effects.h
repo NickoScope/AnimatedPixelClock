@@ -37,3 +37,9 @@ int16_t     luaEffectCurrent();           // -1 when none is showing
 // above it, so the selection has to be dropped rather than left pointing at a
 // slot that now holds something else.
 void        luaEffectStop();
+
+// The effect task's stack high-water mark, in bytes still free at its worst.
+// Exposed because this firmware's whole case for running uploaded scripts is an
+// arithmetic about that number, and an arithmetic nobody can read off the
+// running panel is a claim rather than a fact. 0 when the task is not up.
+uint32_t    luaEffectsStackFreeMin();

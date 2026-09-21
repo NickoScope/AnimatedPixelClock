@@ -977,6 +977,9 @@ static void handleLua() {
   JsonDocument doc(&s_alloc);
   doc["success"] = true;
   doc["current"] = luaEffectCurrent();
+  // The number the whole uploaded-script case rests on: what the effect task
+  // has left of its 12 KB at its worst moment so far. A reading, not a claim.
+  doc["stackFreeMin"] = luaEffectsStackFreeMin();
   JsonArray list = doc["effects"].to<JsonArray>();
   for (uint8_t i = 0; i < luaEffectCount(); i++) {
     // char[] rather than const char*: ArduinoJson stores a const char* by

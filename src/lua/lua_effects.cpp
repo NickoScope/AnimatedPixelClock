@@ -49,6 +49,7 @@
 #include "../fonts/picopixel_fb.h"
 #include "lua_fx.h"
 #include "lua_px.h"
+#include "../debug/dbg_log.h"
 #if defined(LUA_STORE_ENABLED)
 #include "lua_store.h"
 #endif
@@ -195,7 +196,7 @@ void effectTask(void *) {
     if (want != runningWord) {
       if (s_fx.isOpen()) {
         s_fx.close();
-        Serial.printf("[luafx] closed %s, heap back to %u B, psram free %u\n",
+        dbgLogf("[luafx] closed %s, heap back to %u B, psram free %u\n",
                       id, (unsigned)s_fx.heapBytes(),
                       (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
       }
@@ -232,7 +233,7 @@ void effectTask(void *) {
             // parser does not get. Only this task runs here.
             static char why[160];
             if (!luaStoreValidate(src, srcLen, why, sizeof(why))) {
-              Serial.printf("[luafx] %s refused: %s\n", id, why);
+              dbgLogf("[luafx] %s refused: %s\n", id, why);
               publishError(runningWord, why);
               releaseUser();
               src = nullptr;
@@ -245,20 +246,20 @@ void effectTask(void *) {
         const int64_t t0 = esp_timer_get_time();
         const bool ok = src && s_fx.open(id, src, srcLen, &s_canvas, kLuaFxPanelLimits);
         if (!src) {
-          Serial.printf("[luafx] %s: nothing to run in that slot\n", id);
+          dbgLogf("[luafx] %s: nothing to run in that slot\n", id);
           // Whatever is in s_fx.error() belongs to the previous effect: open()
           // was short-circuited and never cleared it. Say what is actually
           // wrong instead, and leave a refusal message already published alone.
           if (!luaEffectsHasError(runningWord)) publishError(runningWord, "nothing in that slot");
         }
-        Serial.printf("[luafx] open %s: %s in %.1f ms, ~%u instr, heap %u B, fps cap %u, period %.0f s, "
+        dbgLogf("[luafx] open %s: %s in %.1f ms, ~%u instr, heap %u B, fps cap %u, period %.0f s, "
                       "stack free %u B\n", id, ok ? "ok" : "FAILED",
                       (esp_timer_get_time() - t0) / 1000.0, (unsigned)s_fx.lastInstructions(),
                       (unsigned)s_fx.heapBytes(), s_fx.fps(), s_fx.periodSeconds(),
                       (unsigned)uxTaskGetStackHighWaterMark(nullptr));
         if (!ok) {
           if (src) {                       // open() ran, so the message is its own
-            Serial.printf("[luafx] %s\n", s_fx.error());
+            dbgLogf("[luafx] %s\n", s_fx.error());
             publishError(runningWord, s_fx.error());
           }
           failed = true;
@@ -296,13 +297,13 @@ void effectTask(void *) {
       // ~380 ms of its 500). Only kOverrunsAllowed in a row stop the effect.
       // The state survives a failed draw: it runs under lua_pcall.
       if (strstr(s_fx.error(), "over the time budget") && ++overruns < kOverrunsAllowed) {
-        Serial.printf("[luafx] %s: frame dropped (%u in a row), %s\n",
+        dbgLogf("[luafx] %s: frame dropped (%u in a row), %s\n",
                       id, (unsigned)overruns, s_fx.error());
         vTaskDelay(1);
         lastWake = xTaskGetTickCount();
         continue;
       }
-      Serial.printf("[luafx] %s stopped: %s\n", id, s_fx.error());
+      dbgLogf("[luafx] %s stopped: %s\n", id, s_fx.error());
       publishError(runningWord, s_fx.error());
       s_fx.close();
       failed = true;
@@ -330,7 +331,7 @@ void effectTask(void *) {
     if (us > drawMaxUs) drawMaxUs = us;
     if (s_fx.lastInstructions() > instrMax) instrMax = s_fx.lastInstructions();
     if (nowMs >= reportAt) {
-      Serial.printf("[luafx] %s: %u frames in %u s (%.1f fps), draw avg %.1f max %.1f ms, "
+      dbgLogf("[luafx] %s: %u frames in %u s (%.1f fps), draw avg %.1f max %.1f ms, "
                     "~%u instr max, heap %u B peak %u B, stack free %u B, psram free %u, "
                     "internal free %u min %u\n",
                     id, (unsigned)frames, (unsigned)(kReportMs / 1000),
@@ -442,6 +443,13 @@ int16_t luaEffectCurrent() { return s_selected; }
 
 void luaEffectStop() { luaEffectsSelect(-1); }
 
+uint32_t luaEffectsStackFreeMin() {
+  // uxTaskGetStackHighWaterMark is in words on some ports and bytes on Xtensa;
+  // ESP-IDF's FreeRTOS returns bytes here, which is what the boot line already
+  // prints and what kStackBytes is measured in.
+  return s_task ? (uint32_t)uxTaskGetStackHighWaterMark(s_task) : 0;
+}
+
 // ---------------------------------------------------------------- page hooks
 void luaEffectsBegin() {
 #if defined(LUA_STORE_ENABLED)
@@ -453,19 +461,19 @@ void luaEffectsBegin() {
   for (uint8_t **b : bufs) {
     *b = static_cast<uint8_t *>(heap_caps_calloc(1, LUA_PX_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
     if (!*b) {
-      Serial.println("[luafx] no PSRAM for the frame buffers - effects unavailable");
+      dbgLogf("[luafx] no PSRAM for the frame buffers - effects unavailable");
       for (uint8_t **f : bufs) { heap_caps_free(*f); *f = nullptr; }
       return;
     }
   }
   if (xTaskCreatePinnedToCore(effectTask, "luafx", kStackBytes, nullptr, kPriority, &s_task, kCore) != pdPASS) {
     s_task = nullptr;
-    Serial.printf("[luafx] task create failed (%u B stack, internal largest block %u) - effects unavailable\n",
+    dbgLogf("[luafx] task create failed (%u B stack, internal largest block %u) - effects unavailable\n",
                   (unsigned)kStackBytes, (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
     for (uint8_t **f : bufs) { heap_caps_free(*f); *f = nullptr; }
     return;
   }
-  Serial.printf("[luafx] %u effects, task on core %d with %u B stack (internal free %u -> %u), "
+  dbgLogf("[luafx] %u effects, task on core %d with %u B stack (internal free %u -> %u), "
                 "4 x %u B frame buffers in PSRAM\n", (unsigned)LUA_EFFECT_COUNT, (int)kCore,
                 (unsigned)kStackBytes, (unsigned)internalBefore,
                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL), (unsigned)LUA_PX_BYTES);
