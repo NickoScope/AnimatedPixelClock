@@ -53,7 +53,6 @@
             <a href="https://github.com/NickoScope/AnimatedPixelClock" target="_blank" rel="noopener">github</a>
             <a href="https://github.com/NickoScope/AnimatedPixelClock#readme" target="_blank" rel="noopener">docs</a>
             <a href="https://github.com/NickoScope/AnimatedPixelClock/issues" target="_blank" rel="noopener">report a bug</a>
-            <a href="https://github.com/NickoScope/AnimatedPixelClock/blob/main/docs/HUB75_WIRING.md" target="_blank" rel="noopener">wiring guide</a>
           </nav>
 
           <div class="rail-foot">
@@ -87,7 +86,7 @@
           <ul class="checklist">
             <li><strong>Desktop Chrome or Edge.</strong> Web Serial doesn't run on Firefox, Safari, or mobile.</li>
             <li><strong>A real data USB cable.</strong> Power-only cables are silent killers - the port simply won't show up.</li>
-            <li><strong>The Waveshare ESP32-S3-RGB-Matrix board.</strong> The driver board with the controller on it: 32MB octal flash, 16MB octal PSRAM and a HUB75 socket. It is the only board this page installs - the only one that has been flashed from here and seen to boot. The firmware drives 2× 64×64 HUB75E panels chained into one 128×64 matrix - see the <a href="https://github.com/NickoScope/AnimatedPixelClock/blob/main/docs/HUB75_WIRING.md" target="_blank" rel="noopener">wiring guide</a> for the pin map and power notes.</li>
+            <li><strong>The Waveshare ESP32-S3-RGB-Matrix board.</strong> The driver board with the controller on it: 32MB octal flash, 16MB octal PSRAM and a HUB75 socket. It is the only board this page installs - the only one that has been flashed from here and seen to boot. The firmware drives 2× 64×64 HUB75E panels chained into one 128×64 matrix.</li>
             <li><strong>Stuck in a connect / disconnect loop?</strong> Hold <code>BOOT</code>, plug in USB while holding, then release. Or hold <code>BOOT</code>, tap <code>RESET</code>, then let go of both.</li>
             <li><strong>Nothing else on the serial port.</strong> Close Arduino IDE, PlatformIO Monitor, and the serial monitor below before flashing.</li>
           </ul>
@@ -167,7 +166,7 @@
               <h3 id="wifi-ap">Or join the setup hotspot</h3>
             </header>
 
-            <p class="path-body">Missed the Configure&nbsp;WiFi dialog, or flashed from a phone? The device falls back to an open setup hotspot you can join from any device and finish in a browser.</p>
+            <p class="path-body">Missed the Configure&nbsp;WiFi dialog? The device falls back to an open setup hotspot you can join from any device and finish in a browser.</p>
 
             <div class="creds" aria-label="Setup-mode credentials">
               <div class="creds-head">
