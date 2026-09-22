@@ -41,10 +41,12 @@ from pathlib import Path
 # Variants published by the web flasher.
 # (PlatformIO env, firmware id, label). The firmware id must match the
 # `firmware` field in docs/flasher.js and drives the release/ filenames.
+# One board, by the owner's decision on 2026-09-22: it is the only one that has
+# been installed from the web flasher and seen to boot. The WROOM and Super Mini
+# environments still build (platformio.ini keeps them for anyone porting), but
+# nothing untested is published - a flasher is not the place to offer it.
 VARIANTS = [
     ("matrix-waveshare-rgb", "waveshare", "Waveshare ESP32-S3-RGB-Matrix (32MB)"),
-    ("matrix-s3-wroom",      "wroom",     "ESP32-S3-WROOM devkit (16MB)"),
-    ("matrix-s3",            "supermini", "ESP32-S3-Zero / Super Mini (4MB)"),
 ]
 FLASH_BYTES = {
     # The WROOM-2-N32R16V module: octal flash AND octal PSRAM. The bootloader

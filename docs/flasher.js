@@ -1,31 +1,20 @@
 // AnimatedPixelClock Web Flasher - client logic.
 // Builds an ESP Web Tools manifest on the fly for the chosen board and keeps the
-// install button, specs and board photo in sync. Three boards, three firmware
-// images: the Waveshare ESP32-S3-RGB-Matrix (32MB), the ESP32-S3 Super Mini
-// (4MB) and the ESP32-S3-WROOM devkit (16MB), all driving the 128x64 HUB75
-// matrix.
+// install button, specs and board photo in sync. One board: the Waveshare
+// ESP32-S3-RGB-Matrix (32MB), driving the 128x64 HUB75 matrix.
 
+// One board, on purpose. This is the only one that has been installed from
+// this page and seen to boot (2026-09-21, Improv included). The other two
+// images build, but nobody here has flashed them, and a flasher is not the
+// place to offer something untested - the WROOM entry in particular would
+// be the nearest wrong button for somebody holding the Waveshare board.
 const BOARDS = {
   waveshare: {
     label: 'Waveshare ESP32-S3-RGB-Matrix (32MB)',
     chipFamily: 'ESP32-S3',
     firmware: 'waveshare',              // AnimatedPixelClock-waveshare-<ver>-Full.bin
     board: 'Waveshare ESP32-S3-RGB-Matrix (WROOM-2 N32R16V)',
-    note: 'The HUB75 driver board with the controller on it: 32MB octal flash and 16MB octal PSRAM, and a HUB75 socket instead of jumper wires. Its module needs an octal-flash bootloader - a 16MB devkit image written to this board installs cleanly and then fails to boot every time, so pick this entry and not the WROOM one. Flashes over its native USB-C port.',
-  },
-  supermini: {
-    label: 'ESP32-S3-Zero / Super Mini (4MB, USB-C)',
-    chipFamily: 'ESP32-S3',
-    firmware: 'supermini',              // AnimatedPixelClock-supermini-<ver>-Full.bin (shared 4MB image)
-    board: 'ESP32-S3-Zero / Super Mini',
-    note: 'The compact 4MB build - the same image runs on the Waveshare ESP32-S3-Zero and an ESP32-S3 Super Mini. One USB-C charger powers the board and both panels. Native USB: if the serial port does not appear, hold BOOT while plugging in.',
-  },
-  wroom: {
-    label: 'ESP32-S3-WROOM devkit (16MB)',
-    chipFamily: 'ESP32-S3',
-    firmware: 'wroom',                  // AnimatedPixelClock-wroom-<ver>-Full.bin
-    board: 'ESP32-S3-WROOM-1 (N16R8)',
-    note: 'The full-size 16MB devkit has more storage for custom GIF animations. Follow the wiring guide for the panel power connections.',
+    note: 'The HUB75 driver board with the controller on it: 32MB octal flash and 16MB octal PSRAM, and a HUB75 socket instead of jumper wires. Flashes over its native USB-C port.',
   },
 };
 
