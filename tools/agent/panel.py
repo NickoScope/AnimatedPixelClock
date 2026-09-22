@@ -37,6 +37,7 @@ import uuid
 import urllib.error
 import urllib.request
 
+import discover as D
 from discover import discover
 
 # The panel group demands this on POST or answers 415; it is deliberate
@@ -137,6 +138,13 @@ def _nothing_answered(seen):
             + ", ".join(f"{p['name']} ({p['mac']})" for p in advertised)
             + " but none of them answered /api/info. They may be rebooting; try "
             "again in a few seconds.")
+    if not D.can_browse():
+        # "None answered" would be a lie. Nothing looked.
+        return ("Nothing on this machine can browse mDNS, so nothing was "
+                "searched - avahi-daemon resolves names but cannot browse; that "
+                "needs `sudo apt install avahi-utils`. Until then, name the "
+                "panel: LEDMATRIX_PANEL=<name|mac|address>, and a name is "
+                "resolved as <name>.local through the OS resolver.")
     return ("No panel answered on this network. Check it is powered and on the "
             "same subnet; `python3 tools/agent/discover.py` shows what mDNS sees.")
 
@@ -260,6 +268,19 @@ def resolve(panel=None, refresh=False):
             return {"address": p, "mac": None, "name": None, "given": True}
 
     panels = [x for x in known(refresh) if x.get("reachable")]
+
+    # Nothing browsed, but a name was given: resolve it through the OS. Browsing
+    # mDNS and resolving a .local name are different abilities, and a Linux box
+    # can have the second without the first - glibc with nss-mdns resolves names
+    # through a running avahi-daemon, while browsing needs the avahi-browse
+    # binary from avahi-utils, which Raspberry Pi OS does not install. Found on
+    # nickol.local on 2026-09-22, where discovery returned nothing while the
+    # panel answered perfectly well by name.
+    if not panels and panel and not D.can_browse():
+        one = D.by_name(panel.strip())
+        if one:
+            return one
+
     if not panels:
         raise PanelError(_nothing_answered(known(refresh)))
 

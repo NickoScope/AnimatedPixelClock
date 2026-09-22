@@ -24,6 +24,7 @@ import argparse
 import json
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import urllib.error
@@ -109,12 +110,50 @@ def _identify(addr, timeout=8.0):
         if "freeInternalHeap" not in d:
             return None
         return {"version": d.get("version"), "build": d.get("build"),
-                "name": d.get("deviceName"), "uptime": d.get("uptime")}
+                "name": d.get("deviceName"), "uptime": d.get("uptime"),
+                "mac": d.get("mac")}
     except urllib.error.HTTPError as e:
         return {"version": None, "build": None, "name": None, "uptime": None,
-                "busy": True, "http": e.code}
+                "mac": None, "busy": True, "http": e.code}
     except Exception:
         return None
+
+
+def can_browse():
+    """Is there anything on this machine that can BROWSE mDNS at all?
+
+    Resolving `name.local` and browsing for services are different abilities,
+    and a Linux box can easily have the first and not the second: glibc with
+    nss-mdns resolves names through a running avahi-daemon, while browsing needs
+    the `avahi-browse` binary out of the `avahi-utils` package, which is not
+    installed by default on Raspberry Pi OS. Found there on 2026-09-22, where
+    this returned "no panels found on this network" - which was not true. It had
+    not looked. It had nothing to look with.
+    """
+    return shutil.which("avahi-browse") or shutil.which("dns-sd")
+
+
+def by_name(name, timeout=6.0):
+    """One panel by its mDNS name, through the OS resolver rather than a browse.
+
+    This is the way in on a machine that cannot browse: `socket.getaddrinfo`
+    goes through nss-mdns on Linux and mDNSResponder on macOS, so a `.local`
+    name resolves even with no avahi-utils. It finds only a panel you can
+    already name - which is why it is a fallback and not the road.
+    """
+    if not name:
+        return None
+    host = name if name.endswith(".local") else name + ".local"
+    try:
+        addr = socket.getaddrinfo(host, 80, socket.AF_INET)[0][4][0]
+    except Exception:  # noqa: BLE001
+        return None
+    got = _identify(addr)
+    if not got:
+        return None
+    return {"name": got.get("name") or name.removesuffix(".local"), "address": addr,
+            "mac": got.get("mac"), "version": got.get("version"),
+            "reachable": True, "via": "name"}
 
 
 def discover(timeout=6.0):
@@ -175,7 +214,17 @@ def main():
                           "error": None, "warnings": []}, ensure_ascii=False))
     else:
         if not panels:
-            print("no panels found on this network", file=sys.stderr)
+            if not can_browse():
+                # Saying "none found" here would be a lie: nothing looked.
+                print("nothing on this machine can browse mDNS, so nothing was "
+                      "searched.", file=sys.stderr)
+                print("  Linux: sudo apt install avahi-utils   (avahi-daemon "
+                      "alone resolves names but cannot browse)", file=sys.stderr)
+                print("  or name the panel: LEDMATRIX_PANEL=<name|mac|address>, "
+                      "which resolves <name>.local through the OS",
+                      file=sys.stderr)
+            else:
+                print("no panels found on this network", file=sys.stderr)
         for p in panels:
             mark = ("" if p.get("reachable") else "  (advertised but not answering)")
             if p.get("busy"):
