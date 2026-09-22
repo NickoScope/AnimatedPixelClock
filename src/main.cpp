@@ -1222,6 +1222,7 @@ void loop() {
       else                     yachtRadarStop();
       yrWasOn = httpForceYachtRadar;
     }
+    yachtRadarLoop();
   }
 #endif
   loopMark("yacht radar");

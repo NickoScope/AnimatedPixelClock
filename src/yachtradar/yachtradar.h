@@ -35,6 +35,9 @@ bool yachtRadarBegin();
 // open for a display nobody is looking at - the same gating fx34 uses. The task
 // disconnects and ends on its own, and its stack goes with it.
 void yachtRadarStop();
+// While the page is up and the stream task could not be created, retry it.
+// Call from loop(); does nothing otherwise.
+void yachtRadarLoop();
 
 void     yachtRadarRender();
 

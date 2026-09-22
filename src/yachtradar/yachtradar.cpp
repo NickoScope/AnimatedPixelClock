@@ -3,6 +3,7 @@
 #if defined(YACHTRADAR_ENABLED)
 
 #include <Arduino.h>
+#include <esp_heap_caps.h>
 #include <ArduinoJson.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
@@ -324,10 +325,23 @@ static void onEvent(WStype_t type, uint8_t *payload, size_t len) {
 
 // ---------------------------------------------------------------- stream task
 // Core 0 below the Lua effect task, like the other network work: a handshake is
-// hundreds of milliseconds of maths. 12 KB, as the rail and flight fetches: the
-// TLS handshake and the JSON parse run on it, and stackFree in the portal shows
-// the margin. It exists only while the page is up.
-static const uint32_t    YR_TASK_STACK = 12 * 1024;
+// hundreds of milliseconds of maths. It exists only while the page is up.
+//
+// 8 KB, from measurements. It was 12 KB "as the rail and flight fetches", and
+// three readings of stackFree while the stream was connected - handshake
+// included, since the high-water mark keeps the worst - were 9,232, 9,236 and
+// 9,268 B left of 12,288: a peak near 3 KB. And 12 KB in one piece is what the
+// internal heap had stopped having: on 2026-09-22 the panel logged
+// "allocation failed: 12288 B, caps 0x804, before yacht radar" with its largest
+// internal block at 7-11 KB, and the page sat on "no memory" for good. 8 KB
+// leaves 2.6 times the measured peak; stackFree in the portal keeps showing it.
+static const uint32_t    YR_TASK_STACK = 8 * 1024;
+// While the page is up and the task could not be created, try again this often:
+// the heap moves, and a page that gives up on its first try stays dark until
+// somebody leaves and comes back.
+static const uint32_t    YR_RETRY_MS   = 5000;
+static bool              s_want      = false;   // the page is up
+static uint32_t          s_retryAt   = 0;       // millis() of the next attempt, 0 = none
 static TaskHandle_t      s_task      = nullptr;
 static portMUX_TYPE      s_taskMux   = portMUX_INITIALIZER_UNLOCKED;
 static bool              s_stopReq   = false;   // these three under s_taskMux
@@ -390,18 +404,39 @@ bool yachtRadarBegin() {
   else if (s_exiting) s_restart = true;     // still closing the last visit: it reopens
   else                s_stopReq = false;    // left and back before it noticed
   portEXIT_CRITICAL(&s_taskMux);
+  s_want = true;
   if (create && (!s_mx || xTaskCreatePinnedToCore(wsTask, "aisws", YR_TASK_STACK, nullptr, 0,
                                                   &s_task, 0) != pdPASS)) {
     s_task = nullptr;
+    if (!s_retryAt)   // once per episode, not every retry
+      Serial.printf("[yacht] no room for the AIS task: %u B stack, largest internal block %u B; retrying every %u s\n",
+                    (unsigned)YR_TASK_STACK,
+                    (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                    (unsigned)(YR_RETRY_MS / 1000));
     strncpy(s_err, "no memory for the AIS stream task", sizeof(s_err) - 1);
     s_err[sizeof(s_err) - 1] = '\0';
+    s_retryAt = millis() + YR_RETRY_MS;
+    if (!s_retryAt) s_retryAt = 1;
     return false;
   }
+  if (create && s_retryAt) {
+    Serial.println("[yacht] AIS task started after a retry");
+    s_err[0] = '\0';
+  }
+  s_retryAt = 0;
   s_open = true;
   return true;
 }
 
+void yachtRadarLoop() {
+  if (!s_want || s_open || s_noKey || !s_retryAt) return;
+  if ((int32_t)(millis() - s_retryAt) < 0) return;
+  yachtRadarBegin();
+}
+
 void yachtRadarStop() {
+  s_want = false;
+  s_retryAt = 0;
   if (!s_open) return;
   s_open = false;
   portENTER_CRITICAL(&s_taskMux);
