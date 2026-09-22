@@ -10,8 +10,18 @@
 #include <esp_task_wdt.h>
 #include <string.h>
 
-#ifndef MQTT_BUS_HOST_DEFAULT
-#define MQTT_BUS_HOST_DEFAULT "homeassistant.local"
+#ifndef MQTT_BUS_HOST_LEGACY
+// There is no default broker. Until 2026-09-22 this was "homeassistant.local"
+// for every panel, which made a freshly flashed one knock on whatever Home
+// Assistant answered to that name on the buyer's network - with no credentials
+// - and report configured:true for a setting nobody had made. Found on a
+// controller installed from the web flasher: it sat at CONNECTING against the
+// owner's broker. A broker is configured when somebody configures one.
+//
+// The old name survives only as a LEGACY fallback, for a panel that was given
+// credentials but no host. That is how a panel provisioned before this change
+// could have worked, and it must keep working after an OTA: see mqttBusBegin.
+#define MQTT_BUS_HOST_LEGACY "homeassistant.local"
 #endif
 #ifndef MQTT_BUS_PORT_DEFAULT
 #define MQTT_BUS_PORT_DEFAULT 1883
@@ -161,14 +171,19 @@ bool mqttBusPublishLarge(const char *topic, const uint8_t *payload, size_t len, 
 void mqttBusBegin() {
   Preferences p;
   if (p.begin("fb", true)) {
-    s_host = p.getString("host", MQTT_BUS_HOST_DEFAULT);
+    s_host = p.getString("host", "");
     s_user = p.getString("user", "");
     s_pass = p.getString("pass", "");
     s_port = (uint16_t)p.getUShort("port", MQTT_BUS_PORT_DEFAULT);
     p.end();
   } else {
-    s_host = MQTT_BUS_HOST_DEFAULT;
+    s_host = "";
   }
+  // Credentials with no host: a panel provisioned while the default was still
+  // homeassistant.local, which relied on it. Keep it where it was. With neither
+  // a host nor a user there is no broker, and the panel says NO BROKER rather
+  // than trying one it was never given.
+  if (s_host.isEmpty() && !s_user.isEmpty()) s_host = MQTT_BUS_HOST_LEGACY;
   s_noBroker = s_host.isEmpty();
   if (s_noBroker) return;
 
