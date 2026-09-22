@@ -1,84 +1,101 @@
-# AnimatedPixelClock
+# AnimatedPixelClock (NickoScope fork)
 
-An animated retro-arcade clock on a 128x64 RGB LED matrix, driven by an ESP32-S3.
+A 128x64 RGB LED wall panel on the Waveshare ESP32-S3-RGB-Matrix board. It
+started as [Keralots/AnimatedPixelClock](https://github.com/Keralots/AnimatedPixelClock),
+a retro-arcade clock, and all of that is still here. This fork adds live screens
+fed from the network, Lua effects uploaded over WiFi, a knob and a carousel,
+Home Assistant over MQTT, and an SDK that lets an AI agent drive the panel.
 
-![AnimatedPixelClock prototype displaying the Tetris clock on two RGB matrix panels](img/animatedpixelclock.jpg)
+![Nine of the panel's screens: aquarium, world clock, flight board, rail board, markets, media player, football clock, room radar, Tetris clock](img/screens.png)
 
-[![AnimatedPixelClock example animation video](https://img.youtube.com/vi/dw6Jv9x7Knw/hqdefault.jpg)](https://youtu.be/dw6Jv9x7Knw)
+*Host renders of the panel's own frames, 128x64 scaled 3x. Top row: the Lua
+aquarium, the world clock, the flight board. Middle: the rail board, the market
+dashboard, the media player. Bottom: the football clock, the room radar and the
+Tetris clock.*
 
-[![Watch on YouTube](https://img.shields.io/badge/YouTube-Watch%20example%20animation-FF0000?logo=youtube&logoColor=white)](https://youtu.be/dw6Jv9x7Knw)
-
-Fourteen clock styles plus a Cycle All mode (Mario, Space Invaders, Pac-Man, Snake,
-Tetris, Asteroids, Dino Runner, Matrix Rain, Weather and more), configurable from a built-in web
-interface: per-element sprite
-colors, brightness with scheduled night dimming, timezone selection with automatic
-DST, and OTA updates.
-It can also act as a PC performance monitor, showing live CPU/GPU/RAM/network stats
-sent by a desktop companion app.
-
-> Looking for the small OLED version? See the sibling project
-> [SmallOLED-PCMonitor](https://github.com/Keralots/SmallOLED-PCMonitor).
+- **Flash it from the browser:** [nickoscope.github.io/AnimatedPixelClock](https://nickoscope.github.io/AnimatedPixelClock/)
+- **Releases:** [github.com/NickoScope/AnimatedPixelClock/releases](https://github.com/NickoScope/AnimatedPixelClock/releases/latest)
+- **Report a bug:** [issues](https://github.com/NickoScope/AnimatedPixelClock/issues)
 
 ## Hardware
 
 | Part | Notes |
 |------|-------|
-| ESP32-S3 board | ESP32-S3-WROOM-1 (N16R8) devkit or Waveshare ESP32-S3-Zero. Compatible Super Mini boards also work; check that the particular board exposes GPIO 1, 2, 4-14 and 38 without conflicts |
-| 2x [Waveshare P2.5 64x64 HUB75E panels](https://kamami.pl/en/matrix/1183428-waveshare-23708-rgb-full-color-led-matrix-panel-2-5mm-pitch-64x64-pixels-adjustable-brightness-5906623427154.html) | Chained into one 128x64 canvas, 1/32 scan, FM6126A driver (init handled by the firmware) |
-| 5V power | Two options - see below |
-| Panel joiner (optional) | 3D-printable bracket that locks the two panels into one flat 128x64 frame: [MakerWorld model 3264534](https://makerworld.com/en/models/3264534) |
+| Waveshare ESP32-S3-RGB-Matrix | ESP32-S3-WROOM-2 N32R16V: 32 MB octal flash, 16 MB octal PSRAM, a 2x8 HUB75 socket with on-board buffers, two USB-C sockets (USB and POWER), BOOT and RESET buttons, and an SHTC3 temperature and humidity sensor |
+| 2x 64x64 HUB75E panels | Chained OUT to IN with the ribbon into one 128x64 canvas, 1/32 scan. The panels here are `RGB-Matrix-P2-64x64-B` with FM6124HJ column drivers; the firmware initialises them in FM6126A mode |
+| 5V power | Each panel has its own power harness. The board has a USB-C socket marked POWER and 5V/GND posts |
+| EC11 rotary knob (optional) | One knob with a push switch. Without it the carousel runs the panel by itself |
 
-The tested build runs directly from the ESP32's 3.3V GPIO signals. Keep signal
-wires short; the [wiring guide](docs/HUB75_WIRING.md) covers optional buffers if
-your panels show flicker or ghosting, plus bench setup and first-light checks.
+This is the only board this fork is tested and released for. The firmware still
+builds for the boards upstream supports (ESP32-S3-WROOM-1 devkit, ESP32-S3-Zero,
+Super Mini, wired by hand to the panels), but none of those has been flashed
+here; for them, see [upstream](https://github.com/Keralots/AnimatedPixelClock)
+and its [wiring guide](docs/HUB75_WIRING.md).
 
-### Connection diagram
+## What is on the panel
 
-![ESP32-S3 wiring: separate USB-C power input, capacitor, two-panel chain and exact HUB75E GPIO connections](docs/img/hub75_connection_diagram.svg)
+The pages:
 
-[Download PNG](docs/img/hub75_connection_diagram.png) ·
-[Open scalable SVG](docs/img/hub75_connection_diagram.svg)
+| Page | What it shows | Needs | Details |
+|------|---------------|-------|---------|
+| Clock | Fourteen animated clock styles, see [Clock styles](#clock-styles) | nothing | this file |
+| World clock | A dotted world map with day, night and twilight, your cities, and home's time in home's zone | nothing | [src/worldclock](src/worldclock/README.md) |
+| Flight board | Departures and arrivals for any airport, and flights you track | a FlightAware AeroAPI key, or Home Assistant | [src/flightboard](src/flightboard/README.md) |
+| Rail board | Departures and arrivals for any National Rail station | a Realtime Trains token, or Home Assistant | [src/railboard](src/railboard/README.md) |
+| Yacht radar | Live AIS vessels in the Bay of Cannes: a sweeping plot and a vessel table | an aisstream.io key | [src/yachtradar](src/yachtradar/README.md) |
+| Media | Now playing on a Home Assistant or Music Assistant player, and the knob as its remote | Home Assistant, MQTT | [src/media](src/media/README.md) |
+| Markets | Indices, ticker, portfolio and holdings pages with an exchange tape | Home Assistant, MQTT | [src/market](src/market/README.md) |
+| Lua effects | Seven built in (football, snooker, snake and Tetris clocks, Minecraft, the room radar, La Gioconda) and up to twelve of your own | nothing; the room radar needs a presence sensor over MQTT | [src/lua](src/lua/README.md), [gallery](gallery/README.md) |
 
-### Build photos
+The weather clock, the ambient screensavers, custom GIF animations, the PC
+monitor and the audio visualizer from upstream are all still in; they are
+described further down.
 
-Photos of the hand-soldered prototype - an ESP32-S3, a USB-C power breakout, the
-2200µF capacitor, an XT60 panel feed and the HUB75 header on a piece of protoboard,
-wired point to point:
+The board's own SHTC3 sensor reports temperature and humidity in `/api/info`, on
+the portal's Clock page, and, on request, as two Home Assistant sensors
+([src/climate](src/climate/README.md)).
 
-- Board, component side: [boardA.jpg](img/boardA.jpg) · solder side: [boardB.jpg](img/boardB.jpg)
-- Board size, about 50 x 41 mm: [board1.jpg](img/board1.jpg) · [board1a.jpg](img/board1a.jpg)
-- Connected to the panels: [display1.jpg](img/display1.jpg) · [display2.jpg](img/display2.jpg)
+### Lua effects over WiFi
 
-### Powering it
+A new screen is a Lua script, sent to the running panel in about a second: no
+build, no flash, no reboot. The panel keeps **twelve** uploaded effects of up to
+**50 KB** each, beside the seven compiled in, and they survive reboots and
+OTA updates.
 
-- **Prototype shown above:** a phone charger plugs into a **separate USB-C power
-  breakout**. Its 5V/GND rails feed the ESP32's 5V/GND pins and a two-pole panel
-  power connector. Each panel gets a dedicated power feed; panel current does
-  not pass through the ESP32 or HUB75 ribbon. A **2200µF, 25V capacitor** is
-  connected across the 5V/GND rails (positive to 5V). The supply remains **5V**.
-  Complete the wiring with power off, then connect the charger.
-- **Observed consumption:** the prototype works from a phone charger. The owner
-  estimates around **10W** in use and reports measurements staying **below 30W**;
-  this is not a measured maximum for sustained full-white content.
-- **Bench alternative:** the wiring guide describes a dedicated 5V supply
-  (10A example) feeding both panels separately, with the ESP32 powered by USB
-  and all grounds connected together.
+```bash
+python3 tools/agent/gallery.py show aquarium      # one of the gallery's screens
+```
 
-### Pin map
+The [gallery](gallery/README.md) has an aquarium that reacts to people in the
+room, a starship, the Bay of Cannes and La Gioconda. Scripts are written and
+checked on the host first with [`tools/luasim`](tools/luasim), which runs the
+same API the panel does.
 
-Same pin map on every supported board:
+### The knob and the carousel
 
-| Function | Signals | GPIO |
-|----------|---------|------|
-| Upper half RGB | R1 / G1 / B1 | 1 / 2 / 4 |
-| Lower half RGB | R2 / G2 / B2 | 5 / 6 / 7 |
-| Row address | A / B / C / D / E | 8 / 9 / 10 / 11 / 12 |
-| Clock / Latch / Output-enable | CLK / LAT / OE | 13 / 14 / 38 |
-| Common ground | HUB75E pins 4 and 16 / power ground | GND |
+Turn the knob to walk every clock style, then every page. Click enters a page
+that has controls of its own, such as the media remote, and click again leaves
+it. Leave the knob alone for 60 seconds and the carousel
+takes over, showing each page and each clock style for 15 seconds. Both numbers
+can be changed in the web portal.
 
-The **E** address line is required for 64x64 (1/32 scan) panels:
-**HUB75E pin 8 → GPIO12**, not ground. The firmware mapping is defined in
-[`src/display/matrix_display.h`](src/display/matrix_display.h).
+### Home Assistant
+
+The panel talks to Home Assistant over MQTT, through one connection shared by
+every page. It has no default broker: it connects only after you give it one in
+the portal. Without Home Assistant the clock, world clock, flight board, rail
+board, yacht radar and Lua effects all work on their own; the media and market
+pages and the room radar need it. The Home Assistant side of each page (the
+AppDaemon apps) lives next to it under [`tools/`](tools).
+
+### An SDK for AI agents
+
+[`tools/agent/`](tools/agent/README.md) is a Python SDK and an MCP server
+(over stdio) that let Claude Code, Codex or any MCP client
+find panels on the network by MAC address, bring a new one up, switch pages,
+read what the panel is doing, and write and upload new Lua screens.
+[`AGENTS.md`](AGENTS.md) is where an agent starts. It deliberately has no
+flashing tool: building and flashing is a person's call.
 
 ## Clock styles
 
@@ -195,9 +212,9 @@ on automatically during set hours (e.g. 20:00-23:00). `GET /api/mode/ambient` /
 ### Custom animations (upload your own GIFs)
 
 The **Custom animation** ambient effect plays animations you upload to the device
-on both 4MB and 16MB boards. The 4MB layout has 128KiB of animation storage,
-so short clips fit best: an empty tested device allows about 23 frames. The UI
-reports the current upload budget, including space needed for a temporary file.
+from the board's flash storage (about 23 MB free on the Waveshare board, shared
+with the Lua effects). The UI reports the current upload budget, including space
+needed for a temporary file.
 
 In the desktop companion, save `pixelclock.local` (or your clock's IP) on
 **Connection**, then open **Animations**. Refresh storage, select a GIF, choose
@@ -260,7 +277,7 @@ web-style config window, live device preview, drag-and-drop layout editor and
 sensor picker.
 
 - **Windows**: download and run
-  [`pc_stats_monitor_v4.exe`](https://github.com/Keralots/AnimatedPixelClock/releases/latest/download/pc_stats_monitor_v4.exe),
+  [`pc_stats_monitor_v4.exe`](https://github.com/NickoScope/AnimatedPixelClock/releases/latest/download/pc_stats_monitor_v4.exe),
   no Python needed. Install
   [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor/releases)
   and run it as Administrator for temperature/fan/power sensors (on 0.9.5+ enable
@@ -382,84 +399,58 @@ after detecting its new uptime (checked every 10 seconds).
 ### Web flasher (recommended)
 
 Open **[nickoscope.github.io/AnimatedPixelClock](https://nickoscope.github.io/AnimatedPixelClock/)**
-in Chrome or Edge on a desktop, pick your board, plug it in over USB and press
-Install. It flashes a prebuilt firmware image straight from the browser, then walks
-you through joining WiFi and connecting the PC companion. Nothing to install, no
-PlatformIO, no drivers beyond the ones your OS already ships.
+in Chrome or Edge on a desktop, plug the board in over USB and press Install. It
+writes the full image at `0x0`, then hands your WiFi to the board over USB
+(Improv Serial) in the same tab. The page also has a serial log viewer, useful
+if the panel stays dark after a flash, and the Windows companion download.
 
-That page is this fork's, and it serves images built from this branch. Upstream
-runs its own at [pixelclock.stolaris.dev](https://pixelclock.stolaris.dev), which
-carries the two boards it supports and not the Waveshare one.
-
-Board choices on that page:
-
-- **Waveshare ESP32-S3-RGB-Matrix (32MB)** - the driver board with the controller
-  on it. **Do not flash it with the WROOM image**: that module has octal flash, and
-  a quad-flash image installs cleanly and then fails to boot every time.
-- **ESP32-S3-Zero / Super Mini (4MB)** - the compact build. Native USB: if the serial
-  port never appears, hold BOOT while plugging the board in.
-- **ESP32-S3-WROOM devkit (16MB)** - the full-size devkit; its larger flash also
-  provides more space for custom animations.
-
-The same page has a serial log viewer, useful if the display stays dark after a flash.
-It also provides a direct Windows companion download after flashing. Full images,
-OTA-only images for both boards, the EXE and SHA-256 checksums are available in
-[GitHub Releases](https://github.com/Keralots/AnimatedPixelClock/releases/latest).
-Release packaging is documented in [docs/firmware/README.md](docs/firmware/README.md).
+The page carries one board, the Waveshare ESP32-S3-RGB-Matrix, because it is
+the one that has been flashed from there and seen to boot. Upstream runs its own
+flasher at [pixelclock.stolaris.dev](https://pixelclock.stolaris.dev) for the
+boards it supports.
 
 ### Building from source
 
 Built with [PlatformIO](https://platformio.org/).
 
 ```bash
-# ESP32-S3-WROOM devkit (default, 16MB)
-pio run -e matrix-s3-wroom -t upload
-
-# Compact 4MB boards (ESP32-S3 Super Mini, Waveshare ESP32-S3-Zero)
-pio run -e matrix-s3 -t upload
-
-# Waveshare ESP32-S3-RGB-Matrix (WROOM-2-N32R16V, 32MB octal flash + 16MB octal PSRAM)
 pio run -e matrix-waveshare-rgb -t upload
 ```
 
-The Waveshare RGB-Matrix board needs `opi_opi`, not the `qio_opi` the WROOM-1
-builds use: with quad flash set the image uploads and then every boot dies in
-`do_core_init` right after "Octal Flash Mode Enabled". `platformio.ini` has it
-right - the note is here because the symptom looks like a dead board.
+The board needs `opi_opi` memory, not the `qio_opi` of WROOM-1 builds: with quad
+flash set, the image uploads and then every boot dies in `do_core_init` right
+after "Octal Flash Mode Enabled". `platformio.ini` has it right; the note is here
+because the symptom looks like a dead board. **Do not flash it with a WROOM
+image** for the same reason.
 
-Omit `-t upload` to build only. The WROOM environment currently sets upload and
-monitor ports to `COM9`; change them in [`platformio.ini`](platformio.ini) or
-override the upload port with `--upload-port <port>` for your computer.
+`matrix-waveshare-rgb-bringup` builds a standalone panel self-test
+(`bringup/hello_matrix.cpp`), useful before the full firmware. The upstream
+environments (`matrix-s3-wroom`, `matrix-s3`) still build.
 
-The compact 4MB boards use native USB (no separate USB-UART chip): if the first
-flash isn't detected, hold BOOT while plugging in USB, then use OTA for later
-updates. The `matrix-s3-bringup` / `matrix-wroom-bringup` environments
-build a standalone panel self-test (`bringup/hello_matrix.cpp`) with six test
-patterns, useful for verifying wiring before flashing the full firmware.
+Release packaging is described in [docs/firmware/README.md](docs/firmware/README.md).
 
 ### First-time WiFi setup
 
-With no saved WiFi credentials, the device opens an access point named
-**PixelClock-Setup** (passwordless by default). Join it
-and a captive portal (or `192.168.4.1`) lets you enter your WiFi credentials.
-Improv-Serial provisioning over USB is also supported, which is what the web
-flasher uses to hand over your network right after installing.
+The web flasher hands your network over right after installing. If you miss
+that, the board opens an open access point named **PixelClock-Setup**; join it
+and a captive portal (or `192.168.4.1`) takes your WiFi credentials. Then the
+panel shows its IP address, and the portal is at that address or at
+`http://pixelclock.local`.
 
 ### OTA updates
 
-After the initial flash, update over WiFi from the web interface's Firmware Update
+After the first flash, update over WiFi from the portal's Firmware Update
 section, or from the command line:
 
 ```bash
-curl -F "firmware=@.pio/build/matrix-s3-wroom/firmware.bin" http://<device-ip>/update
+curl -F "firmware=@.pio/build/matrix-waveshare-rgb/firmware.bin" http://<device-ip>/update
 ```
 
-Updating from a [GitHub release](https://github.com/Keralots/AnimatedPixelClock/releases/latest):
-upload `OTA_ONLY_firmware-v<version>-<board>.bin`. Do not upload the full
-`firmware-v<version>-<board>.bin` - that one carries the bootloader and partition
-table and belongs at `0x0` over USB. `wroom` is the ESP32-S3-WROOM-1 N16R8 (16MB)
-build, `supermini` the ESP32-S3-Zero / Super Mini (4MB) build. Downloads can be
-verified against `SHA256SUMS.txt`.
+From a [release](https://github.com/NickoScope/AnimatedPixelClock/releases/latest),
+upload `OTA_ONLY_firmware-v<version>-waveshare.bin`. Do not upload the full
+`firmware-v<version>-waveshare.bin`: it carries the bootloader and partition
+table and belongs at `0x0` over USB. Downloads can be checked against
+`SHA256SUMS.txt`.
 
 ## HTTP control API
 
@@ -533,10 +524,18 @@ rest_command:
     payload: '{"text":"{{ message }}","icon":"{{ icon | default(''info'') }}","color":"{{ color | default(''#FFFFFF'') }}"}'
 ```
 
+## Credits
+
+This is a fork of [Keralots/AnimatedPixelClock](https://github.com/Keralots/AnimatedPixelClock)
+by Keralots: the clock styles, the ambient effects, the web portal, the PC
+companion and the audio visualizer come from there. Its sibling project for
+small OLED screens is [SmallOLED-PCMonitor](https://github.com/Keralots/SmallOLED-PCMonitor).
+
 ## Libraries
 
 - [ESP32-HUB75-MatrixPanel-DMA](https://github.com/mrcodetastic/ESP32-HUB75-MatrixPanel-I2S-DMA) (matrix driver)
 - Adafruit GFX, WiFiManager (tzapu), ArduinoJson, Improv-Serial
+- [Lua 5.4](https://www.lua.org/) for the effects
 
 ## License
 

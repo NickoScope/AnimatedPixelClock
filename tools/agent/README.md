@@ -10,7 +10,7 @@ write new screens for it.
 | `bringup.py` | a new panel: asks for a name, sets it, switches off the pages that have no source without Home Assistant. It will not make that call over a broker that is merely down |
 | `panel.py` | the transport. One place that knows how this firmware really behaves |
 | `gallery.py` | the `gallery/` screens, and any of them onto a running panel in about a second |
-| `mcp_server.py` | twenty-three MCP tools over stdio. This is what you register with Claude Code, Codex or anything else that speaks MCP |
+| `mcp_server.py` | twenty-four MCP tools over stdio. This is what you register with Claude Code, Codex or anything else that speaks MCP |
 
 **This SDK is the source of truth for working with a panel.** Where a fact about
 driving one has to live in exactly one place, it lives here - as a tool that
