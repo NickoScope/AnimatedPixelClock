@@ -101,6 +101,8 @@ claude mcp add ledmatrix --scope user --env LEDMATRIX_PANEL=AA:BB:CC:00:11:22 --
 - `panel_capabilities` - which modules this build has, which routes answer, and whether Home Assistant is behind it
 
 **Driving**
+- `panel_carousel` - start or stop the page rotation, and set how long it dwells.
+  **Stop it before showing somebody one screen**, or it walks off mid-sentence
 - `panel_show_page` · `panel_set_style` · `panel_enable_page`
 - `panel_effects` · `panel_show_effect`
 - `panel_notify` · `panel_display` · `panel_rename`

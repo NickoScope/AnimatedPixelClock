@@ -810,6 +810,69 @@ async def panel_display(args: DisplayIn) -> str:
         return _say(e)
 
 
+class CarouselIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool | None = Field(default=None,
+                                 description="Start or stop the rotation. This is the "
+                                             "whole tool for most callers.")
+    idleS: int | None = Field(default=None, ge=5, le=3600,
+                              description="Seconds of no knob and no command before the "
+                                          "rotation starts again. PANEL_IDLE_MIN_S..MAX_S "
+                                          "in panel.h.")
+    slotS: int | None = Field(default=None, ge=0, le=3600,
+                              description="Seconds a page is held. 0 means each page "
+                                          "keeps its own time; otherwise 5..3600.")
+    allStyles: bool | None = Field(default=None,
+                                   description="Walk every clock style as well as every "
+                                               "page.")
+    panel: str | None = None
+
+
+@mcp.tool(
+    name="panel_carousel",
+    annotations={"title": "Start or stop the page rotation", "readOnlyHint": False,
+                 "destructiveHint": False, "idempotentHint": True,
+                 "openWorldHint": True})
+async def panel_carousel(args: CarouselIn) -> str:
+    """Turn the carousel on or off, and set how long it dwells.
+
+    The carousel is what walks the panel from page to page on its own. **Turn it
+    off before showing somebody one screen**, or it will move on mid-sentence -
+    which is exactly what happened on 2026-09-22 while the owner was looking at
+    an aquarium, and the panel wandered off to ROOM RADAR.
+
+    `idleS` is the patience: how long after the last knob turn or command the
+    rotation resumes. So `panel_show_effect` is not sticky on its own - the
+    carousel comes back when idleS expires. If you want a page to stay, stop the
+    carousel; if you want it back afterwards, start it again.
+
+    Nothing here is persisted: a reboot restores the saved settings.
+
+    Returns: {"ok": true, "outcome": "changed"|"already", "carousel": {...}}
+    """
+    try:
+        p = _pick(args.panel)
+        a = p["address"]
+        before = (P.get(a, "/api/panel").get("carousel") or {})
+        body = {k: v for k, v in (("enabled", args.enabled), ("idleS", args.idleS),
+                                  ("slotS", args.slotS), ("allStyles", args.allStyles))
+                if v is not None}
+        if not body:
+            return _ok(outcome="already", carousel=before,
+                       note="Nothing was asked for; this is the current state.")
+        r = P.post(a, "/api/panel", {"carousel": body})
+        # The answer carries the whole new state, so compare it rather than
+        # trusting the 200 - a 200 here can mean nothing happened at all.
+        after = (r.get("carousel") if isinstance(r, dict) else None) or \
+                (P.get(a, "/api/panel").get("carousel") or {})
+        changed = any(after.get(k) != before.get(k) for k in body)
+        return _ok(outcome="changed" if changed else "already",
+                   carousel=after, was={k: before.get(k) for k in body},
+                   note="Not persisted - a reboot restores the saved settings.")
+    except Exception as e:  # noqa: BLE001
+        return _say(e)
+
+
 class RenameIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str = Field(pattern=r"^[A-Za-z][A-Za-z0-9-]{0,30}$",
