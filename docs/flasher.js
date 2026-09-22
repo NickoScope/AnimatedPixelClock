@@ -122,13 +122,6 @@ function showVersion(version) {
   document.getElementById('spec-version').textContent = version;
   const rail = document.getElementById('rail-version');
   if (rail) rail.textContent = version;
-  const releaseUrl = 'https://github.com/Keralots/AnimatedPixelClock/releases';
-  const download = document.getElementById('companion-download');
-  if (download) download.href = `${releaseUrl}/download/${encodeURIComponent(version)}/pc_stats_monitor_v4.exe`;
-  const notes = document.getElementById('release-downloads');
-  if (notes) notes.href = `${releaseUrl}/tag/${encodeURIComponent(version)}`;
-  const label = document.getElementById('companion-release');
-  if (label) label.textContent = `Included in ${version}`;
 }
 
 function showVersionError(err) {
