@@ -21,23 +21,40 @@ static void eq(uint32_t got, uint32_t want, const char *what) {
 // not one of them touched the line that decides whether the web portal serves a
 // page or returns 503. It went unnoticed until the reserve it applies outlived
 // the thing it was protecting.
+static const uint32_t BIG = 1u << 20;  // DMA pool not the constraint in these checks
+static void checkTooTightDma() {
+  // 2026-09-22, the four steps measured while the portal opened, as (general
+  // largest, DMA largest). The old guard read only the first and let all four
+  // through; the radio failed at the last.
+  is(webHeapTooTight(11252, 11252, true), false, "portal opens: first request is served");
+  is(webHeapTooTight(7668, 5108, true), true, "second request refused: DMA pool too short for a response");
+  is(webHeapTooTight(7668, 3572, true), true, "third refused");
+  is(webHeapTooTight(7668, 1396, true), true, "the step that starved the radio is refused");
+  // At rest after recovery, 2026-09-22: DMA largest 11,252-12,788 B.
+  is(webHeapTooTight(18420, 12788, true), false, "a panel at rest serves the portal");
+  // The line itself: the radio's buffer plus one response's send buffer.
+  eq(WEB_HEAP_KEEP_DMA, 1626u + 5760u, "DMA line = radio 1,626 + TCP send buffer 5,760");
+  is(webHeapTooTight(BIG, WEB_HEAP_KEEP_DMA - 1, true), true, "one below the DMA line is too tight");
+  is(webHeapTooTight(BIG, WEB_HEAP_KEEP_DMA, true), false, "exactly the DMA line is enough");
+  is(webHeapTooTight(BIG, WEB_HEAP_KEEP_DMA - 1, false), true, "broker down does not relax the DMA line");
+}
 static void checkTooTight() {
   // Broker up: no module starts a fetch task any more, so the only thing that
   // must be left room is the radio's 1,626 B DMA buffer.
-  is(webHeapTooTight(0, true), true, "broker up: nothing free is too tight");
-  is(webHeapTooTight(1625, true), true, "broker up: one below the radio's need is too tight");
-  is(webHeapTooTight(1626, true), false, "broker up: exactly the radio's need is enough");
-  is(webHeapTooTight(8692, true), false,
+  is(webHeapTooTight(0, BIG, true), true, "broker up: nothing free is too tight");
+  is(webHeapTooTight(1625, BIG, true), true, "broker up: one below the radio's need is too tight");
+  is(webHeapTooTight(1626, BIG, true), false, "broker up: exactly the radio's need is enough");
+  is(webHeapTooTight(8692, BIG, true), false,
      "broker up: the measured unlucky boot (8,692 B) still serves the portal");
-  is(webHeapTooTight(24564, true), false, "broker up: a good boot is fine");
+  is(webHeapTooTight(24564, BIG, true), false, "broker up: a good boot is fine");
 
   // Broker down: every module creates its own task again, so the old combined
   // line is the right one.
-  is(webHeapTooTight(8692, false), true,
+  is(webHeapTooTight(8692, BIG, false), true,
      "broker down: 8,692 B must refuse - the rail board's 10 KB task could not start");
-  is(webHeapTooTight(11865, false), true, "broker down: one below the sum is too tight");
-  is(webHeapTooTight(11866, false), false, "broker down: exactly the sum is enough");
-  is(webHeapTooTight(24564, false), false, "broker down: a good boot is fine");
+  is(webHeapTooTight(11865, BIG, false), true, "broker down: one below the sum is too tight");
+  is(webHeapTooTight(11866, BIG, false), false, "broker down: exactly the sum is enough");
+  is(webHeapTooTight(24564, BIG, false), false, "broker down: a good boot is fine");
 
   // Named for what it now takes: not "the broker is running" but "every
   // consumer is on it". The audit of 2026-09-21 pointed out that these ten
@@ -50,7 +67,7 @@ static void checkTooTight() {
   // The relationship, which is the part that would rot silently if either
   // constant moved: all-migrated can only ever ALLOW more, never less.
   for (uint32_t b = 0; b < 30000; b += 97)
-    if (webHeapTooTight(b, true) && !webHeapTooTight(b, false)) {
+    if (webHeapTooTight(b, BIG, true) && !webHeapTooTight(b, BIG, false)) {
       is(false, true, "broker up is never stricter than broker down");
       return;
     }
@@ -59,6 +76,7 @@ static void checkTooTight() {
 
 int main() {
   checkTooTight();
+  checkTooTightDma();
   // The age arithmetic, including the millis() wrap - the half that lives on the
   // panel and used to be unreachable from here.
   eq(webHeapFailAgeMs(5000, 1000), 4000, "plain elapsed");

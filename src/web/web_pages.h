@@ -1326,6 +1326,58 @@ static const char PORTAL_CSS[] PROGMEM = R"CSS(:root{--paper:#f4f0e7;--paper-2:#
 //  loads panel.css and panel.js where the build has a Panel group.
 // ============================================================================
 static const char PORTAL_JS[] PROGMEM = R"JS(
+// One request to the panel at a time. Measured over the cable 2026-09-22:
+// one portal visit issued 48 requests, many of them at once, and every one
+// waiting its turn in the panel's synchronous server holds Wi-Fi receive
+// buffers from the DMA-capable pool (1,626 B each, caps 0x80c) - the pool
+// went 11,252 -> 1,588 B largest in a single step and the radio lost the
+// link. The browser cannot be told to open fewer connections, so every
+// same-origin fetch goes through this queue: one on the wire, the body read
+// to the end before the next starts, a GET already waiting shared rather
+// than queued twice (the pollers), and a 503 - the panel saying "not now" -
+// retried after its Retry-After instead of surfacing as an error.
+(function () {
+'use strict';
+var F = window.fetch.bind(window), q = [], busy = false, waiting = {};
+function same(u) { try { return new URL(u, location.href).origin === location.origin; } catch (e) { return true; } }
+function copy(b, r) { return new Response(b.byteLength ? b : null, { status: r.status, statusText: r.statusText, headers: r.headers }); }
+function next() {
+ if (busy || !q.length) return;
+ busy = true;
+ var j = q.shift();
+ if (j.key) delete waiting[j.key];
+ var ac = (!j.init.signal && window.AbortController) ? new AbortController() : null;
+ var init = ac ? Object.assign({}, j.init, { signal: ac.signal }) : j.init;
+ var t = ac && j.key ? setTimeout(function () { ac.abort(); }, 15000) : 0;
+ F(j.url, init).then(function (r) {
+  return r.arrayBuffer().then(function (b) {
+   if (r.status === 503 && j.tries < 3) {
+    var s = parseInt(r.headers.get('Retry-After') || '1', 10) || 1;
+    j.tries++;
+    setTimeout(function () { q.unshift(j); next(); }, s * 1000);
+    return;
+   }
+   j.ok.forEach(function (f) { f(copy(b, r)); });
+  });
+ }).catch(function (e) { j.bad.forEach(function (f) { f(e); }); })
+   .then(function () { if (t) clearTimeout(t); busy = false; next(); });
+}
+window.fetch = function (url, init) {
+ init = init || {};
+ var u = (url && url.url) || String(url);
+ if (!same(u)) return F(url, init);
+ var get = !init.method || String(init.method).toUpperCase() === 'GET';
+ var key = get ? u : '';
+ return new Promise(function (ok, bad) {
+  var w = key && waiting[key];
+  if (w) { w.ok.push(ok); w.bad.push(bad); return; }
+  var j = { url: url, init: init, key: key, tries: 0, ok: [ok], bad: [bad] };
+  if (key) waiting[key] = j;
+  q.push(j);
+  next();
+ });
+};
+})();
 (function () {
 'use strict';
 var $  = function (s, r) { return (r || document).querySelector(s); };

@@ -93,12 +93,41 @@ static inline uint32_t webHeapStreakNow(uint32_t streak, uint32_t sinceLastRefus
 #define WEB_HEAP_KEEP_FOR_FETCH  10240UL
 #define WEB_HEAP_KEEP_FOR_OTHERS (WEB_HEAP_KEEP_FOR_RADIO + WEB_HEAP_KEEP_FOR_FETCH)
 
+// **The response's own share, in the pool the radio allocates from.**
+// Measured over the cable 2026-09-22 on NickoScopeMatrix-64x128-01 (v2.5.3,
+// which added the DMA-capable figures to [mem] and /api/info): opening the
+// portal took the largest DMA-capable internal block 11,252 -> 5,108 -> 3,572
+// -> 1,396 B in four consecutive "during web server" steps, while the largest
+// block of the general internal pool - the one this guard used to read - sat
+// at 7,668 B and let every request through. The Wi-Fi task then failed its
+// 1,626 B allocation with caps 0x80c = INTERNAL|DMA|8BIT, and the link was
+// gone. The radio does not allocate from "internal"; it allocates from the
+// DMA-capable part of it, which is smaller, and that is what has to be read.
+//
+// The figure is not guessed: it is lwIP's per-connection send buffer, the most
+// one response can have queued at once (sdkconfig CONFIG_LWIP_TCP_SND_BUF_DEFAULT,
+// 5,760 B in this build), and it matches the ~6 KB step measured per request.
+#if defined(__has_include)
+#if __has_include("sdkconfig.h")
+#include "sdkconfig.h"
+#endif
+#endif
+#ifdef CONFIG_LWIP_TCP_SND_BUF_DEFAULT
+#define WEB_HEAP_KEEP_FOR_RESPONSE ((uint32_t)CONFIG_LWIP_TCP_SND_BUF_DEFAULT)
+#else
+#define WEB_HEAP_KEEP_FOR_RESPONSE 5760UL   // host test: the build's sdkconfig value
+#endif
+#define WEB_HEAP_KEEP_DMA (WEB_HEAP_KEEP_FOR_RADIO + WEB_HEAP_KEEP_FOR_RESPONSE)
+
 // True when a large response would leave the radio - and, when modules still
-// start their own fetch tasks, a fetch - with nothing. `brokerUp` says whether
-// anything can still ask for a task-sized contiguous block.
-static inline bool webHeapTooTight(uint32_t largestFreeBlock, bool brokerUp) {
+// start their own fetch tasks, a fetch - with nothing. `largestFreeBlock` is the
+// general internal pool (task stacks), `largestDmaBlock` the DMA-capable part
+// the radio's receive buffers come from; a response has to fit in the second
+// with the radio's buffer still left over. `brokerUp` says whether anything can
+// still ask for a task-sized contiguous block.
+static inline bool webHeapTooTight(uint32_t largestFreeBlock, uint32_t largestDmaBlock, bool brokerUp) {
   const uint32_t keep = brokerUp ? WEB_HEAP_KEEP_FOR_RADIO : WEB_HEAP_KEEP_FOR_OTHERS;
-  return largestFreeBlock < keep;
+  return largestFreeBlock < keep || largestDmaBlock < WEB_HEAP_KEEP_DMA;
 }
 
 // True while the portal should refuse large responses: the radio failed

@@ -409,6 +409,14 @@ void handleDeviceInfo() {
  // hide internal-SRAM pressure, which is what actually breaks WiFi and lwip.
  doc["largestHeapBlock"] = (uint32_t)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
  doc["freeInternalHeap"] = (uint32_t)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+ // The pool the Wi-Fi driver actually draws its RX/TX buffers from: internal AND
+ // DMA-capable (the failure on 2026-09-22 was "1626 B, caps 0x80c" = INTERNAL |
+ // DMA | 8BIT). The HUB75 framebuffer is DMA-capable internal RAM too, so this
+ // pool is a strict subset of the one above and can be empty while the one
+ // above still looks healthy. Watching only freeInternalHeap is how that hides.
+ doc["dmaFree"]    = (uint32_t)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+ doc["dmaLargest"] = (uint32_t)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+ doc["dmaMin"]     = (uint32_t)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
  { extern uint32_t loopMaxMs(); doc["loopMaxMs"] = loopMaxMs(); }   // longest loop() pass, last 10 s
  // The network broker, when it is built and up (src/net/net_broker.h). The one
  // that matters here is `netStackFreeMin`: the 12 KB stack was chosen as the
@@ -1360,7 +1368,9 @@ static bool webRefuseBig() {
   // TLS handshake, which is the one moment this exists to prevent.
   // Either the network is busy, or the memory from the last client has not
   // come back yet. Both mean the same thing to a big response: wait your turn.
-  if (netLockBusy() || webHeapTooTight(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL), nbAllMigrated())) {
+  if (netLockBusy() || webHeapTooTight(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+                      heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT),
+                      nbAllMigrated())) {
     s_webRefused++;
     netMarkHttp();
     server.sendHeader("Retry-After", "1");

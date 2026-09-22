@@ -988,10 +988,12 @@ static void loopMark(const char *tag) {
   const uint32_t heapMin = heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL);
   if (s_heapMinSeen && heapMin + 1024 <= s_heapMinSeen) {
     const int n = snprintf(line, sizeof(line),
-                           "[mem] internal minimum %u -> %u B during %s (free %u, largest %u, tasks %u)\n",
+                           "[mem] internal minimum %u -> %u B during %s (free %u, largest %u, dma %u/%u, tasks %u)\n",
                            (unsigned)s_heapMinSeen, (unsigned)heapMin, tag,
                            (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
                            (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+                           (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA),
+                           (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA),
                            (unsigned)uxTaskGetNumberOfTasks());
     if (n > 0) dbgLogWrite(line, (uint32_t)(n < (int)sizeof(line) ? n : (int)sizeof(line) - 1));
   }

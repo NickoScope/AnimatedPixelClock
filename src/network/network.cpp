@@ -308,6 +308,15 @@ void initNTP() {
 #define NET_IDLE_BEFORE_PROBE_MS 120000UL
 #define NET_PROBE_RETRY_MS 60000UL
 #define NET_PROBE_FAILS_BEFORE_RECOVERY 2
+// Consecutive probe ROUNDS in which not one ping left the board. One such round
+// is a transient - 2026-09-20 was exactly that, and restarting the radio over it
+// took down a working link. Two in a row, NET_PROBE_RETRY_MS apart, is not: on
+// 2026-09-22 a portal load starved the Wi-Fi task of its 1,626 B DMA buffer and
+// the transmit path stayed broken after the heap had recovered - 23:30:06 three
+// send errors, memory back at 25 KB free, still nothing leaving. Two rounds is
+// about three minutes after the last traffic; the blind timer would have taken
+// fifteen, and any stray inbound packet resets that.
+#define NET_UNSENT_ROUNDS_BEFORE_RECOVERY 2
 #define NET_REBOOT_AFTER_MS 360000UL
 
 // The blind timer: how long the panel may be unreachable AND unable to find out
@@ -326,6 +335,7 @@ static uint32_t netNextProbeMs = 0;
 static uint32_t netHttpCount = 0;
 static uint32_t netRecoverCount = 0;
 static uint8_t netProbeFails = 0;
+static uint8_t netUnsentRounds = 0;   // consecutive rounds with nothing sent
 static const char* netRecoverReason = "";
 static esp_ping_handle_t netPing = nullptr;
 static volatile bool netPingReplied = false;
@@ -337,6 +347,7 @@ static void netMarkAlive() {
   netBadSinceMs = 0;
   netBlindSinceMs = 0;
   netProbeFails = 0;
+  netUnsentRounds = 0;
 }
 
 // Arm, or keep armed, the blind timer: we cannot say whether the link works,
@@ -490,6 +501,7 @@ static void netHealthTick() {
     netPingRelease();
     netNextProbeMs = now + NET_PROBE_RETRY_MS;
     const uint32_t sent = netPingSent;
+    if (sent) netUnsentRounds = 0;         // the transmit path works, whatever the reply
     if (replied) {
       netMarkAlive();
     } else if (!sent) {
@@ -511,6 +523,17 @@ static void netHealthTick() {
       // makes no claim about the gateway.
       Serial.println("Link probe could not be sent (no buffer): not counted against the gateway");
       netBlind("probe not sent");
+      // What neither of the above reasoned about: the round REPEATING. A second
+      // round a minute later with nothing sent is not a buffer that was briefly
+      // short - it is a transmit path that has stopped. The gateway is still not
+      // blamed; the radio is restarted because the radio is what is broken, and
+      // restarting it frees and re-allocates exactly the buffers it could not get.
+      if (++netUnsentRounds >= NET_UNSENT_ROUNDS_BEFORE_RECOVERY && !cooling) {
+        Serial.printf("Link probe unsendable %u rounds running: the Wi-Fi transmit path is stuck\n",
+                      (unsigned)netUnsentRounds);
+        netUnsentRounds = 0;
+        netRecover("transmit path stuck");
+      }
     } else if (++netProbeFails >= NET_PROBE_FAILS_BEFORE_RECOVERY && !cooling) {
       netRecover("gateway unreachable");
     }
