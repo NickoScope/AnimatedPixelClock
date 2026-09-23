@@ -79,6 +79,7 @@ import panel as P  # noqa: E402
 
 RADIO_BUFFER = 1626          # bytes, caps 0x80c: the allocation that fails first
 RISKY_KEYS = {"yachts"}      # pages that are known to hurt the panel when shown
+GALLERY_RAW = "https://raw.githubusercontent.com/NickoScope/AnimatedPixelClock/main/gallery/"
 FEED_IDLE_S = 3.0            # presence.cpp and climate.cpp kIdleMs: a feed stops 3 s after the last read
 PORTAL_JSON = ["/api/portal", "/api/info", "/api/status", "/api/panel", "/metrics",
                "/api/anim/list", "/api/lua", "/api/worldclock", "/api/knob"]
@@ -222,7 +223,7 @@ def status(address):
 # --- the run ----------------------------------------------------------------
 
 def run(panel=None, serial_port=None, read_only=False, include=(), notify=True,
-        out_dir=None, stress=False):
+        out_dir=None, stress=False, effects_roundtrip=False):
     log = Log()
     report = {"started": datetime.now().isoformat(timespec="seconds"), "findings": [],
               "steps": {}}
@@ -293,6 +294,10 @@ def run(panel=None, serial_port=None, read_only=False, include=(), notify=True,
                 report["steps"]["onscreen"] = onscreen(addr, pan0, log, find, changed)
             except Exception as e:  # noqa: BLE001
                 find("FAIL", f"on-screen feeds: {e}")
+            try:
+                report["steps"]["effects"] = effects(addr, log, find, changed, orig, effects_roundtrip)
+            except Exception as e:  # noqa: BLE001
+                find("FAIL", f"effects: {e}")
         report["steps"]["portal"] = portal(addr, log, find, 0)
 
         time.sleep(2)
@@ -379,6 +384,15 @@ def restore(addr, orig, changed, ring_on, log, find):
             step("page", lambda: P.post(addr, "/api/panel", {"show": {"page": orig["page"]}}))
     if "ring" in changed:
         step("ring", lambda: P.get_text(addr, "/api/log?on=" + ("1" if ring_on else "0")))
+    if "walk" in changed and orig.get("walk"):
+        def w():
+            name, was = orig["walk"]
+            names = P.get(addr, "/api/lua").get("effects") or []
+            if name in names:
+                P.post(addr, "/api/lua", {"walk": {"i": names.index(name), "on": was}})
+        step("walk", w)
+    if "upload" in changed and orig.get("upload"):
+        step("upload", lambda: P.post(addr, "/api/lua", {"delete": orig["upload"]}))
 
 
 def controls(addr, st0, pan0, include, notify, log, find, changed, dwell, gap):
@@ -553,6 +567,74 @@ def onscreen(addr, pan0, log, find, changed):
     return done
 
 
+def effects(addr, log, find, changed, orig, roundtrip):
+    """2.5.7: each Lua effect in or out of the carousel on its own, and (with
+    --effects) the gallery round trip the portal does: an effect from GitHub
+    uploaded, shown, deleted. Everything is put back."""
+    d = P.get(addr, "/api/lua")
+    names, walk = d.get("effects") or [], d.get("inWalk")
+    if not isinstance(walk, list) or not names:
+        log("info", "effects: this firmware has no per-effect switch (2.5.7); step skipped")
+        return {"skipped": "firmware"}
+    done = {}
+    i = len(names) - 1
+    name, was = names[i], bool(walk[i])
+    orig["walk"] = (name, was)
+    changed.add("walk")
+    r = P.post(addr, "/api/lua", {"walk": {"i": i, "on": not was}})
+    flipped = (r.get("inWalk") or [None] * (i + 1))[i] == (not was)
+    seen = [p.get("effectOn") for p in P.get(addr, "/api/panel").get("pages") or [] if p.get("name") == name]
+    r = P.post(addr, "/api/lua", {"walk": {"i": i, "on": was}})
+    back = (r.get("inWalk") or [None] * (i + 1))[i] == was
+    changed.discard("walk")
+    done["walk"] = {"effect": name, "switched": flipped, "panelSaw": seen, "restored": back}
+    if not flipped or seen != [not was] or not back:
+        find("FAIL", f"the carousel switch of {name} did not follow: {done['walk']}")
+    if not roundtrip:
+        return done
+
+    up = d.get("uploaded") or {}
+    if up.get("count", 0) >= up.get("slots", 0):
+        log("info", "effects: every upload slot is used; the gallery round trip skipped")
+        return done
+    try:
+        import urllib.request
+        with urllib.request.urlopen(GALLERY_RAW + "index.json", timeout=20) as f:
+            index = json.loads(f.read())
+    except Exception as e:  # noqa: BLE001
+        log("info", f"effects: the gallery on GitHub could not be read ({e}); round trip skipped")
+        return done
+    have = set(names)
+    pick = [g for g in index.get("effects") or [] if g["name"].replace("_", " ") not in have]
+    if not pick:
+        log("info", "effects: every gallery effect is on the panel already; round trip skipped")
+        return done
+    g = min(pick, key=lambda g: g["bytes"])
+    with urllib.request.urlopen(GALLERY_RAW + g["file"], timeout=20) as f:
+        data = f.read()
+    shown = g["name"].replace("_", " ")
+    orig["upload"] = g["name"]
+    changed.add("upload")
+    res = P.post_file(addr, "/api/lua/upload?name=" + g["name"], "script", g["file"], data)
+    after = P.get(addr, "/api/lua").get("effects") or []
+    listed = shown in after
+    ran = None
+    if listed:
+        changed.add("page")
+        P.post(addr, "/api/lua", {"show": after.index(shown)})
+        time.sleep(3)
+        ran = P.get(addr, "/api/lua").get("current") == after.index(shown)
+    P.post(addr, "/api/lua", {"delete": g["name"]})
+    gone = shown not in (P.get(addr, "/api/lua").get("effects") or [])
+    if gone:
+        changed.discard("upload")
+    done["gallery"] = {"effect": shown, "bytes": len(data), "uploaded": bool(res and res.get("success")),
+                       "listed": listed, "ran": ran, "deleted": gone}
+    if not (listed and ran and gone):
+        find("FAIL", f"the gallery round trip did not hold: {done['gallery']}")
+    return done
+
+
 def compare(b, a, elapsed, find):
     expected = (b.get("uptime") or 0) + elapsed
     reset = RESET_REASONS.get(a.get("resetReason"), a.get("resetReason"))
@@ -680,6 +762,9 @@ def main():
     ap.add_argument("--include", action="append", default=[],
                     help="also show a page kind skipped as risky (e.g. yachts)")
     ap.add_argument("--no-notify", action="store_true", help="skip the banner")
+    ap.add_argument("--effects", action="store_true",
+                    help="also take an effect from the GitHub gallery, upload, show and delete it "
+                         "(writes the panel's flash; needs the internet)")
     ap.add_argument("--out", help="folder for the logs (default: health-logs/<time>)")
     ap.add_argument("--json", action="store_true", help="print the full report")
     a = ap.parse_args()
@@ -702,7 +787,7 @@ def main():
         base = Path(a.out) if a.out else Path.cwd() / "health-logs" / stamp
         out = str(base / (t or "panel").replace(":", "") if len(targets) > 1 else base)
         try:
-            report, _ = run(t, a.serial, a.read_only, tuple(a.include), not a.no_notify, out, a.stress)
+            report, _ = run(t, a.serial, a.read_only, tuple(a.include), not a.no_notify, out, a.stress, a.effects)
         except KeyboardInterrupt:
             print(f"interrupted; what it changed was put back, the logs are in {out}")
             sys.exit(130)

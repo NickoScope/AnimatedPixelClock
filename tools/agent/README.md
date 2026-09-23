@@ -194,6 +194,9 @@ AGENTS.md section 8 and `tools/fonts/check_sysfont.py`.
 - `presence.source: "idle"`, `presence.subscribed: false`, `climate.idle: true`:
   the room radar feed and the onboard sensor run only while a screen needs them.
   Idle is normal, not a fault. `health.py` checks that they follow the screen.
+- `health.py` also switches one effect out of the carousel and back (2.5.7),
+  and with `--effects` does the portal's gallery round trip: an effect from the
+  GitHub gallery that is not on the panel is uploaded, shown and deleted.
 
 ## Грабли
 
