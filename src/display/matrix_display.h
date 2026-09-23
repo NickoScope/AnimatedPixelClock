@@ -20,6 +20,7 @@
 #define MATRIX_DISPLAY_H
 
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
+#include <Arduino.h>
 #include <esp_heap_caps.h>
 #include <string.h>
 
@@ -38,8 +39,14 @@
 // to PSRAM and striped the picture (tried 2026-09-14, platformio.ini); here the
 // DMA still reads internal RAM, and the colour depth is untouched (owner,
 // 2026-09-21). Knowledge base: HANDOFF, 2026-09-23.
+// On for the Waveshare board, where the shortage was measured; the other
+// boards keep double buffering until someone measures them (gate audit).
 #ifndef HUB75_FRAME_IN_PSRAM
+#if defined(BOARD_WAVESHARE_RGB_MATRIX)
 #define HUB75_FRAME_IN_PSRAM 1
+#else
+#define HUB75_FRAME_IN_PSRAM 0
+#endif
 #endif
 
 inline HUB75_I2S_CFG makeMatrixConfig() {
@@ -152,22 +159,35 @@ public:
   }
 
   inline void clearDisplay() { clearScreen(); }
-  // The flip: the pixels that changed since the last one go to the DMA frame.
-  // Timed, so /api/info can say what it costs.
+  // The flip: the pixels that changed since the last one go to the DMA frame,
+  // as runs of one colour through the library's hlineDMA path - one call per
+  // run instead of one per pixel. A run starts at a changed pixel and takes in
+  // every following pixel of the same colour, changed or not: writing a pixel
+  // its own value again is harmless and makes the runs longer. src/fx3d
+  // measured the difference (README: 14-15 ms a full frame per pixel, 6-10 ms
+  // by runs). Timed, so /api/info can say what it costs.
   inline void display() {
     if (ready()) {
       const uint32_t t0 = micros();
       uint32_t n = 0;
-      for (int i = 0, px = 0; px < kW * kH; px++, i += 3) {
-        if (!full_ && frame_[i] == shown_[i] && frame_[i + 1] == shown_[i + 1] && frame_[i + 2] == shown_[i + 2])
-          continue;
-        shown_[i] = frame_[i]; shown_[i + 1] = frame_[i + 1]; shown_[i + 2] = frame_[i + 2];
-        MatrixPanel_I2S_DMA::drawPixelRGB888(px % kW, px / kW, frame_[i], frame_[i + 1], frame_[i + 2]);
-        n++;
+      for (int y = 0; y < kH; y++) {
+        uint8_t *f = frame_ + 3 * y * kW, *sh = shown_ + 3 * y * kW;
+        for (int x = 0; x < kW;) {
+          uint8_t *c = f + 3 * x;
+          if (!full_ && c[0] == sh[3 * x] && c[1] == sh[3 * x + 1] && c[2] == sh[3 * x + 2]) { x++; continue; }
+          int e = x + 1;
+          while (e < kW && f[3 * e] == c[0] && f[3 * e + 1] == c[1] && f[3 * e + 2] == c[2]) e++;
+          MatrixPanel_I2S_DMA::drawFastHLine(x, y, e - x, c[0], c[1], c[2]);
+          memcpy(sh + 3 * x, f + 3 * x, (size_t)3 * (e - x));
+          n += e - x;
+          x = e;
+        }
       }
-      full_ = false;
       blitUs = micros() - t0;
-      if (blitUs > blitMaxUs) blitMaxUs = blitUs;
+      // The first copy after boot writes every pixel; it is not a frame in
+      // service, so it is kept out of the worst case (gate audit).
+      if (!full_ && blitUs > blitMaxUs) blitMaxUs = blitUs;
+      full_ = false;
       blitPixels = n;
     }
     lastFlipUs = micros();
@@ -189,6 +209,9 @@ public:
   // The S3 driver queues a DMA chain switch but does not wait for EOF.
   // A full scan after the request guarantees the old front buffer is free.
   inline void waitForScanCompletion() {
+#if HUB75_FRAME_IN_PSRAM
+    return;   // one DMA frame, no flip: nothing to wait for
+#endif
     if (!hasFlipped || calculated_refresh_rate <= 0) return;
     const uint32_t scanUs = (1000000UL + calculated_refresh_rate - 1) /
                             calculated_refresh_rate + 100;
@@ -225,6 +248,7 @@ private:
     if (!frame_ || !shown_) {
       heap_caps_free(frame_); heap_caps_free(shown_);
       frame_ = shown_ = nullptr;
+      Serial.println("[display] no PSRAM for the drawn frame: drawing straight to the single DMA frame");
       return false;
     }
     return true;
