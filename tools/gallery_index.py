@@ -19,9 +19,10 @@ OUT = GAL / "index.json"
 MAX_BYTES = 51200   # LUA_USER_SRC_MAX, src/lua/lua_store.h
 
 
-def build():
+def build(gal=None):
+    gal = pathlib.Path(gal) if gal else GAL
     items = []
-    for f in sorted(GAL.glob("*.lua")):
+    for f in sorted(gal.glob("*.lua")):
         text = f.read_text(encoding="utf-8")
         line = ""
         for l in text.splitlines()[:6]:
@@ -34,15 +35,21 @@ def build():
         # checks it again: a name outside it could reach into the page.
         if not re.fullmatch(r"[A-Za-z0-9_]{1,24}", stem):
             sys.exit(f"gallery_index: {f.name}: a name is 1 to 24 of letters, digits and underscore")
-        prev = GAL / "preview" / (stem + ".png")
-        items.append({
+        prev = gal / "preview" / (stem + ".png")
+        item = {
             "stem": stem,
             "name": stem.upper(),
             "file": f.name,
             "line": line,
             "bytes": len(text.encode("utf-8")),
             "preview": ("preview/" + prev.name) if prev.exists() else None,
-        })
+        }
+        # "-- @by openclaw": published by an agent (tools/agent/gallery.py
+        # publish --by), which may replace or remove only its own.
+        by = re.search(r"^--\s*@by\s+([A-Za-z0-9_-]{1,32})\s*$", "\n".join(text.splitlines()[:10]), re.M)
+        if by:
+            item["by"] = by.group(1)
+        items.append(item)
         if items[-1]["bytes"] > MAX_BYTES:
             sys.exit(f"gallery_index: {f.name} is over the panel's {MAX_BYTES} B")
     return json.dumps({"version": 1, "maxBytes": MAX_BYTES, "effects": items}, indent=2, ensure_ascii=False) + "\n"
