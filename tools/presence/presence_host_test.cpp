@@ -389,23 +389,24 @@ static void listeningGap() {
   {
     presence::Model m;
     m.reset();
-    m.onSummary(true, true);
+    m.onSummary();
     m.listenFrom(1000);
     CHECK(m.source(1000) == Source::Live);
     CHECK(m.source(1000 + presence::kVisitLostMs) == Source::Live);
     CHECK(m.source(1000 + presence::kVisitLostMs + 1) == Source::Lost);
     CHECK(presence::kVisitLostMs < 15000);            // shorter than a carousel visit
   }
-  // The summary says the sensor is offline: NO FEED at once.
+  // A summary alone (its "online" read false on the panel while the feed ran)
+  // is not NO FEED: an empty live room until the first message.
   {
     presence::Model m;
     m.reset();
-    m.onSummary(true, false);
+    m.onSummary();
     m.listenFrom(1000);
-    CHECK(m.source(1000) == Source::Lost);
+    CHECK(m.source(1000) == Source::Live);
     fill(r, -1, 0, 0, 0);
-    m.onMessage(1500, r);                              // but a message that arrives is believed
-    CHECK(m.source(1500) == Source::Live);
+    m.onMessage(4000, r);                              // the empty room's heartbeat
+    CHECK(m.source(4000 + presence::kVisitLostMs + 1) == Source::Live);   // heard: kLostMs applies now
   }
 
   // A person, confirmed, with a trail; then the page goes off screen.

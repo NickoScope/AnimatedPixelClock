@@ -135,7 +135,7 @@ class Model {
     messages_ = 0;
     listening_ = false;
     listenMs_ = 0;
-    heard_ = publisher_ = offline_ = false;
+    heard_ = publisher_ = false;
   }
 
   // The feed is heard only while a page reads the model (presence.cpp): the
@@ -161,12 +161,9 @@ class Model {
   bool listening() const { return listening_; }
   bool wantsLive() const { return wantLive_; }
 
-  // The retained summary: a publisher exists, and whether the sensor itself is
-  // online. It never moves a dot (presence.cpp).
-  void onSummary(bool haveOnline, bool online) {
-    publisher_ = true;
-    if (haveOnline) offline_ = !online;
-  }
+  // The retained summary: a publisher exists. It never moves a dot, and its
+  // "online" does not decide NO FEED (see source()).
+  void onSummary() { publisher_ = true; }
 
   void setMirror(bool on) { mirror_ = on; }
   void setWanted(uint8_t source) { wantLive_ = source != kSourceDemo; }
@@ -233,19 +230,19 @@ class Model {
   }
 
   // During a visit, in order: a message this visit means the feed is live,
-  // lost after kLostMs of silence as always. Before the first one: a summary
-  // that says the sensor is offline is NO FEED at once; a board that has never
-  // seen a publisher (no summary, no targets since boot) keeps its scripted
-  // story, the screen for panels without the sensor; otherwise the room is
-  // drawn empty while the first heartbeat is awaited, and NO FEED after
-  // kVisitLostMs. Every time here is measured from inside the visit, so
+  // lost after kLostMs of silence as always. Before the first one: a board
+  // that has never seen a publisher (no summary, no targets since boot) keeps
+  // its scripted story, the screen for panels without the sensor; otherwise
+  // the room is drawn empty while the first heartbeat is awaited, and NO FEED
+  // after kVisitLostMs. The retained summary's "online" is not taken as NO FEED:
+  // on the panel, 2026-09-23, it read false while targets arrived every 5 s,
+  // and believing it put NO FEED on screen for the first 3 s of every visit. Every time here is measured from inside the visit, so
   // millis() wrapping during a long spell off screen changes nothing.
   // Outside a visit nothing reads this but /api/info, which says "idle".
   Source source(uint32_t nowMs) const {
     if (!wantLive_) return Source::Demo;
     if (listening_) {
       if (heard_) return since(nowMs, lastMs_) > (int32_t)kLostMs ? Source::Lost : Source::Live;
-      if (offline_) return Source::Lost;
       if (!publisher_) return Source::Demo;
       return since(nowMs, listenMs_) > (int32_t)kVisitLostMs ? Source::Lost : Source::Live;
     }
@@ -327,7 +324,6 @@ class Model {
   bool     ever_ = false, mirror_ = kMirrorDefault, wantLive_ = true, listening_ = false;
   bool     heard_ = false;       // a targets message during this visit
   bool     publisher_ = false;   // a summary or a targets message since boot
-  bool     offline_ = false;     // the newest summary said the sensor is offline
 };
 
 }  // namespace presence

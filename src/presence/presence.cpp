@@ -101,7 +101,7 @@ void onMqtt(const char *topic, const uint8_t *payload, uint16_t len) {
   if (summary) {
     s_summaries++;
     portENTER_CRITICAL(&s_mux);
-    s_model.onSummary(sum.haveOnline, sum.online);   // a publisher exists; is the sensor online
+    s_model.onSummary();                     // a publisher exists
     portEXIT_CRITICAL(&s_mux);
     return;                                  // never draws anybody: see the head of this file
   }
