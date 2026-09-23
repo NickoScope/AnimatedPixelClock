@@ -125,7 +125,13 @@ claude mcp add ledmatrix --scope user --env LEDMATRIX_PANEL=AA:BB:CC:00:11:22 --
   twelve slots, up to 50 KB each. `from_gallery=true` takes it straight out of
   `gallery/`. Since 2.5.7 a name that would read as an effect already on the
   panel (a built-in's, or another case of the same stem) is refused; the same
-  stem replaces
+  stem replaces. Since 2.5.9 the panel also **runs it before it keeps it**: the
+  load and 4 frames, off screen, under the real budgets. A script that errors,
+  or takes more than 500 ms a frame on the panel's processor (1 over is
+  forgiven), is refused with the measured times and never stored; an accepted
+  one answers `"trial": "loaded in N ms, 4 frames a b c d ms"`. The simulator
+  says what a script draws, byte for byte; only the panel says how long it
+  takes
 - `gallery_list` - what is in `gallery/`, with sizes and previews
 - `effect_delete` - free a slot
 - `effect_walk` - one effect in or out of the knob's walk and the carousel

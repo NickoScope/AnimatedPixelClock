@@ -1179,6 +1179,7 @@ static void handleLuaUploadDone() {
     if (s_luaUpName == stem) idx = (int)(luaEffectCount() - luaStoreCount() + i);
   }
   doc["index"] = idx;
+  doc["trial"] = luaEffectsTrialReport();   // what it cost on this panel's processor
   doc["note"] = "no reboot and no flash: select it with POST /api/lua {\"show\": index}";
   String out;
   serializeJson(doc, out);

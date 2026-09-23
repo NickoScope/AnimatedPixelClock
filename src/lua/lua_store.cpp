@@ -413,6 +413,9 @@ bool luaStoreWrite(const uint8_t *data, size_t len) {
   return true;
 }
 
+static LuaStoreTrialFn s_trial = nullptr;
+void luaStoreSetTrial(LuaStoreTrialFn fn) { s_trial = fn; }
+
 bool luaStoreFinish(char *err, size_t errlen) {
   if (!s_upOpen) { snprintf(err, errlen, "nothing was uploaded"); return false; }
   s_up.close();
@@ -430,7 +433,11 @@ bool luaStoreFinish(char *err, size_t errlen) {
   f.close();
   buf[got] = '\0';
 
-  const bool ok = luaStoreValidate(buf, got, err, errlen);
+  bool ok = luaStoreValidate(buf, got, err, errlen);
+  // Then run it: a script that parses can still fail on its first frame, or
+  // take longer than a frame may on this processor. Refused here, before the
+  // old copy is touched, it never reaches the list or the screen.
+  if (ok && s_trial) ok = s_trial(buf, got, err, errlen);
   heap_caps_free(buf);
   if (!ok) { LittleFS.remove(LUA_STORE_TMP); return false; }
 

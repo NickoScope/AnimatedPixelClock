@@ -36,6 +36,7 @@
 
 #include <Arduino.h>
 #include <esp_heap_caps.h>
+#include <esp_task_wdt.h>
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -179,6 +180,76 @@ void releaseUser() {
 }
 #endif
 
+// ── the trial run of an upload (luaStoreSetTrial) ─────────────────────────
+// loop() asks, the effect task runs it - the only task that may touch s_fx -
+// and loop() waits. The task takes its own copy of the text, so a loop() that
+// gives up waiting can free its buffer while the task is still compiling.
+const uint8_t  kTrialFrames  = 4;
+const uint8_t  kTrialOverMax = 1;      // frames over the budget a trial forgives (Wi-Fi shares the core)
+const uint32_t kTrialWaitMs  = 15000;  // load deadline 3 s + 4 frames x 0.5 s, with room
+struct Trial {
+  char    *src = nullptr;
+  size_t   len = 0;
+  bool     ok = false;
+  bool     abandoned = false;
+  uint32_t openMs = 0;
+  uint16_t ms[kTrialFrames] = {};
+  uint8_t  n = 0;
+  char     err[160] = "";
+};
+Trial             s_trial;
+volatile uint8_t  s_trialState = 0;   // 0 idle, 1 asked, 2 running, 3 done
+char              s_trialReport[96] = "";
+
+void runTrial() {
+  s_trialState = 2;
+  if (s_fx.isOpen()) s_fx.close();
+#if defined(LUA_STORE_ENABLED)
+  releaseUser();
+#endif
+  Trial &t = s_trial;
+  memset(s_work, 0, LUA_PX_BYTES);
+  fillClock(s_canvas.clock, 60.0);
+  int64_t t0 = esp_timer_get_time();
+  bool ok = s_fx.open("upload", t.src, t.len, &s_canvas, kLuaFxPanelLimits);
+  t.openMs = (uint32_t)((esp_timer_get_time() - t0) / 1000);
+  heap_caps_free(t.src);   // compiled into the state; the text is finished with
+  t.src = nullptr;
+  if (!ok) {
+    snprintf(t.err, sizeof(t.err), "it does not load on the panel: %s", s_fx.error());
+  } else {
+    uint8_t over = 0;
+    for (uint8_t k = 0; k < kTrialFrames && ok; k++) {
+      fillClock(s_canvas.clock, s_fx.periodSeconds());
+      t0 = esp_timer_get_time();
+      const bool drew = s_fx.draw();
+      const uint32_t ms = (uint32_t)((esp_timer_get_time() - t0) / 1000);
+      t.ms[t.n++] = (uint16_t)(ms > 65535 ? 65535 : ms);
+      if (!drew) {
+        if (strstr(s_fx.error(), "over the time budget")) { over++; }
+        else {
+          snprintf(t.err, sizeof(t.err), "frame %u fails on the panel: %s", (unsigned)k + 1, s_fx.error());
+          ok = false;
+        }
+      }
+      vTaskDelay(1);   // IDLE0 and Wi-Fi get their tick between frames
+    }
+    if (ok && over > kTrialOverMax) {
+      snprintf(t.err, sizeof(t.err),
+               "too slow for the panel: %u of %u frames over the %u ms a frame may take "
+               "(%u %u %u %u ms). Draw less per frame", (unsigned)over, (unsigned)kTrialFrames,
+               (unsigned)kLuaFxPanelLimits.drawMs, t.ms[0], t.ms[1], t.ms[2], t.ms[3]);
+      ok = false;
+    }
+    s_fx.close();
+  }
+  t.ok = ok;
+  dbgLogf("[luafx] trial of an upload: %s, load %u ms, frames %u %u %u %u ms%s%s\n",
+          ok ? "passed" : "REFUSED", (unsigned)t.openMs, t.ms[0], t.ms[1], t.ms[2], t.ms[3],
+          ok ? "" : ": ", ok ? "" : t.err);
+  s_trialState = t.abandoned ? 0 : 3;
+}
+
 void effectTask(void *) {
   s_canvas.rgb = s_work;
   char       id[LUA_EFFECT_NAME_CAP] = "?";
@@ -192,6 +263,12 @@ void effectTask(void *) {
   uint64_t drawSumUs = 0;
 
   for (;;) {
+    if (s_trialState == 1) {
+      runTrial();
+      runningWord = 0;          // whatever was on screen opens again, from its start
+      lastWake = xTaskGetTickCount();
+      continue;
+    }
     const uint32_t want = s_wantWord;
     if (want != runningWord) {
       if (s_fx.isOpen()) {
@@ -471,10 +548,45 @@ uint32_t luaEffectsStackFreeMin() {
   return s_task ? (uint32_t)uxTaskGetStackHighWaterMark(s_task) : 0;
 }
 
+// ---------------------------------------------------------------- the trial
+static bool luaEffectsTrial(const char *src, size_t len, char *err, size_t errlen) {
+  if (!s_task) return true;                 // no effect task: nothing to try it on
+  if (s_trialState != 0) { snprintf(err, errlen, "another upload is being tried: send it again"); return false; }
+  char *copy = (char *)heap_caps_malloc(len + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (!copy) { snprintf(err, errlen, "no PSRAM to try it"); return false; }
+  memcpy(copy, src, len);
+  copy[len] = '\0';
+  s_trial = Trial();
+  s_trial.src = copy;
+  s_trial.len = len;
+  s_trialState = 1;
+  xTaskNotifyGive(s_task);
+  const uint32_t t0 = millis();
+  while (s_trialState != 3) {
+    if (millis() - t0 > kTrialWaitMs) {
+      s_trial.abandoned = true;             // the task frees its copy and goes idle
+      snprintf(err, errlen, "the trial run did not finish in %u s", (unsigned)(kTrialWaitMs / 1000));
+      return false;
+    }
+    esp_task_wdt_reset();                   // loop() waits here: a few seconds at most
+    vTaskDelay(pdMS_TO_TICKS(20));
+  }
+  s_trialState = 0;
+  snprintf(s_trialReport, sizeof(s_trialReport), "loaded in %u ms, 4 frames %u %u %u %u ms (the budget is %u)",
+           (unsigned)s_trial.openMs, s_trial.ms[0], s_trial.ms[1], s_trial.ms[2], s_trial.ms[3],
+           (unsigned)kLuaFxPanelLimits.drawMs);
+  if (s_trial.ok) return true;
+  snprintf(err, errlen, "%s", s_trial.err);
+  return false;
+}
+
+const char *luaEffectsTrialReport() { return s_trialReport; }
+
 // ---------------------------------------------------------------- page hooks
 void luaEffectsBegin() {
 #if defined(LUA_STORE_ENABLED)
   luaStoreInit();     // before the task, so the first list is already right
+  luaStoreSetTrial(luaEffectsTrial);
 #endif
   if (s_task) return;
   const size_t internalBefore = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);

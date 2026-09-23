@@ -46,3 +46,4 @@ void        luaEffectsReload();
 // arithmetic about that number, and an arithmetic nobody can read off the
 // running panel is a claim rather than a fact. 0 when the task is not up.
 uint32_t    luaEffectsStackFreeMin();
+const char *luaEffectsTrialReport();   // the last upload's trial run, "" before one

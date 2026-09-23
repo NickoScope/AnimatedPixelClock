@@ -144,6 +144,15 @@ int luaStoreDelete(const char *stem);
 bool luaStoreBegin(const char *stem, char *err, size_t errlen);
 bool luaStoreWrite(const uint8_t *data, size_t len);
 bool luaStoreFinish(char *err, size_t errlen);
+
+// A trial run before an upload is kept (src/lua/lua_effects.cpp installs it):
+// the validated source is run on the panel for a few frames, off screen, and
+// an upload that fails or does not fit the frame budget is refused and never
+// stored - the owner's rule (2026-09-23): the panel does not take a file that
+// would show an error. Called from loop(); the source is only read during the
+// call. true = keep it; false = refused, err says why.
+typedef bool (*LuaStoreTrialFn)(const char *src, size_t len, char *err, size_t errlen);
+void luaStoreSetTrial(LuaStoreTrialFn fn);
 void luaStoreAbort();
 
 // Everything the checks above would refuse, without writing anything. Exposed
