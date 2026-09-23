@@ -369,7 +369,7 @@ void irBegin() {
 #if defined(IR_RX_ENABLED)
   if (settings.irEnabled) {
     s_recv.setUnknownThreshold(12);   // shorter bursts are noise, not a protocol
-    s_recv.enableIRIn();
+    s_recv.enableIRIn(true);   // keep the pull-up: GPIO0 is shared with the knob's switch
     s_rxOn = true;
   }
   Serial.printf("[ir] IO%d, %u/%u buttons learned, receiver %s. Type `ir help` on this port.\n", IR_PIN,
@@ -400,7 +400,11 @@ void irLoop() {
       f.unknown = (r.decode_type == decode_type_t::UNKNOWN);
       apply(millis(), &f, -1, 0);
     }
-    s_recv.resume();
+    // No resume() here: with the stable copy (save_buffer) decode() already
+    // re-armed the receiver itself (IRrecv.cpp, decode()), and a second
+    // resume() after apply() - NVS, serial, MQTT - would reset a frame that
+    // had started arriving meanwhile. The library's own IRrecvDumpV2/V3 do the
+    // same. Gate audit, 2026-09-23.
   }
 #endif
 }
@@ -482,10 +486,12 @@ bool irSimulateFn(uint8_t fn, uint8_t arg, uint32_t holdMs) {
 bool irSetFn(uint8_t slot, uint8_t fn, uint8_t arg) {
   if (slot >= ir::kSlotCount || fn >= ir::kFnCount) return false;
   bool ok;
+  bool same;
   portENTER_CRITICAL(&s_mux);
+  same = s_dec.map().fn(slot) == fn && s_dec.map().arg(slot) == (fn == ir::kFnPage ? arg : 0);
   ok = s_dec.map().setFn(slot, fn, arg);
   portEXIT_CRITICAL(&s_mux);
-  if (ok) mapSaveFn(slot, fn, fn == ir::kFnPage ? arg : 0);
+  if (ok && !same) mapSaveFn(slot, fn, fn == ir::kFnPage ? arg : 0);   // no NVS write for no change
   return ok;
 }
 
@@ -493,7 +499,7 @@ void irSettingsChanged() {
 #if defined(IR_RX_ENABLED)
   if (settings.irEnabled && !s_rxOn) {
     s_recv.setUnknownThreshold(12);
-    s_recv.enableIRIn();
+    s_recv.enableIRIn(true);   // keep the pull-up: GPIO0 is shared with the knob's switch
     s_rxOn = true;
     Serial.println(F("[ir] receiver on"));
   } else if (!settings.irEnabled && s_rxOn) {

@@ -35,7 +35,8 @@
 // an open-collector receiver needs no resistor of its own there, and the line
 // carries no capacitance to smear the pulses. It idles high, which is also
 // the normal-boot level of this strapping pin. The BOOT button and the knob's
-// switch share the line; src/control tells a press from IR by duration.
+// switch share the line; src/control tells a press from IR by duration (40 ms,
+// CTRL_SW_DEBOUNCE_MIN_MS).
 // Knowledge base, docs/24-ir-remote.md.
 #ifndef IR_PIN
 #define IR_PIN 0

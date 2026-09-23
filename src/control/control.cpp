@@ -129,13 +129,20 @@ static bool     s_swLongSent = false;
 // timer copies the mode in when it sees a generation it has not seen.
 static volatile bool     s_cfgReverse    = CTRL_REVERSE != 0;
 static volatile uint16_t s_cfgLockoutMs  = CTRL_ENC_LOCKOUT_MS;
-static volatile uint16_t s_cfgDebounceMs = CTRL_SW_DEBOUNCE_MS;
 #if defined(IR_RX_ENABLED) && (IR_PIN == CTRL_PIN_SW)
 // GPIO0 carries the BOOT button, the knob's switch and the IR receiver at once:
-// all three only ever pull it low. See controlConfigure().
-#define CTRL_SW_DEBOUNCE_MIN_MS 12
-static_assert(CTRL_SW_DEBOUNCE_MS >= CTRL_SW_DEBOUNCE_MIN_MS,
-              "the default switch debounce would read IR marks as presses");
+// all three only ever pull it low, and a press is told from IR by how long the
+// line stays low. The longest mark any protocol IRremoteESP8266 2.9.0 knows is
+// the Hitachi AC424 air conditioner's leader, 29,784 us (ir_Hitachi.cpp,
+// kHitachiAc424LdrMark), then Truma's 20.2 ms and Trotec's 12 ms - so an air
+// conditioner's remote in the room would click the knob at 12 or even 20 ms.
+// 40 ms clears the longest with a margin, and a person does not notice 40 ms on
+// a click; the 1 s long press is unchanged. Found by the gate audit, 2026-09-23.
+#define CTRL_SW_DEBOUNCE_MIN_MS 40
+static volatile uint16_t s_cfgDebounceMs =
+    CTRL_SW_DEBOUNCE_MS > CTRL_SW_DEBOUNCE_MIN_MS ? CTRL_SW_DEBOUNCE_MS : CTRL_SW_DEBOUNCE_MIN_MS;
+#else
+static volatile uint16_t s_cfgDebounceMs = CTRL_SW_DEBOUNCE_MS;
 #endif
 static volatile int8_t   s_cfgDetent     = CTRL_ENC_HALF_DETENT;
 static volatile uint8_t  s_cfgGen        = 0;
@@ -331,9 +338,7 @@ void controlConfigure(bool reverse, uint16_t lockoutMs, uint16_t debounceMs, int
   s_cfgReverse    = reverse;
   s_cfgLockoutMs  = lockoutMs;
 #if defined(IR_RX_ENABLED) && (IR_PIN == CTRL_PIN_SW)
-  // The receiver shares this line. A press is told from IR by duration: the
-  // longest IR mark is NEC's 9 ms leader (Vishay 80071), so a debounce under
-  // it would read a remote's frame as the button. 12 ms is our margin.
+  // The receiver shares this line: see CTRL_SW_DEBOUNCE_MIN_MS above.
   if (debounceMs < CTRL_SW_DEBOUNCE_MIN_MS) debounceMs = CTRL_SW_DEBOUNCE_MIN_MS;
 #endif
   s_cfgDebounceMs = debounceMs;

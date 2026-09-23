@@ -39,7 +39,7 @@ without the module).
 | `ir_console.h` | the serial grammar: one line in, one command out. Tested on the host |
 | `ir.cpp` | the receiver, NVS, the serial console, `/api/info`, the portal's handlers |
 | `../control/control.cpp` | the seam: two places inside the 1 kHz sampling task |
-| `../../tools/ir/check_ir.py` | the host test - 150 checks over the rules and the grammar |
+| `../../tools/ir/check_ir.py` | the host test - 263 checks over the rules and the grammar |
 
 ## The hardware: GPIO0, the BOOT line (since 2026-09-23)
 
@@ -59,9 +59,10 @@ from VS to GND at the receiver. v1b's R307 2.2 kOhm pull-up is not needed here.
 TSOP21.. pins are **1 OUT, 2 VS, 3 GND** (TSOP48.. differs).
 
 How a press is told from IR on the shared line: `src/control` counts the
-switch as pressed only after 20 ms low at 1 kHz sampling, and the longest IR
-mark is NEC's 9 ms leader, so the portal's debounce is clamped at 12 ms while
-the receiver shares the pin. A remote pressed during a reset can land the chip
+switch as pressed only after it has been low for CTRL_SW_DEBOUNCE_MIN_MS,
+40 ms, while the receiver shares the pin. The longest mark any protocol the
+library knows is the Hitachi AC424 air conditioner's 29.8 ms leader
+(ir_Hitachi.cpp), so an air conditioner's remote cannot click the knob. A remote pressed during a reset can land the chip
 in download mode; another reset recovers. Knowledge base: docs/24-ir-remote.md.
 
 ## The earlier plan: IO45

@@ -782,7 +782,7 @@ static const char PAGE_HTML[] PROGMEM = R"PAGE(<!doctype html>
             <label class="check-row standalone" style="margin-top:16px">
               <input type="checkbox" name="irEnabled" id="irEnabled">
               <span class="check-box" aria-hidden="true"></span>
-              <span class="check-text"><strong>Listen to the remote</strong><span class="ct-hint">The remote does what the knob does: turning browses, a press selects, a long press is the same as a press. Turn this off and the receiver is switched off with it.</span></span>
+              <span class="check-text"><strong>Listen to the remote</strong><span class="ct-hint">Ten buttons, each doing what you choose below; the knob keeps working alongside. Turn this off and the receiver is switched off with it.</span></span>
             </label>
             <p class="field-hint" style="margin-top:16px">Ten buttons. For each: <strong>Learn</strong>, then press that button on the remote within 15 seconds; choose what it does; <strong>Test</strong> runs it exactly as the remote would. Codes and choices are kept on the panel and survive a reflash, so a new remote is taught rather than flashed. The knob keeps working alongside.</p>
             <div id="irTable" class="ir-table" style="margin-top:8px"></div>
@@ -2128,10 +2128,10 @@ function irCall(path) {
 return fetch(path, { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (d) {
 if (d && d.buttons) irRender(d); else if (d && d.error) { var n = $('#irNow'); if (n) n.textContent = d.error; }
 return d;
-});
+}).catch(function (e) { var n = $('#irNow'); if (n) n.textContent = 'The panel did not answer (' + e + ').'; });
 }
 function irLoad() {
-var t = $('#irTable'); if (!t) return;
+var t = $('#irTable'); if (!t) return;       // no Remote card in this build: nothing to ask for
 var pages = irPages ? Promise.resolve(irPages) : fetch('/api/panel').then(function (r) { return r.json(); })
 .then(function (p) { irPages = (p.pages || []).map(function (x) { return { i: x.i, name: x.name || x.key }; }); return irPages; })
 .catch(function () { irPages = []; return irPages; });
@@ -2146,7 +2146,7 @@ var html = '';
 (d.buttons || []).forEach(function (b) {
 var opts = order.map(function (g) {
 return '<optgroup label="' + irEsc(g) + '">' + groups[g].map(function (f) {
-return '<option value="' + f.name + '"' + (f.name === b.fn ? ' selected' : '') + '>' + irEsc(f.label) + '</option>';
+return '<option value="' + irEsc(f.name) + '"' + (f.name === b.fn ? ' selected' : '') + '>' + irEsc(f.label) + '</option>';
 }).join('') + '</optgroup>';
 }).join('');
 var pageSel = '';
@@ -2185,7 +2185,16 @@ function irBind() {
 var c = $('#irCancelBtn'); if (c) c.addEventListener('click', function () { irCall('/api/ir/cancel'); });
 var f = $('#irForgetBtn'); if (f) f.addEventListener('click', function () {
 if (confirm('Forget every learned code? What each button does is kept.')) irCall('/api/ir/clear?btn=all'); });
-irLoad();
+// The table is asked for when the card first comes into view, not on every
+// portal load: /api/panel and /api/ir together are a few KB the panel's
+// memory would otherwise spend for a card nobody opened.
+var t = $('#irTable');
+if (!t) return;
+if (!window.IntersectionObserver) { irLoad(); return; }
+var io = new IntersectionObserver(function (es) {
+if (es.some(function (e) { return e.isIntersecting; })) { io.disconnect(); irLoad(); }
+});
+io.observe(t);
 }
 function irStatus(p) {
 var tag = $('#irTag'), now = $('#irNow');
