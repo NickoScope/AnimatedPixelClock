@@ -166,67 +166,130 @@ public:
   // scan pass can show that pass half old, half new - which double buffering
   // never did: its flip re-points the last descriptor of the chain
   // (gdma_lcd_parallel16.cpp, flip_dma_output_buffer), so the new frame starts
-  // at a pass boundary. To keep that property the copy is timed to the scan:
-  // it waits until the DMA is on the last row pair, then rewrites the row
-  // pairs 0..31 in the order the scan will read them. As long as each row
-  // pair is written before the scan reaches it, the next pass is entirely new
-  // and no pass is mixed. The scan probe below measures, on the panel, whether
-  // that held: every changed row pair's write is logged against the scan's
-  // position, and a pass that showed some changed rows new and others old - or
-  // a row rewritten while it was being output - is counted as mixed.
+  // at a pass boundary. To keep that property the copy is timed to the scan,
+  // one of two ways (syncMode, switchable at run time so both are measured on
+  // the same firmware and page):
+  //
+  //   kSyncFollow  a changed row pair is written only once the scan has
+  //                passed it in this pass, so this pass shows every changed
+  //                row old and the next shows them all new. The scan wrapping
+  //                ends the waiting: rows written after it are ahead of the
+  //                scan and new in that pass, like the rest. Slack: nearly a
+  //                whole pass before the scan can come round and catch it.
+  //   kSyncAhead   wait for the scan to be on the last row pair, then write
+  //                every changed row pair ahead of it. Slack: what is left of
+  //                the last row pair's time, a fraction of a millisecond.
+  //
+  // The scan probe measures, on the panel, whether a pass stayed whole: the
+  // scan's position is unwrapped into a count of rows since the copy began,
+  // every changed row pair's write is logged between the count before and
+  // after it, and pass k showed row r new if k*32 + r came after the write,
+  // old if before it, and was output during the write otherwise. A pass with
+  // changed rows both new and old, or one written while output, is mixed.
   //
   // Rows y and y + 32 are one DMA row (the upper and lower halves are clocked
   // out together), so they are copied together.
   inline void display() {
     if (ready()) {
       const bool probe = scanReady();
-      uint32_t waited = 0;
-      if (probe && !full_ && syncCopy) waited = waitForLastRow();
+      const uint8_t mode = (probe && !full_) ? syncMode : kSyncOff;
       const uint32_t t0 = micros();
-      uint32_t n = 0;
-      // For each changed row pair: the pass (counted from the copy's start)
-      // it was written in, and where the scan was then: 1 ahead of it (the
-      // row shows new in that pass), -1 behind it (old in that pass, new from
-      // the next), 0 on it (rewritten while being output).
-      int8_t wpass[kRowPairs], side[kRowPairs];
+      const uint32_t limit = calculated_refresh_rate > 0 ? 1000000UL / calculated_refresh_rate + 200 : 20000;
+      uint32_t n = 0, waited = 0;
+      // Scan rows since the copy began: the pass count times 32 plus the row.
+      // Read often enough (well under a pass apart) the unwrap is exact.
+      int pass = 0, last = probe ? scanRow() : 0;
+      if (last < 0) last = 0;
+      // The longest gap between two reads: over a pass, the unwrap may have
+      // missed one, and the frame's verdict is not to be trusted.
+      uint32_t readAt = micros(), gapMax = 0;
+      auto scanAbs = [&]() -> int {
+        const uint32_t now = micros();
+        if (now - readAt > gapMax) gapMax = now - readAt;
+        readAt = now;
+        int sc = scanRow();
+        if (sc < 0) sc = last;
+        if (sc < last) pass++;
+        last = sc;
+        return pass * kRowPairs + sc;
+      };
+      const int startRow = last;
+      if (mode == kSyncAhead) {
+        const uint32_t w0 = micros();
+        while (scanAbs() % kRowPairs != kRowPairs - 1 && micros() - w0 < limit) {}
+        waited = micros() - w0;
+      }
+      // Follow: rows are written behind the scan in the base pass. A row the
+      // scan has passed is only safe while the scan is far from coming round
+      // to it again; on the last few row pairs it is about to reach row 0, so
+      // the copy starts from the next pass instead (at most kFollowGuard rows,
+      // about a millisecond). The probe found every remaining mixed frame to
+      // be exactly that: row 0 written with the scan on row 31.
+      int base = 0;
+      if (mode == kSyncFollow && startRow >= kRowPairs - kFollowGuard) {
+        const uint32_t w0 = micros();
+        while (scanAbs() < kRowPairs && micros() - w0 < limit) {}
+        waited = micros() - w0;
+        base = kRowPairs;
+      }
+      int16_t a0[kRowPairs], a1[kRowPairs];
       bool touched[kRowPairs];
-      int pass = 0, lastScan = probe ? scanRow() : -1;
+      int end = 0;
       for (int r = 0; r < kRowPairs; r++) {
+        touched[r] = false;
+        if (!full_ && !rowPairChanged(r)) continue;
+        if (mode == kSyncFollow) {
+          const uint32_t w0 = micros();
+          while (scanAbs() <= base + r && micros() - t0 < 2 * limit) {}   // guard + one pass
+          waited += micros() - w0;
+        }
+        const int s0 = probe ? scanAbs() : 0;
         const uint32_t changed = copyRow(r) + copyRow(r + kRowPairs);
         n += changed;
-        touched[r] = probe && changed;
-        if (!touched[r]) continue;
-        const int sc = scanRow();
-        if (sc < lastScan) pass++;              // the scan wrapped: a new pass
-        lastScan = sc;
-        wpass[r] = (int8_t)(pass > 100 ? 100 : pass);
-        side[r] = sc < r ? 1 : (sc > r ? -1 : 0);
+        if (!probe || !changed) continue;
+        touched[r] = true;
+        a0[r] = (int16_t)s0;
+        a1[r] = (int16_t)(end = scanAbs());
       }
       if (probe && n) {
-        // Pass q showed row r new if r was written in an earlier pass, or in q
-        // ahead of the scan; old if written later, or in q behind the scan.
-        // A pass with both, or with a row rewritten under the scan, was mixed.
         bool mixed = false;
         uint32_t inflight = 0;
-        for (int q = 0; q <= pass && q <= 100; q++) {
+        int why = -1;
+        for (int k = 0; k * kRowPairs <= end + kRowPairs; k++) {
           bool shownNew = false, shownOld = false;
           for (int r = 0; r < kRowPairs; r++) {
             if (!touched[r]) continue;
-            if (wpass[r] < q || (wpass[r] == q && side[r] > 0)) shownNew = true;
-            else if (wpass[r] > q || side[r] < 0) shownOld = true;
-            else { mixed = true; if (q == wpass[r]) inflight++; }
+            const int at = k * kRowPairs + r;
+            if (at > a1[r]) shownNew = true;
+            else if (at < a0[r]) shownOld = true;
+            else { mixed = true; inflight++; if (why < 0) why = r; }
           }
           if (shownNew && shownOld) mixed = true;
         }
         changedFrames++;
-        if (mixed) mixedFrames++;
+        if (mixed) {
+          mixedFrames++;
+          // What the last few mixed frames looked like, for /api/frame?detail.
+          MixedNote &m = mixedLog[mixedLogAt++ % kMixedLog];
+          int lo = -1, hi = -1;
+          for (int r = 0; r < kRowPairs; r++)
+            if (touched[r]) { if (lo < 0) lo = r; hi = r; }
+          m.first = (int8_t)lo; m.last = (int8_t)hi; m.row = (int8_t)why;
+          m.a0 = why >= 0 ? a0[why] : -1; m.a1 = why >= 0 ? a1[why] : -1;
+          m.start = (int16_t)startRow; m.end = (int16_t)end;
+          m.gapUs = gapMax; m.mode = mode;
+        }
+        if (gapMax * (uint32_t)(calculated_refresh_rate > 0 ? calculated_refresh_rate : 60) > 1000000UL) unsureFrames++;
         inflightRows += inflight;
       }
-      if (probe) {
+      blitUs = micros() - t0 - waited;
+      if (probe && !full_) {
         syncWaitUs = waited;
-        if (!full_ && waited > syncWaitMaxUs) syncWaitMaxUs = waited;
+        if (waited > syncWaitMaxUs) syncWaitMaxUs = waited;
+        syncWaitSumUs += waited;
+        blitSumUs += blitUs;
+        flips++;
       }
-      blitUs = micros() - t0;
       // The first copy after boot writes every pixel; it is not a frame in
       // service, so it is kept out of the worst case (gate audit).
       if (!full_ && blitUs > blitMaxUs) blitMaxUs = blitUs;
@@ -236,15 +299,30 @@ public:
     lastFlipUs = micros();
     hasFlipped = true;
   }
-  // The scan probe's counts, since boot: frames that changed anything, and of
-  // those the ones that showed a mixed pass; rows rewritten while output; and
-  // how long the copy waited for the scan.
+  // The scan probe's counts, since boot or the last reset: frames that changed
+  // anything, and of those the ones that showed a mixed pass; rows rewritten
+  // while output; how long the copy waited for the scan and took, summed over
+  // all flips so the averages and the flip rate can be had.
   uint32_t changedFrames = 0, mixedFrames = 0, inflightRows = 0;
   uint32_t syncWaitUs = 0, syncWaitMaxUs = 0;
-  // Off only to prove the probe can see a mixed pass (the negative control):
-  // GET /api/frame?sync=0, then back with sync=1. Counts reset on a change.
-  bool syncCopy = true;
-  void resetFrameStats() { changedFrames = mixedFrames = inflightRows = 0; syncWaitMaxUs = blitMaxUs = 0; }
+  uint32_t flips = 0, statsSinceMs = 0, unsureFrames = 0;
+  struct MixedNote { int8_t first, last, row; uint8_t mode; int16_t a0, a1, start, end; uint32_t gapUs; };
+  static const int kMixedLog = 8;
+  MixedNote mixedLog[kMixedLog] = {};
+  uint32_t mixedLogAt = 0;
+  uint64_t syncWaitSumUs = 0, blitSumUs = 0;
+  // How the copy is timed to the scan. kSyncOff only to prove the probe can
+  // see a mixed pass (the negative control): GET /api/frame?sync=0, back with
+  // sync=1 (follow) or sync=2 (ahead). Counts reset on a change.
+  enum : uint8_t { kSyncOff = 0, kSyncFollow = 1, kSyncAhead = 2 };
+  static const int kFollowGuard = 3;
+  uint8_t syncMode = kSyncFollow;
+  void resetFrameStats() {
+    changedFrames = mixedFrames = inflightRows = flips = unsureFrames = mixedLogAt = 0;
+    syncWaitMaxUs = blitMaxUs = 0;
+    syncWaitSumUs = blitSumUs = 0;
+    statsSinceMs = millis();
+  }
   bool scanProbeOk() { return scanReady(); }
   int scanDescPerRow() const { return descPerRow_; }
   // Frame stats for /api/info: the last copy's time and pixel count, the worst.
@@ -349,13 +427,11 @@ private:
     const int i = (int)(d - first_);
     return (i >= 0 && i < descCount_) ? i / descPerRow_ : -1;
   }
-  // Waits for the scan to be on the last row pair, at most one pass: from
-  // there the copy has the whole next pass ahead of it.
-  uint32_t waitForLastRow() {
-    const uint32_t t0 = micros();
-    const uint32_t limit = calculated_refresh_rate > 0 ? 1000000UL / calculated_refresh_rate + 200 : 20000;
-    while (scanRow() != kRowPairs - 1 && micros() - t0 < limit) {}
-    return micros() - t0;
+  // Whether row pair r (rows r and r + 32) differs from what is on the panel.
+  bool rowPairChanged(int r) const {
+    const size_t row = (size_t)3 * kW;
+    return memcmp(frame_ + r * row, shown_ + r * row, row) ||
+           memcmp(frame_ + (r + kRowPairs) * row, shown_ + (r + kRowPairs) * row, row);
   }
   // PSRAM is allocated on first use, not in the constructor: `display` is a
   // global. If it cannot be had the calls go straight to the DMA frame, which

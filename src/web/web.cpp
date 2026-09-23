@@ -241,19 +241,39 @@ void setupWebServer() {
  //   GET /api/ir/learn?btn=3, /api/ir/cancel, /api/ir/clear?btn=3|all
 #if HUB75_FRAME_IN_PSRAM
  // The frame copy's scan synchronisation, for measuring it: ?sync=0 turns it
- // off (the probe must then see mixed passes), ?sync=1 back on; either resets
- // the counts. Answers with the counts either way.
+ // off (the probe must then see mixed passes), ?sync=1 follows the scan, ?sync=2
+ // writes ahead of it from the last row; any of them resets the counts.
+ // Answers with the counts either way, averages over the flips since the reset.
  server.on("/api/frame", HTTP_GET, []() {
    if (server.hasArg("sync")) {
-     display.syncCopy = server.arg("sync") != "0";
+     const long m = server.arg("sync").toInt();
+     display.syncMode = (m == 2) ? MatrixDisplay::kSyncAhead : (m == 1) ? MatrixDisplay::kSyncFollow : MatrixDisplay::kSyncOff;
      display.resetFrameStats();
    }
-   server.send(200, "application/json", String("{\"sync\":") + (display.syncCopy ? "true" : "false") +
-               ",\"changedFrames\":" + display.changedFrames + ",\"mixedFrames\":" + display.mixedFrames +
-               ",\"rowsRewrittenWhileShown\":" + display.inflightRows + ",\"copyUs\":" + display.blitUs +
-               ",\"copyMaxUs\":" + display.blitMaxUs + ",\"syncWaitUs\":" + display.syncWaitUs +
-               ",\"syncWaitMaxUs\":" + display.syncWaitMaxUs + ",\"refreshHz\":" + display.refreshRateHz() +
-               ",\"scanProbe\":" + (display.scanProbeOk() ? "true" : "false") + "}");
+   const uint32_t f = display.flips ? display.flips : 1;
+   const uint32_t ms = millis() - display.statsSinceMs;
+   static const char *const kModes[] = {"off", "follow", "ahead"};
+   String j = String("{\"sync\":\"") + kModes[display.syncMode > 2 ? 0 : display.syncMode] + "\"";
+   j += String(",\"seconds\":") + (ms / 1000) + ",\"flips\":" + display.flips;
+   j += String(",\"flipsPerSecond\":") + String(ms ? display.flips * 1000.0f / ms : 0.0f, 1);
+   j += String(",\"changedFrames\":") + display.changedFrames + ",\"mixedFrames\":" + display.mixedFrames;
+   j += String(",\"rowsRewrittenWhileShown\":") + display.inflightRows;
+   j += String(",\"copyAvgUs\":") + (uint32_t)(display.blitSumUs / f) + ",\"copyMaxUs\":" + display.blitMaxUs;
+   j += String(",\"waitAvgUs\":") + (uint32_t)(display.syncWaitSumUs / f) + ",\"waitMaxUs\":" + display.syncWaitMaxUs;
+   j += String(",\"unsureFrames\":") + display.unsureFrames;
+   if (server.hasArg("detail")) {
+     j += ",\"lastMixed\":[";
+     const uint32_t n = display.mixedLogAt < MatrixDisplay::kMixedLog ? display.mixedLogAt : MatrixDisplay::kMixedLog;
+     for (uint32_t i = 0; i < n; i++) {
+       const auto &m = display.mixedLog[(display.mixedLogAt - n + i) % MatrixDisplay::kMixedLog];
+       if (i) j += ",";
+       j += String("{\"rows\":[") + m.first + "," + m.last + "],\"row\":" + m.row + ",\"write\":[" + m.a0 + "," + m.a1 +
+            "],\"scanStart\":" + m.start + ",\"scanEnd\":" + m.end + ",\"gapUs\":" + m.gapUs + ",\"mode\":" + m.mode + "}";
+     }
+     j += "]";
+   }
+   j += String(",\"refreshHz\":") + display.refreshRateHz() + ",\"scanProbe\":" + (display.scanProbeOk() ? "true" : "false") + "}";
+   server.send(200, "application/json", j);
  });
 #endif
  server.on("/api/ir", HTTP_GET, []() { sendIrTable(); });
