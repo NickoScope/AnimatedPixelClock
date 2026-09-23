@@ -37,6 +37,11 @@ verdict with findings from the panel's own counters; every raw log goes to
 `health-logs/<time>/`. Read the findings, open a log only for what a finding
 points at. Same thing as the `panel_selftest` MCP tool.
 
+**Is there a new firmware?** `python3 tools/agent/update.py --panel <name>`
+lists every published release newer than the panel, with its notes;
+`--install` asks the person three questions and then updates over the air
+(MCP: `panel_update_check`, `panel_update`). The person answers, not you.
+
 It works from macOS (`dns-sd`) and Linux (`avahi-browse`), and it confirms every
 advertisement by asking the panel itself - a stale mDNS record for a panel that
 has gone is worse than no answer, because you would go on to talk to nothing.
