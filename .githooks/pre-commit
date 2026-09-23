@@ -207,3 +207,14 @@ if git diff --cached --name-only | grep -qE '^(gallery/|tools/gallery_index\.py)
     exit 1
   }
 fi
+
+# The portal's Effects card and gallery, run in JavaScriptCore over a stand-in
+# DOM: switches, Show/Delete, the gallery rows and the upload they send.
+if git diff --cached --name-only | grep -qE '^(src/web/web_panel_js\.h|tools/web/check_effects_ui\.py)'; then
+  python3 tools/web/check_effects_ui.py >/dev/null || {
+    python3 tools/web/check_effects_ui.py | grep -v '^ok'
+    echo
+    echo "pre-commit: the portal's Effects card check failed (see above)."
+    exit 1
+  }
+fi

@@ -67,6 +67,12 @@ OTA updates.
 python3 tools/agent/gallery.py show aquarium      # one of the gallery's screens
 ```
 
+From the web portal too (2.5.7), on the Effects & clips page: each effect has
+a switch that keeps it in or out of the knob's walk and the carousel, uploaded
+ones have Delete, and **Add from the gallery** lists this repository's
+[gallery](gallery/README.md) with previews and sends the one you pick to the
+panel; the browser fetches it from GitHub, the panel never goes out for it.
+
 The [gallery](gallery/README.md) has an aquarium that reacts to people in the
 room, a starship, the Bay of Cannes and La Gioconda. Scripts are written and
 checked on the host first with [`tools/luasim`](tools/luasim), which runs the

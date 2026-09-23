@@ -812,11 +812,13 @@ class EffectIn(BaseModel):
 async def panel_effects(panel: PanelArg = None) -> str:
     """Which Lua effects this firmware carries, and which is running.
 
-    Effects are compiled into the image, not uploaded, so this list is fixed
-    until someone flashes. `current` is -1 when no effect page is showing.
+    The compiled-in effects are fixed until someone flashes; uploaded ones come
+    and go (effect_upload, effect_delete). `current` is -1 when no effect page
+    is showing. `inWalk` (firmware 2.5.7+) says whether the knob and the
+    carousel visit it: effect_walk switches that per effect.
 
     Returns:
-        {"ok": true, "effects": [{"i", "name", "uploaded", "bytes"}],
+        {"ok": true, "effects": [{"i", "name", "uploaded", "bytes", "inWalk"}],
         "current": N, "slots": {"used", "free"}, "stackFreeMin": N}
     """
     try:
@@ -828,6 +830,9 @@ async def panel_effects(panel: PanelArg = None) -> str:
         out = []
         for i, name in enumerate(d.get("effects") or []):
             row = {"i": i, "name": name, "uploaded": i >= built}
+            walk = d.get("inWalk")
+            if isinstance(walk, list) and i < len(walk):
+                row["inWalk"] = walk[i]
             if i in by_i:
                 row["file"] = by_i[i]["name"]
                 row["bytes"] = by_i[i]["bytes"]
@@ -1897,6 +1902,38 @@ async def effect_delete(args: DeleteIn) -> str:
                 return f"There is no uploaded script called {args.name!r} on that panel."
             raise
         return _ok(removed=args.name, uploaded=P.get(a, "/api/lua").get("uploaded"))
+    except Exception as e:  # noqa: BLE001
+        return _say(e)
+
+
+class WalkIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    effect: int = Field(ge=0, le=31, description="the effect's index, as panel_effects lists it")
+    on: bool = Field(description="true: the knob and the carousel visit it; false: they pass it by")
+    panel: str | None = None
+
+
+@mcp.tool(
+    name="effect_walk",
+    annotations={"title": "Put an effect in or out of the carousel", "readOnlyHint": False,
+                 "destructiveHint": False, "idempotentHint": True, "openWorldHint": True})
+async def effect_walk(args: WalkIn) -> str:
+    """Put one Lua effect in or out of the knob's walk and the carousel.
+
+    Firmware 2.5.7+. Kept on the panel across reboots, by the effect's name, so
+    uploads and deletes do not move it to another effect. An effect that is out
+    of the walk still runs with panel_show_effect. The switch for all effects
+    at once is the page key "lua" (/api/panel enable).
+
+    Returns: {"ok": true, "effect": "NAME", "inWalk": true|false}
+    """
+    try:
+        p = _pick(args.panel)
+        a = p["address"]
+        d = P.post(a, "/api/lua", {"walk": {"i": args.effect, "on": args.on}})
+        if "inWalk" not in d:
+            return "This panel's firmware has no per-effect switch (it came in 2.5.7); update it first."
+        return _ok(effect=d["effects"][args.effect], inWalk=d["inWalk"][args.effect])
     except Exception as e:  # noqa: BLE001
         return _say(e)
 

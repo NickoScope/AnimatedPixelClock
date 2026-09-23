@@ -126,6 +126,8 @@ claude mcp add ledmatrix --scope user --env LEDMATRIX_PANEL=AA:BB:CC:00:11:22 --
   `gallery/`
 - `gallery_list` - what is in `gallery/`, with sizes and previews
 - `effect_delete` - free a slot
+- `effect_walk` - one effect in or out of the knob's walk and the carousel
+  (2.5.7+; kept on the panel by name). `panel_effects` shows `inWalk` for each
 - `effect_install` - regenerate the compiled-in effect table. This one is the old
   path: after it a **person** builds and flashes
 

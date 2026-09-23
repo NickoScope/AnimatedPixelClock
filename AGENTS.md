@@ -374,6 +374,14 @@ they cannot fail from outside. The carousel walks them by itself when
 Scripted faces: football, Minecraft, room radar, snake, snooker, Tetris. Each is
 a page of its own so the knob and carousel walk them singly.
 
+*Switching them:* since 2.5.7 each effect is in or out of the knob's walk and
+the carousel on its own, by name (kept in NVS; `/api/lua` `inWalk`, POST
+`{"walk":{"i":n,"on":b}}`, or `/api/panel` `{"enable":{"page":i,"on":b}}`;
+MCP `effect_walk`). "Show" still shows one that is out. The page key `lua`
+switches them all. Deleting an upload forgets its switch. The portal's
+Effects & clips page does all of this and adds from the GitHub gallery
+(`gallery/index.json`, written by `tools/gallery_index.py`).
+
 *Working with them:* `/api/lua`. They run on their own task with a frame cap and
 PSRAM frame buffers, and the panel logs each one's cost - `[luafx] open <name>:
 ok in N ms, ~N instr, heap N B, fps cap N, stack free N`. Some are slow to open
