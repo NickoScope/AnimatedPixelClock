@@ -149,6 +149,22 @@ if git diff --cached --name-only | grep -qE '^tools/agent/(update\.py|panel\.py|
   }
 fi
 
+# effect_walk, the MCP tool: index or name, the name sent along so a renumbered
+# list is refused rather than the neighbour switched. Needs the agent's venv
+# (it imports the MCP server); a checkout without one says so and goes on.
+if git diff --cached --name-only | grep -qE '^tools/agent/(mcp_server\.py|panel\.py|tests/test_effect_walk\.py)'; then
+  if [ -x tools/agent/.venv/bin/python ]; then
+    tools/agent/.venv/bin/python tools/agent/tests/test_effect_walk.py >/dev/null || {
+      tools/agent/.venv/bin/python tools/agent/tests/test_effect_walk.py | grep -v '^ok'
+      echo
+      echo "pre-commit: the effect_walk test failed (see above)."
+      exit 1
+    }
+  else
+    echo "pre-commit: no tools/agent/.venv, the effect_walk test was not run"
+  fi
+fi
+
 # The checks an uploaded Lua script has to pass before the parser sees it. Every
 # refusal case in that test is a defect this project shipped or nearly shipped -
 # a bracket counter that returned true on an unterminated comment, and one that

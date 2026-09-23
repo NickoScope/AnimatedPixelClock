@@ -413,6 +413,8 @@ static void handlePanel() {
       if (panelPageKey((uint8_t)pg) != PANEL_KEY_LUA || !panelPageName((uint8_t)pg)[0])
         REJECT(400, "enable.page is not an effect: switch other pages by key");
       if (!en["on"].is<bool>()) REJECT(400, "enable.on must be true or false");
+      const char *want = en["name"];   // optional, as walk.name in /api/lua
+      if (want && strcmp(want, panelPageName((uint8_t)pg))) REJECT(409, "enable.name is not that page any more: reload the list");
       enableEffect = (int)pg;
       enableOn = en["on"].as<bool>();
     } else if (!en.isNull()) {
@@ -456,7 +458,8 @@ static void handlePanel() {
 
     // Everything checked: apply.
     if (enableKey >= 0) panelSetPageEnabled((uint8_t)enableKey, enableOn);
-    if (enableEffect >= 0) panelSetEffectOn(panelPageName((uint8_t)enableEffect), enableOn);
+    if (enableEffect >= 0 && !panelSetEffectOn(panelPageName((uint8_t)enableEffect), enableOn))
+      REJECT(409, "too many effects switched off to remember another");
     if (haveCar) panelSetCarousel(car);
     if (styleId >= 0) panelShowStyle((uint8_t)styleId);
     if (showPage >= 0) panelShowPage((uint8_t)showPage);
@@ -972,14 +975,23 @@ static void handleLua() {
     if (hasShow && hasDel) REJECT(400, "send show or delete, not both");
     // {"walk":{"i":n,"on":b}}: effect n in or out of the knob's walk and the
     // carousel, by itself (panelSetEffectOn). Show still shows it.
+    // Checked here, applied after show is checked too: a request refused is a
+    // request that changed nothing.
+    long wi = -1;
+    char walkName[LUA_EFFECT_NAME_CAP] = "";
     if (!in["walk"].isNull()) {
-      long wi;
       if (!intIn(in["walk"]["i"], 0, (long)luaEffectCount() - 1, &wi)) REJECT(400, "walk.i out of range");
       if (!in["walk"]["on"].is<bool>()) REJECT(400, "walk.on must be true or false");
-      char nm[LUA_EFFECT_NAME_CAP];
-      luaEffectName((uint8_t)wi, nm, sizeof(nm));
-      panelSetEffectOn(nm, in["walk"]["on"].as<bool>());
+      luaEffectName((uint8_t)wi, walkName, sizeof(walkName));
+      // Optional: the name the caller saw at i. An upload or delete in between
+      // renumbers the list, and a click must not switch the neighbour.
+      const char *want = in["walk"]["name"];
+      if (want && strcmp(want, walkName)) REJECT(409, "walk.name is not effect i any more: reload the list");
     }
+    long showI = -1;
+    if (hasShow && !intIn(in["show"], 0, (long)luaEffectCount() - 1, &showI)) REJECT(400, "show out of range");
+    if (wi >= 0 && !panelSetEffectOn(walkName, in["walk"]["on"].as<bool>()))
+      REJECT(409, "too many effects switched off to remember another");
 #if defined(LUA_STORE_ENABLED)
     if (hasDel) {
       if (originIsForeign()) REJECT(403, "refused: this request came from another origin");
@@ -998,11 +1010,7 @@ static void handleLua() {
 #else
     if (hasDel) REJECT(400, "this build stores no uploaded scripts");
 #endif
-    if (hasShow) {
-      long i;
-      if (!intIn(in["show"], 0, (long)luaEffectCount() - 1, &i)) REJECT(400, "show out of range");
-      luaEffectShow((uint8_t)i);
-    }
+    if (showI >= 0) luaEffectShow((uint8_t)showI);
   }
   JsonDocument doc(&s_alloc);
   doc["success"] = true;
@@ -1080,6 +1088,28 @@ static void handleLuaUploadChunk() {
       s_luaUpName = upload.filename;
       const int dot = s_luaUpName.lastIndexOf('.');
       if (dot > 0) s_luaUpName.remove(dot);
+    }
+    // Effects are told apart by the name the banner shows ("my_fx" is MY FX),
+    // and the carousel switch is kept by that name. A new script that would
+    // read the same as another effect is refused; the same stem replaces.
+    char shown[LUA_EFFECT_NAME_CAP], other[LUA_EFFECT_NAME_CAP];
+    bool replacing = false;
+    for (uint8_t j = 0; j < luaStoreCount() && !replacing; j++)
+      replacing = luaStoreStem(j, other, sizeof(other)) && s_luaUpName == other;
+    size_t k = 0;
+    for (; k < s_luaUpName.length() && k + 1 < sizeof(shown); k++) {
+      const char c = s_luaUpName[k];
+      shown[k] = c == '_' ? ' ' : (char)toupper((unsigned char)c);
+    }
+    shown[k] = '\0';
+    for (uint8_t j = 0; j < luaEffectCount() && !replacing; j++) {
+      luaEffectName(j, other, sizeof(other));
+      if (!strcmp(other, shown)) {
+        static char kept[96];
+        snprintf(kept, sizeof(kept), "an effect called %s is already on the panel: pick another name", shown);
+        s_luaUpErr = kept;
+        return;
+      }
     }
     if (!luaStoreBegin(s_luaUpName.c_str(), err, sizeof(err))) {
       static char kept[160];

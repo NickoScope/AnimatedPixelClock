@@ -1908,9 +1908,18 @@ async def effect_delete(args: DeleteIn) -> str:
 
 class WalkIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    effect: int = Field(ge=0, le=31, description="the effect's index, as panel_effects lists it")
+    effect: int | str = Field(description="the effect's index, as panel_effects lists it, or its name "
+                                          "as shown there (\"AQUARIUM\"; case and underscores do not matter)")
     on: bool = Field(description="true: the knob and the carousel visit it; false: they pass it by")
     panel: str | None = None
+
+
+def _walk_index(names, effect):
+    """The effect's index in names, from an index or a name; None if there is none."""
+    if isinstance(effect, int):
+        return effect if 0 <= effect < len(names) else None
+    want = effect.strip().replace("_", " ").upper()
+    return names.index(want) if want in names else None
 
 
 @mcp.tool(
@@ -1925,15 +1934,24 @@ async def effect_walk(args: WalkIn) -> str:
     of the walk still runs with panel_show_effect. The switch for all effects
     at once is the page key "lua" (/api/panel enable).
 
+    The name read with the index goes along with it: if an upload or a delete
+    renumbered the list in between, the panel refuses (409) rather than switch
+    the neighbour, and this says so.
+
     Returns: {"ok": true, "effect": "NAME", "inWalk": true|false}
     """
     try:
         p = _pick(args.panel)
         a = p["address"]
-        d = P.post(a, "/api/lua", {"walk": {"i": args.effect, "on": args.on}})
-        if "inWalk" not in d:
+        cur = P.get(a, "/api/lua")
+        if "inWalk" not in cur:
             return "This panel's firmware has no per-effect switch (it came in 2.5.7); update it first."
-        return _ok(effect=d["effects"][args.effect], inWalk=d["inWalk"][args.effect])
+        names = cur.get("effects") or []
+        i = _walk_index(names, args.effect)
+        if i is None:
+            return f"No effect {args.effect!r} on this panel. It has: {', '.join(names)}."
+        d = P.post(a, "/api/lua", {"walk": {"i": i, "name": names[i], "on": args.on}})
+        return _ok(effect=d["effects"][i], inWalk=d["inWalk"][i])
     except Exception as e:  # noqa: BLE001
         return _say(e)
 

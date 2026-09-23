@@ -30,6 +30,10 @@ def build():
                 line = m.group(2).strip()
                 break
         stem = f.stem
+        # The panel's own rule (validStem, src/lua/lua_store.cpp). The portal
+        # checks it again: a name outside it could reach into the page.
+        if not re.fullmatch(r"[A-Za-z0-9_]{1,24}", stem):
+            sys.exit(f"gallery_index: {f.name}: a name is 1 to 24 of letters, digits and underscore")
         prev = GAL / "preview" / (stem + ".png")
         items.append({
             "stem": stem,

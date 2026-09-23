@@ -182,7 +182,7 @@ function renderPages(d) {
         '><span class="check-box" aria-hidden="true"></span><span class="check-text"><strong>' + esc(p.name) + '</strong></span></label>';
       var ebox = row.querySelector('input');
       ebox.addEventListener('change', function () {
-        api('/api/panel', { enable: { page: p.i, on: ebox.checked } }).then(function (r) { learn(r); renderNow(r); })
+        api('/api/panel', { enable: { page: p.i, name: p.name, on: ebox.checked } }).then(function (r) { learn(r); renderNow(r); })
           .catch(function (err) { ebox.checked = !ebox.checked; alert(err.message); });
       });
     } else if (group) {
@@ -1634,7 +1634,7 @@ function renderLua(d) {
       (mine ? '<button type="button" class="btn btn-sm">Delete</button>' : '');
     var box = row.querySelector('input'), btns = row.querySelectorAll('button');
     box.addEventListener('change', function () {
-      api('/api/lua', { walk: { i: i, on: box.checked } }).then(renderLua)
+      api('/api/lua', { walk: { i: i, name: name, on: box.checked } }).then(renderLua)
         .catch(function (err) { box.checked = !box.checked; note('luaMsg', err.message, true); });
     });
     btns[0].addEventListener('click', function () { api('/api/lua', { show: i }).then(renderLua).catch(function (err) { flash(btns[0], err.message, true); }); });
@@ -1652,15 +1652,22 @@ function renderLua(d) {
 // The list comes from GitHub (gallery/index.json, written by
 // tools/gallery_index.py); "Add" fetches the script there and uploads it here.
 var GALLERY = 'https://raw.githubusercontent.com/NickoScope/AnimatedPixelClock/main/gallery/';
-var galIndex = null, galBusy = false;
+var galIndex = null, galBusy = false, galFailedAt = 0, galFull = false;
+// What an entry may name: the panel's own stem rule (validStem, lua_store.cpp)
+// and nothing else, so a bad index cannot point outside gallery/ or into the page.
+var GAL_STEM = /^[A-Za-z0-9_]{1,24}$/;
+function galEntryOk(g) {
+  return g && GAL_STEM.test(g.stem) && g.name === g.stem.toUpperCase() && g.file === g.stem + '.lua' &&
+    (g.preview == null || g.preview === 'preview/' + g.stem + '.png') && typeof g.bytes === 'number';
+}
 function galLoad() {
-  if (galIndex) return;
+  if (galIndex || Date.now() - galFailedAt < 60000) return;   // offline: once a minute, not every poll
   galIndex = { loading: true };
   fetch(GALLERY + 'index.json', { cache: 'no-store' }).then(function (r) {
     if (!r.ok) throw new Error('GitHub answered ' + r.status);
     return r.json();
   }).then(function (j) { galIndex = j; renderGallery(); })
-    .catch(function (err) { galIndex = null; var h = $('galList'); if (h) h.innerHTML = '<p class="field-hint">The gallery could not be read: ' + esc(err.message) + '. This browser needs the internet for it.</p>'; });
+    .catch(function (err) { galIndex = null; galFailedAt = Date.now(); var h = $('galList'); if (h) h.innerHTML = '<p class="field-hint">The gallery could not be read: ' + esc(err.message) + '. This browser needs the internet for it.</p>'; });
 }
 function renderGallery() {
   var host = $('galList');
@@ -1668,11 +1675,12 @@ function renderGallery() {
   var names = {}, up = luaLast.uploaded || {};
   luaLast.effects.forEach(function (n) { names[n] = true; });
   host.innerHTML = '';
-  (galIndex.effects || []).forEach(function (g) {
+  var list = (galIndex.effects || []).filter(galEntryOk);
+  list.forEach(function (g) {
     var shown = g.name.replace(/_/g, ' '), here = names[shown];
     var row = document.createElement('div');
     row.className = 'pn-row';
-    row.innerHTML = (g.preview ? '<img class="pn-thumb" alt="" src="' + GALLERY + g.preview + '">' : '') +
+    row.innerHTML = (g.preview ? '<img class="pn-thumb" alt="" src="' + esc(GALLERY + g.preview) + '">' : '') +
       '<div class="pn-name"><strong>' + esc(shown) + '</strong><span class="ct-hint">' + esc(g.line || '') + ' · ' +
       Math.round(g.bytes / 1024) + ' KB</span></div><button type="button" class="btn btn-sm"' + (here ? ' disabled' : '') + '>' +
       (here ? 'On the panel' : 'Add') + '</button>';
@@ -1680,8 +1688,9 @@ function renderGallery() {
     if (!here) btn.addEventListener('click', function () { galAdd(g, btn); });
     host.appendChild(row);
   });
-  setText('galTag', (galIndex.effects || []).length + ' on GitHub');
-  if (up.count >= up.slots) note('galMsg', 'All ' + up.slots + ' upload slots are used: delete an effect above first.', true);
+  setText('galTag', list.length + ' on GitHub');
+  if (up.count >= up.slots) { note('galMsg', 'All ' + up.slots + ' upload slots are used: delete an effect above first.', true); galFull = true; }
+  else if (galFull) { note('galMsg', ''); galFull = false; }
 }
 function galAdd(g, btn) {
   if (galBusy) return;

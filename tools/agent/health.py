@@ -389,7 +389,7 @@ def restore(addr, orig, changed, ring_on, log, find):
             name, was = orig["walk"]
             names = P.get(addr, "/api/lua").get("effects") or []
             if name in names:
-                P.post(addr, "/api/lua", {"walk": {"i": names.index(name), "on": was}})
+                P.post(addr, "/api/lua", {"walk": {"i": names.index(name), "name": name, "on": was}})
         step("walk", w)
     if "upload" in changed and orig.get("upload"):
         step("upload", lambda: P.post(addr, "/api/lua", {"delete": orig["upload"]}))
@@ -581,13 +581,24 @@ def effects(addr, log, find, changed, orig, roundtrip):
     name, was = names[i], bool(walk[i])
     orig["walk"] = (name, was)
     changed.add("walk")
-    r = P.post(addr, "/api/lua", {"walk": {"i": i, "on": not was}})
+    # A click on a list that moved since it was read: the name sent along does
+    # not match effect i, and the panel must refuse rather than switch it.
+    stale = None
+    if len(names) > 1:
+        try:
+            P.post(addr, "/api/lua", {"walk": {"i": i, "name": names[0], "on": not was}}, tries=2)
+            stale = "accepted"
+        except P.PanelError as e:
+            stale = "409" if "HTTP 409" in str(e) else str(e)
+    r = P.post(addr, "/api/lua", {"walk": {"i": i, "name": name, "on": not was}})
     flipped = (r.get("inWalk") or [None] * (i + 1))[i] == (not was)
     seen = [p.get("effectOn") for p in P.get(addr, "/api/panel").get("pages") or [] if p.get("name") == name]
-    r = P.post(addr, "/api/lua", {"walk": {"i": i, "on": was}})
+    r = P.post(addr, "/api/lua", {"walk": {"i": i, "name": name, "on": was}})
     back = (r.get("inWalk") or [None] * (i + 1))[i] == was
     changed.discard("walk")
-    done["walk"] = {"effect": name, "switched": flipped, "panelSaw": seen, "restored": back}
+    done["walk"] = {"effect": name, "staleName": stale, "switched": flipped, "panelSaw": seen, "restored": back}
+    if stale not in (None, "409"):
+        find("FAIL", f"a switch sent with another effect's name was not refused: {stale}")
     if not flipped or seen != [not was] or not back:
         find("FAIL", f"the carousel switch of {name} did not follow: {done['walk']}")
     if not roundtrip:

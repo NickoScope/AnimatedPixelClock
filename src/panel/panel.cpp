@@ -418,7 +418,14 @@ void panelTick() {
   }
 #endif
   if (strcmp(c.rbStn, w.rbStn) && p.putString("rbStn", c.rbStn)) memcpy(w.rbStn, c.rbStn, sizeof(w.rbStn));
-  if (strcmp(s_effOff, s_effOffSaved) && p.putString("luaOff", s_effOff)) memcpy(s_effOffSaved, s_effOff, EFF_OFF_CAP);
+  if (strcmp(s_effOff, s_effOffSaved)) {
+    // putString() answers with the length it wrote, so "" reads as a failure
+    // and would leave the saved copy stale: the next switch-off of the same
+    // effect would then match it and never reach NVS. None off is no key.
+    const size_t n = strlen(s_effOff);
+    const bool ok = n ? p.putString("luaOff", s_effOff) == n : (!p.isKey("luaOff") || p.remove("luaOff"));
+    if (ok) memcpy(s_effOffSaved, s_effOff, EFF_OFF_CAP);
+  }
   p.end();
 }
 
@@ -440,8 +447,8 @@ static char *effFind(const char *name) {
 
 bool panelEffectOn(const char *name) { return !name || !effFind(name); }
 
-void panelSetEffectOn(const char *name, bool on) {
-  if (!name || !*name || strchr(name, '\n')) return;
+bool panelSetEffectOn(const char *name, bool on) {
+  if (!name || !*name || strchr(name, '\n')) return false;
   char *l = effFind(name);
   if (on && l) {
     char *e = strchr(l, '\n');
@@ -449,12 +456,13 @@ void panelSetEffectOn(const char *name, bool on) {
     markDirty();
   } else if (!on && !l) {
     const size_t used = strlen(s_effOff), n = strlen(name);
-    if (used + n + 2 > EFF_OFF_CAP) return;   // cannot happen with 19 pages; refused rather than cut
+    if (used + n + 2 > EFF_OFF_CAP) return false;   // refused rather than cut; the caller says so
     memcpy(s_effOff + used, name, n);
     s_effOff[used + n] = '\n';
     s_effOff[used + n + 1] = '\0';
     markDirty();
   }
+  return true;
 }
 
 void panelEffectsPrune() {

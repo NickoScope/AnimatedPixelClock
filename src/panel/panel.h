@@ -87,7 +87,7 @@ bool     panelSetPageEnabled(uint8_t key, bool on);
 // NVS. A name, not a number: an upload or a delete renumbers the effects.
 // "Show" still shows an effect that is switched off.
 bool panelEffectOn(const char *name);
-void panelSetEffectOn(const char *name, bool on);
+bool panelSetEffectOn(const char *name, bool on);   // false: the list is full, nothing changed
 void panelEffectsPrune();   // forget names no effect has any more (after a delete)
 
 const PanelCarousel &panelCarousel();
