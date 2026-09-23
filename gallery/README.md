@@ -264,6 +264,12 @@ effect_check    the firmware's real runtime and real budgets, on your laptop
 effect_upload   onto a panel
 ```
 
+Every screen here must run on a real panel, not only in the simulator: under
+500 ms a frame, and under about 50 ms to look smooth. AGENTS.md "What will run
+on the panel" has the limits and what each drawing call costs there. The panel
+refuses an upload that does not fit; `gallery.py sync` tries every screen on
+the panel before it brings it here.
+
 Then `python3 tools/agent/gallery.py add <name>` copies it here with a preview.
 
 An agent publishes with `gallery_publish` (MCP) or `gallery.py publish <name>

@@ -443,7 +443,33 @@ def readme_about(text, name):
     return "\n".join(keep).strip() or None
 
 
-def sync(source, source_branch, by, remote="origin", branch="main", dry=False):
+TRIAL_STEM = "t_gallery_trial"
+
+
+def panel_trial(text, panel=None):
+    """Run a script on a real panel the way an upload is run (firmware 2.5.9+:
+    the load and 4 frames, off screen) and remove it again. Returns the panel's
+    trial line; raises Refused with the panel's own reason when it refuses."""
+    try:
+        p = P.resolve(panel)
+    except P.PanelError as e:
+        raise Refused(f"no panel to try it on ({e}); sync --no-trial skips this, at your risk")
+    a = p["address"]
+    try:
+        r = P.post_file(a, f"/api/lua/upload?name={TRIAL_STEM}", "script", TRIAL_STEM + ".lua",
+                        text.encode("utf-8"), tries=2)
+    except P.PanelError as e:
+        raise Refused(f"the panel refused it: {str(e).split(' - ', 1)[-1]}")
+    try:
+        P.post(a, "/api/lua", {"delete": TRIAL_STEM})
+    except P.PanelError:
+        pass
+    if not r.get("trial"):
+        raise Refused("this panel's firmware does not try an upload (2.5.9+): update it, or sync --no-trial")
+    return r["trial"]
+
+
+def sync(source, source_branch, by, remote="origin", branch="main", dry=False, trial=True, panel=None):
     if not by or not WHO.fullmatch(by):
         raise Refused("--by: whose entries to carry over")
     with checkout(source, source_branch) as st:
@@ -475,7 +501,11 @@ def sync(source, source_branch, by, remote="origin", branch="main", dry=False):
                     continue
                 verb = _put(wt, stem, text, about, by)
                 if (gal / f"{stem}.lua").read_text(encoding="utf-8") != before or verb == "add":
-                    plan.append(f"{'added' if verb == 'add' else 'updated'} {shown(stem)}")
+                    # The simulator says what it draws, not how long it takes:
+                    # only a panel says whether it fits (AGENTS.md, "What will
+                    # run on the panel"). Nothing reaches GitHub untried.
+                    cost = panel_trial((gal / f"{stem}.lua").read_text(encoding="utf-8"), panel) if trial else "untried"
+                    plan.append(f"{'added' if verb == 'add' else 'updated'} {shown(stem)} ({cost})")
             if board is not None:
                 check_board(board, gal)
                 cur = (gal / BOARD).read_text(encoding="utf-8") if (gal / BOARD).exists() else None
@@ -537,7 +567,7 @@ def cmd_scoreboard(args):
 def cmd_sync(args):
     remote, branch = args.remote or "origin", args.branch or "main"
     return _run(sync, source=args.source, source_branch=args.source_branch, by=args.by,
-                remote=remote, branch=branch, dry=args.dry_run)
+                remote=remote, branch=branch, dry=args.dry_run, trial=not args.no_trial, panel=args.panel)
 
 
 def cmd_unpublish(args):
@@ -610,6 +640,8 @@ def main():
     y.add_argument("--by", required=True, help="whose entries: the agent's LEDMATRIX_PUBLISHER")
     y.add_argument("--remote"); y.add_argument("--branch")
     y.add_argument("--dry-run", action="store_true")
+    y.add_argument("--panel", help="the panel to try each screen on; default: the only one")
+    y.add_argument("--no-trial", action="store_true", help="skip the panel trial (not for the public gallery)")
     args = ap.parse_args()
     return {"list": cmd_list, "show": cmd_show, "add": cmd_add, "remove": cmd_remove,
             "publish": cmd_publish, "unpublish": cmd_unpublish, "scoreboard": cmd_scoreboard,

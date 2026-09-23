@@ -795,6 +795,56 @@ One effect is one persistent `lua_State` on its own task, drawing into a
 The chunk body runs once at load; build your tables and precomputed grids there.
 `draw()` is then called once a frame with no arguments.
 
+**What will run on the panel: the requirements, with the panel's own numbers.**
+The simulator draws exactly what the panel draws, byte for byte (fx_parity).
+It says nothing about how long a frame takes: the panel's core is shared with
+Wi-Fi and is tens of times slower than a laptop. A script that is instant in
+luasim can be refused by the panel. The hard limits (`kLuaFxPanelLimits`,
+`src/lua/lua_fx.h`):
+
+| limit | value | what happens past it |
+|---|---|---|
+| a frame, `draw()` | **500 ms** and 2,000,000 instructions | the frame is dropped; 3 in a row stop the effect |
+| the load, the chunk body | 3,000 ms and 20,000,000 instructions | it does not open |
+| Lua heap | 4 MB | error |
+| source | 51,200 B, nesting depth 16 | refused at upload |
+
+**The upload is the test.** Since 2.5.9 the panel runs every upload once, off
+screen, before it keeps it: the load and 4 frames. More than 1 of the 4 frames
+over 500 ms, or any error, refuses the upload with the frame times, and nothing
+is stored. An accepted upload's answer carries `trial` with the measured load
+and frame times. **Read it.** 500 ms is where the panel gives up, not a target:
+at 18-20 fps a frame has 50-55 ms before the effect starts to stutter.
+
+**What things cost on this panel**, measured on 2026-09-23 through that trial
+(firmware 2.5.9, Wi-Fi on; each is 4 frames of one loop, and every figure
+includes the Lua loop around the call):
+
+| operation | per call | a full 128x64 pass |
+|---|---|---|
+| an empty Lua `for` step | 0.35 us | |
+| a step with a little arithmetic | 1.6 us | |
+| `px.pixel` | 6.5 us | 53 ms |
+| `px.get` | 5.6 us | 46 ms |
+| `px.blend` | 13.5 us | **110 ms** |
+| `px.rect` filled, whole screen | 1.7 ms | |
+| `px.clear` | 0.16 ms | |
+| `px.circle` filled, r 20 | 0.35 ms | |
+| `px.line`, 128 px | 0.04 ms | |
+| `px.text`, 5 letters | 0.02 ms | |
+| **`px.glow`, r 10** | **5.6 ms** | 100 of them: over 500 ms |
+
+What follows from that:
+- Never do a per-pixel pass with `blend` or `glow` every frame.
+- Paint what does not move once, at load or on the first frame. The canvas
+  keeps it.
+- Redraw only what changes.
+- Count your glows.
+- Aim for **under 50 ms** a frame.
+
+The two screens refused on 2026-09-23 each spent more than 500 ms a frame on
+these calls.
+
 **The canvas is not cleared between frames.** It is zeroed once when the effect
 opens and never again (`src/lua/lua_effects.cpp:164`). Call `px.clear()`
 yourself for a clean frame - or leave it out and get trails for nothing.

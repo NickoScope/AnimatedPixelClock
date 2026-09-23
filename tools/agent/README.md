@@ -170,7 +170,8 @@ the gallery", once it is on GitHub)
   ```
 
   `sync` mirrors the agent's entries **by state**, not by replaying its
-  commits: each one goes through every check again, its preview is made again
+  commits, and **tries every new or changed screen on the panel first** (the
+  2.5.9 upload trial; `--no-trial` skips it, not for the public gallery): each one goes through every check again, its preview is made again
   from the script, a person's entry changed in staging is not carried, and the
   staging branch then starts again from what GitHub has. Everything works in a
   throwaway worktree; the local checkout is never touched. Needs a C compiler,

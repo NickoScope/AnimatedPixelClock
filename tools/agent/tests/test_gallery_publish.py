@@ -61,7 +61,9 @@ with tempfile.TemporaryDirectory() as d:
                       "  px.rect(x, 0, 4, 64, 255, 160, 40, true)\nend\n")
 
     def sync():
-        return G.sync("file://" + str(pi), "gallery-staging", "openclaw", remote="file://" + str(gh), branch="main")
+        # trial=False: no panel here; the trial is exercised on hardware
+        return G.sync("file://" + str(pi), "gallery-staging", "openclaw", remote="file://" + str(gh), branch="main",
+                      trial=False)
     try:
         # --- the agent, on its own machine
         r = json.loads(call(M.gallery_publish, M.GalleryPublishIn, name=STEM, about=ABOUT))
