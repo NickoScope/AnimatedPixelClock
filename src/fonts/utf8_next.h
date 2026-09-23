@@ -26,6 +26,7 @@
 // Stops at the terminating NUL: a continuation byte is never read past it,
 // because NUL is not 80..BF.
 
+#include <stddef.h>
 #include <stdint.h>
 
 #define UTF8_REPLACEMENT 0xFFFDu
@@ -52,4 +53,31 @@ static inline uint32_t utf8Next(const unsigned char **ps) {
   }
   *ps = p + need + 1;
   return cp;
+}
+
+// The same table over a buffer that need not end in NUL, for Print's
+// write(buffer, size): the length of the well-formed sequence at p (1..4), with
+// its code point in *cp, or 0 when none starts there. The caller decides what a
+// byte that starts nothing means; the display keeps what it always drew for it.
+static inline unsigned utf8Decode(const unsigned char *p, size_t n, uint32_t *cp) {
+  if (!n) return 0;
+  const unsigned c = p[0];
+  if (c < 0x80) { *cp = c; return 1; }
+  unsigned need, lo = 0x80, hi = 0xBF;
+  uint32_t v;
+  if      (c >= 0xC2 && c <= 0xDF) { need = 1; v = c & 0x1F; }
+  else if (c >= 0xE0 && c <= 0xEF) { need = 2; v = c & 0x0F;
+                                     if (c == 0xE0) lo = 0xA0; else if (c == 0xED) hi = 0x9F; }
+  else if (c >= 0xF0 && c <= 0xF4) { need = 3; v = c & 0x07;
+                                     if (c == 0xF0) lo = 0x90; else if (c == 0xF4) hi = 0x8F; }
+  else return 0;
+  if (n < need + 1) return 0;
+  for (unsigned i = 1; i <= need; i++) {
+    const unsigned b = p[i];
+    if (b < lo || b > hi) return 0;
+    v = (v << 6) | (b & 0x3F);
+    lo = 0x80; hi = 0xBF;
+  }
+  *cp = v;
+  return need + 1;
 }

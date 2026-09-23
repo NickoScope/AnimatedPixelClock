@@ -119,6 +119,7 @@
 #include "../clips/clip_sd.h"
 #endif
 #include "web.h"
+#include "../fonts/pxfb_text.h"   // the Cyrillic advances the portal measures names with
 
 extern bool httpForceClock;
 extern bool httpForceAmbient;
@@ -509,7 +510,7 @@ static void handleFlightboard() {
       // Refused rather than folded: the portal already writes these in capitals.
       if (!fbStr(jAdd["icao"], 4, &icao)) REJECT(400, "add.icao must be 4 capitals or digits, starting with a letter");
       if (!fbStr(jAdd["iata"], 3, &iata, "")) REJECT(400, "add.iata must be 3 capitals, or empty");
-      if (!fbStr(jAdd["name"], FB_APT_NAME_MAX, &name)) REJECT(400, "add.name must be 1 to 12 characters");
+      if (!fbStr(jAdd["name"], FB_APT_NAME_MAX, &name)) REJECT(400, "add.name must be 1 to 12 bytes (a Cyrillic letter is 2)");
       if (!fbStr(jAdd["tz"], FB_APT_TZ_MAX, &tz, "")) REJECT(400, "add.tz must be an IANA zone name such as Europe/Paris");
       bool select = false;
       if (!optBool(jAdd["select"], &select)) REJECT(400, "add.select must be true or false");
@@ -587,6 +588,9 @@ static void handleFlightboard() {
     const char one[2] = {ch, 0};
     adv.add(flightboardNameWidth(one));
   }
+  // And for U+0400..U+045F, the Cyrillic of the system font.
+  JsonArray advCyr = lim["advanceCyr"].to<JsonArray>();
+  for (uint32_t cp = 0x0400; cp <= 0x045F; cp++) advCyr.add(pxfbGlyph(cp, false).g->xAdvance);
   flightboardStatusJson(doc["board"].to<JsonObject>());
 #if defined(FLIGHTBOARD_DIRECT_ENABLED)
   aeroDirectStatusJson(doc["direct"].to<JsonObject>());
@@ -713,7 +717,7 @@ static void handleWorldclock() {
       const char *name, *tz;
       // Refused rather than folded: the portal already writes the name in the
       // panel's capitals, so anything else reaching here is not the portal.
-      if (!strIn(jAdd["name"], WC_NAME_MAX, &name)) REJECT(400, "add.name must be text of at most 20 characters");
+      if (!strIn(jAdd["name"], WC_NAME_MAX, &name)) REJECT(400, "add.name must be text of at most 20 bytes (a Cyrillic letter is 2)");
       // is<float>() holds for any JSON number, integers included (ArduinoJson
       // 7.4.3, Converter<float>::checkJson tests the number bit), and for no string.
       if (!jAdd["lat"].is<float>() || !jAdd["lon"].is<float>()) REJECT(400, "add.lat and add.lon must be numbers");
@@ -780,6 +784,9 @@ static void handleWorldclock() {
     const char one[2] = {ch, 0};
     adv.add(worldClockNameWidth(one));
   }
+  // And for U+0400..U+045F, the Cyrillic of the system font.
+  JsonArray advCyr = lim["advanceCyr"].to<JsonArray>();
+  for (uint32_t cp = 0x0400; cp <= 0x045F; cp++) advCyr.add(pxfbGlyph(cp, false).g->xAdvance);
   doc["tzdb"] = tzdbVersion();
   sendDoc(doc);
 }

@@ -17,8 +17,13 @@ docs/drafts/cyrillic-from-openclaw/) and its review of 2026-09-23:
   cannot hold both without 897 empty slots, and Adafruit's print() cannot carry
   a code above 255 anyway, so the drawing goes through src/fonts/pxfb_text.h.
 - Geometry as the Latin capitals: 5 rows, yOffset -4, xOffset 0, advance =
-  width + 1. Case is folded, as px.text folds a..z: 0x0430..0x044F and U+0451
-  point at the capitals' bitmaps and cost no bytes.
+  width + 1.
+- Lowercase of its own since 2026-09-23 (the owner: the system font has both
+  cases, as the Latin does): from X11 misc-fixed 4x6 (tools/fonts/x11/
+  4x6-cyrillic.bdf, public domain), whose capitals are 3 x 5 and lowercase 4
+  rows over one descender row, Picopixel's own proportions. Its rows are placed
+  on Picopixel's baseline and trimmed to their ink. px.text still folds case
+  (pxfb_text.h), so scripts that always drew capitals still do.
 - Letters that look the same as Latin ones are taken from the Latin font
   itself, so А and A are the same pixels and cannot drift apart.
 - Every slot of the block with no letter of its own, and every code point the
@@ -72,8 +77,36 @@ ART = {
 # zero on the test card ("21°C" came out "210C").
 MISSING = ["###", "###", "###", "###", "###"]
 
-FOLD = {cp + 0x20: cp for cp in range(0x0410, 0x0430)}
-FOLD[0x0451] = 0x0401
+# Lowercase that looks Latin: Picopixel's own lowercase glyph.
+SAME_AS_LATIN_LOWER = {0x0430: "a", 0x0435: "e", 0x043E: "o", 0x0440: "p", 0x0441: "c",
+                       0x0443: "y", 0x0445: "x", 0x0455: "s", 0x0456: "i", 0x0458: "j"}
+LOWER_BDF = ROOT / "tools/fonts/x11/4x6-cyrillic.bdf"
+LOWER = [cp for cp in range(0x0430, 0x0460)]
+
+
+def x11_lower():
+    """4x6's lowercase, on Picopixel's baseline: rows (top first) and yOffset."""
+    s = LOWER_BDF.read_text(encoding="latin-1")
+    asc = int(re.search(r"FONT_ASCENT (\d+)", s).group(1))
+    out = {}
+    for m in re.finditer(r"ENCODING (\d+)\n.*?BBX (-?\d+) (-?\d+) (-?\d+) (-?\d+)\nBITMAP\n(.*?)ENDCHAR", s, re.S):
+        cp = int(m.group(1))
+        if cp not in LOWER:
+            continue
+        w, h, xo, yo = map(int, m.group(2, 3, 4, 5))
+        grid = {}
+        for r, hx in enumerate(m.group(6).split()):
+            v, nb = int(hx, 16), len(hx) * 4
+            for x in range(w):
+                if (v >> (nb - 1 - x)) & 1:
+                    grid[(xo + x, (asc - (yo + h)) + r - (asc - 1))] = 1   # y relative to the baseline row
+        if not grid:
+            continue
+        xs = [x for x, _ in grid]; ys = [y for _, y in grid]
+        x0, x1, y0, y1 = min(xs), max(xs), min(ys), max(ys)
+        rows = ["".join("#" if (x, y) in grid else "." for x in range(x0, x1 + 1)) for y in range(y0, y1 + 1)]
+        out[cp] = (rows, y0)
+    return out
 
 
 def latin_art():
@@ -91,9 +124,11 @@ def latin_art():
         r"\{\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*(-?\d+)\s*\}",
         re.sub(r"//.*", "", gt))]
     out = {}
-    for ch in set(SAME_AS_LATIN.values()):
+    for ch in set(SAME_AS_LATIN.values()) | set(SAME_AS_LATIN_LOWER.values()):
         o, w, h, a, xo, yo = G[ord(ch) - 0x20]
-        assert (h, a, xo, yo) == (5, w + 1, 0, -4), ch
+        assert (a, xo) == (w + 1, 0), ch
+        if ch.isupper():
+            assert (h, yo) == (5, -4), ch
         rows, bit, bo = [], 0, o
         for _ in range(h):
             r = ""
@@ -103,7 +138,7 @@ def latin_art():
                 r += "#" if (BM[bo - 1] >> (7 - (bit & 7))) & 1 else "."
                 bit += 1
             rows.append(r)
-        out[ch] = rows
+        out[ch] = (rows, yo)
     return out
 
 
@@ -113,28 +148,36 @@ def pack(rows):
 
 
 def shapes():
+    """Every glyph as (rows, yOffset): capitals 5 rows at -4, lowercase as drawn."""
     lat = latin_art()
     s = {cp: lat[ch] for cp, ch in SAME_AS_LATIN.items()}
-    s.update(ART)
-    for cp, rows in s.items():
-        assert len(rows) == 5 and len({len(r) for r in rows}) == 1, hex(cp)
+    s.update({cp: (rows, -4) for cp, rows in ART.items()})
+    low = x11_lower()
+    for cp in LOWER:
+        if cp in SAME_AS_LATIN_LOWER:
+            s[cp] = lat[SAME_AS_LATIN_LOWER[cp]]
+        elif cp in low:
+            s[cp] = low[cp]
+    for cp, (rows, yo) in s.items():
+        assert len({len(r) for r in rows}) == 1, hex(cp)
     return s
 
 
 def build():
     s = shapes()
     bitmap, glyph = [], {}
-    def add(rows):
+    def add(rows, yo=-4):
         off = len(bitmap)
         bitmap.extend(pack(rows))
         w = len(rows[0])
-        return (off, w, 5, w + 1, 0, -4)
+        return (off, w, len(rows), w + 1, 0, yo)
     missing = add(MISSING)
     for cp in sorted(s):
-        glyph[cp] = add(s[cp])
+        rows, yo = s[cp]
+        glyph[cp] = add(rows, yo)
     table = []
     for cp in range(FIRST, LAST + 1):
-        g = glyph.get(cp) or glyph.get(FOLD.get(cp, -1)) or missing
+        g = glyph.get(cp) or missing
         table.append((cp, g))
     return bitmap, table, missing
 
@@ -175,8 +218,9 @@ def apply(text):
 def show():
     s = shapes()
     for cp in sorted(s):
-        print(f"U+{cp:04X} {chr(cp)}")
-        for r in s[cp]:
+        rows, yo = s[cp]
+        print(f"U+{cp:04X} {chr(cp)}  yOffset {yo}")
+        for r in rows:
             print("   " + r.replace("#", "█").replace(".", "·"))
     print("missing")
     for r in MISSING:

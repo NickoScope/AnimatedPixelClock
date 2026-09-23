@@ -184,3 +184,16 @@ if git diff --cached --name-only | grep -qE '^(src/|lib/|platformio\.ini|tools/r
     exit 1
   }
 fi
+
+# The system font (src/fonts/sys_text.h, sys_print.h): Latin and Cyrillic in
+# every print(). The generated tables must match their generators, and the
+# panel's print() path, run over the real Adafruit GFX, must draw every letter
+# exactly as the tables say and ASCII exactly as before.
+if git diff --cached --name-only | grep -qE '^(src/fonts/|tools/fonts/|src/display/)'; then
+  python3 tools/fonts/check_sysfont.py >/dev/null || {
+    python3 tools/fonts/check_sysfont.py | grep -v '^ok'
+    echo
+    echo "pre-commit: the system font check failed (see above)."
+    exit 1
+  }
+fi

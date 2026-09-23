@@ -493,16 +493,28 @@ var WC_TWO = { 'Æ': 'AE', 'æ': 'AE', 'Þ': 'TH', 'þ': 'TH', 'ß': 'SS', 'Ĳ':
   'Œ': 'OE', 'œ': 'OE', 'Ø': 'O', 'ø': 'O', 'Ð': 'D', 'ð': 'D', 'Đ': 'D', 'đ': 'D',
   'Ł': 'L', 'ł': 'L', 'Ŀ': 'L', 'ŀ': 'L', 'Ħ': 'H', 'ħ': 'H', 'ı': 'I', 'Ŧ': 'T',
   'ŧ': 'T', 'ĸ': 'K', 'ſ': 'S', 'Ŋ': 'N', 'ŋ': 'N' };
-function wcAdv(ch) { var a = wcMap.limits.advance, i = ch.charCodeAt(0) - 32; return a[i >= 0 && i < a.length ? i : 0]; }
+// Names on the pages are the system font's capitals, Latin and Cyrillic
+// (src/fonts/name_chars.h): accents come off Latin letters only, so Й and Ё
+// stay what they are; lengths are bytes, as the panel stores them.
+function nameFold(s) { return String(s || '').normalize('NFC').replace(/[^\u0400-\u04ff]+/g, function (t) { return t.normalize('NFD').replace(/[\u0300-\u036f]/g, ''); }).toUpperCase(); }
+function u8len(ch) { var c = ch.charCodeAt(0); return c < 0x80 ? 1 : c < 0x800 ? 2 : 3; }
+function u8(s) { var n = 0; for (var i = 0; i < s.length; i++) n += u8len(s.charAt(i)); return n; }
+var NAME_BAD = /[^A-Z0-9\u0410-\u042f\u0401.' -]/, NAME_BAD_ALL = /[^A-Z0-9\u0410-\u042f\u0401.' -]+/g;
+function advOf(lim, ch) { var c = ch.charCodeAt(0), cy = lim.advanceCyr, a = lim.advance, i = c - 32;
+  if (cy && c >= 0x400 && c <= 0x45f) return cy[c - 0x400];
+  return a[i >= 0 && i < a.length ? i : 0]; }
+function wcAdv(ch) { return advOf(wcMap.limits, ch); }
 function wcWidth(s) { var w = 0; for (var i = 0; i < s.length; i++) w += wcAdv(s.charAt(i)); return w; }
 // The name field's first guess, by worldClockFitName's rules: capitals without
 // accents, cut after a word or before a hyphen when it is too wide.
 function wcFit(s) {
   var lim = wcMap.limits, w = 0, cut = 0, whole = 0;
-  var t = String(s || '').replace(/[ÆæÞþßĲĳŒœØøÐðĐđŁłĿŀĦħıŦŧĸſŊŋ]/g,
-    function (ch) { return WC_TWO[ch]; }).normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase()
-    .replace(/[^A-Z0-9.' -]+/g, ' ').replace(/ +/g, ' ').trim();
-  for (var i = 0; i < t.length && i < lim.name; i++) {
+  var t = nameFold(String(s || '').replace(/[ÆæÞþßĲĳŒœØøÐðĐđŁłĿŀĦħıŦŧĸſŊŋ]/g,
+    function (ch) { return WC_TWO[ch]; }))
+    .replace(NAME_BAD_ALL, ' ').replace(/ +/g, ' ').trim();
+  for (var i = 0, b = 0; i < t.length; i++) {
+    b += u8len(t.charAt(i));
+    if (b > lim.name) break;
     w += wcAdv(t.charAt(i));
     if (w > lim.namePx) break;
     cut = i + 1;
@@ -517,8 +529,9 @@ function wcCheckName() {
   var lim = wcMap.limits, v = n.value, w = wcWidth(v), why = '';
   var full = wcMap.cities.filter(function (ct) { return ct.kind === 'custom'; }).length >= lim.custom;
   if (!v) why = 'Give it a name.';
-  else if (/[^A-Z0-9.' -]/.test(v)) why = "Capitals A-Z, digits, space and . - ' only: the panel's font has nothing else.";
+  else if (NAME_BAD.test(v)) why = "Capitals A-Z or А-Я, digits, space and . - ' only: the panel's font has nothing else.";
   else if (/^ | $|  /.test(v)) why = 'No space at either end, and no two in a row.';
+  else if (u8(v) > lim.name) why = 'Too long: ' + u8(v) + ' of ' + lim.name + ' bytes (a Cyrillic letter is 2).';
   else if (w > lim.namePx) why = 'Too wide for the panel: ' + w + ' of ' + lim.namePx + ' px.';
   else if (wcMap.cities.some(function (ct) { return ct.kind !== 'auto' && ct.name === v; })) why = 'A city with that name is already on the map.';
   else if (full) why = 'All ' + lim.custom + ' of your cities are in use: delete one first.';
@@ -633,7 +646,7 @@ function fbEnd(e, code, verb, done) {
   return (e.actHm ? done : verb) + ' ' + hm + ' ' + where +
     (!e.actHm && e.estHm && e.schedHm && e.estHm !== e.schedHm ? ' (scheduled ' + e.schedHm + ')' : '');
 }
-function fbFold(s) { return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase(); }
+function fbFold(s) { return nameFold(s); }
 function fbPost(body, done, msgId) {
   return api('/api/flightboard', body).then(function (d) { fbSigCustom = fbSigTracks = ''; renderFb(d); note(msgId, done); return d; })
     .catch(function (err) { note(msgId, err.message, true); });
@@ -837,14 +850,16 @@ function fbFind(q) {
     if (seq === fbSeq) note('fbFindMsg', 'Could not load the airport list (' + err.message + '). It is fetched by this browser, which needs the internet.', true);
   });
 }
-function fbAdv(ch) { var a = fbLast.limits.advance, i = ch.charCodeAt(0) - 32; return a[i >= 0 && i < a.length ? i : 0]; }
+function fbAdv(ch) { return advOf(fbLast.limits, ch); }
 function fbWidth(s) { var w = 0; for (var i = 0; i < s.length; i++) w += fbAdv(s.charAt(i)); return w; }
 // A first guess at the header name, by the panel's rules: capitals without
 // accents, cut after a word when too wide.
 function fbFit(s) {
   var lim = fbLast.limits, w = 0, cut = 0, whole = 0;
-  var t = fbFold(s).replace(/[^A-Z0-9.' -]+/g, ' ').replace(/ +/g, ' ').trim();
-  for (var i = 0; i < t.length && i < lim.name; i++) {
+  var t = fbFold(s).replace(NAME_BAD_ALL, ' ').replace(/ +/g, ' ').trim();
+  for (var i = 0, b = 0; i < t.length; i++) {
+    b += u8len(t.charAt(i));
+    if (b > lim.name) break;
     w += fbAdv(t.charAt(i));
     if (w > lim.namePx) break;
     cut = i + 1;
@@ -858,8 +873,9 @@ function fbCheckName() {
   var lim = fbLast.limits, v = n.value, w = fbWidth(v), why = '';
   var full = fbLast.airports.filter(function (a) { return a.kind === 'custom'; }).length >= lim.custom;
   if (!v) why = 'Give it a name.';
-  else if (/[^A-Z0-9.' -]/.test(v)) why = "Capitals A-Z, digits, space and . - ' only: the panel's font has nothing else.";
+  else if (NAME_BAD.test(v)) why = "Capitals A-Z or А-Я, digits, space and . - ' only: the panel's font has nothing else.";
   else if (/^ | $|  /.test(v)) why = 'No space at either end, and no two in a row.';
+  else if (u8(v) > lim.name) why = 'Too long: ' + u8(v) + ' of ' + lim.name + ' bytes (a Cyrillic letter is 2).';
   else if (w > lim.namePx) why = 'Too wide for the header: ' + w + ' of ' + lim.namePx + ' px.';
   else if (fbLast.airports.some(function (a) { return a.code === fbPick.icao; })) why = 'That airport is already in the list.';
   else if (full) why = 'All ' + lim.custom + ' of your airports are in use: delete one first.';

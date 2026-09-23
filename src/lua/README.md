@@ -103,6 +103,11 @@ to 32 KB and measure the internal heap first.
   (a new thread would start with a fresh hook count), no `sys`.
 - Generational GC: on the shipped scripts it matched the incremental collector's
   draw time and never peaked higher.
+- `px.text(x, y, s, r, g, b [, font])`, `px.width(s [, font])`: the system font
+  (src/fonts/sys_text.h), UTF-8, Latin and Cyrillic. `font` is `"small"` (the
+  default: Picopixel with lowercase drawn as capitals, as always), `"pico"`
+  (Picopixel with its own lowercase) or `"5x7"` (the classic font every screen
+  prints with, both cases; y is the top of the cell). luasim draws the same.
 - `presence.*` (builds with the room radar, src/presence): reading it is what
   turns the MTR-1 feed on. The panel subscribes while a script reads it and
   unsubscribes 3 s after the last read, so read it every frame. Each visit

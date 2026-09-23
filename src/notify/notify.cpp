@@ -10,6 +10,7 @@
 
 #include "../config/config.h"
 #include "../display/display.h"
+#include "../fonts/sys_text.h"
 
 // ========== Built-in 8x8 icons (1-bit, MSB = leftmost pixel) ==========
 struct NotifyIcon {
@@ -62,6 +63,7 @@ const char* notifyIconNames() {
 void notifySet(const char* text, uint16_t color565, int8_t iconId,
                uint32_t durationMs, uint8_t position) {
   strlcpy(notifyText, text, sizeof(notifyText));
+  utf8TrimPartial(notifyText);
   notifyColor = color565;
   notifyIcon = (iconId >= 0 && iconId < NOTIFY_ICON_COUNT) ? iconId : -1;
   notifyPos = position ? 1 : 0;
@@ -100,12 +102,14 @@ void drawNotifyOverlay() {
   bool hasIcon = (notifyIcon >= 0);
   int textX0 = hasIcon ? 14 : 3;
   int avail = SCREEN_WIDTH - textX0 - 2;
-  int textW = strlen(notifyText) * 6 - 1;
-  int textY = contentY + 4;
-
+  display.setFont(NULL);
   display.setTextSize(1);
   display.setTextWrap(false);
   display.setTextColor(notifyColor);
+  // The ink, 6 a letter less the last blank column, as strlen() * 6 - 1 was for
+  // ASCII: counted in letters, since a Cyrillic letter is two bytes.
+  int textW = display.textWidth(notifyText) - 1;
+  int textY = contentY + 4;
 
   if (textW <= avail) {
     display.setCursor(textX0 + (avail - textW) / 2, textY);

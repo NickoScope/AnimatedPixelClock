@@ -23,6 +23,7 @@
 #if defined(RAILBOARD_DIRECT_ENABLED)
 #include "rtt_direct.h"
 #endif
+#include "../fonts/sys_text.h"   // cutting names on letter boundaries
 
 #define RB_TOPIC_ROOT   MQTT_BASE "/railboard/"
 #define RB_TOPIC_SELECT RB_TOPIC_ROOT "select"
@@ -223,6 +224,7 @@ static void copyText(char *dst, size_t cap, const char *src) {
     for (; src[i] && i + 1 < cap; i++) dst[i] = src[i];
   }
   dst[i] = '\0';
+  utf8TrimPartial(dst);
 }
 
 static void copyUpper(char *dst, size_t cap, const char *src) {
@@ -792,7 +794,10 @@ static void fitName(char *out, size_t cap, const char *name, int16_t room) {
   char *sp = strchr(out, ' ');
   if (sp) *sp = '\0';
   size_t n = strlen(out);
-  while (n > 1 && textW(out) > room) out[--n] = '\0';
+  const unsigned char *p = (const unsigned char *)out;
+  utf8Next(&p);
+  const size_t first = (size_t)(p - (const unsigned char *)out);   // the first letter always stays
+  while (n > first && textW(out) > room) n = utf8DropLast(out, n);   // a letter at a time, never half of one
 }
 
 static bool isLate(const RbService &sv) {

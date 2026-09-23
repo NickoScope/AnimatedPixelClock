@@ -40,6 +40,7 @@
 #include "../fonts/picopixel_fb.h"
 #include "../mqtt/mqtt_bus.h"
 #include "../panel/panel.h"
+#include "../fonts/sys_text.h"
 
 using namespace media;
 
@@ -275,7 +276,7 @@ static int16_t textW(const char *s) {
 }
 
 static int16_t bigW(const char *s) {
-  const size_t n = strlen(s);
+  const int n = sysTextLetters(s);            // letters, not bytes
   return n ? (int16_t)(n * MP_BIG_ADV - 1) : 0;
 }
 
@@ -299,7 +300,7 @@ static void putBig(int16_t x, int16_t top, const char *s, uint16_t c) {
 // Cut at the right until it fits: a name cut short still reads, a title scrolls.
 static void fitCut(char *s, int16_t room) {
   size_t n = strlen(s);
-  while (n && textW(s) > room) s[--n] = '\0';
+  while (n && textW(s) > room) n = utf8DropLast(s, n);   // a letter at a time, never half of one
   while (n && s[n - 1] == ' ') s[--n] = '\0';
 }
 

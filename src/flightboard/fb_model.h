@@ -24,7 +24,7 @@ enum FbStatus : uint8_t {
 // NVS "panel"/fbApt written before custom airports existed keeps its meaning.
 #define FB_APT_CUSTOM_MAX 6
 #define FB_APT_CUSTOM     100
-#define FB_APT_NAME_MAX   12     // characters
+#define FB_APT_NAME_MAX   12     // bytes: 12 Latin letters, 6 Cyrillic
 // Picopixel advance. The header is the name, 6 px, DEPARTURES (40 px) and the
 // clock right-aligned to x 126 (18 px, from x 108): a name up to 56 px leaves
 // 4 px before the clock. AMSTERDAM, the widest built-in name, is 40.
@@ -34,7 +34,7 @@ enum FbStatus : uint8_t {
 struct FbAirport {
   char icao[5];                        // 4 of A-Z 0-9, starting with a letter
   char iata[4];                        // 3 of A-Z, or ""
-  char name[FB_APT_NAME_MAX + 1];      // A-Z 0-9 space . - ' : what the page's font draws
+  char name[FB_APT_NAME_MAX + 1];      // capitals A-Z А-Я, 0-9, space . - ' (src/fonts/name_chars.h)
   char tz[FB_APT_TZ_MAX + 1];          // IANA name, "" when unknown
 };
 

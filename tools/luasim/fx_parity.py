@@ -70,7 +70,10 @@ TZ_REFUSE = ["", "CET", "CET-1CEST", "AB-1", "<AB>-1", "CET-25", "CET-1CEST,M13.
 # 72 px exactly at 17 letters, and has no word break to prefer.
 FIT_CASES = [
     ("Zürich", "ZURICH"), ("São Paulo", "SAO PAULO"), ("Łódź", "LODZ"), ("Straße", "STRASSE"),
-    ("Москва", ""), ("  le   Cannet ", "LE CANNET"), ("Ho Chi Minh City", "HO CHI MINH CITY"),
+    ("Москва", "МОСКВА"), ("  le   Cannet ", "LE CANNET"), ("Ho Chi Minh City", "HO CHI MINH CITY"),
+    # Cyrillic since 2026-09-23 (the system font): capitals, two bytes a letter
+    # against the name's 20; the whole word before the hyphen is preferred.
+    ("ёлки", "ЁЛКИ"), ("Санкт-Петербург", "САНКТ"),
     ("Petropavlovsk-Kamchatsky", "PETROPAVLOVSK"), ("Llanfairpwllgwyngyll", "LLANFAIRPWLLGWYNG"),
 ]
 

@@ -136,14 +136,30 @@ static int l_circle(lua_State *L) {
 
 /* Picopixel, the same corrected font the firmware draws with, Latin and
    Cyrillic, decoded by the firmware's own src/fonts/utf8_next.h. The routing
-   below is src/fonts/pxfb_text.h's pxfbGlyph with foldLatin = true, written
-   again in C; fx_parity holds the two to the same pixels. */
+   below is src/fonts/pxfb_text.h's pxfbGlyph, written again in C; fx_parity
+   holds the two to the same pixels. The classic 5x7 font is the firmware's
+   own table, src/fonts/classic_font.h. */
 #include "font_picopixel.inc"
 #include "../../src/fonts/utf8_next.h"
+#include "../../src/fonts/classic_font.h"
 
-static const PicoGlyph *pico_glyph(uint32_t cp, const unsigned char **bitmap) {
+/* The optional font argument of px.text and px.width, as src/lua/lua_px.cpp:
+   0 "small" (lowercase as capitals, the default), 1 "pico" (its own
+   lowercase), 2 "5x7" (the classic font, both cases). */
+static const char *const kFonts[] = {"small", "pico", "5x7", NULL};
+
+static const unsigned char *classic_glyph(uint32_t cp) {   /* sys_text.h's sysClassicGlyph */
+  if (cp >= 0x20 && cp < 0x7F) return kClassicAscii[cp - 0x20];
+  if (cp >= 0xA0 && cp <= 0xFF) return kClassicLatin1[cp - 0xA0];
+  if (cp >= kClassicCyrFirst && cp <= kClassicCyrLast) return kClassicCyr[cp - kClassicCyrFirst];
+  return kClassicMissing;
+}
+
+static const PicoGlyph *pico_glyph_f(uint32_t cp, int fold, const unsigned char **bitmap) {
+  if (fold && cp >= 0x0430 && cp <= 0x044F) cp -= 0x20;
+  else if (fold && cp >= 0x0450 && cp <= 0x045F) cp -= 0x50;
   if (cp < 0x80) {
-    if (cp >= 'a' && cp <= 'z') cp -= 32;
+    if (fold && cp >= 'a' && cp <= 'z') cp -= 32;
     if (cp < 0x20 || cp > 0x7E) cp = ' ';
     *bitmap = kPicoBitmap;
     return &kPicoGlyphs[cp - 0x20];
@@ -158,10 +174,22 @@ static int l_text(lua_State *L) {
   const char *s = luaL_checkstring(L, 3);
   int r = (int)luaL_checkinteger(L, 4), g = (int)luaL_checkinteger(L, 5),
       b = (int)luaL_checkinteger(L, 6);
+  const int font = luaL_checkoption(L, 7, "small", kFonts);
+  if (font == 2) {
+    for (const unsigned char *c = (const unsigned char *)s; *c;) {
+      if (x >= W) break;
+      const unsigned char *cols = classic_glyph(utf8Next(&c));
+      for (int gx = 0; gx < 5; gx++)
+        for (int gy = 0; gy < 8; gy++)
+          if ((cols[gx] >> gy) & 1) put(x + gx, y + gy, r, g, b);
+      x += 6;
+    }
+    return 0;
+  }
   for (const unsigned char *c = (const unsigned char *)s; *c;) {
     if (x >= W) break;
     const unsigned char *bm;
-    const PicoGlyph *gl = pico_glyph(utf8Next(&c), &bm);
+    const PicoGlyph *gl = pico_glyph_f(utf8Next(&c), font == 0, &bm);
     int bit = 0, bo = gl->off;
     for (int gy = 0; gy < gl->h; gy++)
       for (int gx = 0; gx < gl->w; gx++) {
@@ -177,10 +205,12 @@ static int l_text(lua_State *L) {
 
 static int l_width(lua_State *L) {
   const char *s = luaL_checkstring(L, 1);
+  const int font = luaL_checkoption(L, 2, "small", kFonts);
   int w = 0;
   for (const unsigned char *c = (const unsigned char *)s; *c;) {
     const unsigned char *bm;
-    w += pico_glyph(utf8Next(&c), &bm)->adv;
+    const uint32_t cp = utf8Next(&c);
+    w += font == 2 ? 6 : pico_glyph_f(cp, font == 0, &bm)->adv;
   }
   lua_pushinteger(L, w); return 1;
 }

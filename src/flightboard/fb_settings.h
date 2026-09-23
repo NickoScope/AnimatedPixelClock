@@ -12,6 +12,7 @@
 #include <cstring>
 
 #include "fb_model.h"
+#include "../fonts/name_chars.h"
 
 namespace fbs {
 
@@ -191,14 +192,11 @@ inline const char *checkAirport(const FbAirport &a, int (*width)(const char *), 
   if (!validIcao(a.icao)) return "add.icao must be 4 capitals or digits, starting with a letter";
   if (!validIata(a.iata)) return "add.iata must be 3 capitals, or empty";
   const size_t n = strlen(a.name);
-  if (n == 0 || n > FB_APT_NAME_MAX) return "add.name must be 1 to 12 characters";
-  for (size_t i = 0; i < n; i++) {
-    const char c = a.name[i];
-    if (!upper(c) && !digit(c) && c != ' ' && c != '.' && c != '-' && c != '\'')
-      return "add.name may hold only A-Z, 0-9, space and . - '";
-    if (c == ' ' && (i == 0 || i == n - 1 || a.name[i + 1] == ' '))
+  if (n == 0 || n > FB_APT_NAME_MAX) return "add.name must be 1 to 12 bytes (a Cyrillic letter is 2)";
+  if (!nameCharsOk(a.name)) return "add.name may hold only capitals A-Z or А-Я, digits, space and . - '";
+  for (size_t i = 0; i < n; i++)
+    if (a.name[i] == ' ' && (i == 0 || i == n - 1 || a.name[i + 1] == ' '))
       return "add.name must not start or end with a space, or have two in a row";
-  }
   if (width && width(a.name) > FB_APT_NAME_PX) return "add.name is too wide for the panel's header";
   if (!a.tz[0] || !validTz(a.tz)) return "add.tz must be an IANA zone name such as Europe/Paris";
   if (knownTz && !knownTz(a.tz)) return "add.tz is not a zone this panel knows";

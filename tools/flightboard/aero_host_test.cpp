@@ -237,7 +237,11 @@ static void units() {
   CHECK(!aero::normaliseIdent("", id, sizeof(id)));
 }
 
-static int width4(const char *s) { return 4 * (int)strlen(s); }
+static int width4(const char *s) {   // 4 px a letter, counted in letters as the panel counts them
+  int n = 0;
+  for (const unsigned char *p = (const unsigned char *)s; *p; n++) utf8Next(&p);
+  return 4 * n;
+}
 static bool known(const char *iana) { return tzdbPosix(iana) != nullptr; }
 
 // ── airport-local time ──────────────────────────────────────────────────────
@@ -378,6 +382,12 @@ static void settings() {
   x = a; strcpy(x.iata, "JF");                 CHECK(fbs::checkAirport(x, width4, known) != nullptr);
   x = a; strcpy(x.name, "");                   CHECK(fbs::checkAirport(x, width4, known) != nullptr);
   x = a; strcpy(x.name, "New York");           CHECK(fbs::checkAirport(x, width4, known) != nullptr);
+  // The system font's Cyrillic capitals (src/fonts/name_chars.h), 2 bytes a letter.
+  x = a; strcpy(x.name, "СОЧИ");               CHECK(fbs::checkAirport(x, width4, known) == nullptr);
+  x = a; strcpy(x.name, "ВНУКОВО");            CHECK(fbs::checkAirport(x, width4, known) != nullptr);   // 14 bytes > 12
+  x = a; strcpy(x.name, "Внуково");            CHECK(fbs::checkAirport(x, width4, known) != nullptr);   // lowercase
+  x = a; strcpy(x.name, "ЁЛКИ-2");             CHECK(fbs::checkAirport(x, width4, known) == nullptr);
+  x = a; strcpy(x.name, "\xD0");               CHECK(fbs::checkAirport(x, width4, known) != nullptr);   // broken UTF-8
   x = a; strcpy(x.name, "NEW  YORK");          CHECK(fbs::checkAirport(x, width4, known) != nullptr);
   x = a; strcpy(x.name, " NEWYORK");           CHECK(fbs::checkAirport(x, width4, known) != nullptr);
   x = a; strcpy(x.name, "ST. JOHN'S");         CHECK(fbs::checkAirport(x, width4, known) == nullptr);

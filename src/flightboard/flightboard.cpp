@@ -15,6 +15,7 @@
 #include "fb_mqtt.h"
 #include "fb_settings.h"
 #include "fb_zone.h"
+#include "../fonts/sys_text.h"
 
 // ── layout ──────────────────────────────────────────────────────────────────
 // Picopixel, not TomThumb. Both are 3x5-class faces that fit 32-ish characters
@@ -205,6 +206,7 @@ static void copyField(char *dst, size_t cap, const char *src) {
   if (!src) { dst[0] = '\0'; return; }
   strncpy(dst, src, cap - 1);
   dst[cap - 1] = '\0';
+  utf8TrimPartial(dst);
 }
 
 // ── airports ────────────────────────────────────────────────────────────────
@@ -242,13 +244,7 @@ const char *flightboardAirportLabel(uint8_t id) {
 }
 
 int flightboardNameWidth(const char *name) {
-  int w = 0;
-  for (const char *s = name ? name : ""; *s; s++) {
-    unsigned c = (unsigned char)*s;
-    if (c < PicopixelFB.first || c > PicopixelFB.last) c = ' ';
-    w += PicopixelFB.glyph[c - PicopixelFB.first].xAdvance;
-  }
-  return w;
+  return pxfbWidth(name ? name : "", false);   // letters, as print() now draws them
 }
 
 #if defined(FLIGHTBOARD_DIRECT_ENABLED)

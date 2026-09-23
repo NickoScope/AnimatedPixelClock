@@ -28,13 +28,13 @@
 #define WC_CUSTOM_MAX  6
 #define WC_ID_CUSTOM   100
 #define WC_ID_AUTO     200
-#define WC_NAME_MAX    20       // characters
+#define WC_NAME_MAX    20       // bytes: 20 Latin letters, 10 Cyrillic
 #define WC_NAME_PX     72       // Picopixel advance; see NAME_X in worldclock.cpp
 #define WC_POSIX_MAX   63       // as settings.timezoneString
 #define WC_IANA_MAX    39
 
 struct WcCity {
-  char  name[WC_NAME_MAX + 1];      // A-Z 0-9 space . - ' : what the page's font draws
+  char  name[WC_NAME_MAX + 1];      // capitals A-Z А-Я, 0-9, space . - ' (src/fonts/name_chars.h)
   float lat, lon;
   char  posix[WC_POSIX_MAX + 1];
   char  iana[WC_IANA_MAX + 1];      // "" when the zone is the panel's own setting

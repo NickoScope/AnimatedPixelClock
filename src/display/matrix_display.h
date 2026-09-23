@@ -21,6 +21,8 @@
 
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 
+#include "../fonts/sys_print.h"   // every print() is UTF-8: the system font
+
 #define HUB75_PANEL_W 64
 #define HUB75_PANEL_H 64
 #define HUB75_CHAIN   2   // two panels chained -> 128x64
@@ -57,9 +59,9 @@ inline HUB75_I2S_CFG makeMatrixConfig() {
 
 // Adds the non-GFX frame methods the animation code uses (clearDisplay /
 // display) on top of the GFX-derived matrix panel.
-class MatrixDisplay : public MatrixPanel_I2S_DMA {
+class MatrixDisplay : public SysTextGfx<MatrixPanel_I2S_DMA> {
 public:
-  explicit MatrixDisplay(const HUB75_I2S_CFG &cfg) : MatrixPanel_I2S_DMA(cfg) {}
+  explicit MatrixDisplay(const HUB75_I2S_CFG &cfg) : SysTextGfx<MatrixPanel_I2S_DMA>(cfg) {}
 
   inline void clearDisplay() { clearScreen(); }      // clear the (back) draw buffer
   inline void display() {
@@ -85,6 +87,7 @@ public:
 
   // The scan rate the driver settled on at begin(), for diagnostics.
   inline int refreshRateHz() const { return calculated_refresh_rate; }
+
 private:
   uint32_t lastFlipUs = 0;
   bool hasFlipped = false;

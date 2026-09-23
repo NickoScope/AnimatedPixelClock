@@ -32,6 +32,7 @@ extern "C" {
 }
 
 #include "../fonts/pxfb_text.h"   // Picopixel, Latin and Cyrillic
+#include "../fonts/sys_text.h"    // the system font: the classic 5x7 too
 
 #define W LUA_PX_W
 #define H LUA_PX_H
@@ -196,25 +197,47 @@ static int l_circle(lua_State *L) {
   return 0;
 }
 
-// Picopixel as the rest of the firmware draws it: the corrected font, read
-// through the GFXfont tables with drawChar's bit order, now through
-// src/fonts/pxfb_text.h so a UTF-8 string draws its Cyrillic. Latin keeps its
-// case folding (a..z as A..Z); ASCII draws exactly as it always has.
+// The system font (src/fonts/sys_text.h), UTF-8, Latin and Cyrillic. The
+// optional last argument picks the font:
+//   "small" (the default)  Picopixel with lowercase drawn as capitals, as
+//                          px.text has always drawn: ASCII exactly as before
+//   "pico"                 Picopixel with its own lowercase, Latin and Cyrillic
+//   "5x7"                  the classic 5x7 font every screen prints with,
+//                          capitals and lowercase; y is the top of the cell
+// Glyphs are read with drawChar's bit order; a glyph that would start at or
+// past the canvas's right edge is not drawn (see the note at the top).
+static const char *const kFonts[] = {"small", "pico", "5x7", nullptr};
+
 static int l_text(lua_State *L) {
   const int x = (int)luaL_checkinteger(L, 1);
   const int y = (int)luaL_checkinteger(L, 2);
   const char *s = luaL_checkstring(L, 3);
   const int r = (int)luaL_checkinteger(L, 4), g = (int)luaL_checkinteger(L, 5),
             b = (int)luaL_checkinteger(L, 6);
+  const int font = luaL_checkoption(L, 7, "small", kFonts);
   uint8_t *fb = canvasOf(L)->rgb;
+  auto dot = [&](int px, int py) { put(fb, px, py, r, g, b); };
+  if (font == 2) {
+    int cx = x;
+    for (const unsigned char *p = (const unsigned char *)s; *p;) {
+      if (cx >= W) break;
+      const uint8_t *cols = sysClassicGlyph(utf8Next(&p));
+      for (int gx = 0; gx < 5; gx++)
+        for (int gy = 0; gy < 8; gy++)
+          if ((cols[gx] >> gy) & 1) dot(cx + gx, y + gy);
+      cx += 6;
+    }
+    return 0;
+  }
   const int base = y + (PicopixelFB.yAdvance - 1);
-  // stopX = W: see the note at the top
-  pxfbDraw(s, x, base, true, W, [&](int px, int py) { put(fb, px, py, r, g, b); });
+  pxfbDraw(s, x, base, font == 0, W, dot);
   return 0;
 }
 
 static int l_width(lua_State *L) {
-  lua_pushinteger(L, pxfbWidth(luaL_checkstring(L, 1), true));
+  const char *s = luaL_checkstring(L, 1);
+  const int font = luaL_checkoption(L, 2, "small", kFonts);
+  lua_pushinteger(L, font == 2 ? sysTextLetters(s) * 6 : pxfbWidth(s, font == 0));
   return 1;
 }
 

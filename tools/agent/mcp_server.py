@@ -1133,8 +1133,11 @@ async def effect_api() -> str:
             "px.line(x0,y0,x1,y1,r,g,b)": "",
             "px.rect(x,y,w,h,r,g,b,fill)": "fill is truthy",
             "px.circle(cx,cy,rad,r,g,b,fill)": "",
-            "px.text(x,y,s,r,g,b)": "",
-            "px.width(s)": "-> pixel advance of that string",
+            "px.text(x,y,s,r,g,b[,font])": "font: 'small' (default, lowercase drawn "
+                                           "as capitals), 'pico' (its own lowercase), "
+                                           "'5x7' (the classic system font, both cases; "
+                                           "y is the top of the 8-row cell)",
+            "px.width(s[,font])": "-> pixel advance of that string in that font",
             "px.get(x,y)": "-> r,g,b (0,0,0 off-canvas)",
             "px.blend(x,y,r,g,b,a)": "a is alpha, a number",
             "px.glow(cx,cy,rad,r,g,b[,amp])": "amp defaults to 1.0",
@@ -1145,10 +1148,12 @@ async def effect_api() -> str:
                     "U reads as V across a room.",
             "range": "0x20..0x7E, plus Cyrillic U+0400..U+045F (А-Я, а-я, Ё ё) "
                      "since firmware 2.5.4: strings are UTF-8, write Russian as it is. "
-                     "**px.text folds lowercase onto uppercase** in both alphabets, so "
-                     "'a' and 'A' (and 'я' and 'Я') draw the same ink - a ramp or a "
-                     "palette built on letter case has half as many shapes as it "
-                     "looks like it has.",
+                     "**px.text folds lowercase onto uppercase** in both alphabets by "
+                     "default, so 'a' and 'A' (and 'я' and 'Я') draw the same ink. "
+                     "For real lowercase pass the font: px.text(..., 'pico') for the "
+                     "small font, px.text(..., '5x7') for the classic 5x7, both since "
+                     "firmware 2.5.6 (the system font; test card "
+                     "tools/luasim/scripts/sysfont_test.lua).",
             "what it cannot draw": "any other code point, and broken UTF-8, draws a "
                                    "solid 3x5 block, 4 px of advance - on purpose, so "
                                    "a missing glyph is seen, not silently spaced. "

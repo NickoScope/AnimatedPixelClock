@@ -13,9 +13,9 @@
 // ASCII is drawn exactly as before this file existed: the same glyphs, the
 // same case folding where the caller asked for it, a space for control
 // characters and DEL. What is new is only what lies above 0x7F: Cyrillic
-// U+0400..U+045F from PicopixelCyr (case folded: the font has capitals only),
-// and the MISSING box for everything else, including broken UTF-8, where the
-// old loops silently drew a space per byte.
+// U+0400..U+045F from PicopixelCyr, capitals and (since 2026-09-23) lowercase
+// of its own, and the MISSING box for everything else, including broken UTF-8,
+// where the old loops silently drew a space per byte.
 //
 // Needs no Adafruit_GFX class, only the font structs, so the host builds in
 // tools/luasim compile it unchanged.
@@ -28,10 +28,14 @@ struct PxfbGlyph {
   const uint8_t  *bitmap;
 };
 
-// `foldLatin`: a..z drawn as A..Z, as px.text has always done. The world clock
-// keeps Picopixel's own lowercase, so it passes false.
+// `foldLatin`: lowercase drawn as capitals, as px.text has always done - a..z
+// as A..Z, and the Cyrillic the same way (а..я as А..Я, ѐ..џ as Ѐ..Џ), so a
+// script sees one rule for both. The world clock and the display's print()
+// keep each font's own lowercase, so they pass false.
 static inline PxfbGlyph pxfbGlyph(uint32_t cp, bool foldLatin) {
   PxfbGlyph r;
+  if (foldLatin && cp >= 0x0430 && cp <= 0x044F) cp -= 0x20;
+  else if (foldLatin && cp >= 0x0450 && cp <= 0x045F) cp -= 0x50;
   if (cp < 0x80) {
     if (foldLatin && cp >= 'a' && cp <= 'z') cp -= 32;
     if (cp < PicopixelFB.first || cp > PicopixelFB.last) cp = ' ';

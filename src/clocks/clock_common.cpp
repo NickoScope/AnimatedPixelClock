@@ -7,6 +7,7 @@
 #include "clocks.h"
 #include "clock_globals.h"
 #include "../display/display.h"
+#include "../fonts/sys_text.h"
 
 // Time-digit + colon color for the ACTIVE clock style. Each style keeps its own
 // digit color (COL_DIGITS_S0 + style). Cycle All (style 9) uses its own slot for
@@ -319,7 +320,7 @@ void displayStandardClock() {
   // Day of week
   const char* days[] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
   const char* dayName = days[timeinfo.tm_wday];
-  int day_width = strlen(dayName) * 6;
+  int day_width = sysTextLetters(dayName) * 6;
   int day_x = (SCREEN_WIDTH - day_width) / 2;
   display.setCursor(day_x, 52);
   display.print(dayName);

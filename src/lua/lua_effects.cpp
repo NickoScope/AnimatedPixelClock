@@ -381,6 +381,7 @@ void drawMessage(const char *title, const char *name, const char *detail) {
       while (sp > 0 && p[sp] != ' ') sp--;
       if (sp > 0) n = sp;
     }
+    while (n && p[n] && ((unsigned char)p[n] & 0xC0) == 0x80) n--;   // never half a letter
     memcpy(line, p, n);
     line[n] = 0;
     messageLine(y, line, display.color565(160, 170, 180));

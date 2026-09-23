@@ -10,22 +10,21 @@
 
 #include "market_model.h"
 
-#if defined(ARDUINO)
-#include "../fonts/picopixel_fb.h"
-#else
-#include <Fonts/Picopixel.h>
-#endif
+#include "../fonts/pxfb_text.h"   // UTF-8 letters, as print() now draws them (src/fonts/sys_text.h)
 
 namespace market {
 
-static const GFXglyph *glyphOf(char c) {
-  if (c < 0x20 || c > 0x7E) c = '?';
-  return &PicopixelGlyphs[c - 0x20];
+// A letter's metrics: ASCII from the stock table as always (a control
+// character as '?'), Cyrillic from PicopixelCyr, anything else the MISSING box.
+static const GFXglyph *glyphOf(uint32_t cp) {
+  if (cp < 0x20 || cp == 0x7F) cp = '?';
+  return pxfbGlyph(cp, false).g;
 }
 
 int16_t picoAdv(const char *s) {
   int16_t x = 0;
-  for (; s && *s; s++) x = (int16_t)(x + glyphOf(*s)->xAdvance);
+  for (const unsigned char *p = (const unsigned char *)(s ? s : ""); *p;)
+    x = (int16_t)(x + glyphOf(utf8Next(&p))->xAdvance);
   return x;
 }
 
@@ -33,8 +32,8 @@ int16_t picoAdv(const char *s) {
 // last; a blank glyph (the space) advances and adds nothing.
 int16_t picoInk(const char *s) {
   int16_t x = 0, lo = INT16_MAX, hi = -1;
-  for (; s && *s; s++) {
-    const GFXglyph *g = glyphOf(*s);
+  for (const unsigned char *p = (const unsigned char *)(s ? s : ""); *p;) {
+    const GFXglyph *g = glyphOf(utf8Next(&p));
     if (g->width && g->height) {
       const int16_t a = (int16_t)(x + g->xOffset), b = (int16_t)(a + g->width - 1);
       if (a < lo) lo = a;

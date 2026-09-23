@@ -11,6 +11,7 @@
 #include "../fonts/picopixel_fb.h"
 #include "../mqtt/mqtt_bus.h"
 #include "icon_store.h"
+#include "../fonts/sys_text.h"
 
 #define CARD_TOPIC  MQTT_BASE "/card/"
 #define NOTIFY_TOPIC MQTT_BASE "/notify"
@@ -52,6 +53,7 @@ static void copyField(char *dst, size_t n, JsonVariantConst v) {
   const char *s = v.is<const char *>() ? v.as<const char *>() : "";
   strncpy(dst, s ? s : "", n - 1);
   dst[n - 1] = '\0';
+  utf8TrimPartial(dst);
 }
 
 static Card *slotFor(const char *name) {
@@ -155,7 +157,7 @@ static void wrapText(const char *s, uint16_t maxW, char *l1, char *l2, size_t n)
   int16_t bx, by; uint16_t bw, bh;
   l1[0] = l2[0] = '\0';
   display.getTextBounds(s, 0, 0, &bx, &by, &bw, &bh);
-  if (bw <= maxW) { strncpy(l1, s, n - 1); l1[n - 1] = '\0'; return; }
+  if (bw <= maxW) { strncpy(l1, s, n - 1); l1[n - 1] = '\0'; utf8TrimPartial(l1); return; }
   // Break at the last space that still fits.
   size_t cut = 0;
   char buf[CARD_TEXT_LEN];
@@ -165,9 +167,10 @@ static void wrapText(const char *s, uint16_t maxW, char *l1, char *l2, size_t n)
     display.getTextBounds(buf, 0, 0, &bx, &by, &bw, &bh);
     if (bw <= maxW) cut = i; else break;
   }
-  if (!cut) { strncpy(l1, s, n - 1); l1[n - 1] = '\0'; return; }  // one long word
+  if (!cut) { strncpy(l1, s, n - 1); l1[n - 1] = '\0'; utf8TrimPartial(l1); return; }  // one long word
   strncpy(l1, s, cut); l1[cut] = '\0';
   strncpy(l2, s + cut + 1, n - 1); l2[n - 1] = '\0';
+  utf8TrimPartial(l2);
 }
 
 // Layout, in TOP-of-line coordinates. GFX positions a custom font from the

@@ -18,6 +18,7 @@
 #include "../fonts/picopixel_fb.h"
 
 #include "../util/psram_json.h"
+#include "../fonts/sys_text.h"
 
 
 // ---------------------------------------------------------------- geometry
@@ -255,6 +256,7 @@ static void onMessage(const char *payload, size_t len) {
     if (nm[0]) {
       strncpy(v->name, nm, sizeof(v->name) - 1);
       v->name[sizeof(v->name) - 1] = '\0';
+      utf8TrimPartial(v->name);
       // AISstream pads names with trailing spaces out of the AIS frame.
       for (int i = (int)strlen(v->name) - 1; i >= 0 && v->name[i] == ' '; i--)
         v->name[i] = '\0';
@@ -569,7 +571,7 @@ static void drawRow(const YrVessel &v, int16_t top, uint32_t now, uint16_t dim) 
   display.print(len);
 
   char nm[YR_NAME_LEN];
-  if (v.name[0]) { strncpy(nm, v.name, sizeof(nm) - 1); nm[sizeof(nm) - 1] = '\0'; }
+  if (v.name[0]) { strncpy(nm, v.name, sizeof(nm) - 1); nm[sizeof(nm) - 1] = '\0'; utf8TrimPartial(nm); }
   else snprintf(nm, sizeof(nm), "%06lu", (unsigned long)(v.mmsi % 1000000UL));
   const int16_t room = (YR_X_RIGHT - (int16_t)lenW - YR_GAP) - YR_X_TABLE;
   for (;;) {

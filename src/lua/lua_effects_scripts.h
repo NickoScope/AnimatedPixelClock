@@ -6,6 +6,7 @@
 // Not embedded:
 //   cyrillic_test.lua: a test card for Latin and Cyrillic text, held to parity by fx_parity
 //   demo.lua: a test card for the px.* API, not something to hang on a wall
+//   sysfont_test.lua: a test card for px.text's fonts (5x7, pico), held to parity by fx_parity
 //   world_clock.lua: already a native page drawing the same picture (src/worldclock, WORLDCLOCK_ENABLED); a second copy would show twice in the rotation
 //   sent over the air instead, marked @upload-only: aquarium.lua, cannes.lua, starship.lua
 

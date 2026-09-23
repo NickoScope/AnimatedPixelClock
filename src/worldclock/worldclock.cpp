@@ -14,6 +14,7 @@
 #include "../display/display.h"
 #endif
 #include "../fonts/pxfb_text.h"   // Picopixel, drawn the way px.text draws it
+#include "../fonts/name_chars.h"   // what a city's name may hold
 #include "posix_tz.h"
 #include "worldmap.h"
 
@@ -185,12 +186,9 @@ int worldClockNameWidth(const char *name) { return pxfbWidth(name, false); }
 
 const char *worldClockCheck(const WcCity &c) {
   const size_t n = strnlen(c.name, sizeof(c.name));
-  if (n == 0 || n > WC_NAME_MAX) return "name must be 1 to 20 characters";
-  for (size_t i = 0; i < n; i++) {
-    const char ch = c.name[i];
-    if (!((ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == ' ' || ch == '.' || ch == '-' || ch == '\''))
-      return "name may use only A-Z, 0-9, space and . - '";
-  }
+  if (n == 0 || n > WC_NAME_MAX) return "name must be 1 to 20 bytes (a Cyrillic letter is 2)";
+  if (!nameCharsOk(c.name))
+    return "name may use only capitals A-Z or А-Я, digits, space and . - '";
   if (c.name[0] == ' ' || c.name[n - 1] == ' ' || strstr(c.name, "  "))
     return "name has a space at an end or two in a row";
   if (worldClockNameWidth(c.name) > WC_NAME_PX) return "name is too wide for the panel";
@@ -277,6 +275,12 @@ void worldClockFitName(const char *utf8, char *out, size_t n) {
     const char *two = (cp == 0xC6 || cp == 0xE6) ? "AE" : (cp == 0xDE || cp == 0xFE) ? "TH" : cp == 0xDF ? "SS"
                     : (cp == 0x132 || cp == 0x133) ? "IJ" : (cp == 0x152 || cp == 0x153) ? "OE" : nullptr;
     if (two) { put(two[0]); put(two[1]); continue; }
+    // Cyrillic, as capitals like the Latin: the page's font has both (sys_text.h).
+    unsigned cy = 0;
+    if ((cp >= 0x0410 && cp <= 0x042F) || cp == 0x0401) cy = cp;
+    else if (cp >= 0x0430 && cp <= 0x044F) cy = cp - 0x20;
+    else if (cp == 0x0451) cy = 0x0401;
+    if (cy) { put((char)(0xC0 | (cy >> 6))); put((char)(0x80 | (cy & 0x3F))); continue; }
     char ch = ' ';                              // spaces, and anything the font cannot show, part words
     if (cp >= 'a' && cp <= 'z') ch = (char)(cp - 32);
     else if ((cp >= 'A' && cp <= 'Z') || (cp >= '0' && cp <= '9') || cp == '.' || cp == '-' || cp == '\'') ch = (char)cp;
@@ -290,14 +294,19 @@ void worldClockFitName(const char *utf8, char *out, size_t n) {
     buf[m++] = buf[i];
   }
   while (m && buf[m - 1] == ' ') m--;
-  // As much as fits; whole words when at least one whole word does.
+  // As much as fits; whole words when at least one whole word does. By
+  // letters, and within the name's bytes: a Cyrillic letter is two.
+  buf[m] = '\0';
   size_t cut = 0, whole = 0;
   int w = 0;
-  for (size_t i = 0; i < m && i < WC_NAME_MAX; i++) {
-    w += pxfbGlyph((unsigned char)buf[i], false).g->xAdvance;
+  for (const unsigned char *q = (const unsigned char *)buf; *q;) {
+    const uint32_t cp = utf8Next(&q);
+    const size_t at = (size_t)(q - (const unsigned char *)buf);
+    if (at > WC_NAME_MAX) break;
+    w += pxfbGlyph(cp, false).g->xAdvance;
     if (w > WC_NAME_PX) break;
-    cut = i + 1;
-    if (i + 1 == m || buf[i + 1] == ' ' || buf[i + 1] == '-') whole = i + 1;
+    cut = at;
+    if (at == m || buf[at] == ' ' || buf[at] == '-') whole = at;
   }
   if (cut < m && whole) cut = whole;
   while (cut && (buf[cut - 1] == ' ' || buf[cut - 1] == '-')) cut--;
