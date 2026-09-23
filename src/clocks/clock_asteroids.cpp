@@ -713,5 +713,5 @@ void displayClockWithAsteroids() {
   }
   drawMeridiemIndicator(110, 4, displayed_is_pm);
 
-  if (!wifiConnected) drawNoWiFiIcon(0, 0);
+  // No Wi-Fi is shown by the system corner now (src/display/sys_corners.h), on every page.
 }

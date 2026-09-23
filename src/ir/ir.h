@@ -85,6 +85,10 @@ void irDetailJson(JsonObject out);
 
 // src/ir/ir_actions.cpp: everything that is not the knob. Run from loop().
 void irRunAction(uint8_t fn, uint8_t arg);
+
+// Milliseconds since the receiver last decoded any frame, a stranger's remote
+// included; -1 before the first. For the system corner (src/display/sys_corners).
+int32_t irMsSinceFrame();
 void irActionsTick();   // from irLoop(): the remote's brightness saved once its presses stop
 bool irActionBuilt(uint8_t fn);   // false: this firmware lacks the module behind it
 

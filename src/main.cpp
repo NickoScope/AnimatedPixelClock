@@ -161,6 +161,7 @@ int getOptimalRefreshRate();
 #include "ambient/ambient.h"
 #include "ambient/anim_store.h"
 #include "display/display.h"
+#include "display/sys_corners.h"
 #include "clocks/clocks.h"
 #include "clocks/clock_globals.h"
 #include "metrics/metrics.h"
@@ -1496,6 +1497,9 @@ void loop() {
     }
 
     loopMark("render");
+    // The system corners - A/M and Wi-Fi, or the remote being heard - over every
+    // page, under the notification and the toast (src/display/sys_corners.h).
+    sysCornersDraw();
     // Notification banner draws over whatever screen is active.
     if (notifyActive()) {
       drawNotifyOverlay();
@@ -1505,9 +1509,9 @@ void loop() {
     // After everything else, before the flip: a toast has to sit on top of
     // whatever the page drew. Every page now, since pages announce themselves.
     clockStyleOverlay();
-    // While a click has entered a page, an amber mark in the corner says the
-    // knob acts inside it rather than browsing.
-    if (ctrlEntered) display.fillRect(display.width() - 3, 0, 3, 3, display.color565(255, 160, 0));
+    // While a click has entered a page the system corner shows an amber arrow
+    // in place of A/M (src/display/sys_corners.cpp): a 3x3 mark here was lost
+    // against bright page headers, the owner never saw it.
 #endif
 #if defined(CARDS_ENABLED)
     // Last of all, because it replaces the page rather than decorating it.

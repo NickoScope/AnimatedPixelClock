@@ -435,6 +435,21 @@ click dismisses one instead of doing what the click would normally do
 can be on screen when you think a page is, and `GET /api/panel`'s `now.notify`
 says so.
 
+*The system corners* (since 2.5.8, `src/display/sys_corners.h`) sit on every
+page, under notifications and the knob's toast. Each is a 5 to 7 px mark on a
+black patch, so a screen of your own should leave the top-left 6x6 and the
+top-right 8x7 pixels to them.
+- **Top left:**
+  - A green: the carousel is on and walking;
+  - A dim: on, held after a hand turned a page;
+  - M amber: off;
+  - an amber arrow instead, while a click has entered a page.
+- **Top right:**
+  - the Wi-Fi icon, green at -67 dBm and better, amber to -80, red below (from
+    MetaGeek's RSSI table);
+  - a red cross when not connected;
+  - a blinking red 6x6 dot while the remote is being received.
+
 ### e. fx3d — a scene engine, and **not in the firmware you are talking to**
 
 Three-dimensional scenes with their own looks, which own the display while one

@@ -761,10 +761,6 @@ void displayClockWithTetris() {
   if (tetSmall()) {
     tetGameDraw();
     tetDrawSmallClock(&timeinfo);
-    if (!wifiConnected) {
-      int ix = (settings.tetrisSmallClockPos == 0) ? (SCREEN_WIDTH - 10) : 0;
-      drawNoWiFiIcon(ix, 0);
-    }
     return;
   }
 
@@ -812,5 +808,5 @@ void displayClockWithTetris() {
   // Idle Tetris game (bottom well)
   if (settings.tetrisIdleTumble) tetGameDraw();
 
-  if (!wifiConnected) drawNoWiFiIcon(0, 0);
+  // No Wi-Fi is shown by the system corner now (src/display/sys_corners.h), on every page.
 }

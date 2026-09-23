@@ -605,4 +605,16 @@ void irDetailJson(JsonObject out) {
   }
 }
 
+int32_t irMsSinceFrame() {
+  uint8_t  p = 0;
+  uint64_t v = 0;
+  bool     rep = false, seen;
+  uint32_t age = 0;
+  portENTER_CRITICAL(&s_mux);
+  seen = s_dec.lastSeen(&p, &v, &rep, &age, millis());
+  portEXIT_CRITICAL(&s_mux);
+  if (!seen) return -1;
+  return age > 0x7FFFFFFF ? 0x7FFFFFFF : (int32_t)age;
+}
+
 #endif  // IR_ENABLED

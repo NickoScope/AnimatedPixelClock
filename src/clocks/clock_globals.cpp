@@ -186,6 +186,11 @@ void resetClockAnimationState() {
 
 // ========== WiFi Status Icon ==========
 // Draw a "no WiFi" icon (8x8 pixels) - WiFi symbol with diagonal cross
+// Nothing, since 2026-09-23: no Wi-Fi is shown on every page by the system
+// corner (src/display/sys_corners.h), in the same place and style everywhere.
+// The clocks' calls are kept so their code stays as the author wrote it; an 8x8
+// icon here would sit half under the corner's A/M mark.
 void drawNoWiFiIcon(int x, int y) {
-  drawNoWiFiIconOn(display, x, y);   // wifi_icon.h, which the weather screen's host check also runs
+  (void)x;
+  (void)y;
 }
