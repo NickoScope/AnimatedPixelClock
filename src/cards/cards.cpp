@@ -1,4 +1,5 @@
 #include "cards.h"
+#include "../util/psram_state.h"
 
 #if defined(CARDS_ENABLED)
 
@@ -28,7 +29,7 @@ struct Card {
   uint32_t seen;
 };
 
-static Card    s_cards[CARD_MAX];
+static PSRAM_ARRAY(Card, s_cards, [CARD_MAX]);
 static uint8_t s_count = 0;
 
 static char     s_nIcon[CARD_ICON_LEN];

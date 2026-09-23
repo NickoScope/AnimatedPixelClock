@@ -1,4 +1,5 @@
 #include "yachtradar.h"
+#include "../util/psram_state.h"
 
 #if defined(YACHTRADAR_ENABLED)
 
@@ -70,7 +71,7 @@ struct YrVessel {
   uint32_t last_ping;          // millis() when the sweep last crossed it, 0 = never
 };
 
-static YrVessel     s_v[YR_MAX_VESSELS];
+static PSRAM_ARRAY(YrVessel, s_v, [YR_MAX_VESSELS]);
 static uint8_t      s_count    = 0;
 static uint32_t     s_lastPos  = 0;
 // Vessels admitted to the table since boot. A boat that leaves the bay and
@@ -117,7 +118,7 @@ static YrVessel *find(uint32_t mmsi) {
 // The last sizes seen are kept here and handed over when the vessel is plotted.
 struct YrStatic { uint32_t mmsi; uint16_t length_m; uint8_t ship_type; };
 static const uint8_t YR_STATIC_CACHE = 32;
-static YrStatic s_static[YR_STATIC_CACHE];
+static PSRAM_ARRAY(YrStatic, s_static, [YR_STATIC_CACHE]);
 static uint8_t  s_staticNext = 0;
 
 static void rememberStatic(uint32_t mmsi, uint16_t len, uint8_t type) {

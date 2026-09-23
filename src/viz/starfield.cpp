@@ -3,10 +3,11 @@
 #include "../display/display.h"
 #include "../config/config.h"
 #include <math.h>
+#include "../util/psram_state.h"
 
 namespace {
 struct MusicStar { float x, y, z; };
-MusicStar stars[96];
+PSRAM_ARRAY(MusicStar, stars, [96]);
 float drive = 0, boost = 0, cooldown = 0, phase = 0;
 float previousBass[8] = {}, fluxAverage = 0, packetAge = 0;
 uint32_t seenPacket = 0;

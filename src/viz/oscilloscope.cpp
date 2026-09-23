@@ -5,9 +5,10 @@
 #include "../config/config.h"
 #include <math.h>
 #include <string.h>
+#include "../util/psram_state.h"
 
 namespace {
-uint8_t trail[SCOPE_TRAIL_MAX][VIZ_WAVE_POINTS];
+PSRAM_ARRAY(uint8_t, trail, [SCOPE_TRAIL_MAX][VIZ_WAVE_POINTS]);
 uint8_t previousWave[VIZ_WAVE_POINTS];
 bool trailUsed[SCOPE_TRAIL_MAX] = {};
 int trailHead = 0;

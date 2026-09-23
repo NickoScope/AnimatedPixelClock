@@ -1,4 +1,5 @@
 #include "icon_store.h"
+#include "../util/psram_state.h"
 
 #if defined(CARDS_ENABLED)
 
@@ -10,7 +11,7 @@
 
 static bool     s_ready = false;
 static char     s_cachedName[20] = "";
-static uint16_t s_cached[ICON_PX];
+static PSRAM_ARRAY(uint16_t, s_cached, [ICON_PX]);
 static bool     s_cachedValid = false;
 
 // Names come off an MQTT topic, so they are attacker-shaped by default. Only

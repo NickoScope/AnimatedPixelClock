@@ -8,6 +8,7 @@
 #include "ambient.h"
 
 #include "../display/display.h"
+#include "../util/psram_state.h"
 
 #define STAR_COUNT 96
 
@@ -15,7 +16,7 @@ struct Star {
   float x, y, z;  // x,y in [-1,1], z in (0.05, 1]
 };
 
-static Star stars[STAR_COUNT];
+static PSRAM_ARRAY(Star, stars, [STAR_COUNT]);
 static bool starsInit = false;
 static unsigned long lastStarUpdate = 0;
 

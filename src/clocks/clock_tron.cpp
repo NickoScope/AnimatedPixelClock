@@ -4,6 +4,7 @@
 #include "../display/display.h"
 #include <math.h>
 #include <string.h>
+#include "../util/psram_state.h"
 
 namespace {
 const int GX=64, GY=32, TRAIL=96;
@@ -23,8 +24,8 @@ struct Bike {
   uint32_t stepped,crashed;
   bool dead;
 };
-Bike bikes[2];
-uint8_t occupied[GY][GX];
+PSRAM_ARRAY(Bike, bikes, [2]);
+PSRAM_ARRAY(uint8_t, occupied, [GY][GX]);
 enum Phase { DUEL, ERASE, APPROACH, TRACE, RETURN };
 Phase phase;
 int shown[4],target[4],activeDigit,builder,nextBuilder,traceValue;

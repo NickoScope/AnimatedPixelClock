@@ -6,6 +6,7 @@
 
 #include <LittleFS.h>
 #include <esp_heap_caps.h>
+#include "../util/psram_state.h"
 
 namespace {
 
@@ -15,7 +16,7 @@ struct Entry {
   uint32_t bytes;
 };
 
-Entry   s_list[LUA_USER_MAX];
+PSRAM_ARRAY(Entry, s_list, [LUA_USER_MAX]);
 uint8_t s_count = 0;
 bool    s_usable = false;
 

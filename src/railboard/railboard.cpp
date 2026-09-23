@@ -1,4 +1,5 @@
 #include "railboard.h"
+#include "../util/psram_state.h"
 
 #if defined(RAILBOARD_ENABLED)
 
@@ -135,7 +136,7 @@ enum : uint8_t { RB_SRC_NONE = 0, RB_SRC_HA, RB_SRC_DIRECT };
 // What the knob chose. AUTO is the alternation.
 enum RbView : uint8_t { RB_VIEW_AUTO = 0, RB_VIEW_DEP, RB_VIEW_ARR, RB_VIEW_DIAG };
 
-static RbBoard    s_board[2];
+static PSRAM_ARRAY(RbBoard, s_board, [2]);
 static uint32_t   s_lastRenderMs = 0;   // the page was drawn this recently
 static RbBoard    s_scratch;          // parsed into first, so a bad payload never shows
 static RbHaStatus s_ha;

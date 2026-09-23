@@ -11,6 +11,7 @@
 #include "../display/display.h"
 #include "wifi_icon.h"
 #include <cstring>
+#include "../util/psram_state.h"
 
 // ========== Common Digit Positioning ==========
 // Standard digit X positions for time display (18px spacing, starting at 19)
@@ -71,13 +72,13 @@ unsigned long last_space_sprite_toggle = 0;
 
 // Laser and explosions
 Laser space_laser = {0, 0, 0, false, -1};
-SpaceFragment space_fragments[MAX_SPACE_FRAGMENTS];
+PSRAM_ARRAY(SpaceFragment, space_fragments, [MAX_SPACE_FRAGMENTS]);
 int space_explosion_timer = 0;
 
 // ========== Pong Clock Globals ==========
 PongBall pong_balls[MAX_PONG_BALLS];
-SpaceFragment pong_fragments[MAX_PONG_FRAGMENTS];
-FragmentTarget fragment_targets[MAX_PONG_FRAGMENTS];
+PSRAM_ARRAY(SpaceFragment, pong_fragments, [MAX_PONG_FRAGMENTS]);
+PSRAM_ARRAY(FragmentTarget, fragment_targets, [MAX_PONG_FRAGMENTS]);
 DigitTransition digit_transitions[5];
 BreakoutPaddle breakout_paddle = {SCREEN_CENTER_X, SCREEN_CENTER_X, 20, 3};  // x, target_x, width, speed
 unsigned long last_pong_update = 0;

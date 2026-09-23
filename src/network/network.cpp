@@ -5,6 +5,7 @@
  */
 
 #include "network.h"
+#include "../util/psram_state.h"
 #include "../display/display.h"
 #include "../utils/utils.h"
 #include "../timezones.h"
@@ -629,11 +630,12 @@ void handleWiFiReconnection() {
 }
 
 // ========== UDP Packet Handling ==========
+static PSRAM_ARRAY(char, s_udpBuffer, [2048]);   // PSRAM, allocated at boot (util/psram_state.h)
 void handleUDP() {
   int packetSize = udp.parsePacket();
   if (packetSize) {
     netMarkInbound();
-    static char buffer[2048];
+    char (&buffer)[2048] = s_udpBuffer;
 
     // Check size BEFORE reading to avoid processing truncated data
     if (packetSize > (int)sizeof(buffer) - 1) {

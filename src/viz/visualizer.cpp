@@ -9,6 +9,7 @@
  */
 
 #include "visualizer.h"
+#include "../util/psram_state.h"
 #include "starfield.h"
 #include "oscilloscope.h"
 
@@ -46,7 +47,7 @@ static unsigned long lastVizFrame = 0;
 
 // Fixed-size history: no allocations or filesystem work in the render loop.
 static const int WATERFALL_ROWS = 26;
-static uint8_t waterfall[WATERFALL_ROWS][VIZ_BANDS];
+static PSRAM_ARRAY(uint8_t, waterfall, [WATERFALL_ROWS][VIZ_BANDS]);
 static int waterfallHead = 0;
 static unsigned long lastWaterfallRow = 0;
 static uint8_t lastStyle = 255;

@@ -23,6 +23,7 @@
 #include "../display/display.h"
 #include "clocks.h"
 #include "clock_globals.h"
+#include "../util/psram_state.h"
 
 // ========== Layout / tuning ==========
 #define SCELL 4                      // grid cell size in pixels
@@ -263,14 +264,17 @@ static bool snakeChooseDir(int tcx, int tcy) {
 // digits through the corridors above/below/between them instead of stalling
 // against a wall - it heads to the food the way a person steering it would.
 // Returns true if a reachable heading toward the target was found.
+// Its work arrays, in PSRAM, allocated at boot (util/psram_state.h).
+static PSRAM_ARRAY(uint8_t, s_flowDist, [SNAKE_CELLS]);
+static PSRAM_ARRAY(uint16_t, s_flowQueue, [SNAKE_CELLS]);
 static bool snakeFlowDir(int tcx, int tcy) {
   if (tcx < 0 || tcx >= SGRID_W || tcy < 0 || tcy >= SGRID_H) return false;
 
   int minx, maxx, miny, maxy;
   snakeBounds(minx, maxx, miny, maxy);
 
-  static uint8_t dist[SNAKE_CELLS];
-  static uint16_t queue[SNAKE_CELLS];
+  uint8_t (&dist)[SNAKE_CELLS] = s_flowDist;
+  uint16_t (&queue)[SNAKE_CELLS] = s_flowQueue;
   for (int i = 0; i < SNAKE_CELLS; i++) dist[i] = 255;
 
   const int dirs[4][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};

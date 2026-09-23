@@ -1,4 +1,5 @@
 #include "worldclock.h"
+#include "../util/psram_state.h"
 
 #if defined(WORLDCLOCK_ENABLED)
 
@@ -60,11 +61,11 @@ static const float PULSE_S = 10.0f, FADE_S = 2.0f;
 // degree a minute and a dot is 5.6 degrees wide, so this is recomputed when
 // the minute changes and not seventy times a second. Storing the final colour
 // rather than a brightness keeps the blend identical to the Lua prototype's.
-static uint16_t s_colour[WORLD_ROWS][WORLD_COLS];
+static PSRAM_ARRAY(uint16_t, s_colour, [WORLD_ROWS][WORLD_COLS]);
 static const int64_t NEVER = INT64_MIN, NO_TIME = INT64_MIN + 1;
 static int64_t  s_forMinute = NEVER;
 
-static WcCity   s_custom[WC_CUSTOM_MAX];
+static PSRAM_ARRAY(WcCity, s_custom, [WC_CUSTOM_MAX]);
 static bool     s_used[WC_CUSTOM_MAX];
 static WcCity   s_auto;
 static bool     s_haveAuto = false;

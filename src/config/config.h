@@ -11,9 +11,10 @@
 #include <Arduino.h>
 #include "user_config.h"
 #include "color_slots.h"
+#include "../util/psram_state.h"
 
 // ========== Version ==========
-#define FIRMWARE_VERSION "2.5.5"
+#define FIRMWARE_VERSION "2.5.6"
 
 // ========== Constants ==========
 #define MAX_METRICS 20
@@ -533,13 +534,13 @@ extern int space_patrol_direction;
 extern unsigned long last_space_update;
 extern unsigned long last_space_sprite_toggle;
 extern Laser space_laser;
-extern SpaceFragment space_fragments[MAX_SPACE_FRAGMENTS];
+PSRAM_ARRAY_EXTERN(SpaceFragment, space_fragments, [MAX_SPACE_FRAGMENTS]);
 extern int space_explosion_timer;
 
 // Pong clock globals
 extern PongBall pong_balls[MAX_PONG_BALLS];
-extern SpaceFragment pong_fragments[MAX_PONG_FRAGMENTS];
-extern FragmentTarget fragment_targets[MAX_PONG_FRAGMENTS];
+PSRAM_ARRAY_EXTERN(SpaceFragment, pong_fragments, [MAX_PONG_FRAGMENTS]);
+PSRAM_ARRAY_EXTERN(FragmentTarget, fragment_targets, [MAX_PONG_FRAGMENTS]);
 extern DigitTransition digit_transitions[5];
 extern BreakoutPaddle breakout_paddle;
 extern unsigned long last_pong_update;

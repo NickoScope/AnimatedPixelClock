@@ -1,4 +1,5 @@
 #include "flightboard.h"
+#include "../util/psram_state.h"
 
 #if defined(FLIGHTBOARD_ENABLED)
 
@@ -81,7 +82,7 @@ struct FbBoard {
   uint32_t stamp;
   bool     have;
 };
-static FbBoard s_b[2];            // [0] arrivals, [1] departures
+static PSRAM_ARRAY(FbBoard, s_b, [2]);            // [0] arrivals, [1] departures
 
 static const uint32_t FB_ALT_MS = FB_ALT_SECONDS * 1000UL;
 // A half fetched longer ago than this is worth asking for again. Retained
@@ -108,7 +109,7 @@ static const uint8_t FB_AIRPORT_COUNT = sizeof(FB_AIRPORTS)/sizeof(FB_AIRPORTS[0
 static uint8_t s_aptId = 1;   // LFMN
 
 // Airports added in the portal, kept by src/panel in NVS "panel"/fbA0-fbA5.
-static FbAirport s_custom[FB_APT_CUSTOM_MAX];
+static PSRAM_ARRAY(FbAirport, s_custom, [FB_APT_CUSTOM_MAX]);
 static bool      s_customUsed[FB_APT_CUSTOM_MAX];
 
 #if defined(FLIGHTBOARD_DIRECT_ENABLED)

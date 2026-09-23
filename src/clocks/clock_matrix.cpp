@@ -23,6 +23,7 @@
 #include "../display/display.h"
 #include "clocks.h"
 #include "clock_globals.h"
+#include "../util/psram_state.h"
 
 // ========== Layout / tuning ==========
 #define MX_COLS 21               // 6px char columns (126px + 1px margin each side)
@@ -53,7 +54,7 @@ struct MxColumn {
   float respawn;    // seconds until this column restarts (while inactive)
 };
 
-static MxColumn mx_cols[MX_COLS];
+static PSRAM_ARRAY(MxColumn, mx_cols, [MX_COLS]);
 static char mx_chars[MX_COLS][MX_ROWS];
 
 // Digit decode state (slot 2 = colon, never decodes)

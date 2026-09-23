@@ -23,6 +23,7 @@
 #include "../display/display.h"
 #include "clocks.h"
 #include "clock_globals.h"
+#include "../util/psram_state.h"
 
 // ========== Layout / tuning ==========
 #define TET_TIME_Y_LOW 28            // date on top: digits sit low, room below
@@ -80,7 +81,7 @@ static bool  dot_locked[TET_MAX_DOTS];
 static int   dot_n = 0;
 static int   dot_frame = 0;
 
-static TetFrag tet_frags[TET_MAX_FRAG];
+static PSRAM_ARRAY(TetFrag, tet_frags, [TET_MAX_FRAG]);
 
 // ----- Idle Tetris game (auto-played in a well below the clock) -----
 // Two well geometries: the normal 5-row strip under the centred clock, or - in
@@ -99,7 +100,7 @@ enum TetGamePhase { TG_DELAY, TG_MOVING, TG_CLEARING };
 static uint32_t tet_well[TET_WELL_ROWS_MAX];  // bit c set = filled; row 0 = top of well
 // Piece index (0-6, I..L) that filled each settled cell - drives per-piece color.
 // Only meaningful where the matching tet_well bit is set.
-static uint8_t tet_well_col[TET_WELL_ROWS_MAX][TET_WELL_COLS];
+static PSRAM_ARRAY(uint8_t, tet_well_col, [TET_WELL_ROWS_MAX][TET_WELL_COLS]);
 // The 7 piece colors are read as COL_TET_I + pieceIndex, so the slots must be
 // contiguous in I,O,T,S,Z,J,L order. Fail the build if a future enum edit breaks it.
 static_assert(COL_TET_L - COL_TET_I == 6,

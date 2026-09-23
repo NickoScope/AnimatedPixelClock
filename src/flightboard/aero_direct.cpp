@@ -1,4 +1,5 @@
 #include "aero_direct.h"
+#include "../util/psram_state.h"
 
 #if defined(FLIGHTBOARD_DIRECT_ENABLED)
 
@@ -115,7 +116,7 @@ ListCache s_lists[aero::LIST_COUNT];
 char      s_listIcao[5] = "";
 uint32_t  s_gen = 0;
 
-AeroTracker s_trk[FB_TRACK_MAX];
+PSRAM_ARRAY(AeroTracker, s_trk, [FB_TRACK_MAX]);
 uint8_t     s_trkN = 0;
 
 fbs::Budget s_budget = fbs::defaults();

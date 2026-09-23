@@ -6,6 +6,7 @@
  */
 
 #include "web.h"
+#include "../util/psram_state.h"
 
 #include "../net/net_broker.h"
 #include "../config/config.h"
@@ -433,6 +434,8 @@ void handleDeviceInfo() {
  doc["dmaFree"]    = (uint32_t)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
  doc["dmaLargest"] = (uint32_t)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
  doc["dmaMin"]     = (uint32_t)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+ // Page and effect state kept in PSRAM rather than in that pool (util/psram_state.h).
+ doc["stateInPsram"] = (uint32_t)psramStateBytes();
  { extern uint32_t loopMaxMs(); doc["loopMaxMs"] = loopMaxMs(); }   // longest loop() pass, last 10 s
  // The network broker, when it is built and up (src/net/net_broker.h). The one
  // that matters here is `netStackFreeMin`: the 12 KB stack was chosen as the

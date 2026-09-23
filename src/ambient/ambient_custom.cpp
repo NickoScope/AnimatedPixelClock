@@ -26,6 +26,7 @@
  */
 
 #include <LittleFS.h>
+#include "../util/psram_state.h"
 
 #include "../config/config.h"
 #include "../display/display.h"
@@ -42,9 +43,9 @@ static uint16_t pcaPalette[PCA_MAX_PALETTE];
 // buffers + page streaming), and a failed 4KB malloc there stranded the
 // player on the Invaders fallback until the user saved again (hardware-seen,
 // failReason=alloc). ~9KB of BSS buys an open path that cannot OOM.
-static uint16_t pcaDelays[PCA_MAX_FRAMES];
-static uint8_t pcaBufA[PCA_FRAME_BYTES];
-static uint8_t pcaBufB[PCA_FRAME_BYTES];
+static PSRAM_ARRAY(uint16_t, pcaDelays, [PCA_MAX_FRAMES]);
+static PSRAM_ARRAY(uint8_t, pcaBufA, [PCA_FRAME_BYTES]);
+static PSRAM_ARRAY(uint8_t, pcaBufB, [PCA_FRAME_BYTES]);
 static uint8_t* pcaFrame = pcaBufA;    // frame being drawn
 static uint8_t* pcaNext = pcaBufB;     // prefetched next frame
 static int pcaNextIndex = -1;          // frame held in pcaNext (-1 = none)

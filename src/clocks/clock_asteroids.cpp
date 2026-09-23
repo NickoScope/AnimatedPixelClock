@@ -25,6 +25,7 @@
 #include "clock_globals.h"
 
 #include <math.h>
+#include "../util/psram_state.h"
 
 // ========== Layout / tuning ==========
 #define AST_TIME_Y_TOP 16        // digit top when the date row is shown
@@ -91,7 +92,7 @@ static float ast_thrust_timer = 0.0f;     // remaining thrust burst
 static float ast_shot_timer = 5.0f;       // until the next idle rock shot
 
 // Rocks
-static AstRock ast_rocks[AST_MAX_ROCKS];
+static PSRAM_ARRAY(AstRock, ast_rocks, [AST_MAX_ROCKS]);
 static float ast_respawn_timer = 0.0f;
 
 // Bullet (one in flight at a time)
@@ -102,7 +103,7 @@ static float ast_bullet_life = 0.0f;
 static int ast_bullet_rock = -1;          // idle shot: rock index, or -1 = digit
 
 // Shards (digit debris + rock bursts share the pool)
-static AstShard ast_shards[AST_MAX_SHARDS];
+static PSRAM_ARRAY(AstShard, ast_shards, [AST_MAX_SHARDS]);
 
 // Minute-change bookkeeping
 static int ast_change_idx[4];

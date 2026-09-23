@@ -1,4 +1,5 @@
 #include "panel.h"
+#include "../util/psram_state.h"
 #include "panel_pages.h"
 
 #if defined(CONTROL_ENCODER_ENABLED)
@@ -63,7 +64,7 @@ static bool sameCity(const WcCity &a, const WcCity &b) {
 
 static void slotKey(uint8_t slot, char key[6]) { snprintf(key, 6, "wcC%u", (unsigned)slot); }
 
-static WcCity s_wcSaved[WC_CUSTOM_MAX];     // what NVS holds, slot by slot
+static PSRAM_ARRAY(WcCity, s_wcSaved, [WC_CUSTOM_MAX]);     // what NVS holds, slot by slot
 static bool   s_wcSavedUsed[WC_CUSTOM_MAX];
 #endif
 
@@ -86,7 +87,7 @@ static bool sameAirport(const FbAirport &a, const FbAirport &b) {
 
 static void fbSlotKey(uint8_t slot, char key[6]) { snprintf(key, 6, "fbA%u", (unsigned)slot); }
 
-static FbAirport s_fbSaved[FB_APT_CUSTOM_MAX];     // what NVS holds, slot by slot
+static PSRAM_ARRAY(FbAirport, s_fbSaved, [FB_APT_CUSTOM_MAX]);     // what NVS holds, slot by slot
 static bool      s_fbSavedUsed[FB_APT_CUSTOM_MAX];
 #endif
 

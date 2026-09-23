@@ -9,6 +9,7 @@
 #define CLOCK_GLOBALS_H
 
 #include "../config/config.h"
+#include "../util/psram_state.h"
 
 // ========== Common Digit Positioning ==========
 // Standard digit X positions for time display (18px spacing)
@@ -69,13 +70,13 @@ extern unsigned long last_space_sprite_toggle;
 
 // Laser and explosions
 extern Laser space_laser;
-extern SpaceFragment space_fragments[MAX_SPACE_FRAGMENTS];
+PSRAM_ARRAY_EXTERN(SpaceFragment, space_fragments, [MAX_SPACE_FRAGMENTS]);
 extern int space_explosion_timer;
 
 // ========== Pong Clock Globals ==========
 extern PongBall pong_balls[MAX_PONG_BALLS];
-extern SpaceFragment pong_fragments[MAX_PONG_FRAGMENTS];
-extern FragmentTarget fragment_targets[MAX_PONG_FRAGMENTS];
+PSRAM_ARRAY_EXTERN(SpaceFragment, pong_fragments, [MAX_PONG_FRAGMENTS]);
+PSRAM_ARRAY_EXTERN(FragmentTarget, fragment_targets, [MAX_PONG_FRAGMENTS]);
 extern DigitTransition digit_transitions[5];
 extern BreakoutPaddle breakout_paddle;
 extern unsigned long last_pong_update;
