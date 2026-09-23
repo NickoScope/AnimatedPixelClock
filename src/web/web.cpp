@@ -239,6 +239,23 @@ void setupWebServer() {
  //   GET /api/ir/do?fn=bright_up[&page=20][&hold=1200]   run a function, no button needed
  //   GET /api/ir/fn?btn=5&fn=page&page=20      what a button does (kept in NVS)
  //   GET /api/ir/learn?btn=3, /api/ir/cancel, /api/ir/clear?btn=3|all
+#if HUB75_FRAME_IN_PSRAM
+ // The frame copy's scan synchronisation, for measuring it: ?sync=0 turns it
+ // off (the probe must then see mixed passes), ?sync=1 back on; either resets
+ // the counts. Answers with the counts either way.
+ server.on("/api/frame", HTTP_GET, []() {
+   if (server.hasArg("sync")) {
+     display.syncCopy = server.arg("sync") != "0";
+     display.resetFrameStats();
+   }
+   server.send(200, "application/json", String("{\"sync\":") + (display.syncCopy ? "true" : "false") +
+               ",\"changedFrames\":" + display.changedFrames + ",\"mixedFrames\":" + display.mixedFrames +
+               ",\"rowsRewrittenWhileShown\":" + display.inflightRows + ",\"copyUs\":" + display.blitUs +
+               ",\"copyMaxUs\":" + display.blitMaxUs + ",\"syncWaitUs\":" + display.syncWaitUs +
+               ",\"syncWaitMaxUs\":" + display.syncWaitMaxUs + ",\"refreshHz\":" + display.refreshRateHz() +
+               ",\"scanProbe\":" + (display.scanProbeOk() ? "true" : "false") + "}");
+ });
+#endif
  server.on("/api/ir", HTTP_GET, []() { sendIrTable(); });
  server.on("/api/ir/press", HTTP_GET, []() {
    uint8_t slot = 0;
@@ -426,6 +443,14 @@ void handleDeviceInfo() {
    fr["copyUs"] = display.blitUs;
    fr["copyMaxUs"] = display.blitMaxUs;
    fr["copyPixels"] = display.blitPixels;
+   // The scan probe (matrix_display.h): measured on the panel, not assumed.
+   fr["scanProbe"] = display.scanProbeOk();
+   fr["descPerRow"] = display.scanDescPerRow();
+   fr["changedFrames"] = display.changedFrames;
+   fr["mixedFrames"] = display.mixedFrames;
+   fr["rowsRewrittenWhileShown"] = display.inflightRows;
+   fr["syncWaitUs"] = display.syncWaitUs;
+   fr["syncWaitMaxUs"] = display.syncWaitMaxUs;
 #endif
    fr["refreshHz"] = display.refreshRateHz();
  }

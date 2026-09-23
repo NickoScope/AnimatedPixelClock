@@ -23,6 +23,7 @@
 #include <Arduino.h>
 #include <esp_heap_caps.h>
 #include <string.h>
+#include "soc/gdma_struct.h"     // the scan probe: which descriptor the DMA is on
 
 #define HUB75_PANEL_W 64
 #define HUB75_PANEL_H 64
@@ -159,29 +160,71 @@ public:
   }
 
   inline void clearDisplay() { clearScreen(); }
-  // The flip: the pixels that changed since the last one go to the DMA frame,
-  // as runs of one colour through the library's hlineDMA path - one call per
-  // run instead of one per pixel. A run starts at a changed pixel and takes in
-  // every following pixel of the same colour, changed or not: writing a pixel
-  // its own value again is harmless and makes the runs longer. src/fx3d
-  // measured the difference (README: 14-15 ms a full frame per pixel, 6-10 ms
-  // by runs). Timed, so /api/info can say what it costs.
+  // The flip: the pixels that changed since the last one go to the DMA frame.
+  //
+  // One DMA frame is scanned while it is written, so a copy that overlaps a
+  // scan pass can show that pass half old, half new - which double buffering
+  // never did: its flip re-points the last descriptor of the chain
+  // (gdma_lcd_parallel16.cpp, flip_dma_output_buffer), so the new frame starts
+  // at a pass boundary. To keep that property the copy is timed to the scan:
+  // it waits until the DMA is on the last row pair, then rewrites the row
+  // pairs 0..31 in the order the scan will read them. As long as each row
+  // pair is written before the scan reaches it, the next pass is entirely new
+  // and no pass is mixed. The scan probe below measures, on the panel, whether
+  // that held: every changed row pair's write is logged against the scan's
+  // position, and a pass that showed some changed rows new and others old - or
+  // a row rewritten while it was being output - is counted as mixed.
+  //
+  // Rows y and y + 32 are one DMA row (the upper and lower halves are clocked
+  // out together), so they are copied together.
   inline void display() {
     if (ready()) {
+      const bool probe = scanReady();
+      uint32_t waited = 0;
+      if (probe && !full_ && syncCopy) waited = waitForLastRow();
       const uint32_t t0 = micros();
       uint32_t n = 0;
-      for (int y = 0; y < kH; y++) {
-        uint8_t *f = frame_ + 3 * y * kW, *sh = shown_ + 3 * y * kW;
-        for (int x = 0; x < kW;) {
-          uint8_t *c = f + 3 * x;
-          if (!full_ && c[0] == sh[3 * x] && c[1] == sh[3 * x + 1] && c[2] == sh[3 * x + 2]) { x++; continue; }
-          int e = x + 1;
-          while (e < kW && f[3 * e] == c[0] && f[3 * e + 1] == c[1] && f[3 * e + 2] == c[2]) e++;
-          MatrixPanel_I2S_DMA::drawFastHLine(x, y, e - x, c[0], c[1], c[2]);
-          memcpy(sh + 3 * x, f + 3 * x, (size_t)3 * (e - x));
-          n += e - x;
-          x = e;
+      // For each changed row pair: the pass (counted from the copy's start)
+      // it was written in, and where the scan was then: 1 ahead of it (the
+      // row shows new in that pass), -1 behind it (old in that pass, new from
+      // the next), 0 on it (rewritten while being output).
+      int8_t wpass[kRowPairs], side[kRowPairs];
+      bool touched[kRowPairs];
+      int pass = 0, lastScan = probe ? scanRow() : -1;
+      for (int r = 0; r < kRowPairs; r++) {
+        const uint32_t changed = copyRow(r) + copyRow(r + kRowPairs);
+        n += changed;
+        touched[r] = probe && changed;
+        if (!touched[r]) continue;
+        const int sc = scanRow();
+        if (sc < lastScan) pass++;              // the scan wrapped: a new pass
+        lastScan = sc;
+        wpass[r] = (int8_t)(pass > 100 ? 100 : pass);
+        side[r] = sc < r ? 1 : (sc > r ? -1 : 0);
+      }
+      if (probe && n) {
+        // Pass q showed row r new if r was written in an earlier pass, or in q
+        // ahead of the scan; old if written later, or in q behind the scan.
+        // A pass with both, or with a row rewritten under the scan, was mixed.
+        bool mixed = false;
+        uint32_t inflight = 0;
+        for (int q = 0; q <= pass && q <= 100; q++) {
+          bool shownNew = false, shownOld = false;
+          for (int r = 0; r < kRowPairs; r++) {
+            if (!touched[r]) continue;
+            if (wpass[r] < q || (wpass[r] == q && side[r] > 0)) shownNew = true;
+            else if (wpass[r] > q || side[r] < 0) shownOld = true;
+            else { mixed = true; if (q == wpass[r]) inflight++; }
+          }
+          if (shownNew && shownOld) mixed = true;
         }
+        changedFrames++;
+        if (mixed) mixedFrames++;
+        inflightRows += inflight;
+      }
+      if (probe) {
+        syncWaitUs = waited;
+        if (!full_ && waited > syncWaitMaxUs) syncWaitMaxUs = waited;
       }
       blitUs = micros() - t0;
       // The first copy after boot writes every pixel; it is not a frame in
@@ -193,6 +236,17 @@ public:
     lastFlipUs = micros();
     hasFlipped = true;
   }
+  // The scan probe's counts, since boot: frames that changed anything, and of
+  // those the ones that showed a mixed pass; rows rewritten while output; and
+  // how long the copy waited for the scan.
+  uint32_t changedFrames = 0, mixedFrames = 0, inflightRows = 0;
+  uint32_t syncWaitUs = 0, syncWaitMaxUs = 0;
+  // Off only to prove the probe can see a mixed pass (the negative control):
+  // GET /api/frame?sync=0, then back with sync=1. Counts reset on a change.
+  bool syncCopy = true;
+  void resetFrameStats() { changedFrames = mixedFrames = inflightRows = 0; syncWaitMaxUs = blitMaxUs = 0; }
+  bool scanProbeOk() { return scanReady(); }
+  int scanDescPerRow() const { return descPerRow_; }
   // Frame stats for /api/info: the last copy's time and pixel count, the worst.
   uint32_t blitUs = 0, blitMaxUs = 0, blitPixels = 0;
   bool frameInPsram() const { return frame_ != nullptr; }
@@ -236,6 +290,73 @@ private:
   uint8_t *shown_ = nullptr;   // what display() last put on the panel
   bool full_ = true;           // the first copy writes every pixel
   bool tried_ = false;
+  static const int kRowPairs = kH / 2;
+
+  // One row of the drawn frame onto the DMA frame, as runs of one colour
+  // through the library's drawFastHLine (hlineDMA). Returns the pixels written.
+  uint32_t copyRow(int y) {
+    uint8_t *f = frame_ + 3 * y * kW, *sh = shown_ + 3 * y * kW;
+    uint32_t n = 0;
+    for (int x = 0; x < kW;) {
+      uint8_t *c = f + 3 * x;
+      if (!full_ && c[0] == sh[3 * x] && c[1] == sh[3 * x + 1] && c[2] == sh[3 * x + 2]) { x++; continue; }
+      int e = x + 1;
+      while (e < kW && f[3 * e] == c[0] && f[3 * e + 1] == c[1] && f[3 * e + 2] == c[2]) e++;
+      MatrixPanel_I2S_DMA::drawFastHLine(x, y, e - x, c[0], c[1], c[2]);
+      memcpy(sh + 3 * x, f + 3 * x, (size_t)3 * (e - x));
+      n += e - x;
+      x = e;
+    }
+    return n;
+  }
+
+  // ── the scan probe ──────────────────────────────────────────────────────
+  // The GDMA out channel feeding LCD_CAM (peri_sel 5, SOC_GDMA_TRIG_PERIPH_LCD0)
+  // holds the address of the descriptor it is on (out.dscr, gdma_struct.h).
+  // The driver lays its descriptors out as one array, row pair by row pair,
+  // the same number per row pair (ESP32-HUB75-MatrixPanel-I2S-DMA.cpp, the
+  // loop over ROWS_PER_FRAME), and closes the ring with suc_eof on the last.
+  // So the row pair being output is (descriptor index) / (descriptors per row).
+  struct Desc { uint32_t dw0; void *buffer; Desc *next; };   // dma_descriptor_t's layout
+  int dmaCh_ = -1;
+  const Desc *first_ = nullptr;
+  int descCount_ = 0, descPerRow_ = 0;
+  bool probeTried_ = false;
+  bool scanReady() {
+    if (first_) return true;
+    if (probeTried_) return false;
+    probeTried_ = true;
+    for (int ch = 0; ch < 5; ch++)
+      if (GDMA.channel[ch].out.peri_sel.sel == 5) dmaCh_ = ch;
+    if (dmaCh_ < 0) return false;
+    const Desc *d = (const Desc *)GDMA.channel[dmaCh_].out.dscr;
+    for (int i = 0; d && i < 8192; i++, d = d->next)            // find the ring's end
+      if (d->dw0 & (1u << 30)) { first_ = d->next; break; }      // suc_eof
+    if (!first_) return false;
+    int count = 0;
+    for (const Desc *e = first_; count < 8192; count++) {
+      if (e != first_ + count) { first_ = nullptr; return false; }   // not one array
+      e = e->next;
+      if (e == first_) { count++; break; }
+    }
+    if (count % kRowPairs) { first_ = nullptr; return false; }
+    descCount_ = count;
+    descPerRow_ = count / kRowPairs;
+    return true;
+  }
+  int scanRow() const {
+    const Desc *d = (const Desc *)GDMA.channel[dmaCh_].out.dscr;
+    const int i = (int)(d - first_);
+    return (i >= 0 && i < descCount_) ? i / descPerRow_ : -1;
+  }
+  // Waits for the scan to be on the last row pair, at most one pass: from
+  // there the copy has the whole next pass ahead of it.
+  uint32_t waitForLastRow() {
+    const uint32_t t0 = micros();
+    const uint32_t limit = calculated_refresh_rate > 0 ? 1000000UL / calculated_refresh_rate + 200 : 20000;
+    while (scanRow() != kRowPairs - 1 && micros() - t0 < limit) {}
+    return micros() - t0;
+  }
   // PSRAM is allocated on first use, not in the constructor: `display` is a
   // global. If it cannot be had the calls go straight to the DMA frame, which
   // is only ever a flickery picture, never a missing one.
