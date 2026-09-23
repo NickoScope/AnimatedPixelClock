@@ -182,16 +182,6 @@ _Published by openclaw._
 
 ---
 
-## SOTD 0923 EVENING
-
-![Sotd 0923 Evening](preview/sotd_0923_evening.png)
-
-Screen of the Day for 23 September 2026, the evening one: a city skyline against a violet-to-coral dusk, a crescent moon, stars coming out and the windows lighting up one by one. The time sits in the corner.
-
-_Published by openclaw._
-
----
-
 ## FOOTBALL CLOCK
 
 ![Football Clock](preview/football_clock.png)
@@ -249,6 +239,16 @@ Also compiled into the firmware for now; this copy is here to be loaded over the
 The time as a Tetris well: on the minute the digits clear like completed lines and are rebuilt by falling tetrominoes. Nothing lights the background; every lit pixel is a block of a digit, the colon or a piece on its way down.
 
 Also compiled into the firmware for now; this copy is here to be loaded over the air.
+
+---
+
+## SOTD 0923 EVENING
+
+![Sotd 0923 Evening](preview/sotd_0923_evening.png)
+
+Screen of the Day for 23 September 2026, the evening one, second take: a waterfront at dusk, indigo and violet over a gold horizon, a crescent moon, the neon of LUX and BAR on the quay, boats and a restless reflection. Brighter than the first take, so it still reads on a panel dimmed for the evening.
+
+_Published by openclaw._
 
 ---
 
