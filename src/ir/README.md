@@ -40,7 +40,30 @@ without the module).
 | `../control/control.cpp` | the seam: two places inside the 1 kHz sampling task |
 | `../../tools/ir/check_ir.py` | the host test - 150 checks over the rules and the grammar |
 
-## The hardware, and the one thing to check on the bench
+## The hardware: GPIO0, the BOOT line (since 2026-09-23)
+
+![IR receiver wiring](ir-receiver-wiring.svg)
+
+The receiver sits on **GPIO0**, beside the knob: IO45/IO46 keep the knob as the
+backup control, and GPIO0 carries the BOOT button, the knob's switch and the
+receiver at once - all three only ever pull it low. The vendor schematic's
+reset/boot circuit gives the line **R8 10 kOhm to 3V3** and leaves **C9 across
+the button unfitted**, so an open-collector receiver needs no resistor of its
+own and nothing smears its pulses. It idles high, which is also the normal-boot
+level of this strapping pin.
+
+Parts, as on NickoScope32 v1b (its BOM): **U308 Vishay TSOP2138** 38 kHz
+(LCSC C7128385), **R313 51 Ohm** in series with VS from 3V3, **C308 100 nF**
+from VS to GND at the receiver. v1b's R307 2.2 kOhm pull-up is not needed here.
+TSOP21.. pins are **1 OUT, 2 VS, 3 GND** (TSOP48.. differs).
+
+How a press is told from IR on the shared line: `src/control` counts the
+switch as pressed only after 20 ms low at 1 kHz sampling, and the longest IR
+mark is NEC's 9 ms leader, so the portal's debounce is clamped at 12 ms while
+the receiver shares the pin. A remote pressed during a reset can land the chip
+in download mode; another reset recovers. Knowledge base: docs/24-ir-remote.md.
+
+## The earlier plan: IO45
 
 **There is no free GPIO on this board.** The expansion header U8 is four pins -
 IO45, IO46, GND, 3V3 - and the knob holds both signals (`src/control/control.cpp`
