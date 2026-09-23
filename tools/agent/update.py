@@ -173,11 +173,12 @@ def upload(address, data, name, progress=None):
         conn.send(data[i:i + step])
         if progress:
             progress(min(i + step, len(data)), len(data))
-    conn.send(tail)
-    r = conn.getresponse()
-    body = r.read().decode("utf-8", "replace")
-    conn.close()
-    return r.status, body
+    try:
+        conn.send(tail)
+        r = conn.getresponse()
+        return r.status, r.read().decode("utf-8", "replace")
+    finally:
+        conn.close()
 
 
 def identify(address):
@@ -221,9 +222,10 @@ def watch(address, who, target, before, sent_at, say=print):
     again while it is still unconfirmed is waited for, within that deadline."""
     t0 = time.monotonic()
     time.sleep(5)                     # /update answers 200, waits a second, restarts
-    info, back_at = None, None
+    info, back_at, last_seen = None, None, None
     while time.monotonic() - t0 < WATCH_LIMIT_S:
         address, now = find_again(address, who)
+        last_seen = now
         if now is None:
             if back_at is None and time.monotonic() - t0 > BACK_WAIT_S:
                 break
@@ -268,6 +270,10 @@ def watch(address, who, target, before, sent_at, say=print):
     if info is None:
         return {"result": "NOT BACK", "detail": f"no answer from the panel for {BACK_WAIT_S} s. "
                 "Power-cycle it; if it still does not come back, reflash over USB from the web flasher."}
+    if last_seen is None:
+        return {"result": "NOT BACK", "detail": f"{target} came up, then the panel left the network and "
+                "did not return. Power-cycle it, then run the check: it shows which version runs.",
+                "info": info}
     return {"result": "PENDING", "detail": "the watch ran out of time; run the check again", "info": info}
 
 
@@ -302,7 +308,7 @@ def plan(panel=None, version=None):
         raise UpdateError(f"no published release {version} newer than {c['current']}")
     if (c["panel"].get("chip") or "") != "ESP32-S3":
         raise UpdateError(f"the published image is for the ESP32-S3; this panel reports {c['panel'].get('chip')}")
-    key = c["panel"].get("mac") or c["panel"]["address"]
+    key = (c["panel"].get("mac") or c["panel"]["address"]).lower()
     token = secrets.token_hex(6)
     p = {"asked": 0, "at": time.time(), "panel": c["panel"], "from": c["current"],
          "rel": target, "name": c["panel"]["name"], "key": key}
@@ -368,7 +374,7 @@ def install(who, rel, before, say=print):
             say(f"sent {pct}%")
     try:
         status, body = upload(address, data, rel["asset_name"], prog)
-    except OSError as e:
+    except (OSError, http.client.HTTPException) as e:
         # Mid-upload, or the answer lost after Update.end(): nobody can say
         # which. The firmware keeps an interrupted upload "running" until it
         # restarts, so a second try would be refused anyway.
