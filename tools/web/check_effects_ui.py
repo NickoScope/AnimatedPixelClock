@@ -6,7 +6,8 @@ into macOS) over a small stand-in DOM, feeds it an /api/lua answer and the
 gallery index, and checks what it draws and what it sends:
   - every effect: a walk switch (ticked as inWalk says), Show, and Delete only
     on an uploaded one; a switch change posts {walk:{i,name,on}}, and a refused
-    one puts the tick back; Delete asks first and posts {delete:<its name>};
+    one puts the tick back; Delete takes two presses (no confirm() dialog,
+    which some browsers suppress) and posts {delete:<its stem>};
     a name is escaped, never markup;
   - the Pages card: an effect's own switch posts {enable:{page,name,on}};
   - the gallery: one row per index entry, "On the panel" for an effect already
@@ -120,10 +121,13 @@ var box2 = t.renderLua && els.luaList.children[0].querySelector('input');
 box2.checked = false; box2.handlers.change(); drainMicrotasks();
 out.walkRolledBack = box2.checked === true;
 mode.walkFail = false;
-// Delete asks, then posts the uploaded name
+// Delete: armed by the first press, sent by the second
 fetched = [];
-els.luaList.children[3].querySelectorAll('button')[1].handlers.click(); drainMicrotasks();
-out.deleteAsked = confirmed.length === 1 && /AUTUMN LEAVES/.test(confirmed[0]);
+var delBtn = els.luaList.children[3].querySelectorAll('button')[1];
+delBtn.handlers.click(); drainMicrotasks();
+out.deleteArmed = delBtn.textContent === 'Sure? Delete' && confirmed.length === 0 &&
+  !fetched.some(function (f) { return f.o && f.o.body && /delete/.test(f.o.body); });
+delBtn.handlers.click(); drainMicrotasks();
 out.deletePost = fetched.filter(function (f) { return f.o && f.o.body && /delete/.test(f.o.body); }).map(function (f) { return f.o.body; });
 // a name is text, not markup
 var evil = JSON.parse(JSON.stringify(LUA)); evil.effects[0] = '<img src=x onerror=1>';
@@ -197,7 +201,7 @@ check(e["AUTUMN LEAVES"]["buttons"] == ["Show", "Delete"], "an uploaded effect: 
 check(out["walkPost"] == [json.dumps({"walk": {"i": 1, "name": "LA GIOCONDA", "on": True}}, separators=(",", ":"))],
       "a switch posts {walk:{i,name,on}}")
 check(out["walkRolledBack"], "a refused switch puts the tick back")
-check(out["deleteAsked"], "Delete asks first, naming the effect")
+check(out["deleteArmed"], "Delete: the first press only arms the button (no dialog, nothing sent)")
 check(out["deletePost"] == ['{"delete":"autumn_leaves"}'], "and posts {delete:<the uploaded stem>}, not the name shown")
 check(out["nameEscaped"], "an effect's name is escaped, never markup")
 gal = {x["name"]: x for x in out["gallery"]}

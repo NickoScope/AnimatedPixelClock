@@ -42,6 +42,27 @@ function api(path, body) {
   });
 }
 function note(id, text, bad) { var e = $(id); if (!e) return; e.textContent = text; e.classList.toggle('pn-err', !!bad); }
+// A delete takes two presses, not a dialog: some browsers and embedded views
+// suppress confirm() and answer "no", which left Delete doing nothing at all.
+// The first press turns the button into "Sure? Delete" for four seconds.
+function armDelete(btn, go) {
+  if (btn.dataset.armed) {
+    clearTimeout(+btn.dataset.armed);
+    delete btn.dataset.armed;
+    btn.textContent = btn.dataset.label;
+    btn.classList.remove('armed');
+    go();
+    return;
+  }
+  btn.dataset.label = btn.textContent;
+  btn.textContent = 'Sure? Delete';
+  btn.classList.add('armed');
+  btn.dataset.armed = String(setTimeout(function () {
+    delete btn.dataset.armed;
+    btn.textContent = btn.dataset.label;
+    btn.classList.remove('armed');
+  }, 4000));
+}
 function flash(btn, text, bad) {
   if (!btn) return;
   if (!btn.dataset.t) btn.dataset.t = btn.innerHTML;
@@ -513,7 +534,7 @@ function renderWc() {
     });
     var del = row.querySelector('button');
     if (del) del.addEventListener('click', function () {
-      if (confirm('Delete ' + cap(ct.name) + ' from the map?')) wcPost({ remove: ct.id }, cap(ct.name) + ' deleted.');
+      armDelete(del, function () { wcPost({ remove: ct.id }, cap(ct.name) + ' deleted.'); });
     });
     host.appendChild(row);
   });
@@ -833,8 +854,9 @@ function renderFbCustom(d) {
     row.querySelector('[data-a="pick"]').addEventListener('click', function () {
       fbPost({ airport: a.id }, cap(a.name) + ' is on the board.', 'fbMsg');
     });
-    row.querySelector('[data-a="del"]').addEventListener('click', function () {
-      if (confirm('Delete ' + cap(a.name) + ' from your airports?')) fbPost({ remove: a.id }, cap(a.name) + ' deleted.', 'fbFindMsg');
+    var fbDel = row.querySelector('[data-a="del"]');
+    fbDel.addEventListener('click', function () {
+      armDelete(fbDel, function () { fbPost({ remove: a.id }, cap(a.name) + ' deleted.', 'fbFindMsg'); });
     });
     host.appendChild(row);
   });
@@ -1291,9 +1313,10 @@ function clipRow(host, a, sd, here) {
   var b = row.querySelectorAll('button');
   b[0].addEventListener('click', function () { playClip(a.name, sd, b[0]); });
   b[1].addEventListener('click', function () {
-    if (!confirm('Delete the clip "' + a.name + '" from the ' + (sd ? 'card' : 'panel') + '?')) return;
-    (sd ? api('/api/clips', { 'delete': a.name }) : fetch('/api/anim/delete?name=' + encodeURIComponent(a.name)))
-      .then(function () { clipSig = ''; return pollClips(); }).catch(function (err) { flash(b[1], err.message, true); });
+    armDelete(b[1], function () {
+      (sd ? api('/api/clips', { 'delete': a.name }) : fetch('/api/anim/delete?name=' + encodeURIComponent(a.name)))
+        .then(function () { clipSig = ''; return pollClips(); }).catch(function (err) { flash(b[1], err.message, true); });
+    });
   });
   if (sd) thumb(row.querySelector('canvas'), a);
   host.appendChild(row);
@@ -1631,7 +1654,7 @@ function renderLua(d) {
       '><span class="check-box" aria-hidden="true"></span><span class="check-text"><strong>' + esc(name) +
       '</strong><span class="ct-hint">' + (mine ? 'uploaded, ' + Math.round(mine.bytes / 1024) + ' KB' : 'built in') +
       '</span></span></label><span class="pn-here">on screen</span><button type="button" class="btn btn-sm">Show</button>' +
-      (mine ? '<button type="button" class="btn btn-sm">Delete</button>' : '');
+      (mine ? '<button type="button" class="btn btn-sm btn-danger">Delete</button>' : '');
     var box = row.querySelector('input'), btns = row.querySelectorAll('button');
     box.addEventListener('change', function () {
       api('/api/lua', { walk: { i: i, name: name, on: box.checked } }).then(renderLua)
@@ -1639,9 +1662,10 @@ function renderLua(d) {
     });
     btns[0].addEventListener('click', function () { api('/api/lua', { show: i }).then(renderLua).catch(function (err) { flash(btns[0], err.message, true); }); });
     if (mine) btns[1].addEventListener('click', function () {
-      if (!confirm('Delete ' + name + ' from the panel? It can be uploaded again.')) return;
-      api('/api/lua', { delete: mine.name }).then(function (r) { luaSig = ''; renderLua(r); renderGallery(); note('luaMsg', name + ' deleted.'); })
-        .catch(function (err) { note('luaMsg', err.message, true); });
+      armDelete(btns[1], function () {
+        api('/api/lua', { delete: mine.name }).then(function (r) { luaSig = ''; renderLua(r); renderGallery(); note('luaMsg', name + ' deleted. It can be uploaded again.'); })
+          .catch(function (err) { note('luaMsg', err.message, true); });
+      });
     });
     host.appendChild(row);
   });
