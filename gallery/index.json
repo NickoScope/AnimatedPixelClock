@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "maxBytes": 51200,
+  "effects": [
+    {
+      "stem": "aquarium",
+      "name": "AQUARIUM",
+      "file": "aquarium.lua",
+      "line": "a planted tank with depth, and fish that notice you slowly.",
+      "bytes": 31417,
+      "preview": "preview/aquarium.png"
+    },
+    {
+      "stem": "cannes",
+      "name": "CANNES",
+      "file": "cannes.lua",
+      "line": "the Festival d'Art Pyrotechnique, over the bay.",
+      "bytes": 10407,
+      "preview": "preview/cannes.png"
+    },
+    {
+      "stem": "la_gioconda",
+      "name": "LA_GIOCONDA",
+      "file": "la_gioconda.lua",
+      "line": "the painting drawn in ASCII characters.",
+      "bytes": 6741,
+      "preview": "preview/la_gioconda.png"
+    },
+    {
+      "stem": "starship",
+      "name": "STARSHIP",
+      "file": "starship.lua",
+      "line": "one flight a minute, and the minute is the clock.",
+      "bytes": 18948,
+      "preview": "preview/starship.png"
+    }
+  ]
+}
