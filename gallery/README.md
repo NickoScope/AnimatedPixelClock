@@ -192,6 +192,66 @@ _Published by openclaw._
 
 ---
 
+## FOOTBALL CLOCK
+
+![Football Clock](preview/football_clock.png)
+
+A football match that plays itself: Atletico Madrid against Real Madrid, told apart by their kit colours only, with a broadcast score bug across the top and the real time in the corner. The pitch keeps the proportions of the Laws of the Game and is seen the way a broadcast camera up in the stand sees it, lines straight and the centre circle an ellipse.
+
+Also compiled into the firmware for now; this copy is here to be loaded over the air.
+
+---
+
+## MINECRAFT
+
+![Minecraft](preview/minecraft.png)
+
+A blocky world with a full day and night cycle in one minute, built from 4 px blocks because on a panel this coarse solid colour reads as a world and outlines read as noise. Something is always moving: Steve patrols the hills and jumps now and then, a creeper paces the ridge, the sky goes black at night and torches light whole blocks.
+
+Also compiled into the firmware for now; this copy is here to be loaded over the air.
+
+---
+
+## ROOM RADAR
+
+![Room Radar](preview/room_radar.png)
+
+Who is in the room, as the 24 GHz radar of a presence sensor sees it: up to three people as points in the sensor's own 6 m fan, with their distance and a short trail. It reads the panel's presence feed from Home Assistant; with no sensor behind it, it invents people so the screen still shows what it does.
+
+Also compiled into the firmware for now; this copy is here to be loaded over the air.
+
+---
+
+## SNAKE CLOCK
+
+![Snake Clock](preview/snake_clock.png)
+
+The time, where each digit is a snake. On the minute the four snakes crawl away downward and four new ones crawl in from the top and lay themselves out as the next time. At rest every snake lies exactly on its digit, so a still frame is a clean clock.
+
+Also compiled into the firmware for now; this copy is here to be loaded over the air.
+
+---
+
+## SNOOKER CLOCK
+
+![Snooker Clock](preview/snooker_clock.png)
+
+A snooker table that plays frames by itself, with the time in the corner like a game's HUD. The table and the play follow the WPBSA rules: the 2:1 playing area, baulk, the spots, the break and the order of the colours.
+
+Also compiled into the firmware for now; this copy is here to be loaded over the air.
+
+---
+
+## TETRIS CLOCK
+
+![Tetris Clock](preview/tetris_clock.png)
+
+The time as a Tetris well: on the minute the digits clear like completed lines and are rebuilt by falling tetrominoes. Nothing lights the background; every lit pixel is a block of a digit, the colon or a piece on its way down.
+
+Also compiled into the firmware for now; this copy is here to be loaded over the air.
+
+---
+
 ## Adding one
 
 The loop, and only the last step needs a panel:

@@ -37,6 +37,14 @@
       "by": "openclaw"
     },
     {
+      "stem": "football_clock",
+      "name": "FOOTBALL_CLOCK",
+      "file": "football_clock.lua",
+      "line": "a football match that plays itself, with a broadcast score bug and the real time in the corner.",
+      "bytes": 39445,
+      "preview": "preview/football_clock.png"
+    },
+    {
       "stem": "la_gioconda",
       "name": "LA_GIOCONDA",
       "file": "la_gioconda.lua",
@@ -54,6 +62,14 @@
       "by": "openclaw"
     },
     {
+      "stem": "minecraft",
+      "name": "MINECRAFT",
+      "file": "minecraft.lua",
+      "line": "a blocky world with a full day and night cycle in one minute.",
+      "bytes": 16283,
+      "preview": "preview/minecraft.png"
+    },
+    {
       "stem": "picture_day_photo",
       "name": "PICTURE_DAY_PHOTO",
       "file": "picture_day_photo.lua",
@@ -61,6 +77,30 @@
       "bytes": 36067,
       "preview": "preview/picture_day_photo.png",
       "by": "openclaw"
+    },
+    {
+      "stem": "room_radar",
+      "name": "ROOM_RADAR",
+      "file": "room_radar.lua",
+      "line": "who is in the room, as the 24 GHz presence radar sees it.",
+      "bytes": 15484,
+      "preview": "preview/room_radar.png"
+    },
+    {
+      "stem": "snake_clock",
+      "name": "SNAKE_CLOCK",
+      "file": "snake_clock.lua",
+      "line": "HH:MM where each digit is a snake that crawls away and back on the minute.",
+      "bytes": 9210,
+      "preview": "preview/snake_clock.png"
+    },
+    {
+      "stem": "snooker_clock",
+      "name": "SNOOKER_CLOCK",
+      "file": "snooker_clock.lua",
+      "line": "a snooker table that plays frames by itself, with the time in the corner.",
+      "bytes": 41901,
+      "preview": "preview/snooker_clock.png"
     },
     {
       "stem": "sotd_0923_evening",
@@ -78,6 +118,14 @@
       "line": "one flight a minute, and the minute is the clock.",
       "bytes": 18948,
       "preview": "preview/starship.png"
+    },
+    {
+      "stem": "tetris_clock",
+      "name": "TETRIS_CLOCK",
+      "file": "tetris_clock.lua",
+      "line": "HH:MM that clears like completed lines and is rebuilt by falling tetrominoes.",
+      "bytes": 9819,
+      "preview": "preview/tetris_clock.png"
     }
   ]
 }
