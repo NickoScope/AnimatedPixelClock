@@ -552,13 +552,16 @@ curl -s http://$PANEL/api/info
 | field | what it tells you |
 |---|---|
 | `freeInternalHeap`, `largestHeapBlock` | internal SRAM. **This is the scarce thing** (§7) |
+| `dmaFree`, `dmaLargest`, `dmaMin` | the radio's pool (internal, DMA-capable): Wi-Fi takes its 1,626 B receive buffers here. `dmaMin` is the lowest since boot; 21.5 KB over 2 h 20 min on 2.5.6 |
+| `stateInPsram` | bytes of page and effect state held in PSRAM (`PSRAM_ARRAY`, §7): about 36 KB on 2.5.6 |
 | `allocFails`, `allocFailBytes`, `allocFailTask` | failed allocations - `wifi` means the radio went short |
 | `lastCrash` | the last crash from flash. **Check `thisBoot` and `sameFirmware`** before blaming your change |
 | `resetReason` | 1 power-on, 3 software, 4 panic, 5 interrupt watchdog, 6 task watchdog |
 | `linkRecoveries` | the Wi-Fi watchdog firing. Should be 0 |
 | `loopMaxMs`, `loopSlowPart` | the longest `loop()` pass in the last 10 s, and which part |
 | `netBroker` | the network broker: what is on the wire, how many served, its stack high-water |
-| `climate` | the onboard sensor, raw and corrected |
+| `climate` | the onboard sensor, raw and corrected. `idle: true` = not being read: nothing on screen shows it and Home Assistant is off |
+| `presence` | the MTR-1 feed. `source: "idle"`, `subscribed: false` while no page reads it; `visits` counts the times a page turned it on |
 | `ota` | partition and state - **`valid` before you reboot after an update** |
 
 ### The log, over the network

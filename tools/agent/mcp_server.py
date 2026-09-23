@@ -321,9 +321,12 @@ async def panel_health(panel: PanelArg = None) -> str:
     because the raw numbers mislead:
 
     **`largestHeapBlock` matters more than `freeInternalHeap`.** The HUB75 DMA
-    framebuffer takes 131,072 bytes of internal RAM, leaving roughly 19-24 KB of
-    heap, and what kills a request is the demand for a *contiguous* block, not
-    the total. The number is also constant within a boot and varies between
+    framebuffer takes 131,072 bytes of internal RAM, and what kills a request is
+    the demand for a *contiguous* block, not the total. Since 2.5.6 page and
+    effect state lives in PSRAM (`stateInPsram`, about 36 KB) and the radio's
+    pool (`dmaFree`, `dmaMin`: internal DMA-capable, where Wi-Fi takes its
+    1,626 B receive buffers) has 30-50 KB free; on 2.5.5 it had 13-15 KB and
+    fell to 172 B. The number is also constant within a boot and varies between
     boots in 1,024-byte steps, so a single reading compared against a single
     earlier reading proves nothing.
 
@@ -342,6 +345,7 @@ async def panel_health(panel: PanelArg = None) -> str:
         d = P.get(p["address"], "/api/info")
         mem = {k: d.get(k) for k in (
             "freeHeap", "freeInternalHeap", "largestHeapBlock", "minFreeHeap",
+            "dmaFree", "dmaLargest", "dmaMin", "stateInPsram",
             "psramBytes", "psramFreeBytes")}
         net = {k: d.get(k) for k in (
             "rssi", "wifiStatus", "ip", "hostname", "httpServed", "secsSinceHttp",
@@ -368,8 +372,20 @@ async def panel_health(panel: PanelArg = None) -> str:
             reading.append(
                 f"linkRecoveries is {net['linkRecoveries']} - the Wi-Fi link has "
                 "had to be rescued. This one is worth investigating.")
+        if mem.get("dmaMin") is not None and mem["dmaMin"] < 1626:
+            reading.append(
+                f"dmaMin is {mem['dmaMin']} B: since boot the radio's pool has been "
+                "below one 1,626 B Wi-Fi receive buffer. That is how the panel drops "
+                "off the network.")
+        pr, cl = d.get("presence") or {}, d.get("climate") or {}
+        if pr.get("source") == "idle" or cl.get("idle"):
+            reading.append(
+                "The room radar feed and the onboard sensor run only while a screen "
+                "needs them (2.5.6): presence 'idle' and climate idle mean nothing on "
+                "screen reads them, not that they are broken.")
         if d.get("weatherValid") is False:
-            reading.append("The weather fetch has no valid result yet.")
+            reading.append("The weather fetch has no valid result yet (it is fetched "
+                           "only while the weather clock is on screen).")
         if not reading:
             reading.append("Nothing here needs attention.")
 
@@ -897,6 +913,12 @@ async def panel_notify(args: NotifyIn) -> str:
 
     This is the one way to put arbitrary text on the panel without building
     anything, and unlike the cards it works with no MQTT broker at all.
+
+    Text is UTF-8: Latin and Cyrillic, capitals and lowercase, and the Latin-1
+    signs the classic font has (°, ±, é...) - the panel's system font since
+    2.5.6. Anything else draws as a solid block. The panel takes up to 200
+    bytes; a Cyrillic letter is 2, so this tool's 160 characters of Russian
+    would be refused - keep Russian under 100 letters.
 
     Two traps the firmware sets here: the route answers **403 until
     notifications are switched on** in the settings, and a malformed colour is

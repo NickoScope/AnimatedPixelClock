@@ -79,6 +79,7 @@ import panel as P  # noqa: E402
 
 RADIO_BUFFER = 1626          # bytes, caps 0x80c: the allocation that fails first
 RISKY_KEYS = {"yachts"}      # pages that are known to hurt the panel when shown
+FEED_IDLE_S = 3.0            # presence.cpp and climate.cpp kIdleMs: a feed stops 3 s after the last read
 PORTAL_JSON = ["/api/portal", "/api/info", "/api/status", "/api/panel", "/metrics",
                "/api/anim/list", "/api/lua", "/api/worldclock", "/api/knob"]
 RESET_REASONS = {0: "unknown", 1: "power-on", 2: "external pin", 3: "software",
@@ -288,6 +289,10 @@ def run(panel=None, serial_port=None, read_only=False, include=(), notify=True,
             report["steps"]["controls"] = controls(
                 addr, st0, pan0, include, notify, log, find, changed,
                 0.5 if stress else 2.0, 0 if stress else 0.5)
+            try:
+                report["steps"]["onscreen"] = onscreen(addr, pan0, log, find, changed)
+            except Exception as e:  # noqa: BLE001
+                find("FAIL", f"on-screen feeds: {e}")
         report["steps"]["portal"] = portal(addr, log, find, 0)
 
         time.sleep(2)
@@ -437,9 +442,13 @@ def controls(addr, st0, pan0, include, notify, log, find, changed, dwell, gap):
         find("FAIL", f"display off/on: {e}")
 
     if notify:
+        # 2.5.6 draws Cyrillic in every print() (the system font): the banner
+        # carries some, capitals and lowercase, so a firmware that turns it back
+        # into garbage is seen on the panel during the test.
+        text = "SELFTEST · САМОТЕСТ Ёж" if _version(st0.get("version") or "") >= (2, 5, 6) else "SELFTEST"
         try:
-            P.post(addr, "/api/notify", {"text": "SELFTEST", "icon": "check", "duration": 3000})
-            done["notify"] = "sent"
+            P.post(addr, "/api/notify", {"text": text, "icon": "check", "duration": 3000})
+            done["notify"] = {"sent": text}
         except Exception as e:  # noqa: BLE001
             find("FAIL", f"notify: {e}")
 
@@ -503,6 +512,47 @@ def portal(addr, log, find, gap):
     return [{"path": p, "code": c, "ms": ms} for p, c, ms in rows]
 
 
+def onscreen(addr, pan0, log, find, changed):
+    """2.5.6: the room radar feed and the onboard sensor run only while a screen
+    needs them. Off the radar the feed must be unsubscribed and idle; on a page
+    that reads it, subscribed. Off the weather clock the sensor must be idle,
+    unless Home Assistant takes it as the room sensor."""
+    info = P.get(addr, "/api/info")
+    pr, cl = info.get("presence"), info.get("climate")
+    if not isinstance(pr, dict) or "subscribed" not in pr:
+        log("info", "on-screen feeds: this firmware predates them (2.5.6); step skipped")
+        return {"skipped": "firmware"}
+    done = {}
+    changed.add("page")
+    P.post(addr, "/api/panel", {"show": {"page": 0}})          # the clock: reads neither
+    time.sleep(FEED_IDLE_S + 1.5)
+    d = P.get(addr, "/api/info")
+    pr, cl = d.get("presence") or {}, d.get("climate") or {}
+    done["off_screen"] = {"presence": pr.get("source"), "subscribed": pr.get("subscribed"),
+                          "climate_idle": cl.get("idle"), "climate_ha": cl.get("ha")}
+    if pr.get("source") != "demo" and (pr.get("subscribed") or pr.get("source") != "idle"):
+        find("FAIL", f"the radar feed still runs off screen: source {pr.get('source')}, "
+                     f"subscribed {pr.get('subscribed')}")
+    if cl and cl.get("state") not in ("off", "absent") and not cl.get("ha") and cl.get("idle") is not True:
+        find("FAIL", f"the onboard sensor is read off screen: climate {cl}")
+    radar = [pg for pg in pan0.get("pages") or []
+             if pg.get("on") and pg.get("key") == "lua" and pg.get("name") in ("ROOM RADAR", "AQUARIUM")]
+    if not radar:
+        log("info", "on-screen feeds: no page here reads the radar; the on-screen half skipped")
+        return done
+    v0 = pr.get("visits") or 0
+    P.post(addr, "/api/panel", {"show": {"page": radar[0]["i"]}})
+    time.sleep(2.5)
+    d = P.get(addr, "/api/info")
+    pr = d.get("presence") or {}
+    done["on_screen"] = {"page": radar[0]["name"], "presence": pr.get("source"),
+                         "subscribed": pr.get("subscribed"), "visits": pr.get("visits")}
+    if pr.get("source") != "demo" and (not pr.get("subscribed") or (pr.get("visits") or 0) <= v0):
+        find("FAIL", f"the radar feed did not start on {radar[0]['name']}: subscribed "
+                     f"{pr.get('subscribed')}, visits {v0} -> {pr.get('visits')}")
+    return done
+
+
 def compare(b, a, elapsed, find):
     expected = (b.get("uptime") or 0) + elapsed
     reset = RESET_REASONS.get(a.get("resetReason"), a.get("resetReason"))
@@ -534,6 +584,10 @@ def compare(b, a, elapsed, find):
                      "the Wi-Fi driver asks for (dmaMin, since boot, not only this test)")
     if (a.get("linkBlindS") or 0) > 0:
         find("WARN", f"the link has been blind for {a['linkBlindS']} s")
+    if (_version(a.get("version") or "") >= (2, 5, 6) and (a.get("psramBytes") or 0) > 0
+            and not a.get("stateInPsram")):
+        find("WARN", "stateInPsram is 0 on a board with PSRAM: the page and effect state "
+                     "is back in internal RAM, the radio's pool (AGENTS.md section 7)")
 
 
 def serial_findings(ser, find):

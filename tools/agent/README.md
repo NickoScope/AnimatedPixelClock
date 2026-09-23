@@ -172,6 +172,27 @@ write the next tool against `/api/panel`:
 
 ---
 
+## Text on the panel: the system font (2.5.6)
+
+Everything the panel draws as text is UTF-8: Latin and Cyrillic, capitals and
+lowercase, in both of its fonts (the classic 5x7 and the small Picopixel).
+Banners (`panel_notify`), cards, media titles, the boards, the author's clock
+screens all draw Russian as it is. A Lua effect picks the font with a last
+argument: `px.text(x, y, s, r, g, b, "5x7")` or `"pico"`; without it px.text
+draws as it always did (small, lowercase as capitals). Widths count letters,
+not bytes: a Cyrillic letter is two bytes, which is what the byte limits count
+(a banner 200, a world-clock city 20, an airport 12). The design and the tests:
+AGENTS.md section 8 and `tools/fonts/check_sysfont.py`.
+
+## What `/api/info` says since 2.5.6
+
+- `dmaFree`, `dmaMin`: the radio's pool. `dmaMin` under 1,626 B means Wi-Fi went
+  short of a receive buffer at some point since boot.
+- `stateInPsram`: page and effect state kept out of internal RAM (about 36 KB).
+- `presence.source: "idle"`, `presence.subscribed: false`, `climate.idle: true`:
+  the room radar feed and the onboard sensor run only while a screen needs them.
+  Idle is normal, not a fault. `health.py` checks that they follow the screen.
+
 ## Грабли
 
 One entry per real debugging day. This section is the most valuable part of this
