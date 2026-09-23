@@ -1966,6 +1966,11 @@ class GalleryPublishIn(BaseModel):
                                    "the commit message. Its first sentence becomes the one-line "
                                    "description if the script has no '-- NAME - ...' title comment.")
     dry_run: bool = Field(default=False, description="Everything but the commit and the push.")
+    photo_no_people: bool = Field(default=False,
+                                  description="The script is a photograph (effect_photo, photo_to_lua.py) "
+                                              "and NO person is in it: a landscape, a tree, the sea. A "
+                                              "photograph of a person never goes to the gallery, whatever "
+                                              "this says; the maintainer looks at every preview.")
 
 
 class GalleryRemoveIn(BaseModel):
@@ -2009,8 +2014,9 @@ async def gallery_publish(args: GalleryPublishIn) -> str:
 
     Refused: a name that a built-in effect or another entry already reads as; an
     entry a person or another publisher put there; anything made from a
-    photograph (photo_to_lua.py, chafa_to_lua.py) - the gallery ends up public
-    and photographs of people never go into it. Publishing again under the same
+    photograph (photo_to_lua.py, chafa_to_lua.py) unless photo_no_people says no
+    person is in it - the gallery ends up public and photographs of people
+    never go into it. Publishing again under the same
     name replaces your own entry.
 
     Where it goes: this machine's gallery remote (git config gallery.remote and
@@ -2022,7 +2028,8 @@ async def gallery_publish(args: GalleryPublishIn) -> str:
     Returns: {"ok": true, "result": "pushed <sha> to <remote> <branch>: <files>"}
     """
     import gallery as G  # noqa: PLC0415
-    return _gallery_call(G.publish, stem=args.name, about=args.about, dry=args.dry_run)
+    return _gallery_call(G.publish, stem=args.name, about=args.about, dry=args.dry_run,
+                         photo_no_people=args.photo_no_people)
 
 
 @mcp.tool(

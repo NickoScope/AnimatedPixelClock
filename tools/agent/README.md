@@ -144,8 +144,10 @@ the gallery", once it is on GitHub)
 
   Entries are marked with who published them (`-- @by <name>`, from
   `LEDMATRIX_PUBLISHER` where the server starts); a publisher can replace or
-  remove only its own, never a person's. Anything made from a photograph is
-  refused: the gallery is public. The CLI is `tools/agent/gallery.py
+  remove only its own, never a person's. A photograph goes in only with
+  `photo_no_people` (no person in it: a landscape, a tree, the sea; the owner's
+  rule, 2026-09-23) and is tagged `-- @photo no-people`; a photograph of a
+  person never goes in, and the maintainer looks at every preview. The CLI is `tools/agent/gallery.py
   publish|unpublish|scoreboard` (`--dry-run`; `--any` is a person's override).
 
   **Where it goes.** The remote is `$LEDMATRIX_GALLERY_REMOTE` or `git config

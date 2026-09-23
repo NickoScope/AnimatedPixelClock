@@ -29,8 +29,8 @@ ahead does not matter.
 Refused, whatever asks: a name outside the panel's rule (1 to 24 of letters,
 digits, underscore); a name that reads as a built-in effect or as another
 gallery entry; a script made from a photograph (photo_to_lua.py,
-chafa_to_lua.py) - the repository is public and photographs of people never go
-into it. With --by, an entry is marked "-- @by <who>", and replacing or
+chafa_to_lua.py) unless --photo-no-people says no person is in it - the
+repository is public and photographs of people never go into it. With --by, an entry is marked "-- @by <who>", and replacing or
 unpublishing an entry someone else published is refused.
 
 The remote is $LEDMATRIX_GALLERY_REMOTE, else `git config gallery.remote`
@@ -276,22 +276,33 @@ def commit_and_push(wt, remote, branch, message, dry):
     return f"pushed {sha} to {remote} {branch}: " + ", ".join(staged)
 
 
-def _script_body(stem, text, about, by):
-    """The script as the gallery keeps it: tagged, with a title comment."""
-    for m in PHOTO:
-        if m in text:
-            raise Refused(f"{stem}: made by {m}, from a photograph: the gallery is public and takes no photographs")
-    lines = [l for l in text.splitlines() if not BY.match(l) and l.strip() != "-- @upload-only"]
+PHOTO_TAG = "-- @photo no-people"
+
+
+def _script_body(stem, text, about, by, photo_no_people=False):
+    """The script as the gallery keeps it: tagged, with a title comment.
+
+    A photograph goes in only when whoever publishes it says no person is in
+    it (the owner's rule, 2026-09-23: landscapes yes, people never), and then
+    it carries PHOTO_TAG, so `sync` and the person reviewing it know."""
+    photo = next((m for m in PHOTO if m in text), None)
+    if photo and not (photo_no_people or PHOTO_TAG in text):
+        raise Refused(f"{stem}: made by {photo}, from a photograph. The gallery is public: a photograph "
+                      "goes in only with no person in it, and you must say so (photo_no_people / "
+                      "--photo-no-people). A photograph of a person never goes in.")
+    lines = [l for l in text.splitlines()
+             if not BY.match(l) and l.strip() not in ("-- @upload-only", PHOTO_TAG)]
     # The portal's one-line description is the script's title comment
     # ("-- NAME - what it is", tools/gallery_index.py); one is made from the
     # first sentence of --about when the script has none.
     if not any(re.match(r"--\s*[A-Z0-9_ ]+?\s+-\s+.+$", l) for l in lines[:6]):
         first = re.split(r"(?<=[.!?])\s", about.strip().replace("\n", " "), maxsplit=1)[0]
         lines.insert(0, f"-- {shown(stem)} - {first[:90].rstrip('.')}")
-    return "\n".join(["-- @upload-only"] + ([f"-- @by {by}"] if by else []) + lines) + "\n"
+    return "\n".join(["-- @upload-only"] + ([f"-- @by {by}"] if by else []) +
+                     ([PHOTO_TAG] if photo else []) + lines) + "\n"
 
 
-def _put(wt, stem, text, about, by, any_owner=False):
+def _put(wt, stem, text, about, by, any_owner=False, photo_no_people=False):
     """One entry into the worktree's gallery/, every check first. Returns 'add' or 'update'."""
     if not STEM.fullmatch(stem or ""):
         raise Refused("a name is 1 to 24 of letters, digits and underscore")
@@ -299,7 +310,7 @@ def _put(wt, stem, text, about, by, any_owner=False):
         raise Refused("--by is 1 to 32 of letters, digits, _ and -")
     if not about or len(about.strip()) < 20:
         raise Refused(f"{stem}: --about: a few sentences on what it is (the gallery's README is prose)")
-    body = _script_body(stem, text, about, by)
+    body = _script_body(stem, text, about, by, photo_no_people)
     name = shown(stem)
     gal = wt / "gallery"
     if name in builtin_names(wt):
@@ -363,14 +374,15 @@ def _retry(remote, branch, dry, work):
     return None
 
 
-def publish(stem, about, by=None, file=None, remote="origin", branch="main", dry=False, any_owner=False):
+def publish(stem, about, by=None, file=None, remote="origin", branch="main", dry=False, any_owner=False,
+            photo_no_people=False):
     src = pathlib.Path(file) if file else SCRIPTS / f"{stem}.lua"
     if not src.exists():
         raise Refused(f"no {src}")
     text = src.read_text(encoding="utf-8")
 
     def work(wt):
-        verb = _put(wt, stem, text, about, by, any_owner)
+        verb = _put(wt, stem, text, about, by, any_owner, photo_no_people)
         return f"gallery: {verb} {shown(stem)}\n\n{about.strip()[:400]}\n" + (f"\nPublished-by: {by}\n" if by else "")
     return _retry(remote, branch, dry, work)
 
@@ -454,7 +466,14 @@ def sync(source, source_branch, by, remote="origin", branch="main", dry=False):
                 if not about:
                     raise Refused(f"{stem}: no README section in the staging gallery")
                 before = (gal / f"{stem}.lua").read_text(encoding="utf-8") if (gal / f"{stem}.lua").exists() else None
-                verb = _put(wt, stem, path.read_text(encoding="utf-8"), about, by)
+                text = path.read_text(encoding="utf-8")
+                # Unchanged script and text: left alone. A preview is not made
+                # again for nothing - a real-time clock draws a different one
+                # every run, and that would be a commit every evening.
+                if before is not None and before == _script_body(stem, text, about, by) and \
+                        readme_about((gal / "README.md").read_text(encoding="utf-8"), shown(stem)) == about:
+                    continue
+                verb = _put(wt, stem, text, about, by)
                 if (gal / f"{stem}.lua").read_text(encoding="utf-8") != before or verb == "add":
                     plan.append(f"{'added' if verb == 'add' else 'updated'} {shown(stem)}")
             if board is not None:
@@ -506,7 +525,7 @@ def cmd_publish(args):
     remote, branch = target(args.remote, args.branch)
     about = pathlib.Path(args.about_file).read_text(encoding="utf-8") if args.about_file else args.about
     return _run(publish, stem=args.name, about=about, by=args.by, file=args.file, remote=remote,
-                branch=branch, dry=args.dry_run, any_owner=args.any)
+                branch=branch, dry=args.dry_run, any_owner=args.any, photo_no_people=args.photo_no_people)
 
 
 def cmd_scoreboard(args):
@@ -580,6 +599,8 @@ def main():
             x.add_argument("--about", help="the README section: what it is, a few sentences")
             x.add_argument("--about-file")
             x.add_argument("--file", help="the script, if not tools/luasim/scripts/<name>.lua")
+            x.add_argument("--photo-no-people", action="store_true",
+                           help="a photograph with no person in it (a photograph of a person never goes in)")
     b = sub.add_parser("scoreboard"); b.add_argument("file", help="the new SCREEN_OF_THE_DAY.md")
     b.add_argument("--by"); b.add_argument("--remote"); b.add_argument("--branch")
     b.add_argument("--dry-run", action="store_true")
