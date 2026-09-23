@@ -385,7 +385,9 @@ the name it saw (`walk.name`, `enable.name`): if the list moved in between the
 panel answers 409 instead of switching the neighbour. An upload whose name
 would read as an effect already there (built-in, or another case of the same
 stem) is refused. Agents publish to and remove from the gallery with MCP
-`gallery_publish` / `gallery_unpublish` (tools/agent/README.md).
+`gallery_publish` / `gallery_unpublish` / `gallery_scoreboard`, into a staging
+branch on their own machine; a maintainer brings them to GitHub with
+`gallery.py sync` (tools/agent/README.md).
 
 *Working with them:* `/api/lua`. They run on their own task with a frame cap and
 PSRAM frame buffers, and the panel logs each one's cost - `[luafx] open <name>:

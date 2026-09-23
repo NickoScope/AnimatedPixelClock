@@ -1989,33 +1989,37 @@ def _gallery_call(fn, **kw):
     except G.Refused as e:
         return f"Refused: {e}"
     except PermissionError as e:
-        return (f"{e}\nThis machine has no write access to the gallery on GitHub. That is set up "
-                "by the owner (a deploy key with write access); see tools/agent/README.md, "
-                "'Publishing to the gallery'.")
+        return (f"{e}\nThis machine cannot write to its gallery remote. On the agent's machine "
+                "the remote is a local staging branch (git config gallery.remote .; gallery.branch "
+                "gallery-staging), never GitHub; see tools/agent/README.md, 'Publishing to the gallery'.")
     except Exception as e:  # noqa: BLE001
         return f"Could not publish: {e}"
 
 
 @mcp.tool(
     name="gallery_publish",
-    annotations={"title": "Publish an effect to the GitHub gallery", "readOnlyHint": False,
+    annotations={"title": "Publish an effect to the gallery", "readOnlyHint": False,
                  "destructiveHint": False, "idempotentHint": True, "openWorldHint": True})
 async def gallery_publish(args: GalleryPublishIn) -> str:
-    """Publish a finished Lua effect to the PUBLIC gallery on GitHub.
+    """Publish a finished Lua effect to the gallery.
 
-    The gallery (gallery/ in NickoScope/AnimatedPixelClock) is what every
-    panel's web portal lists under "Add from the gallery". This checks the script
-    with the panel's own rules, runs it 300 frames in the simulator (an error or
-    an all-black screen is refused), makes the preview, writes the README section
-    and the index, and pushes one commit that touches only gallery/.
+    Checks the script with the panel's own rules, runs it 300 frames in the
+    simulator (an error or an all-black screen is refused), makes the preview,
+    writes the README section and the index, and commits only gallery/.
 
     Refused: a name that a built-in effect or another entry already reads as; an
     entry a person or another publisher put there; anything made from a
-    photograph (photo_to_lua.py, chafa_to_lua.py) - the repository is public and
-    photographs of people never go into it. Publishing again under the same name
-    replaces your own entry.
+    photograph (photo_to_lua.py, chafa_to_lua.py) - the gallery ends up public
+    and photographs of people never go into it. Publishing again under the same
+    name replaces your own entry.
 
-    Returns: {"ok": true, "result": "pushed <sha> to origin main: <files>"}
+    Where it goes: this machine's gallery remote (git config gallery.remote and
+    gallery.branch in the SDK's clone). On the agent's own machine that is a
+    staging branch - it has no key for GitHub - and the maintainer carries it to
+    the public gallery on GitHub (`gallery.py sync`), checking every entry
+    again. The portal's "Add from the gallery" lists it from then on.
+
+    Returns: {"ok": true, "result": "pushed <sha> to <remote> <branch>: <files>"}
     """
     import gallery as G  # noqa: PLC0415
     return _gallery_call(G.publish, stem=args.name, about=args.about, dry=args.dry_run)
@@ -2023,21 +2027,57 @@ async def gallery_publish(args: GalleryPublishIn) -> str:
 
 @mcp.tool(
     name="gallery_unpublish",
-    annotations={"title": "Remove your effect from the GitHub gallery", "readOnlyHint": False,
+    annotations={"title": "Remove your effect from the gallery", "readOnlyHint": False,
                  "destructiveHint": True, "idempotentHint": False, "openWorldHint": True})
 async def gallery_unpublish(args: GalleryRemoveIn) -> str:
-    """Remove an effect YOU published from the public GitHub gallery.
+    """Remove an effect YOU published from the gallery.
 
     Only an entry marked with this server's publisher (LEDMATRIX_PUBLISHER) can be
     removed; a person's entries are refused. The script, its preview, its README
     section and its index line go in one commit; git history keeps them.
-    Panels that already added it keep their copy until it is deleted there
-    (panel effects: Delete in the portal, or /api/lua {"delete": stem}).
+    Panels that already added it keep their copy until it is deleted there.
 
-    Returns: {"ok": true, "result": "pushed <sha> to origin main: <files>"}
+    Where it goes: this machine's gallery remote (git config gallery.remote and
+    gallery.branch in the SDK's clone). On the agent's own machine that is a
+    staging branch - it has no key for GitHub - and the maintainer carries it to
+    the public gallery on GitHub (`gallery.py sync`), checking every entry
+    again. The portal's "Add from the gallery" lists it from then on.
+
+    Returns: {"ok": true, "result": "pushed <sha> to <remote> <branch>: <files>"}
     """
     import gallery as G  # noqa: PLC0415
     return _gallery_call(G.unpublish, stem=args.name, dry=args.dry_run)
+
+
+class ScoreboardIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    markdown: str = Field(min_length=1, max_length=65536,
+                          description="The whole new gallery/SCREEN_OF_THE_DAY.md. Markdown, no HTML "
+                                      "tags. A picture may only be a gallery preview: "
+                                      "![NAME](preview/<stem>.png), of a screen already published.")
+    dry_run: bool = False
+
+
+@mcp.tool(
+    name="gallery_scoreboard",
+    annotations={"title": "Update the Screen of the Day scoreboard", "readOnlyHint": False,
+                 "destructiveHint": False, "idempotentHint": True, "openWorldHint": True})
+async def gallery_scoreboard(args: ScoreboardIn) -> str:
+    """Replace gallery/SCREEN_OF_THE_DAY.md: the daily screens and the owner's thumbs.
+
+    Publish the day's screen with gallery_publish first; then its preview can be
+    shown here. Record 👍/👎 only as the owner gave them.
+
+    Where it goes: this machine's gallery remote (git config gallery.remote and
+    gallery.branch in the SDK's clone). On the agent's own machine that is a
+    staging branch - it has no key for GitHub - and the maintainer carries it to
+    the public gallery on GitHub (`gallery.py sync`), checking every entry
+    again. The portal's "Add from the gallery" lists it from then on.
+
+    Returns: {"ok": true, "result": "pushed <sha> to <remote> <branch>: <files>"}
+    """
+    import gallery as G  # noqa: PLC0415
+    return _gallery_call(G.scoreboard, text=args.markdown, dry=args.dry_run)
 
 
 @mcp.tool(

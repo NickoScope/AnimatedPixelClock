@@ -34,8 +34,18 @@ into it. With --by, an entry is marked "-- @by <who>", and replacing or
 unpublishing an entry someone else published is refused.
 
 The remote is $LEDMATRIX_GALLERY_REMOTE, else `git config gallery.remote`
-(default origin), and the branch
+(default origin), and the branch $LEDMATRIX_GALLERY_BRANCH, else
 `git config gallery.branch` (default main); --remote and --branch override.
+
+An agent's machine has no key for GitHub: there the remote is its own clone
+(gallery.remote = .) and the branch gallery-staging. A maintainer carries it
+to GitHub from a machine that can push, entry by entry, every check again:
+
+    python3 tools/agent/gallery.py sync pi@nickol.local:ledmatrix-mcp --by openclaw
+
+The agent's Screen of the Day scoreboard (gallery/SCREEN_OF_THE_DAY.md) goes
+the same way: `scoreboard FILE` (MCP gallery_scoreboard), Markdown with no
+HTML, pictures only gallery previews.
 
 Exit codes as elsewhere: 0 done, 2 bad arguments or refused, 3 a person must
 decide, 4 nothing answered (the remote), 1 the checks could not be run.
@@ -209,7 +219,8 @@ def builtin_names(wt):
 def target(remote=None, branch=None):
     import os  # noqa: PLC0415
     remote = remote or os.environ.get("LEDMATRIX_GALLERY_REMOTE") or git(ROOT, "config", "gallery.remote", check=False).stdout.strip() or "origin"
-    branch = branch or git(ROOT, "config", "gallery.branch", check=False).stdout.strip() or "main"
+    branch = branch or os.environ.get("LEDMATRIX_GALLERY_BRANCH") or \
+        git(ROOT, "config", "gallery.branch", check=False).stdout.strip() or "main"
     return remote, branch
 
 
@@ -265,92 +276,208 @@ def commit_and_push(wt, remote, branch, message, dry):
     return f"pushed {sha} to {remote} {branch}: " + ", ".join(staged)
 
 
-def publish(stem, about, by=None, file=None, remote="origin", branch="main", dry=False, any_owner=False):
-    if not STEM.fullmatch(stem or ""):
-        raise Refused("a name is 1 to 24 of letters, digits and underscore")
-    if by is not None and not WHO.fullmatch(by):
-        raise Refused("--by is 1 to 32 of letters, digits, _ and -")
-    if not about or len(about.strip()) < 20:
-        raise Refused("--about: a few sentences on what it is (the gallery's README is prose)")
-    src = pathlib.Path(file) if file else SCRIPTS / f"{stem}.lua"
-    if not src.exists():
-        raise Refused(f"no {src}")
-    text = src.read_text(encoding="utf-8")
+def _script_body(stem, text, about, by):
+    """The script as the gallery keeps it: tagged, with a title comment."""
     for m in PHOTO:
         if m in text:
-            raise Refused(f"made by {m}, from a photograph: the gallery is public and takes no photographs")
+            raise Refused(f"{stem}: made by {m}, from a photograph: the gallery is public and takes no photographs")
     lines = [l for l in text.splitlines() if not BY.match(l) and l.strip() != "-- @upload-only"]
-    name = shown(stem)
     # The portal's one-line description is the script's title comment
     # ("-- NAME - what it is", tools/gallery_index.py); one is made from the
     # first sentence of --about when the script has none.
     if not any(re.match(r"--\s*[A-Z0-9_ ]+?\s+-\s+.+$", l) for l in lines[:6]):
         first = re.split(r"(?<=[.!?])\s", about.strip().replace("\n", " "), maxsplit=1)[0]
-        lines.insert(0, f"-- {name} - {first[:90].rstrip('.')}")
-    body = "\n".join(["-- @upload-only"] + ([f"-- @by {by}"] if by else []) + lines) + "\n"
+        lines.insert(0, f"-- {shown(stem)} - {first[:90].rstrip('.')}")
+    return "\n".join(["-- @upload-only"] + ([f"-- @by {by}"] if by else []) + lines) + "\n"
+
+
+def _put(wt, stem, text, about, by, any_owner=False):
+    """One entry into the worktree's gallery/, every check first. Returns 'add' or 'update'."""
+    if not STEM.fullmatch(stem or ""):
+        raise Refused("a name is 1 to 24 of letters, digits and underscore")
+    if by is not None and not WHO.fullmatch(by):
+        raise Refused("--by is 1 to 32 of letters, digits, _ and -")
+    if not about or len(about.strip()) < 20:
+        raise Refused(f"{stem}: --about: a few sentences on what it is (the gallery's README is prose)")
+    body = _script_body(stem, text, about, by)
+    name = shown(stem)
+    gal = wt / "gallery"
+    if name in builtin_names(wt):
+        raise Refused(f"{name} is built into the firmware; pick another name")
+    for p in gal.glob("*.lua"):
+        if p.stem != stem and shown(p.stem) == name:
+            raise Refused(f"{name} is already in the gallery as {p.name}")
+    dest = gal / f"{stem}.lua"
+    if dest.exists() and not any_owner and by_of(dest) != by:
+        raise Refused(f"{dest.name} was published by {by_of(dest) or 'a person'}; not yours to replace")
+    dest.write_text(body, encoding="utf-8")
+    sys.path.insert(0, str(ROOT / "tools" / "luasim"))
+    import validate as V  # noqa: PLC0415
+    v = V.check(dest)
+    if v is None:
+        raise RuntimeError("the panel's own check (tools/luasim/validate.py) could not be run")
+    if not v["ok"]:
+        raise Refused(f"{stem}: the panel would refuse it: {v['error']}")
+    # The preview is always made here, from the script: never taken from
+    # anywhere else, so it cannot be anything but what the script draws.
+    err, lit = make_preview(dest, gal / "preview" / f"{stem}.png")
+    if err:
+        raise Refused(f"{stem}: it does not run in the simulator: {err}")
+    if not lit:
+        raise Refused(f"{stem}: 300 frames in the simulator and not one pixel lit")
+    readme = gal / "README.md"
+    readme.write_text(readme_put(readme.read_text(encoding="utf-8"), name, stem, about, by), encoding="utf-8")
+    (gal / "index.json").write_text(index_text(gal), encoding="utf-8")
+    return "update" if git(wt, "cat-file", "-e", f"HEAD:gallery/{stem}.lua", check=False).returncode == 0 else "add"
+
+
+def _drop(wt, stem, by, any_owner=False):
+    if not STEM.fullmatch(stem or ""):
+        raise Refused("a name is 1 to 24 of letters, digits and underscore")
+    gal = wt / "gallery"
+    dest = gal / f"{stem}.lua"
+    if not dest.exists():
+        raise Refused(f"no {stem} in the gallery; it has: {', '.join(sorted(p.stem for p in gal.glob('*.lua')))}")
+    owner = by_of(dest)
+    if not any_owner and owner != by:
+        raise Refused(f"{dest.name} was published by {owner or 'a person'}; not yours to remove")
+    dest.unlink()
+    for extra in (gal / "preview" / f"{stem}.png", gal / "preview" / f"{stem}.gif"):
+        if extra.exists():
+            extra.unlink()
+    readme = gal / "README.md"
+    readme.write_text(readme_drop(readme.read_text(encoding="utf-8"), shown(stem)), encoding="utf-8")
+    (gal / "index.json").write_text(index_text(gal), encoding="utf-8")
+
+
+def _retry(remote, branch, dry, work):
+    """work(wt) -> commit message; committed and pushed, once more if the branch moved."""
     for attempt in (1, 2):
         with checkout(remote, branch) as wt:
-            gal = wt / "gallery"
-            if name in builtin_names(wt):
-                raise Refused(f"{name} is built into the firmware; pick another name")
-            for p in gal.glob("*.lua"):
-                if p.stem != stem and shown(p.stem) == name:
-                    raise Refused(f"{name} is already in the gallery as {p.name}")
-            dest = gal / f"{stem}.lua"
-            if dest.exists() and not any_owner and by_of(dest) != by:
-                raise Refused(f"{dest.name} was published by {by_of(dest) or 'a person'}; not yours to replace")
-            dest.write_text(body, encoding="utf-8")
-            sys.path.insert(0, str(ROOT / "tools" / "luasim"))
-            import validate as V  # noqa: PLC0415
-            v = V.check(dest)
-            if v is None:
-                raise RuntimeError("the panel's own check (tools/luasim/validate.py) could not be run")
-            if not v["ok"]:
-                raise Refused(f"the panel would refuse it: {v['error']}")
-            err, lit = make_preview(dest, gal / "preview" / f"{stem}.png")
-            if err:
-                raise Refused(f"it does not run in the simulator: {err}")
-            if not lit:
-                raise Refused("300 frames in the simulator and not one pixel lit")
-            readme = gal / "README.md"
-            readme.write_text(readme_put(readme.read_text(encoding="utf-8"), name, stem, about, by), encoding="utf-8")
-            (gal / "index.json").write_text(index_text(gal), encoding="utf-8")
-            verb = "update" if git(wt, "cat-file", "-e", f"HEAD:gallery/{stem}.lua", check=False).returncode == 0 else "add"
-            msg = f"gallery: {verb} {name}\n\n{about.strip()[:400]}\n" + (f"\nPublished-by: {by}\n" if by else "")
+            msg = work(wt)
             try:
                 return commit_and_push(wt, remote, branch, msg, dry)
             except BlockingIOError:
                 if attempt == 2:
                     raise
     return None
+
+
+def publish(stem, about, by=None, file=None, remote="origin", branch="main", dry=False, any_owner=False):
+    src = pathlib.Path(file) if file else SCRIPTS / f"{stem}.lua"
+    if not src.exists():
+        raise Refused(f"no {src}")
+    text = src.read_text(encoding="utf-8")
+
+    def work(wt):
+        verb = _put(wt, stem, text, about, by, any_owner)
+        return f"gallery: {verb} {shown(stem)}\n\n{about.strip()[:400]}\n" + (f"\nPublished-by: {by}\n" if by else "")
+    return _retry(remote, branch, dry, work)
 
 
 def unpublish(stem, by=None, remote="origin", branch="main", dry=False, any_owner=False):
-    if not STEM.fullmatch(stem or ""):
-        raise Refused("a name is 1 to 24 of letters, digits and underscore")
-    for attempt in (1, 2):
-        with checkout(remote, branch) as wt:
+    def work(wt):
+        _drop(wt, stem, by, any_owner)
+        return f"gallery: remove {shown(stem)}\n" + (f"\nUnpublished-by: {by}\n" if by else "")
+    return _retry(remote, branch, dry, work)
+
+
+# ------------------------------------------------------------ the scoreboard
+# gallery/SCREEN_OF_THE_DAY.md: the agent's daily screen and the owner's
+# thumbs. Markdown only; a picture in it may be only a gallery preview, so the
+# only images it can show are what gallery scripts draw.
+BOARD = "SCREEN_OF_THE_DAY.md"
+BOARD_MAX = 65536
+IMG_OK = re.compile(r"(?:\./)?preview/[A-Za-z0-9_]{1,24}\.png")
+
+
+def check_board(text, gal):
+    if len(text.encode("utf-8")) > BOARD_MAX:
+        raise Refused(f"the scoreboard is over {BOARD_MAX // 1024} KB")
+    if re.search(r"<\s*(script|iframe|object|embed|style|form|img|video|audio|svg)\b", text, re.I):
+        raise Refused("the scoreboard is Markdown: no HTML tags (pictures as ![](preview/<name>.png))")
+    for ref in re.findall(r"!\[[^\]]*\]\(\s*<?([^)\s>]+)", text):
+        if not IMG_OK.fullmatch(ref):
+            raise Refused(f"a picture may only be a gallery preview (preview/<name>.png), not {ref}")
+        if not (gal / ref.lstrip("./")).exists():
+            raise Refused(f"{ref} is not in the gallery: publish that screen first")
+
+
+def scoreboard(text, by=None, remote="origin", branch="main", dry=False):
+    if not text or not text.strip():
+        raise Refused("the scoreboard text is empty")
+
+    def work(wt):
+        gal = wt / "gallery"
+        check_board(text, gal)
+        (gal / BOARD).write_text(text if text.endswith("\n") else text + "\n", encoding="utf-8")
+        return "gallery: Screen of the Day\n" + (f"\nPublished-by: {by}\n" if by else "")
+    return _retry(remote, branch, dry, work)
+
+
+# ------------------------------------------------------------------ sync
+# The agent has no key for GitHub. It publishes into a staging branch on its
+# own machine; a maintainer runs `sync` from a machine that can push. The
+# agent's entries are mirrored BY STATE, not by replaying its commits: each is
+# put through every check again here (_put), its preview made again from the
+# script, and only its own entries and the scoreboard can change.
+
+def readme_about(text, name):
+    m = re.search(r"(?ms)^## " + re.escape(name) + r"\n(.*?)(?:^---\n|(?=^## )|\Z)", text)
+    if not m:
+        return None
+    keep = [l for l in m.group(1).splitlines()
+            if not l.startswith("![") and not re.match(r"_Published by .*\._$", l)]
+    return "\n".join(keep).strip() or None
+
+
+def sync(source, source_branch, by, remote="origin", branch="main", dry=False):
+    if not by or not WHO.fullmatch(by):
+        raise Refused("--by: whose entries to carry over")
+    with checkout(source, source_branch) as st:
+        staged_sha = git(st, "rev-parse", "HEAD").stdout.strip()
+        sgal = st / "gallery"
+        mine = {p.stem: p for p in sgal.glob("*.lua") if by_of(p) == by}
+        sreadme = (sgal / "README.md").read_text(encoding="utf-8")
+        board = (sgal / BOARD).read_text(encoding="utf-8") if (sgal / BOARD).exists() else None
+        plan = []
+
+        def work(wt):
+            plan.clear()
             gal = wt / "gallery"
-            dest = gal / f"{stem}.lua"
-            if not dest.exists():
-                raise Refused(f"no {stem} in the gallery; it has: {', '.join(sorted(p.stem for p in gal.glob('*.lua')))}")
-            owner = by_of(dest)
-            if not any_owner and owner != by:
-                raise Refused(f"{dest.name} was published by {owner or 'a person'}; not yours to remove")
-            dest.unlink()
-            for extra in (gal / "preview" / f"{stem}.png", gal / "preview" / f"{stem}.gif"):
-                if extra.exists():
-                    extra.unlink()
-            readme = gal / "README.md"
-            readme.write_text(readme_drop(readme.read_text(encoding="utf-8"), shown(stem)), encoding="utf-8")
-            (gal / "index.json").write_text(index_text(gal), encoding="utf-8")
-            msg = f"gallery: remove {shown(stem)}\n" + (f"\nUnpublished-by: {by}\n" if by else "")
-            try:
-                return commit_and_push(wt, remote, branch, msg, dry)
-            except BlockingIOError:
-                if attempt == 2:
-                    raise
-    return None
+            theirs = {p.stem for p in gal.glob("*.lua") if by_of(p) == by}
+            for stem in sorted(theirs - set(mine)):
+                _drop(wt, stem, by)
+                plan.append(f"removed {shown(stem)}")
+            for stem, path in sorted(mine.items()):
+                about = readme_about(sreadme, shown(stem))
+                if not about:
+                    raise Refused(f"{stem}: no README section in the staging gallery")
+                before = (gal / f"{stem}.lua").read_text(encoding="utf-8") if (gal / f"{stem}.lua").exists() else None
+                verb = _put(wt, stem, path.read_text(encoding="utf-8"), about, by)
+                if (gal / f"{stem}.lua").read_text(encoding="utf-8") != before or verb == "add":
+                    plan.append(f"{'added' if verb == 'add' else 'updated'} {shown(stem)}")
+            if board is not None:
+                check_board(board, gal)
+                cur = (gal / BOARD).read_text(encoding="utf-8") if (gal / BOARD).exists() else None
+                if cur != board:
+                    (gal / BOARD).write_text(board, encoding="utf-8")
+                    plan.append("scoreboard")
+            return (f"gallery: from {by}: " + ", ".join(plan or ["README and previews"]) +
+                    f"\n\nMirrored from the {by} staging branch ({staged_sha[:9]}), every entry checked\n"
+                    f"again and its preview made again from the script.\n\nPublished-by: {by}\n")
+
+        out = _retry(remote, branch, dry, work)
+    # The staging branch starts again from what GitHub now has, so the agent's
+    # next publish is on top of it. Only if the agent published nothing since.
+    if not dry:
+        git(ROOT, "fetch", "-q", remote, branch)
+        head = git(ROOT, "rev-parse", "FETCH_HEAD").stdout.strip()
+        r = git(ROOT, "push", "-q", f"--force-with-lease=refs/heads/{source_branch}:{staged_sha}",
+                source, f"{head}:refs/heads/{source_branch}", check=False)
+        out += ("; staging moved to " + head[:9]) if not r.returncode else \
+            ("; staging NOT moved (" + ((r.stderr or "").strip().splitlines() or ["?"])[-1] + "): run sync again")
+    return out
 
 
 def index_text(gal):
@@ -380,6 +507,18 @@ def cmd_publish(args):
     about = pathlib.Path(args.about_file).read_text(encoding="utf-8") if args.about_file else args.about
     return _run(publish, stem=args.name, about=about, by=args.by, file=args.file, remote=remote,
                 branch=branch, dry=args.dry_run, any_owner=args.any)
+
+
+def cmd_scoreboard(args):
+    remote, branch = target(args.remote, args.branch)
+    text = pathlib.Path(args.file).read_text(encoding="utf-8")
+    return _run(scoreboard, text=text, by=args.by, remote=remote, branch=branch, dry=args.dry_run)
+
+
+def cmd_sync(args):
+    remote, branch = args.remote or "origin", args.branch or "main"
+    return _run(sync, source=args.source, source_branch=args.source_branch, by=args.by,
+                remote=remote, branch=branch, dry=args.dry_run)
 
 
 def cmd_unpublish(args):
@@ -441,9 +580,19 @@ def main():
             x.add_argument("--about", help="the README section: what it is, a few sentences")
             x.add_argument("--about-file")
             x.add_argument("--file", help="the script, if not tools/luasim/scripts/<name>.lua")
+    b = sub.add_parser("scoreboard"); b.add_argument("file", help="the new SCREEN_OF_THE_DAY.md")
+    b.add_argument("--by"); b.add_argument("--remote"); b.add_argument("--branch")
+    b.add_argument("--dry-run", action="store_true")
+    y = sub.add_parser("sync", help="carry an agent's staged entries to GitHub (a maintainer's machine)")
+    y.add_argument("source", help="the agent's repository, e.g. pi@nickol.local:ledmatrix-mcp")
+    y.add_argument("--source-branch", default="gallery-staging")
+    y.add_argument("--by", required=True, help="whose entries: the agent's LEDMATRIX_PUBLISHER")
+    y.add_argument("--remote"); y.add_argument("--branch")
+    y.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
     return {"list": cmd_list, "show": cmd_show, "add": cmd_add, "remove": cmd_remove,
-            "publish": cmd_publish, "unpublish": cmd_unpublish}[args.cmd](args)
+            "publish": cmd_publish, "unpublish": cmd_unpublish, "scoreboard": cmd_scoreboard,
+            "sync": cmd_sync}[args.cmd](args)
 
 
 if __name__ == "__main__":

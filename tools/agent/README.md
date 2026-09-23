@@ -131,26 +131,40 @@ claude mcp add ledmatrix --scope user --env LEDMATRIX_PANEL=AA:BB:CC:00:11:22 --
   so a list renumbered in between is refused rather than the neighbour
   switched). `effect` is an index or a name. `panel_effects` shows `inWalk`
 
-**Publishing to the gallery on GitHub** (what every panel's portal lists under
-"Add from the gallery")
-- `gallery_publish` - a finished script from `tools/luasim/scripts/` into the
-  public `gallery/`: the panel's own checks, 300 frames in the simulator (an
-  error or an all-black screen is refused), a preview, a README section from
-  `about`, the index, one commit touching only `gallery/`, pushed
+**Publishing to the gallery** (what every panel's portal lists under "Add from
+the gallery", once it is on GitHub)
+- `gallery_publish` - a finished script from `tools/luasim/scripts/` into
+  `gallery/`: the panel's own checks, 300 frames in the simulator (an error or
+  an all-black screen is refused), a preview, a README section from `about`,
+  the index, one commit touching only `gallery/`
 - `gallery_unpublish` - take one of **your own** entries out again
+- `gallery_scoreboard` - replace `gallery/SCREEN_OF_THE_DAY.md`, the daily
+  screen and the owner's thumbs: Markdown, no HTML, pictures only gallery
+  previews
 
   Entries are marked with who published them (`-- @by <name>`, from
   `LEDMATRIX_PUBLISHER` where the server starts); a publisher can replace or
   remove only its own, never a person's. Anything made from a photograph is
-  refused: the repository is public. The CLI is `tools/agent/gallery.py
-  publish|unpublish` (`--dry-run`, and `--any` for a person). Both work in a
-  throwaway worktree of the remote's `main`, so the local checkout is never
-  touched. **Write access is the owner's to give**: the machine needs a key
-  GitHub accepts for pushing; without one the tool says so and changes nothing.
-  The machine also needs a C compiler, `make` and Pillow in the venv
-  (`pip install pillow`) for the simulator and the preview.
-- `effect_install` - regenerate the compiled-in effect table. This one is the old
-  path: after it a **person** builds and flashes
+  refused: the gallery is public. The CLI is `tools/agent/gallery.py
+  publish|unpublish|scoreboard` (`--dry-run`; `--any` is a person's override).
+
+  **Where it goes.** The remote is `$LEDMATRIX_GALLERY_REMOTE` or `git config
+  gallery.remote`, the branch `$LEDMATRIX_GALLERY_BRANCH` or `git config
+  gallery.branch`. The agent's machine has **no key for GitHub**, by the
+  owner's decision (2026-09-23): there it is its own clone (`.`) and the
+  branch `gallery-staging`. The maintainer carries it to GitHub from a machine
+  that can push:
+
+  ```
+  python3 tools/agent/gallery.py sync pi@nickol.local:ledmatrix-mcp --by openclaw
+  ```
+
+  `sync` mirrors the agent's entries **by state**, not by replaying its
+  commits: each one goes through every check again, its preview is made again
+  from the script, a person's entry changed in staging is not carried, and the
+  staging branch then starts again from what GitHub has. Everything works in a
+  throwaway worktree; the local checkout is never touched. Needs a C compiler,
+  `make` and Pillow in the venv (`pip install pillow`).
 
 **A photograph**
 - `effect_photo` - a real photograph on the panel, one call: crop, enhance,

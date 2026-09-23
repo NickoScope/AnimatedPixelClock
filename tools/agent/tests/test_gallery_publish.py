@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""gallery_publish / gallery_unpublish, the MCP tools, against a local remote.
+"""Gallery publishing, the whole path, on the disk only.
 
-A bare repository made from this checkout's HEAD stands in for GitHub, so the
-whole path runs - worktree, the panel's checks, the simulator, the preview,
-the README and the index, the commit, the push - and nothing leaves the disk.
-A second bare one refuses every push (as a read-only deploy key would), to
-check what an agent is told then.
+Two repositories stand in for the real ones: a bare "github" made from this
+checkout's HEAD, and "pi", a clone of it with a gallery-staging branch - the
+agent's machine, which has no key for GitHub. The agent publishes through the
+MCP tools into its staging branch; the maintainer's `sync` carries its entries
+to "github" with every check made again. Also: a person's entry changed in
+staging is not carried; a remote that refuses pushes is told apart.
 
     tools/agent/.venv/bin/python tools/agent/tests/test_gallery_publish.py
 """
@@ -15,6 +16,7 @@ HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
 sys.path.insert(0, str(HERE.parent))
 import mcp_server as M   # noqa: E402
+import gallery as G      # noqa: E402
 
 # The test's own git calls run clean. The tool's run as if from a git hook:
 # GIT_DIR and GIT_INDEX_FILE pointing at this checkout, which is exactly what
@@ -43,51 +45,86 @@ def call(tool, model, **kw):
 STEM = "zz_gallery_test_fx"
 SCRIPT = ROOT / "tools/luasim/scripts" / f"{STEM}.lua"
 ABOUT = "A test pattern that sweeps one bar across the panel. Made by the test, removed by it."
+here_head, here_status = git("rev-parse", "HEAD"), git("status", "--porcelain")
 
 with tempfile.TemporaryDirectory() as d:
-    bare = pathlib.Path(d) / "remote.git"
-    subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True, env=CLEAN)
-    subprocess.run(["git", "-C", str(ROOT), "push", "-q", str(bare), "HEAD:refs/heads/main"], check=True, env=CLEAN)
-    here_head, here_status = git("rev-parse", "HEAD"), git("status", "--porcelain")
-    start = git("rev-parse", "main", cwd=bare)
-    os.environ["LEDMATRIX_GALLERY_REMOTE"] = "file://" + str(bare)
-    os.environ["LEDMATRIX_PUBLISHER"] = "openclaw"
+    d = pathlib.Path(d)
+    gh, pi = d / "github.git", d / "pi"
+    subprocess.run(["git", "init", "-q", "--bare", str(gh)], check=True, env=CLEAN)
+    subprocess.run(["git", "-C", str(ROOT), "push", "-q", str(gh), "HEAD:refs/heads/main"], check=True, env=CLEAN)
+    subprocess.run(["git", "clone", "-q", str(gh), str(pi)], check=True, env=CLEAN)
+    git("branch", "gallery-staging", "origin/main", cwd=pi)
+    start = git("rev-parse", "main", cwd=gh)
+    os.environ.update(LEDMATRIX_GALLERY_REMOTE="file://" + str(pi), LEDMATRIX_GALLERY_BRANCH="gallery-staging",
+                      LEDMATRIX_PUBLISHER="openclaw")
     SCRIPT.write_text("function draw()\n  local x = math.floor(px.t() * 20) % 128\n"
                       "  px.rect(x, 0, 4, 64, 255, 160, 40, true)\nend\n")
+
+    def sync():
+        return G.sync("file://" + str(pi), "gallery-staging", "openclaw", remote="file://" + str(gh), branch="main")
     try:
+        # --- the agent, on its own machine
         r = json.loads(call(M.gallery_publish, M.GalleryPublishIn, name=STEM, about=ABOUT))
-        check(r.get("ok") and "pushed" in r["result"], "publish: pushed")
-        files = git("show", "--name-only", "--format=", "main", cwd=bare).splitlines()
+        check(r.get("ok") and "gallery-staging" in r["result"], "agent: publish goes to its staging branch")
+        check(git("rev-parse", "main", cwd=gh) == start, "and GitHub is untouched")
+        files = git("show", "--name-only", "--format=", "gallery-staging", cwd=pi).splitlines()
         check(sorted(files) == sorted(["gallery/README.md", f"gallery/{STEM}.lua", "gallery/index.json",
                                        f"gallery/preview/{STEM}.png"]), "one commit, only gallery/ files")
-        idx = json.loads(git("show", "main:gallery/index.json", cwd=bare))
+        idx = json.loads(git("show", "gallery-staging:gallery/index.json", cwd=pi))
         e = [x for x in idx["effects"] if x["stem"] == STEM]
         check(e and e[0].get("by") == "openclaw" and e[0]["line"].startswith("A test pattern"),
               "the index marks the publisher and has a line from --about")
-        head = git("show", f"main:gallery/{STEM}.lua", cwd=bare).splitlines()[:3]
-        check(head[0] == "-- @upload-only" and head[1] == "-- @by openclaw", "the script is tagged upload-only and by")
         r = json.loads(call(M.gallery_publish, M.GalleryPublishIn, name=STEM, about=ABOUT))
-        check("nothing to change" in r.get("result", ""), "publish again, unchanged: nothing pushed")
-        r = call(M.gallery_publish, M.GalleryPublishIn, name="aquarium", about=ABOUT)
-        check(r.startswith("Refused") and "not yours" in r, "a person's entry cannot be replaced")
+        check("nothing to change" in r.get("result", ""), "publish again, unchanged: nothing committed")
+        for name, why in (("aquarium", "a person's entry cannot be replaced"),):
+            r = call(M.gallery_publish, M.GalleryPublishIn, name=name, about=ABOUT)
+            check(r.startswith("Refused") and "not yours" in r, why)
         r = call(M.gallery_unpublish, M.GalleryRemoveIn, name="aquarium")
         check(r.startswith("Refused") and "not yours" in r, "nor removed")
-        os.environ["LEDMATRIX_PUBLISHER"] = "someone_else"
-        r = call(M.gallery_unpublish, M.GalleryRemoveIn, name=STEM)
-        check(r.startswith("Refused"), "another publisher cannot remove it")
-        os.environ["LEDMATRIX_PUBLISHER"] = "openclaw"
+        board = f"# Screen of the Day\n\n| Date | Screen | Verdict |\n|---|---|---|\n| 2026-09-24 | ![x](preview/{STEM}.png) | 👍 |\n"
+        r = call(M.gallery_scoreboard, M.ScoreboardIn, markdown=board.replace(f"preview/{STEM}.png", "https://example.com/a.jpg"))
+        check(r.startswith("Refused") and "only be a gallery preview" in r, "scoreboard: a picture from outside is refused")
+        r = call(M.gallery_scoreboard, M.ScoreboardIn, markdown=board + '<img src="preview/aquarium.png">\n')
+        check(r.startswith("Refused") and "no HTML" in r, "scoreboard: HTML is refused")
+        r = json.loads(call(M.gallery_scoreboard, M.ScoreboardIn, markdown=board))
+        check(r.get("ok") and "SCREEN_OF_THE_DAY.md" in r["result"], "scoreboard: a gallery preview and a thumb, committed")
+        # someone changes a person's entry in staging behind the tools
+        aq = pi / "gallery/aquarium.lua"
+        git("checkout", "-q", "gallery-staging", cwd=pi)
+        aq.write_text(aq.read_text() + "-- tampered\n")
+        git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "tamper", cwd=pi)
+        git("checkout", "-q", "main", cwd=pi)
+        staged = git("rev-parse", "gallery-staging", cwd=pi)
+
+        # --- the maintainer
+        out = sync()
+        check("pushed" in out and f"added {G.shown(STEM)}" in git("log", "-1", "--format=%s", "main", cwd=gh)
+              and "scoreboard" in git("log", "-1", "--format=%s", "main", cwd=gh), "sync: the entry and the scoreboard reach GitHub")
+        gfiles = git("show", "--name-only", "--format=", "main", cwd=gh).splitlines()
+        check(all(f.startswith("gallery/") for f in gfiles) and "gallery/aquarium.lua" not in gfiles,
+              "only gallery/, and the person's entry changed in staging is not carried")
+        check(git("rev-parse", "gallery-staging", cwd=pi) == git("rev-parse", "main", cwd=gh) and staged != "",
+              "staging starts again from what GitHub has")
+        out = sync()
+        check("nothing to change" in out, "sync again: nothing to change")
+        # the agent takes it back
         r = json.loads(call(M.gallery_unpublish, M.GalleryRemoveIn, name=STEM))
-        check(r.get("ok") and "pushed" in r["result"], "unpublish: pushed")
-        check(git("diff", "--stat", start, "main", cwd=bare) == "", "the gallery is back exactly as it was")
-        # a remote that refuses every push, as a read-only key does
-        ro = pathlib.Path(d) / "ro.git"
-        subprocess.run(["git", "clone", "-q", "--bare", str(bare), str(ro)], check=True, env=CLEAN)
+        check(r.get("ok"), "agent: unpublish into staging")
+        board2 = "# Screen of the Day\n\nNothing yet.\n"
+        call(M.gallery_scoreboard, M.ScoreboardIn, markdown=board2)
+        out = sync()
+        check("removed " + G.shown(STEM) in git("log", "-1", "--format=%s", "main", cwd=gh), "sync: removed on GitHub too")
+        check(git("diff", "--stat", start, "main", "--", ":!gallery/SCREEN_OF_THE_DAY.md", cwd=gh) == "",
+              "GitHub's gallery is back as it was, but for the scoreboard")
+        # a remote that refuses every push, as GitHub does with no key
+        ro = d / "ro.git"
+        subprocess.run(["git", "clone", "-q", "--bare", str(gh), str(ro)], check=True, env=CLEAN)
         hook = ro / "hooks/pre-receive"
-        hook.write_text("#!/bin/sh\necho 'ERROR: The key you are authenticating with has been marked as read only.' >&2\nexit 1\n")
+        hook.write_text("#!/bin/sh\necho 'ERROR: Permission to the repository denied.' >&2\nexit 1\n")
         hook.chmod(0o755)
-        os.environ["LEDMATRIX_GALLERY_REMOTE"] = "file://" + str(ro)
+        os.environ.update(LEDMATRIX_GALLERY_REMOTE="file://" + str(ro), LEDMATRIX_GALLERY_BRANCH="main")
         r = call(M.gallery_publish, M.GalleryPublishIn, name=STEM, about=ABOUT)
-        check("no write access" in r and "read only" in r, "no write access: said, with the owner's step")
+        check("cannot write" in r and "denied" in r, "a remote that refuses: said, with where it should point")
     finally:
         SCRIPT.unlink(missing_ok=True)
 check(not git("worktree", "list", "--porcelain").count("gallery-"), "no worktree left behind")
