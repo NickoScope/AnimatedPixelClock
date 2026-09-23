@@ -55,7 +55,38 @@ def build(gal=None):
     return json.dumps({"version": 1, "maxBytes": MAX_BYTES, "effects": items}, indent=2, ensure_ascii=False) + "\n"
 
 
+def builtin_drift(gal=None):
+    """Gallery copies of compiled-in effects that no longer match their source.
+
+    While an effect is both built in (tools/luasim/scripts/<stem>.lua, no
+    @upload-only) and in the gallery (the owner's decision, 2026-09-23: keep
+    both for now), the gallery copy is the source plus its tag and title lines.
+    An edit to one and not the other would ship two different effects under
+    one name."""
+    gal = pathlib.Path(gal) if gal else GAL
+    out = []
+    for f in sorted(gal.glob("*.lua")):
+        src = ROOT / "tools/luasim/scripts" / f.name
+        if not src.exists():
+            continue
+        s = src.read_text(encoding="utf-8")
+        if "@upload-only" in "\n".join(s.splitlines()[:10]):
+            continue
+        body = [l for l in f.read_text(encoding="utf-8").splitlines(keepends=True)
+                if not (l.startswith("-- @upload-only") or l.startswith("-- @by ") or
+                        re.match(r"--\s*[A-Z0-9_ ]+?\s+-\s+.+$", l))]
+        head = [l for l in s.splitlines(keepends=True)
+                if not re.match(r"--\s*[A-Z0-9_ ]+?\s+-\s+.+$", l)]
+        if "".join(body) != "".join(head):
+            out.append(f.name)
+    return out
+
+
 if __name__ == "__main__":
+    drift = builtin_drift()
+    if drift:
+        sys.exit("gallery_index: these gallery copies differ from their built-in source in "
+                 "tools/luasim/scripts: " + ", ".join(drift) + ". Change both, or neither.")
     text = build()
     if "--check" in sys.argv:
         ok = OUT.exists() and OUT.read_text(encoding="utf-8") == text

@@ -232,8 +232,9 @@ if git diff --cached --name-only | grep -qE '^(src/fonts/|tools/fonts/|src/displ
 fi
 
 # The portal's "Add from the gallery" reads gallery/index.json from GitHub:
-# it must list exactly the scripts that are there.
-if git diff --cached --name-only | grep -qE '^(gallery/|tools/gallery_index\.py)'; then
+# it must list exactly the scripts that are there. And a built-in effect that
+# also has a gallery copy must match it (tools/luasim/scripts is its source).
+if git diff --cached --name-only | grep -qE '^(gallery/|tools/gallery_index\.py|tools/luasim/scripts/)'; then
   python3 tools/gallery_index.py --check || {
     echo
     echo "pre-commit: gallery/index.json is stale - run python3 tools/gallery_index.py and stage it."
