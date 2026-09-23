@@ -160,3 +160,27 @@ if git diff --cached --name-only | grep -qE '^(src/lua/lua_store\.(cpp|h)|tools/
     exit 1
   }
 fi
+
+# Static internal RAM: the radio's memory (AGENTS.md section 7). 2.5.5 lost the
+# network with the pool at 172 B; 2.5.6 moved page and effect state to PSRAM.
+# This builds the Waveshare image (incremental) and refuses a commit that puts a
+# new object of 256 B or more in internal RAM, or grows the total past
+# tools/ram_budget.json. A real need goes through --allow/--update with a reason.
+# Like the checks above, it builds the working tree, not the index: after a
+# partial `git add` the verdict is for what is on disk.
+if git diff --cached --name-only | grep -qE '^(src/|lib/|platformio\.ini|tools/ram_budget\.(py|json))'; then
+  PIO=$(command -v pio || echo "$HOME/.platformio/penv/bin/pio")
+  [ -x "$PIO" ] || {
+    echo "pre-commit: pio (PlatformIO) not found - the static internal RAM check needs a build."
+    exit 1
+  }
+  "$PIO" run -e matrix-waveshare-rgb -s >/dev/null 2>&1 || {
+    echo "pre-commit: the Waveshare build failed - run  pio run -e matrix-waveshare-rgb  to see why."
+    exit 1
+  }
+  python3 tools/ram_budget.py --just-built || {
+    echo
+    echo "pre-commit: static internal RAM check failed (see above)."
+    exit 1
+  }
+fi

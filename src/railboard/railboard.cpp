@@ -138,7 +138,7 @@ enum RbView : uint8_t { RB_VIEW_AUTO = 0, RB_VIEW_DEP, RB_VIEW_ARR, RB_VIEW_DIAG
 
 static PSRAM_ARRAY(RbBoard, s_board, [2]);
 static uint32_t   s_lastRenderMs = 0;   // the page was drawn this recently
-static RbBoard    s_scratch;          // parsed into first, so a bad payload never shows
+static PSRAM_OBJECT(RbBoard, s_scratch);   // parsed into first, so a bad payload never shows
 static RbHaStatus s_ha;
 static rbs::Settings s_cfg   = RB_BUILD;   // in force
 static rbs::Settings s_haCfg = RB_BUILD;   // build defaults with Home Assistant's fields over them

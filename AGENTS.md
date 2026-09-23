@@ -642,32 +642,80 @@ pointless. The third one is the useful one for an autonomous agent.
 ## 7. Memory, and why it dominates everything here
 
 The chip has 512 KB of internal SRAM and 16 MB of PSRAM. **PSRAM is not the
-constraint and flash is not the constraint. Internal SRAM is.**
+constraint and flash is not the constraint. Internal SRAM is.** It is also the
+radio's memory: the Wi-Fi driver takes its 1,626-byte receive buffers from the
+internal DMA-capable heap (`dmaFree`, `dmaMin` in /api/info), and when one cannot
+be had the panel stops answering until the link watchdog restarts Wi-Fi.
 
 A 128x64 HUB75 panel holds its DMA framebuffer in internal RAM: 32 row-pairs x
 128 pixels x 8 bits of colour depth x 2 bytes, double-buffered - **131,072 bytes,
-from boot, for ever**. That is where the internal heap goes. Moving it to PSRAM
-has been tried (2026-09-14): it frees the 130 KB and breaks both the picture and
-TLS certificate verification.
+from boot, for ever**. It stays there, and so do double buffering and colour
+depth. Moving the frames to PSRAM has been tried (2026-09-14): it frees the 130 KB
+and breaks both the picture and TLS certificate verification. A single DMA frame
+has been tried (2026-09-23, branch feat/frame-in-psram): it frees 64 KB, but a
+frame copied while the panel scans it tore 1-2 % of frames, measured on the
+panel. Double buffering never tears.
 
-What is left is roughly **19-24 KB free**, and the number that matters is not how
-much is free but **how much is free in one contiguous piece**.
+**What sits in internal RAM, 2.5.6, Waveshare build.** The frames (128 KB), the
+ESP-IDF, Wi-Fi and lwIP statics, our own statics (`.dram0.bss` + `.dram0.data`
+= 81,840 B in total, see `tools/ram_budget.json`), every task stack, and the heap.
+Up to 2.5.5 our code also kept about 36 KB of page and effect state there (the
+world clock's colour map, the custom animation's frames, the clock games, the
+star fields, the flight, rail and yacht boards). The pool had 13-15 KB free and
+fell to 172 B in ordinary running. 2.5.6 moved that state to PSRAM. Over a
+2 h 20 min run the pool had 30-50 KB free and 21.5 KB at the lowest, with no
+failed allocation.
 
-Two things follow, and both are counter-intuitive enough to be worth stating:
+**Where the pool goes at run time.** Every task stack is internal: FreeRTOS
+asserts it for a static stack, and the prebuilt config has no external stacks.
+That is 8-12 KB for each fetch task. Sockets and Wi-Fi buffers are internal too.
+mbedTLS's own buffers are in PSRAM already (`src/network/tls_psram.cpp`). One-off
+fetches take turns (`src/network/net_lock.h`, `src/net/net_broker.h`), so adding
+one does not raise the peak. A long-lived connection does: the yacht radar's AIS
+stream holds 16-17.5 KB for as long as its page is on screen (17.5 KB measured
+2026-09-14, the network table above and the knowledge base's docs/32-net-broker.md;
+16.3 KB on 2.5.6, 2026-09-23).
+
+**The rules** (`tools/ram_budget.py` enforces the first one at every commit that
+touches src/, and in release.py):
+
+1. **New page or effect state goes to PSRAM.** Declare it with `PSRAM_ARRAY()` or
+   `PSRAM_OBJECT()` from `src/util/psram_state.h`, or `heap_caps_malloc(n,
+   MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)` at boot. Only what DMA, an interrupt or
+   a task stack touches has to be internal. Such an object goes on the budget's
+   list with its reason (`tools/ram_budget.py --allow ... --reason ...`), and a
+   reasoned rise of the total goes through `--update --reason`. The check fails
+   on a new internal object of 256 B or more in the object files of src/ (lib/
+   is covered only by the total), or a total more than 1,024 B over the budget. Both numbers are our own choice, not a standard: 256 B was the
+   cut-off of the 2026-09-23 inventory, and the slack lets small variables pass
+   while arrays are caught.
+2. **Network work takes turns.** A new fetch goes through the lock or the broker.
+   A new long-lived connection is measured before it is kept: it spends the
+   margin directly.
+3. **Measure against the baseline, in the same conditions.** Run
+   `tools/agent/health.py` (normal pace, and `--stress`) and log `dmaMin` over a
+   long run. Compare with 21.5 KB, the lowest since boot on 2.5.6 over
+   2 h 20 min. `largestHeapBlock` varies between boots, in 1,024-byte steps: a
+   single reading measures the boot, not the change, so compare distributions
+   (`tools/nsc/measure/paired.py`, in the knowledge-base repository
+   LED-MATRIX APOLLO, not this one).
+4. **The sdkconfig that matters is the one for the board's memory type.** It is
+   `tools/sdk/esp32s3/<type>/include/sdkconfig.h` in the framework, not the
+   top-level file. CONFIG_SPIRAM_BOOT_INIT, for one, is on for opi_opi and
+   qio_opi and off for qio_qspi.
+
+Two more facts, both counter-intuitive enough to be worth stating:
 
 **`largestHeapBlock` does not decay over time.** Sampled repeatedly within one
 boot it does not move by a single byte. It varies *between* boots, in 1,024-byte
-steps, with roughly one boot in seven landing 6 KB below the usual band. Anyone
-comparing two single readings is measuring the boot, not the change. Seven boots,
-compare distributions - `tools/nsc/measure/paired.py`.
+steps, with roughly one boot in seven landing 6 KB below the usual band.
 
 **Anything that needs a large contiguous block at an unpredictable moment is the
 enemy.** Four modules used to create 8-13 KB fetch tasks on demand; the panel
 died when a browser opened the portal at the wrong moment. They now share one
 permanent task whose stack is in `.bss` (`src/net/net_broker.h`), so nothing asks
-for contiguous memory at a moment nobody chose. If you add a feature, prefer
-PSRAM (`heap_caps_malloc(n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)`) and prefer
-allocating at boot over allocating on demand.
+for contiguous memory at a moment nobody chose. Prefer allocating at boot over
+allocating on demand.
 
 The build enforces stack frames: `-fstack-usage` and `-Wstack-usage=2048` on our
 sources. Do not raise a task's stack to fit a work buffer - move the buffer.

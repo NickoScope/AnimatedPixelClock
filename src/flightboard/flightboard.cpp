@@ -402,8 +402,9 @@ static bool panelOffset(int64_t now, int32_t *off) {
 // Both halves from the lists as they stand, every time in the airport's own
 // local time. (Home Assistant's MQTT boards arrive as HH:MM in its zone and
 // cannot be converted; they are shown as they come.)
+static PSRAM_OBJECT(aero::Board, s_directBoard);   // 750 B; off the loop task's stack, in PSRAM
 static void rebuildDirect() {
-  static aero::Board board;           // 750 B; kept off the loop task's stack
+  aero::Board &board = s_directBoard;
   const int64_t now = (int64_t)time(nullptr);
   const uint32_t nowMs = millis();
   for (uint8_t d = 0; d < 2; d++) {

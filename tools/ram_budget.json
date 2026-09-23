@@ -1,0 +1,29 @@
+{
+  "env": "matrix-waveshare-rgb",
+  "dram_bytes": 81840,
+  "slack_bytes": 1024,
+  "big_symbol_bytes": 256,
+  "internal_allowed": {
+    "net/net_broker:(anonymous namespace)::s_stack": "the network broker's task stack: FreeRTOS asserts a static stack is internal (net_broker.cpp)",
+    "net/net_broker:(anonymous namespace)::s_tcb": "the network broker's task control block: internal like its stack",
+    "net/net_broker:(anonymous namespace)::s_mb": "present at the 2026-09-23 baseline (2.5.6); the broker's mailbox, shared between loop() and the broker task",
+    "main:settings": "present at the 2026-09-23 baseline (2.5.6); the settings object every module reads, and NVS saves",
+    "main:metricData": "present at the 2026-09-23 baseline (2.5.6); PC stats, written from the network side",
+    "mqtt/mqtt_bus:s_subs": "present at the 2026-09-23 baseline (2.5.6); MQTT subscriptions, called back from the MQTT client",
+    "presence/presence:(anonymous namespace)::s_model": "present at the 2026-09-23 baseline (2.5.6); the presence model, an object with its own constructor",
+    "audio/audio_mic:(anonymous namespace)::s_shared": "present at the 2026-09-23 baseline (2.5.6); shared with the audio capture task; the module is off (docs/22 debt D1)",
+    "network/network:wifiManager": "present at the 2026-09-23 baseline (2.5.6); WiFiManager, a library object with a constructor",
+    "yachtradar/yachtradar:s_ws": "present at the 2026-09-23 baseline (2.5.6); WebSocketsClient, a library object with a constructor",
+    "web/web:server": "present at the 2026-09-23 baseline (2.5.6); WebServer, a library object with a constructor",
+    "lua/lua_effects:(anonymous namespace)::s_fx": "present at the 2026-09-23 baseline (2.5.6); Lua effect task state, shared with that task",
+    "network/improv_setup:improvSerial": "present at the 2026-09-23 baseline (2.5.6); the Improv serial object, a library object with a constructor"
+  },
+  "history": [
+    {
+      "date": "2026-09-23",
+      "from": 82992,
+      "to": 81840,
+      "reason": "2.5.6 baseline: page and effect state moved to PSRAM (34.8 KB + the flight and rail scratch boards)"
+    }
+  ]
+}

@@ -12,6 +12,7 @@
 //
 //   static uint8_t buf[N];            becomes   static PSRAM_ARRAY(uint8_t, buf, [N]);
 //   extern Frag frags[N];             becomes   PSRAM_ARRAY_EXTERN(Frag, frags, [N]);
+//   static Board b;                   becomes   static PSRAM_OBJECT(Board, b);
 //
 // The name is a reference to the array, so indexing, decay to a pointer and
 // sizeof(buf) mean exactly what they meant before. The memory is zeroed, which
@@ -39,11 +40,13 @@ T &psramState() {
 
 #define PSRAM_ARRAY(elem, name, dims) elem (&name) dims = psramState<elem dims>()
 #define PSRAM_ARRAY_EXTERN(elem, name, dims) extern elem (&name) dims
+#define PSRAM_OBJECT(type, name) type &name = psramState<type>()
 
 #else
 
 inline size_t psramStateBytes() { return 0; }
 #define PSRAM_ARRAY(elem, name, dims) elem name dims
 #define PSRAM_ARRAY_EXTERN(elem, name, dims) extern elem name dims
+#define PSRAM_OBJECT(type, name) type name
 
 #endif

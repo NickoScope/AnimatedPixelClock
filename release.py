@@ -275,6 +275,9 @@ def main():
         print("Skipping build (--skip-build)")
 
     refresh_build_metadata(pio)
+    # The radio's memory: no release that puts page state back in internal RAM
+    # (tools/ram_budget.py, AGENTS.md section 7).
+    run([sys.executable, str(REPO_ROOT / "tools" / "ram_budget.py")] + ([] if args.skip_build else ["--just-built"]))
     # Validate every variant before changing any published file.
     images = {env: prepare_full_bin(env, version) for env, *_ in VARIANTS}
 
