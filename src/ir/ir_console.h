@@ -34,17 +34,20 @@ struct Command {
     kNone = 0,   // not addressed to us - the line starts with something else
     kHelp,
     kStatus,
-    kSim,        // slot + arg(hold ms) - `cw`, `ccw` and `ok` arrive as this too
-    kRepeat,     // slot + arg(count): `ir cw 3`
+    kPress,      // slot (a button, 0-based) + arg(hold ms): `ir press 3 [ms]`
+    kDo,         // fn + arg (page, or hold ms for ok): `ir do bright_up`, `ir ok 1200`
+    kRepeatFn,   // fn + arg(count): `ir cw 3`
     kLearn,      // slot
     kCancel,
     kClear,      // slot
     kClearAll,
+    kSetFn,      // slot + fn + arg(page): `ir fn 5 page 20`
     kError,      // ours, but wrong: `error` says how
   } kind;
   uint8_t     slot;
   uint32_t    arg;
   const char *error;   // a literal, only when kind == kError
+  uint8_t     fn;      // zero (kFnNone) when left out of a brace initializer
 };
 
 namespace detail {
@@ -87,26 +90,14 @@ inline bool number(const char *w, uint32_t *out) {
 }
 
 // A slot by name ("ok", "bright_up") or by number ("2").
-inline bool slot(const char *w, uint8_t *out) {
-  uint32_t n = 0;
-  if (number(w, &n)) {
-    if (n >= kSlotCount) return false;
-    *out = (uint8_t)n;
-    return true;
-  }
-  return slotByName(w, out);
-}
-
 }  // namespace detail
 
-// Parses one line. Returns false when the line is not addressed to this module
-// (so anything else on the serial port is left alone); true with kind == kError
-// when it is ours and wrong.
 inline bool parseCommand(const char *line, Command *out) {
   if (!line || !out) return false;
-  Command c{Command::kNone, 0, 0, nullptr};
+  Command c{Command::kNone, 0, 0, nullptr, kFnNone};
   const char *p = line;
   char w[24];
+  auto fail = [&](const char *why) { c.kind = Command::kError; c.error = why; *out = c; return true; };
 
   if (!detail::word(p, w, sizeof(w))) return false;
   if (!detail::sameLower(w, "IR")) return false;
@@ -116,65 +107,82 @@ inline bool parseCommand(const char *line, Command *out) {
   if (detail::sameLower(w, "HELP") || w[0] == '?') { c.kind = Command::kHelp; *out = c; return true; }
   if (detail::sameLower(w, "CANCEL")) { c.kind = Command::kCancel; *out = c; return true; }
 
-  // `ir cw [n]` / `ir ccw [n]`: the shorthand, because a detent count is what
-  // one actually wants to type when walking the pages.
+  // The knob's three, by their old names: `ir cw 3`, `ir ccw`, `ir ok 1200`.
   const bool cw = detail::sameLower(w, "CW"), ccw = detail::sameLower(w, "CCW");
   if (cw || ccw) {
-    c.kind = Command::kRepeat;
-    c.slot = cw ? kCw : kCcw;
+    c.kind = Command::kRepeatFn;
+    c.fn = cw ? kFnCw : kFnCcw;
     c.arg = 1;
     char a[24];
     if (detail::word(p, a, sizeof(a))) {
-      if (!detail::number(a, &c.arg) || c.arg == 0) { c.kind = Command::kError; c.error = "count must be 1 or more"; }
-      else if (c.arg > 64) c.arg = 64;   // a typo should not spin the display for a minute
+      if (!detail::number(a, &c.arg) || c.arg == 0) return fail("count must be 1 or more");
+      if (c.arg > 64) c.arg = 64;   // a typo should not spin the display for a minute
     }
     *out = c;
     return true;
   }
-
   if (detail::sameLower(w, "OK")) {
-    c.kind = Command::kSim;
-    c.slot = kOk;
+    c.kind = Command::kDo;
+    c.fn = kFnOk;
     char a[24];
-    if (detail::word(p, a, sizeof(a)) && !detail::number(a, &c.arg)) {
-      c.kind = Command::kError; c.error = "hold time must be a number of milliseconds";
+    if (detail::word(p, a, sizeof(a)) && !detail::number(a, &c.arg))
+      return fail("hold time must be a number of milliseconds");
+    *out = c;
+    return true;
+  }
+
+  // `ir do <function> [page | hold ms]` - a function, no button needed.
+  if (detail::sameLower(w, "DO")) {
+    char a[24];
+    if (!detail::word(p, a, sizeof(a))) return fail("which function? `ir help` lists them");
+    if (!fnByName(a, &c.fn)) return fail("no such function - `ir help` lists them");
+    c.kind = Command::kDo;
+    char b[24];
+    if (detail::word(p, b, sizeof(b)) && !detail::number(b, &c.arg))
+      return fail(c.fn == kFnPage ? "the page must be a number" : "hold time must be a number of milliseconds");
+    if (c.fn == kFnPage && c.arg > 255) return fail("the page must be 0..255");
+    *out = c;
+    return true;
+  }
+
+  // `ir fn <button> <function> [page]`
+  if (detail::sameLower(w, "FN")) {
+    char a[24], b[24];
+    if (!detail::word(p, a, sizeof(a))) return fail("which button? 1..10");
+    if (!slotByNumber(a, &c.slot)) return fail("buttons are 1..10");
+    if (!detail::word(p, b, sizeof(b))) return fail("which function? `ir help` lists them");
+    if (!fnByName(b, &c.fn)) return fail("no such function - `ir help` lists them");
+    c.kind = Command::kSetFn;
+    char e[24];
+    if (c.fn == kFnPage) {
+      if (!detail::word(p, e, sizeof(e)) || !detail::number(e, &c.arg) || c.arg > 255)
+        return fail("which page? a number, as /api/panel lists them");
     }
     *out = c;
     return true;
   }
 
-  if (detail::sameLower(w, "SIM") || detail::sameLower(w, "LEARN") || detail::sameLower(w, "CLEAR")) {
-    const bool sim = detail::sameLower(w, "SIM"), learn = detail::sameLower(w, "LEARN");
+  // `ir press|sim <button> [ms]`, `ir learn <button>`, `ir clear <button>|all`
+  const bool press = detail::sameLower(w, "PRESS") || detail::sameLower(w, "SIM");
+  const bool learn = detail::sameLower(w, "LEARN");
+  if (press || learn || detail::sameLower(w, "CLEAR")) {
     char a[24];
-    if (!detail::word(p, a, sizeof(a))) {
-      c.kind = Command::kError;
-      c.error = sim ? "which slot? try `ir sim ok`" : (learn ? "which slot? try `ir learn ok`"
-                                                             : "which slot? or `ir clear all`");
-      *out = c;
-      return true;
-    }
-    if (!sim && !learn && detail::sameLower(a, "ALL")) { c.kind = Command::kClearAll; *out = c; return true; }
-    if (!detail::slot(a, &c.slot)) {
-      c.kind = Command::kError;
-      c.error = "no such slot - `ir help` lists them";
-      *out = c;
-      return true;
-    }
-    c.kind = sim ? Command::kSim : (learn ? Command::kLearn : Command::kClear);
-    if (sim) {
+    if (!detail::word(p, a, sizeof(a)))
+      return fail(press ? "which button? try `ir press 3`" : (learn ? "which button? try `ir learn 3`"
+                                                                     : "which button? or `ir clear all`"));
+    if (!press && !learn && detail::sameLower(a, "ALL")) { c.kind = Command::kClearAll; *out = c; return true; }
+    if (!slotByNumber(a, &c.slot)) return fail("buttons are 1..10");
+    c.kind = press ? Command::kPress : (learn ? Command::kLearn : Command::kClear);
+    if (press) {
       char b[24];
-      if (detail::word(p, b, sizeof(b)) && !detail::number(b, &c.arg)) {
-        c.kind = Command::kError; c.error = "hold time must be a number of milliseconds";
-      }
+      if (detail::word(p, b, sizeof(b)) && !detail::number(b, &c.arg))
+        return fail("hold time must be a number of milliseconds");
     }
     *out = c;
     return true;
   }
 
-  c.kind = Command::kError;
-  c.error = "unknown word - `ir help` lists the commands";
-  *out = c;
-  return true;
+  return fail("unknown word - `ir help` lists the commands");
 }
 
 }  // namespace ir

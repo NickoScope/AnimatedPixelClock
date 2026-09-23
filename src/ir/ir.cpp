@@ -39,13 +39,11 @@
 // (AP_1v8)"), which is exactly why the knob may already pull them about. Check
 // the fuse with espefuse summary before soldering anything to IO45 on another
 // board. IO46 gates ROM messages at boot and, with GPIO0, picks the boot mode.
-#ifndef IR_PIN
-#define IR_PIN 45
-#endif
-
+// IR_PIN is in ir.h (GPIO0 by default). The comment above is the history of
+// the IO45 plan and still holds for anyone building IR_PIN=45.
 #if defined(IR_RX_ENABLED) && defined(CONTROL_ENCODER_ENABLED) && defined(BOARD_WAVESHARE_RGB_MATRIX)
 #if (IR_PIN == 45) || (IR_PIN == 46)
-#error "IR_RX_ENABLED and CONTROL_ENCODER_ENABLED want the same pin (IO45/IO46 are the whole of header U8). Retire the knob, or build IR_PIN elsewhere."
+#error "IR_RX_ENABLED and CONTROL_ENCODER_ENABLED want the same pin (IO45/IO46 carry the knob). Keep IR_PIN on GPIO0, where it shares the line with the knob's switch by design."
 #endif
 #endif
 
@@ -77,17 +75,30 @@ static bool     s_rxOn = false;
 // Its own namespace, so nothing here can disturb the settings blob. Opened for
 // the length of one operation and closed again: a handle held open is a handle
 // that outlives a crash half-written.
-static const char *kNs = "irmap";
+//
+// "irbtn" since 2026-09-23 (ten buttons with a function each). The earlier
+// "irmap" held eight fixed slots; no receiver had ever been fitted, so it held
+// nothing, and it is left alone rather than migrated.
+static const char *kNs = "irbtn";
 
 static void keyFor(char *out, size_t n, char kind, uint8_t slot) {
-  snprintf(out, n, "%c%u", kind, (unsigned)slot);   // v0..v7, p0..p7
+  snprintf(out, n, "%c%u", kind, (unsigned)slot);   // v0..v9 code, p protocol, f function, a page
 }
 
 static void mapLoad() {
   Preferences p;
-  if (!p.begin(kNs, true)) return;   // no namespace yet: nothing learned, which is not an error
+  if (!p.begin(kNs, true)) return;   // no namespace yet: the default layout, nothing learned
   char k[8];
   for (uint8_t i = 0; i < ir::kSlotCount; i++) {
+    keyFor(k, sizeof(k), 'f', i);
+    if (p.isKey(k)) {
+      const uint8_t f = p.getUChar(k, ir::kFnNone);
+      keyFor(k, sizeof(k), 'a', i);
+      const uint8_t a = p.isKey(k) ? p.getUChar(k, 0) : 0;
+      portENTER_CRITICAL(&s_mux);
+      s_dec.map().setFn(i, f < ir::kFnCount ? f : ir::kFnNone, a);
+      portEXIT_CRITICAL(&s_mux);
+    }
     keyFor(k, sizeof(k), 'v', i);
     if (!p.isKey(k)) continue;
     const uint64_t v = p.getULong64(k, 0);
@@ -111,13 +122,23 @@ static void mapSaveSlot(uint8_t slot, uint8_t proto, uint64_t value) {
   p.end();
 }
 
+static void mapSaveFn(uint8_t slot, uint8_t fn, uint8_t arg) {
+  Preferences p;
+  if (!p.begin(kNs, false)) return;
+  char k[8];
+  keyFor(k, sizeof(k), 'f', slot); p.putUChar(k, fn);
+  keyFor(k, sizeof(k), 'a', slot); p.putUChar(k, arg);
+  p.end();
+}
+
 static void mapClearSlot(uint8_t slot) {
   Preferences p;
   if (!p.begin(kNs, false)) return;
   char k[8];
   // isKey() first: removing a key that is not there rewrites the whole page for
   // nothing, and on this board that was measured at a visible display freeze
-  // (src/config/settings.cpp, the same fix).
+  // (src/config/settings.cpp, the same fix). The function stays: forgetting a
+  // code is not forgetting what the button is for.
   keyFor(k, sizeof(k), 'v', slot); if (p.isKey(k)) p.remove(k);
   keyFor(k, sizeof(k), 'p', slot); if (p.isKey(k)) p.remove(k);
   p.end();
@@ -140,27 +161,30 @@ static void report(const ir::Outcome &o) {
   switch (o.kind) {
     case ir::Outcome::kLearned:
       if (o.movedFrom >= 0)
-        Serial.printf("[ir] learned %s (taken from %s)\n", ir::slotName((uint8_t)o.slot),
-                      ir::slotName((uint8_t)o.movedFrom));
+        Serial.printf("[ir] learned button %d (taken from button %d)\n", o.slot + 1, o.movedFrom + 1);
       else
-        Serial.printf("[ir] learned %s\n", ir::slotName((uint8_t)o.slot));
+        Serial.printf("[ir] learned button %d\n", o.slot + 1);
       break;
     case ir::Outcome::kReserved:
-      Serial.printf("[ir] %s: learned, but nothing is wired to it yet\n", ir::slotName((uint8_t)o.slot));
+      Serial.printf("[ir] button %d: learned, set to No action\n", o.slot + 1);
       break;
     default:
       break;
   }
 }
 
-// Applies one decoded frame or one simulated slot, then does the slow work
-// (NVS, serial) outside the lock.
-static ir::Outcome apply(uint32_t nowMs, const ir::Frame *f, int16_t simSlot, uint32_t holdMs) {
-  ir::Outcome o{ir::Outcome::kNothing, -1, -1};
+// Applies one decoded frame, one simulated button (simSlot >= 0) or one
+// simulated function (simFn >= 0), then does the slow work - NVS, serial, the
+// action itself - outside the lock.
+static ir::Outcome apply(uint32_t nowMs, const ir::Frame *f, int16_t simSlot, uint32_t holdMs,
+                         int16_t simFn = -1, uint8_t simArg = 0) {
+  ir::Outcome o{ir::Outcome::kNothing, -1, -1, ir::kFnNone, 0};
   uint8_t proto = 0;
   uint64_t value = 0;
   portENTER_CRITICAL(&s_mux);
-  o = f ? s_dec.frame(nowMs, *f) : s_dec.simulate(nowMs, (uint8_t)simSlot, holdMs);
+  if (f)               o = s_dec.frame(nowMs, *f);
+  else if (simFn >= 0) o = s_dec.simulateFn(nowMs, (uint8_t)simFn, simArg, holdMs);
+  else                 o = s_dec.simulate(nowMs, (uint8_t)simSlot, holdMs);
   if (o.kind == ir::Outcome::kLearned && o.slot >= 0) {
     proto = s_dec.map().proto((uint8_t)o.slot);
     value = s_dec.map().value((uint8_t)o.slot);
@@ -171,6 +195,7 @@ static ir::Outcome apply(uint32_t nowMs, const ir::Frame *f, int16_t simSlot, ui
     if (o.movedFrom >= 0) mapClearSlot((uint8_t)o.movedFrom);
     mapSaveSlot((uint8_t)o.slot, proto, value);
   }
+  if (o.kind == ir::Outcome::kAction) irRunAction(o.fn, o.arg);
   report(o);
   return o;
 }
@@ -180,15 +205,16 @@ static char    s_line[96];
 static uint8_t s_len = 0;
 
 static void printHelp() {
-  Serial.println(F("[ir] ir                  what this module knows"));
-  Serial.println(F("[ir] ir cw [n] | ccw [n] n detents, as the knob's"));
-  Serial.println(F("[ir] ir ok [ms]          the button; ms holds it (1200 = long press)"));
-  Serial.println(F("[ir] ir sim <slot> [ms]  any slot, the path a real frame takes"));
-  Serial.println(F("[ir] ir learn <slot>     open the window, then press the remote"));
-  Serial.println(F("[ir] ir cancel           close it"));
-  Serial.println(F("[ir] ir clear <slot>|all forget learned codes"));
-  Serial.print(F("[ir] slots:"));
-  for (uint8_t i = 0; i < ir::kSlotCount; i++) Serial.printf(" %u=%s", (unsigned)i, ir::slotName(i));
+  Serial.println(F("[ir] ir                        what this module knows"));
+  Serial.println(F("[ir] ir press <1..10> [ms]     press a button: whatever it is set to"));
+  Serial.println(F("[ir] ir do <function> [n]      run a function; n = page for `page`, hold ms for `ok`"));
+  Serial.println(F("[ir] ir cw [n] | ccw [n] | ok [ms]   the knob's three"));
+  Serial.println(F("[ir] ir fn <1..10> <function> [page]  what a button does"));
+  Serial.println(F("[ir] ir learn <1..10>          open the window, then press the remote"));
+  Serial.println(F("[ir] ir cancel                 close it"));
+  Serial.println(F("[ir] ir clear <1..10>|all      forget learned codes (functions stay)"));
+  Serial.print(F("[ir] functions:"));
+  for (uint8_t i = 0; i < ir::kFnCount; i++) Serial.printf(" %s", ir::fnInfo(i).name);
   Serial.println();
 }
 
@@ -218,12 +244,12 @@ static void printStatus() {
 #else
   Serial.printf("[ir] no receiver in this build (IR_RX_ENABLED off); pin would be IO%d\n", IR_PIN);
 #endif
-  Serial.printf("[ir] %u of %u slots learned, %lu frames, %lu ignored\n", (unsigned)bound,
+  Serial.printf("[ir] %u of %u buttons learned, %lu frames, %lu ignored\n", (unsigned)bound,
                 (unsigned)ir::kSlotCount, (unsigned long)frames, (unsigned long)ignored);
   if (learn >= 0)
-    Serial.printf("[ir] learning %s - press the button on the remote (%lu ms left)\n",
-                  ir::slotName((uint8_t)learn), (unsigned long)learnLeft);
-  if (hit >= 0) Serial.printf("[ir] last slot: %s\n", ir::slotName((uint8_t)hit));
+    Serial.printf("[ir] learning button %d - press it on the remote (%lu ms left)\n",
+                  learn + 1, (unsigned long)learnLeft);
+  if (hit >= 0) Serial.printf("[ir] last button: %d\n", hit + 1);
   if (seen) {
     char pn[16];
     protoName(sProto, pn, sizeof(pn));
@@ -235,16 +261,20 @@ static void printStatus() {
     uint64_t v;
     uint8_t p;
     uint32_t h;
+    uint8_t fn, arg;
     portENTER_CRITICAL(&s_mux);
     b = s_dec.map().bound(i);
     v = s_dec.map().value(i);
     p = s_dec.map().proto(i);
     h = s_dec.hits(i);
+    fn = s_dec.map().fn(i);
+    arg = s_dec.map().arg(i);
     portEXIT_CRITICAL(&s_mux);
     char pn[16];
     protoName(p, pn, sizeof(pn));
-    Serial.printf("[ir]   %u %-11s %s%s  hits %lu\n", (unsigned)i, ir::slotName(i),
-                  b ? pn : "-", b ? "" : "", (unsigned long)h);
+    Serial.printf("[ir]   %2u %-13s%s %s  hits %lu\n", (unsigned)i + 1, ir::fnInfo(fn).name,
+                  fn == ir::kFnPage ? (String(" ") + arg).c_str() : "", b ? pn : "not learned",
+                  (unsigned long)h);
     if (b) Serial.printf("[ir]     code 0x%llX\n", (unsigned long long)v);
   }
 }
@@ -254,23 +284,31 @@ static void runCommand(const ir::Command &c) {
   switch (c.kind) {
     case ir::Command::kHelp: printHelp(); break;
     case ir::Command::kStatus: printStatus(); break;
-    case ir::Command::kSim:
-      Serial.printf("[ir] sim %s%s\n", ir::slotName(c.slot), c.arg ? " (held)" : "");
+    case ir::Command::kPress:
+      Serial.printf("[ir] press button %u%s\n", (unsigned)c.slot + 1, c.arg ? " (held)" : "");
       apply(now, nullptr, (int16_t)c.slot, c.arg);
       break;
-    case ir::Command::kRepeat:
-      Serial.printf("[ir] sim %s x%lu\n", ir::slotName(c.slot), (unsigned long)c.arg);
+    case ir::Command::kDo:
+      Serial.printf("[ir] do %s\n", ir::fnInfo(c.fn).name);
+      apply(now, nullptr, -1, c.fn == ir::kFnOk ? c.arg : 0, (int16_t)c.fn, (uint8_t)c.arg);
+      break;
+    case ir::Command::kRepeatFn:
+      Serial.printf("[ir] do %s x%lu\n", ir::fnInfo(c.fn).name, (unsigned long)c.arg);
       // One detent per call, as a real remote sends one frame per press: the
       // seam drains at 1 kHz, so a burst arrives as a burst of detents and the
       // accumulator's ceiling is exercised rather than bypassed.
-      for (uint32_t i = 0; i < c.arg; i++) apply(now, nullptr, (int16_t)c.slot, 0);
+      for (uint32_t i = 0; i < c.arg; i++) apply(now, nullptr, -1, 0, (int16_t)c.fn, 0);
+      break;
+    case ir::Command::kSetFn:
+      if (irSetFn(c.slot, c.fn, (uint8_t)c.arg))
+        Serial.printf("[ir] button %u: %s\n", (unsigned)c.slot + 1, ir::fnInfo(c.fn).label);
       break;
     case ir::Command::kLearn:
       portENTER_CRITICAL(&s_mux);
       s_dec.learnArm(c.slot, now);
       portEXIT_CRITICAL(&s_mux);
-      Serial.printf("[ir] learning %s - press its button on the remote within %lu s\n",
-                    ir::slotName(c.slot), (unsigned long)(ir::kLearnWindowMs / 1000));
+      Serial.printf("[ir] learning button %u - press it on the remote within %lu s\n",
+                    (unsigned)c.slot + 1, (unsigned long)(ir::kLearnWindowMs / 1000));
 #if !defined(IR_RX_ENABLED)
       Serial.println(F("[ir] (this build has no receiver, so nothing will arrive)"));
 #endif
@@ -282,15 +320,12 @@ static void runCommand(const ir::Command &c) {
       Serial.println(F("[ir] learn window closed"));
       break;
     case ir::Command::kClear:
-      portENTER_CRITICAL(&s_mux);
-      s_dec.map().clear(c.slot);
-      portEXIT_CRITICAL(&s_mux);
-      mapClearSlot(c.slot);
-      Serial.printf("[ir] %s forgotten\n", ir::slotName(c.slot));
+      irClearSlot(c.slot);
+      Serial.printf("[ir] button %u forgotten\n", (unsigned)c.slot + 1);
       break;
     case ir::Command::kClearAll:
       irClearAll();
-      Serial.println(F("[ir] every code forgotten"));
+      Serial.println(F("[ir] every code forgotten; the functions stay"));
       break;
     case ir::Command::kError:
       Serial.printf("[ir] %s\n", c.error ? c.error : "no");
@@ -334,13 +369,13 @@ void irBegin() {
 #if defined(IR_RX_ENABLED)
   if (settings.irEnabled) {
     s_recv.setUnknownThreshold(12);   // shorter bursts are noise, not a protocol
-    s_recv.enableIRIn();
+    s_recv.enableIRIn(true);   // keep the pull-up: GPIO0 is shared with the knob's switch
     s_rxOn = true;
   }
-  Serial.printf("[ir] IO%d, %u/%u slots learned, receiver %s. Type `ir help` on this port.\n", IR_PIN,
+  Serial.printf("[ir] IO%d, %u/%u buttons learned, receiver %s. Type `ir help` on this port.\n", IR_PIN,
                 (unsigned)bound, (unsigned)ir::kSlotCount, s_rxOn ? "listening" : "off");
 #else
-  Serial.printf("[ir] no receiver in this build, %u/%u slots learned. Type `ir help` on this port.\n",
+  Serial.printf("[ir] no receiver in this build, %u/%u buttons learned. Type `ir help` on this port.\n",
                 (unsigned)bound, (unsigned)ir::kSlotCount);
 #endif
 }
@@ -365,7 +400,11 @@ void irLoop() {
       f.unknown = (r.decode_type == decode_type_t::UNKNOWN);
       apply(millis(), &f, -1, 0);
     }
-    s_recv.resume();
+    // No resume() here: with the stable copy (save_buffer) decode() already
+    // re-armed the receiver itself (IRrecv.cpp, decode()), and a second
+    // resume() after apply() - NVS, serial, MQTT - would reset a frame that
+    // had started arriving meanwhile. The library's own IRrecvDumpV2/V3 do the
+    // same. Gate audit, 2026-09-23.
   }
 #endif
 }
@@ -429,11 +468,7 @@ bool irClearSlot(uint8_t slot) {
 }
 
 void irClearAll() {
-  portENTER_CRITICAL(&s_mux);
-  s_dec.map().reset();
-  portEXIT_CRITICAL(&s_mux);
-  Preferences p;
-  if (p.begin(kNs, false)) { p.clear(); p.end(); }
+  for (uint8_t i = 0; i < ir::kSlotCount; i++) irClearSlot(i);   // codes only: the functions stay
 }
 
 bool irSimulate(uint8_t slot, uint32_t holdMs) {
@@ -442,11 +477,29 @@ bool irSimulate(uint8_t slot, uint32_t holdMs) {
   return true;
 }
 
+bool irSimulateFn(uint8_t fn, uint8_t arg, uint32_t holdMs) {
+  if (fn >= ir::kFnCount) return false;
+  apply(millis(), nullptr, -1, fn == ir::kFnOk ? holdMs : 0, (int16_t)fn, arg);
+  return true;
+}
+
+bool irSetFn(uint8_t slot, uint8_t fn, uint8_t arg) {
+  if (slot >= ir::kSlotCount || fn >= ir::kFnCount) return false;
+  bool ok;
+  bool same;
+  portENTER_CRITICAL(&s_mux);
+  same = s_dec.map().fn(slot) == fn && s_dec.map().arg(slot) == (fn == ir::kFnPage ? arg : 0);
+  ok = s_dec.map().setFn(slot, fn, arg);
+  portEXIT_CRITICAL(&s_mux);
+  if (ok && !same) mapSaveFn(slot, fn, fn == ir::kFnPage ? arg : 0);   // no NVS write for no change
+  return ok;
+}
+
 void irSettingsChanged() {
 #if defined(IR_RX_ENABLED)
   if (settings.irEnabled && !s_rxOn) {
     s_recv.setUnknownThreshold(12);
-    s_recv.enableIRIn();
+    s_recv.enableIRIn(true);   // keep the pull-up: GPIO0 is shared with the knob's switch
     s_rxOn = true;
     Serial.println(F("[ir] receiver on"));
   } else if (!settings.irEnabled && s_rxOn) {
@@ -486,10 +539,10 @@ void irInfoJson(JsonObject out) {
   out["frames"] = frames;
   out["ignored"] = ignored;
   if (learn >= 0) {
-    out["learning"] = ir::slotName((uint8_t)learn);
+    out["learning"] = learn + 1;      // the button, as people number them
     out["learnMs"] = learnLeft;
   }
-  if (hit >= 0) out["lastSlot"] = ir::slotName((uint8_t)hit);
+  if (hit >= 0) out["lastButton"] = hit + 1;
 
   uint8_t  sProto = 0;
   uint64_t sValue = 0;
@@ -507,23 +560,30 @@ void irInfoJson(JsonObject out) {
     out["lastRepeat"] = sRepeat;
     out["lastAgeMs"] = sAge;
   }
+}
 
-  JsonArray arr = out["map"].to<JsonArray>();
+// The whole table, for the Remote card. Not in /api/info: that one is polled
+// every few seconds by every open portal, and the table is the bigger part.
+void irDetailJson(JsonObject out) {
+  irInfoJson(out);
+  JsonArray arr = out["buttons"].to<JsonArray>();
   for (uint8_t i = 0; i < ir::kSlotCount; i++) {
     bool b;
     uint64_t v;
-    uint8_t p;
+    uint8_t p, fn, arg;
     uint32_t h;
     portENTER_CRITICAL(&s_mux);
     b = s_dec.map().bound(i);
     v = s_dec.map().value(i);
     p = s_dec.map().proto(i);
     h = s_dec.hits(i);
+    fn = s_dec.map().fn(i);
+    arg = s_dec.map().arg(i);
     portEXIT_CRITICAL(&s_mux);
     JsonObject o = arr.add<JsonObject>();
-    o["name"] = ir::slotName(i);
-    o["hint"] = ir::slotHint(i);
-    o["knob"] = ir::slotDrivesKnob(i);
+    o["n"] = i + 1;
+    o["fn"] = ir::fnInfo(fn).name;
+    if (fn == ir::kFnPage) o["page"] = arg;
     o["bound"] = b;
     o["hits"] = h;
     if (b) {
@@ -533,6 +593,14 @@ void irInfoJson(JsonObject out) {
       o["proto"] = pn;
       o["code"] = hex;
     }
+  }
+  JsonArray fns = out["functions"].to<JsonArray>();
+  for (uint8_t f = 0; f < ir::kFnCount; f++) {
+    if (!irActionBuilt(f)) continue;   // this firmware lacks the module behind it
+    JsonObject o = fns.add<JsonObject>();
+    o["name"] = ir::fnInfo(f).name;
+    o["label"] = ir::fnInfo(f).label;
+    o["group"] = ir::fnInfo(f).group;
   }
 }
 

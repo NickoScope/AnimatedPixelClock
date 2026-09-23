@@ -28,7 +28,8 @@ ROOT = HERE.parents[1]
 def main():
     with tempfile.TemporaryDirectory() as tmp:
         exe = pathlib.Path(tmp) / "ir_host_test"
-        subprocess.run(["c++", "-std=c++17", "-O2", "-Wall", "-Wextra", "-Werror",
+        # gnu++11, as the firmware builds: C++17 once hid an aggregate error here.
+        subprocess.run(["c++", "-std=gnu++11", "-O2", "-Wall", "-Wextra", "-Werror",
                         "-I", str(ROOT / "src/ir"),
                         str(HERE / "ir_host_test.cpp"), "-o", str(exe)], check=True)
         r = subprocess.run([str(exe)], capture_output=True, text=True)

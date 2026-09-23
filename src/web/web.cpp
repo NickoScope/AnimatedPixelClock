@@ -102,6 +102,19 @@ static void sendDocFromPsram(JsonDocument &doc, int code = 200) {
   heap_caps_free(buf);
 }
 
+#if defined(IR_ENABLED)
+// The Remote card's one reply: the table of buttons and the functions on offer.
+static void sendIrTable() {
+  JsonDocument doc(webJsonAllocator());
+  irDetailJson(doc.to<JsonObject>());
+  doc["success"] = true;
+  sendDocFromPsram(doc);
+}
+static void irBad(const char *why) {
+  server.send(400, "application/json", String("{\"success\":false,\"error\":\"") + why + "\"}");
+}
+#endif
+
 ArduinoJson::Allocator *webJsonAllocator() {
   static WebJsonAllocator alloc;
   return &alloc;
@@ -218,51 +231,54 @@ void setupWebServer() {
  // save posts the whole form, so a one-setting route is what a script can use.
  // Unlike the display routes above this one is persisted: it is a stored setting.
 #if defined(IR_ENABLED)
- // The remote's test bench, the portal's half of `ir sim` on the serial port.
- // GET /api/ir/sim?slot=OK&hold=1200 - press a slot; hold is for the button
- // GET /api/ir/learn?slot=OK, /api/ir/cancel
- // GET /api/ir/clear?slot=OK or ?slot=all
- server.on("/api/ir/sim", HTTP_GET, []() {
+ // The remote: ten buttons, a function each (src/ir/ir_map.h). The portal's
+ // half of the serial console; every route answers with the whole table, so
+ // the Remote card redraws from one reply.
+ //   GET /api/ir                               the table, the functions this build offers
+ //   GET /api/ir/press?btn=3[&hold=1200]       press a button, whatever it is set to
+ //   GET /api/ir/do?fn=bright_up[&page=20][&hold=1200]   run a function, no button needed
+ //   GET /api/ir/fn?btn=5&fn=page&page=20      what a button does (kept in NVS)
+ //   GET /api/ir/learn?btn=3, /api/ir/cancel, /api/ir/clear?btn=3|all
+ server.on("/api/ir", HTTP_GET, []() { sendIrTable(); });
+ server.on("/api/ir/press", HTTP_GET, []() {
    uint8_t slot = 0;
-   if (!ir::slotByName(server.arg("slot").c_str(), &slot)) {
-     server.send(400, "application/json", "{\"error\":\"no such slot\"}");
-     return;
-   }
-   const uint32_t hold = (uint32_t)server.arg("hold").toInt();
-   irSimulate(slot, hold);
-   server.send(200, "application/json",
-               String("{\"success\":true,\"slot\":\"") + ir::slotName(slot) + "\"}");
+   if (!ir::slotByNumber(server.arg("btn").c_str(), &slot)) { irBad("btn must be 1..10"); return; }
+   irSimulate(slot, (uint32_t)server.arg("hold").toInt());
+   sendIrTable();
+ });
+ server.on("/api/ir/do", HTTP_GET, []() {
+   uint8_t fn = 0;
+   if (!ir::fnByName(server.arg("fn").c_str(), &fn) || !irActionBuilt(fn)) { irBad("no such function in this build"); return; }
+   const long page = server.arg("page").toInt();
+   if (fn == ir::kFnPage && (page < 0 || page > 255)) { irBad("page must be 0..255"); return; }
+   irSimulateFn(fn, (uint8_t)page, (uint32_t)server.arg("hold").toInt());
+   sendIrTable();
+ });
+ server.on("/api/ir/fn", HTTP_GET, []() {
+   uint8_t slot = 0, fn = 0;
+   if (!ir::slotByNumber(server.arg("btn").c_str(), &slot)) { irBad("btn must be 1..10"); return; }
+   if (!ir::fnByName(server.arg("fn").c_str(), &fn) || !irActionBuilt(fn)) { irBad("no such function in this build"); return; }
+   const long page = server.arg("page").toInt();
+   if (fn == ir::kFnPage && (!server.hasArg("page") || page < 0 || page > 255)) { irBad("page must be 0..255"); return; }
+   irSetFn(slot, fn, (uint8_t)page);
+   sendIrTable();
  });
  server.on("/api/ir/learn", HTTP_GET, []() {
    uint8_t slot = 0;
-   if (!ir::slotByName(server.arg("slot").c_str(), &slot)) {
-     server.send(400, "application/json", "{\"error\":\"no such slot\"}");
-     return;
-   }
+   if (!ir::slotByNumber(server.arg("btn").c_str(), &slot)) { irBad("btn must be 1..10"); return; }
    irLearnArm(slot);
-   server.send(200, "application/json",
-               String("{\"success\":true,\"learning\":\"") + ir::slotName(slot) +
-                   "\",\"windowMs\":" + String((unsigned long)ir::kLearnWindowMs) + "}");
+   sendIrTable();
  });
  server.on("/api/ir/cancel", HTTP_GET, []() {
    irLearnCancel();
-   server.send(200, "application/json", "{\"success\":true}");
+   sendIrTable();
  });
  server.on("/api/ir/clear", HTTP_GET, []() {
-   const String s = server.arg("slot");
-   if (s == "all") {
-     irClearAll();
-     server.send(200, "application/json", "{\"success\":true,\"cleared\":\"all\"}");
-     return;
-   }
+   if (server.arg("btn") == "all") { irClearAll(); sendIrTable(); return; }
    uint8_t slot = 0;
-   if (!ir::slotByName(s.c_str(), &slot)) {
-     server.send(400, "application/json", "{\"error\":\"no such slot\"}");
-     return;
-   }
+   if (!ir::slotByNumber(server.arg("btn").c_str(), &slot)) { irBad("btn must be 1..10 or all"); return; }
    irClearSlot(slot);
-   server.send(200, "application/json",
-               String("{\"success\":true,\"cleared\":\"") + ir::slotName(slot) + "\"}");
+   sendIrTable();
  });
 #endif
 

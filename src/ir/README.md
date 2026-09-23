@@ -34,13 +34,38 @@ without the module).
 
 | | |
 |---|---|
-| `ir_map.h` | the slots, the learned map, and the state machine: frames in, detents and a button level out. No Arduino, tested on the host |
+| `ir_map.h` | the ten buttons, the function list and the approved default layout, the learned map, and the state machine: frames in, detents, a button level or an action out. No Arduino, tested on the host |
+| `ir_actions.cpp` | what a button does when it is not the knob: each action calls what the matching HTTP route calls |
 | `ir_console.h` | the serial grammar: one line in, one command out. Tested on the host |
 | `ir.cpp` | the receiver, NVS, the serial console, `/api/info`, the portal's handlers |
 | `../control/control.cpp` | the seam: two places inside the 1 kHz sampling task |
-| `../../tools/ir/check_ir.py` | the host test - 150 checks over the rules and the grammar |
+| `../../tools/ir/check_ir.py` | the host test - 263 checks over the rules and the grammar |
 
-## The hardware, and the one thing to check on the bench
+## The hardware: GPIO0, the BOOT line (since 2026-09-23)
+
+![IR receiver wiring](ir-receiver-wiring.svg)
+
+The receiver sits on **GPIO0**, beside the knob: IO45/IO46 keep the knob as the
+backup control, and GPIO0 carries the BOOT button, the knob's switch and the
+receiver at once - all three only ever pull it low. The vendor schematic's
+reset/boot circuit gives the line **R8 10 kOhm to 3V3** and leaves **C9 across
+the button unfitted**, so an open-collector receiver needs no resistor of its
+own and nothing smears its pulses. It idles high, which is also the normal-boot
+level of this strapping pin.
+
+Parts, as on NickoScope32 v1b (its BOM): **U308 Vishay TSOP2138** 38 kHz
+(LCSC C7128385), **R313 51 Ohm** in series with VS from 3V3, **C308 100 nF**
+from VS to GND at the receiver. v1b's R307 2.2 kOhm pull-up is not needed here.
+TSOP21.. pins are **1 OUT, 2 VS, 3 GND** (TSOP48.. differs).
+
+How a press is told from IR on the shared line: `src/control` counts the
+switch as pressed only after it has been low for CTRL_SW_DEBOUNCE_MIN_MS,
+40 ms, while the receiver shares the pin. The longest mark any protocol the
+library knows is the Hitachi AC424 air conditioner's 29.8 ms leader
+(ir_Hitachi.cpp), so an air conditioner's remote cannot click the knob. A remote pressed during a reset can land the chip
+in download mode; another reset recovers. Knowledge base: docs/24-ir-remote.md.
+
+## The earlier plan: IO45
 
 **There is no free GPIO on this board.** The expansion header U8 is four pins -
 IO45, IO46, GND, 3V3 - and the knob holds both signals (`src/control/control.cpp`
@@ -101,24 +126,57 @@ a decoded frame does, so the seam, the encoder's state machine and every page
 are exercised. On the serial port at 115200:
 
 ```
-ir                  what the module knows: pin, receiver, learned slots
-ir help             the list
-ir cw 3             three detents clockwise - the display should browse
-ir ccw              one back
-ir ok               a click
-ir ok 1200          held past the encoder's 1 s threshold: a long press
-ir sim bright_up    any slot, including the reserved ones
-ir learn ok         open the window, then press the button on the remote
+ir                         what the module knows: pin, receiver, the ten buttons
+ir help                    the commands and every function's name
+ir cw 3                    three detents clockwise - the display should browse
+ir ccw                     one back
+ir ok                      a click
+ir ok 1200                 held past the encoder's 1 s threshold: a long press
+ir do bright_up            any function, no button needed (`ir do page 20`)
+ir press 5 [ms]            button 5, whatever it is set to
+ir fn 5 vol_up             what button 5 does (`ir fn 10 page 20`)
+ir learn 3                 open the window, then press button 3 on the remote
 ir cancel
-ir clear ok | ir clear all
+ir clear 3 | ir clear all  forget codes; the functions stay
 ```
 
 Nothing else in the firmware reads `Serial` while `loop()` runs - the Improv
 window in `src/network` closes before it begins - so these lines cannot collide
 with anything. Lines that do not start with `ir` are left alone.
 
-The portal's Remote card does the same over HTTP: `/api/ir/sim?slot=OK&hold=1200`,
-`/api/ir/learn?slot=OK`, `/api/ir/cancel`, `/api/ir/clear?slot=OK|all`.
+The portal's Remote card does the same over HTTP, one row per button with a
+Learn button, the learned code, a drop-down of functions and Test:
+`GET /api/ir` (the table and the functions this build offers),
+`/api/ir/press?btn=N[&hold=ms]`, `/api/ir/do?fn=name[&page=N][&hold=ms]`,
+`/api/ir/fn?btn=N&fn=name[&page=N]`, `/api/ir/learn?btn=N`, `/api/ir/cancel`,
+`/api/ir/clear?btn=N|all`. Every one answers with the table.
+
+## The buttons and what they can do
+
+Owner's list and default layout, approved 2026-09-23:
+
+| Button | Default | | Function | Held |
+|---|---|---|---|---|
+| 1 | Back (turn left) | | `ccw`, `cw` - the knob's turn | a detent per repeat frame |
+| 2 | Forward (turn right) | | `ok` - the knob's press | held while frames arrive |
+| 3 | OK | | `long` - a long press | once per press |
+| 4 | Long press | | `power` - screen on/off | once |
+| 5 | Screen on/off | | `bright_up`, `bright_down` - 10 %, never below 1 % | repeats |
+| 6 | Brightness +10 % | | `home` - the clock page | once |
+| 7 | Brightness -10 % | | `next_style` - the next clock style | repeats |
+| 8 | Home: the clock | | `carousel` - on/off | once |
+| 9 | Carousel on/off | | `ambient` - the screensaver on/off | once |
+| 10 | Play/pause | | `page` - a chosen page (by number, as /api/panel lists them) | once |
+| | | | `media_toggle`, `media_next`, `media_prev` - through Home Assistant | once |
+| | | | `vol_up`, `vol_down` - the media page knob's step | repeats |
+| | | | `dismiss` - clear the notification; `none` | once |
+
+A held repeating action fires on the press, then after 500 ms at most every
+300 ms (our choice: about three steps a second instead of nine from NEC's
+108 ms repeats). A function whose module is not in the build is not offered.
+Deliberately not on the list: reboot, factory reset, firmware update (too
+easy to press by accident), and the microphone visualizer (off until its
+hang is understood). Codes and functions are in NVS namespace `irbtn`.
 
 ## Cost
 
@@ -133,6 +191,7 @@ The portal's Remote card does the same over HTTP: `/api/ir/sim?slot=OK&hold=1200
 
 - **The receiver has never run.** No TSOP is soldered; everything below the
   decoder is verified by the host test and the simulator only.
-- The reserved slots (Back, dimmer, brighter, Power, spare) are learned,
-  counted and reported, but nothing acts on them yet.
+- `page` stores a page by its number, and numbers follow the build and the
+  user cards: a button set to a page may point elsewhere after a firmware with
+  different modules.
 - The RC5/RC6 toggle bit, above.

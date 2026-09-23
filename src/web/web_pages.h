@@ -782,21 +782,13 @@ static const char PAGE_HTML[] PROGMEM = R"PAGE(<!doctype html>
             <label class="check-row standalone" style="margin-top:16px">
               <input type="checkbox" name="irEnabled" id="irEnabled">
               <span class="check-box" aria-hidden="true"></span>
-              <span class="check-text"><strong>Listen to the remote</strong><span class="ct-hint">The remote does what the knob does: turning browses, a press selects, a long press is the same as a press. Turn this off and the receiver is switched off with it.</span></span>
+              <span class="check-text"><strong>Listen to the remote</strong><span class="ct-hint">Ten buttons, each doing what you choose below; the knob keeps working alongside. Turn this off and the receiver is switched off with it.</span></span>
             </label>
-            <p class="field-hint" style="margin-top:16px">Press these and the panel answers exactly as it would to the remote itself - the same path, so this tests the wiring of everything above the receiver.</p>
-            <div class="row" style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
-              <button type="button" class="btn" id="irCcwBtn">Turn left</button>
-              <button type="button" class="btn" id="irCwBtn">Turn right</button>
-              <button type="button" class="btn" id="irOkBtn">Press</button>
-              <button type="button" class="btn" id="irHoldBtn">Hold</button>
-            </div>
-            <p class="field-hint" style="margin-top:16px">Teaching a button: press Learn, then the button on the remote within 15 seconds. Codes are kept on the panel and survive a reflash, so a new remote is taught rather than flashed.</p>
-            <div class="row" style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
-              <button type="button" class="btn" id="irLearnCcwBtn">Learn turn left</button>
-              <button type="button" class="btn" id="irLearnCwBtn">Learn turn right</button>
-              <button type="button" class="btn" id="irLearnOkBtn">Learn press</button>
-              <button type="button" class="btn btn-danger" id="irForgetBtn">Forget all</button>
+            <p class="field-hint" style="margin-top:16px">Ten buttons. For each: <strong>Learn</strong>, then press that button on the remote within 15 seconds; choose what it does; <strong>Test</strong> runs it exactly as the remote would. Codes and choices are kept on the panel and survive a reflash, so a new remote is taught rather than flashed. The knob keeps working alongside.</p>
+            <div id="irTable" class="ir-table" style="margin-top:8px"></div>
+            <div class="row" style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
+              <button type="button" class="btn" id="irCancelBtn">Stop learning</button>
+              <button type="button" class="btn btn-danger" id="irForgetBtn">Forget all codes</button>
             </div>
           </div>
           <div id="colorsClock"></div>
@@ -2128,32 +2120,94 @@ tag.textContent = c.state;
 if (typeof c.tempC === 'number') now.textContent = 'Now ' + c.tempC.toFixed(1) + ' \u00b0C and ' + Math.round(c.humidity) + ' %RH; the sensor itself reads ' + c.sensorTempC.toFixed(1) + ' \u00b0C and ' + Math.round(c.sensorHumidity) + ' %RH (' + c.ageS + ' s ago).';
 else now.textContent = c.state === 'absent' ? 'No SHTC3 answered on the I2C bus.' : c.state === 'off' ? 'Not reading.' : 'Looking for the sensor.';
 }
+// The Remote card: ten rows from GET /api/ir, which every /api/ir/* route
+// also answers with, so each click redraws from the reply it gets.
+var irPages = null, irLearnTimer = 0;
+function irEsc(s) { return String(s).replace(/[&<>"]/g, function (c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
 function irCall(path) {
-fetch(path).then(function (r) { return r.json(); }).then(function () {
-fetch('/api/info').then(function (r) { return r.json(); }).then(function (d) { irStatus(d.ir); });
+return fetch(path, { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (d) {
+if (d && d.buttons) irRender(d); else if (d && d.error) { var n = $('#irNow'); if (n) n.textContent = d.error; }
+return d;
+}).catch(function (e) { var n = $('#irNow'); if (n) n.textContent = 'The panel did not answer (' + e + ').'; });
+}
+function irLoad() {
+var t = $('#irTable'); if (!t) return;       // no Remote card in this build: nothing to ask for
+var pages = irPages ? Promise.resolve(irPages) : fetch('/api/panel').then(function (r) { return r.json(); })
+.then(function (p) { irPages = (p.pages || []).map(function (x) { return { i: x.i, name: x.name || x.key }; }); return irPages; })
+.catch(function () { irPages = []; return irPages; });
+pages.then(function () { return irCall('/api/ir'); });
+}
+function irRender(d) {
+irStatus(d);
+var t = $('#irTable'); if (!t) return;
+var groups = {}, order = [];
+(d.functions || []).forEach(function (f) { if (!groups[f.group]) { groups[f.group] = []; order.push(f.group); } groups[f.group].push(f); });
+var html = '';
+(d.buttons || []).forEach(function (b) {
+var opts = order.map(function (g) {
+return '<optgroup label="' + irEsc(g) + '">' + groups[g].map(function (f) {
+return '<option value="' + irEsc(f.name) + '"' + (f.name === b.fn ? ' selected' : '') + '>' + irEsc(f.label) + '</option>';
+}).join('') + '</optgroup>';
+}).join('');
+var pageSel = '';
+if (b.fn === 'page') {
+pageSel = '<select class="ir-page" data-btn="' + b.n + '">' + (irPages || []).map(function (p) {
+return '<option value="' + p.i + '"' + (p.i === b.page ? ' selected' : '') + '>' + p.i + ' ' + irEsc(p.name) + '</option>';
+}).join('') + '</select>';
+}
+var learning = d.learning === b.n;
+var code = learning ? 'press it on the remote…' : (b.bound ? irEsc(b.proto + ' ' + b.code) : 'not learned');
+html += '<div class="ir-row" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:6px 0;border-top:1px solid var(--line-soft)">' +
+'<strong style="width:2.2em">' + b.n + '</strong>' +
+'<button type="button" class="btn ir-learn" data-btn="' + b.n + '"' + (learning ? ' disabled' : '') + '>Learn</button>' +
+'<span class="ir-code" style="min-width:11em;font-family:var(--mono);font-size:12px;color:var(--dim)">' + code + '</span>' +
+'<select class="ir-fn" data-btn="' + b.n + '" style="max-width:15em">' + opts + '</select>' + pageSel +
+'<button type="button" class="btn ir-test" data-btn="' + b.n + '">Test</button>' +
+'<span style="font-size:12px;color:var(--dim)">' + b.hits + ' presses</span></div>';
 });
+t.innerHTML = html;
+$$('.ir-learn', t).forEach(function (el) { el.addEventListener('click', function () {
+irCall('/api/ir/learn?btn=' + el.dataset.btn).then(irWatchLearn); }); });
+$$('.ir-test', t).forEach(function (el) { el.addEventListener('click', function () { irCall('/api/ir/press?btn=' + el.dataset.btn); }); });
+$$('.ir-fn', t).forEach(function (el) { el.addEventListener('change', function () {
+var q = '/api/ir/fn?btn=' + el.dataset.btn + '&fn=' + el.value;
+if (el.value === 'page') q += '&page=' + ((irPages && irPages.length) ? irPages[0].i : 0);
+irCall(q); }); });
+$$('.ir-page', t).forEach(function (el) { el.addEventListener('change', function () {
+irCall('/api/ir/fn?btn=' + el.dataset.btn + '&fn=page&page=' + el.value); }); });
+}
+// While a learn window is open, ask once a second until it closes: learned or timed out.
+function irWatchLearn(d) {
+if (irLearnTimer) clearTimeout(irLearnTimer);
+if (d && d.learning) irLearnTimer = setTimeout(function () { irCall('/api/ir').then(irWatchLearn); }, 1000);
 }
 function irBind() {
-var b = [['#irCcwBtn', '/api/ir/sim?slot=CCW'], ['#irCwBtn', '/api/ir/sim?slot=CW'],
-['#irOkBtn', '/api/ir/sim?slot=OK'], ['#irHoldBtn', '/api/ir/sim?slot=OK&hold=1200'],
-['#irLearnCcwBtn', '/api/ir/learn?slot=CCW'], ['#irLearnCwBtn', '/api/ir/learn?slot=CW'],
-['#irLearnOkBtn', '/api/ir/learn?slot=OK'], ['#irForgetBtn', '/api/ir/clear?slot=all']];
-for (var i = 0; i < b.length; i++) {
-(function (el, url) { if (el) el.addEventListener('click', function () { irCall(url); }); })($(b[i][0]), b[i][1]);
-}
+var c = $('#irCancelBtn'); if (c) c.addEventListener('click', function () { irCall('/api/ir/cancel'); });
+var f = $('#irForgetBtn'); if (f) f.addEventListener('click', function () {
+if (confirm('Forget every learned code? What each button does is kept.')) irCall('/api/ir/clear?btn=all'); });
+// The table is asked for when the card first comes into view, not on every
+// portal load: /api/panel and /api/ir together are a few KB the panel's
+// memory would otherwise spend for a card nobody opened.
+var t = $('#irTable');
+if (!t) return;
+if (!window.IntersectionObserver) { irLoad(); return; }
+var io = new IntersectionObserver(function (es) {
+if (es.some(function (e) { return e.isIntersecting; })) { io.disconnect(); irLoad(); }
+});
+io.observe(t);
 }
 function irStatus(p) {
 var tag = $('#irTag'), now = $('#irNow');
 if (!p || !tag || !now) return;
 tag.textContent = p.receiver;
-var learned = p.bound + ' of ' + p.slots + ' buttons taught';
+var learned = p.bound + ' of ' + p.slots + ' buttons learned';
 if (p.learning) {
-now.textContent = 'Learning ' + p.learning + ' - press its button on the remote (' + Math.round(p.learnMs / 1000) + ' s left).';
+now.textContent = 'Learning button ' + p.learning + ' - press it on the remote (' + Math.round(p.learnMs / 1000) + ' s left).';
 return;
 }
-var last = p.lastCode ? ' Last code ' + p.lastProto + ' ' + p.lastCode + ', ' + Math.round(p.lastAgeMs / 1000) + ' s ago.' : '';
+var last = p.lastCode ? ' Last code ' + p.lastProto + ' ' + p.lastCode + (p.lastButton ? ' (button ' + p.lastButton + ')' : '') + ', ' + Math.round(p.lastAgeMs / 1000) + ' s ago.' : '';
 now.textContent = p.receiver === 'not built'
-? 'No receiver in this firmware yet; the buttons below still drive the panel. ' + learned + '.'
+? 'No receiver in this firmware; Test still drives the panel. ' + learned + '.'
 : 'On IO' + p.pin + ', ' + p.receiver + '. ' + learned + ', ' + p.frames + ' frames seen, ' + p.ignored + ' ignored.' + last;
 }
 irBind();

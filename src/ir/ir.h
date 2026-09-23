@@ -29,6 +29,19 @@
 #error "IR_RX_ENABLED needs IR_ENABLED: the receiver feeds this module's decoder"
 #endif
 
+// The receiver's pin: GPIO0, the BOOT line (owner's decision 2026-09-23, so
+// IO45 and IO46 stay free for later). The vendor schematic's reset/boot
+// circuit pulls it up with R8 10 kOhm and leaves C9 across the button unfitted:
+// an open-collector receiver needs no resistor of its own there, and the line
+// carries no capacitance to smear the pulses. It idles high, which is also
+// the normal-boot level of this strapping pin. The BOOT button and the knob's
+// switch share the line; src/control tells a press from IR by duration (40 ms,
+// CTRL_SW_DEBOUNCE_MIN_MS).
+// Knowledge base, docs/24-ir-remote.md.
+#ifndef IR_PIN
+#define IR_PIN 0
+#endif
+
 #if defined(IR_ENABLED)
 
 // ── lifecycle ───────────────────────────────────────────────────────────────
@@ -56,10 +69,22 @@ uint32_t irLearnRemainMs();
 bool     irClearSlot(uint8_t slot);
 void     irClearAll();
 
-// Inject a slot at the level a decoded frame reaches, so the whole chain -
-// seam, encoder state machine, pages - is exercised with no receiver soldered
-// and no codes learned. holdMs applies to the button only: 0 is a click, and
-// anything past the encoder's long-press threshold is a long press.
+// Inject a button (0..9) or a function at the level a decoded frame reaches,
+// so the whole chain - seam, encoder state machine, actions, pages - is
+// exercised with no receiver soldered and no codes learned. holdMs applies to
+// "ok" only: 0 is a click, past the encoder's long-press threshold a long press.
 bool irSimulate(uint8_t slot, uint32_t holdMs);
+bool irSimulateFn(uint8_t fn, uint8_t arg, uint32_t holdMs);
+
+// What a button does (ir::Fn), and for kFnPage which page. Kept in NVS.
+bool irSetFn(uint8_t slot, uint8_t fn, uint8_t arg);
+
+// GET /api/ir: the ten buttons, what each does, and the functions this build
+// can offer. Asked for when the Remote card is open, not polled.
+void irDetailJson(JsonObject out);
+
+// src/ir/ir_actions.cpp: everything that is not the knob. Run from loop().
+void irRunAction(uint8_t fn, uint8_t arg);
+bool irActionBuilt(uint8_t fn);   // false: this firmware lacks the module behind it
 
 #endif  // IR_ENABLED
