@@ -39,13 +39,11 @@
 // (AP_1v8)"), which is exactly why the knob may already pull them about. Check
 // the fuse with espefuse summary before soldering anything to IO45 on another
 // board. IO46 gates ROM messages at boot and, with GPIO0, picks the boot mode.
-#ifndef IR_PIN
-#define IR_PIN 45
-#endif
-
+// IR_PIN is in ir.h (GPIO0 by default). The comment above is the history of
+// the IO45 plan and still holds for anyone building IR_PIN=45.
 #if defined(IR_RX_ENABLED) && defined(CONTROL_ENCODER_ENABLED) && defined(BOARD_WAVESHARE_RGB_MATRIX)
 #if (IR_PIN == 45) || (IR_PIN == 46)
-#error "IR_RX_ENABLED and CONTROL_ENCODER_ENABLED want the same pin (IO45/IO46 are the whole of header U8). Retire the knob, or build IR_PIN elsewhere."
+#error "IR_RX_ENABLED and CONTROL_ENCODER_ENABLED want the same pin (IO45/IO46 carry the knob). Keep IR_PIN on GPIO0, where it shares the line with the knob's switch by design."
 #endif
 #endif
 

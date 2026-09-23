@@ -29,6 +29,18 @@
 #error "IR_RX_ENABLED needs IR_ENABLED: the receiver feeds this module's decoder"
 #endif
 
+// The receiver's pin: GPIO0, the BOOT line (owner's decision 2026-09-23, so
+// IO45 and IO46 stay free for later). The vendor schematic's reset/boot
+// circuit pulls it up with R8 10 kOhm and leaves C9 across the button unfitted:
+// an open-collector receiver needs no resistor of its own there, and the line
+// carries no capacitance to smear the pulses. It idles high, which is also
+// the normal-boot level of this strapping pin. The BOOT button and the knob's
+// switch share the line; src/control tells a press from IR by duration.
+// Knowledge base, docs/24-ir-remote.md.
+#ifndef IR_PIN
+#define IR_PIN 0
+#endif
+
 #if defined(IR_ENABLED)
 
 // ── lifecycle ───────────────────────────────────────────────────────────────

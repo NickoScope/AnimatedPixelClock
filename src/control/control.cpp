@@ -130,6 +130,13 @@ static bool     s_swLongSent = false;
 static volatile bool     s_cfgReverse    = CTRL_REVERSE != 0;
 static volatile uint16_t s_cfgLockoutMs  = CTRL_ENC_LOCKOUT_MS;
 static volatile uint16_t s_cfgDebounceMs = CTRL_SW_DEBOUNCE_MS;
+#if defined(IR_RX_ENABLED) && (IR_PIN == CTRL_PIN_SW)
+// GPIO0 carries the BOOT button, the knob's switch and the IR receiver at once:
+// all three only ever pull it low. See controlConfigure().
+#define CTRL_SW_DEBOUNCE_MIN_MS 12
+static_assert(CTRL_SW_DEBOUNCE_MS >= CTRL_SW_DEBOUNCE_MIN_MS,
+              "the default switch debounce would read IR marks as presses");
+#endif
 static volatile int8_t   s_cfgDetent     = CTRL_ENC_HALF_DETENT;
 static volatile uint8_t  s_cfgGen        = 0;
 static uint8_t           s_cfgSeenGen    = 0;   // sampling task only
@@ -323,6 +330,12 @@ CtrlEvent controlTake() {
 void controlConfigure(bool reverse, uint16_t lockoutMs, uint16_t debounceMs, int8_t detent) {
   s_cfgReverse    = reverse;
   s_cfgLockoutMs  = lockoutMs;
+#if defined(IR_RX_ENABLED) && (IR_PIN == CTRL_PIN_SW)
+  // The receiver shares this line. A press is told from IR by duration: the
+  // longest IR mark is NEC's 9 ms leader (Vishay 80071), so a debounce under
+  // it would read a remote's frame as the button. 12 ms is our margin.
+  if (debounceMs < CTRL_SW_DEBOUNCE_MIN_MS) debounceMs = CTRL_SW_DEBOUNCE_MIN_MS;
+#endif
   s_cfgDebounceMs = debounceMs;
   if (detent != s_cfgDetent) {
     s_cfgDetent = detent;
