@@ -33,8 +33,11 @@ CBM = [int(x, 16) for x in re.findall(r"0[xX]([0-9a-fA-F]{2})", arr("PicopixelCy
 TUP = r"\{\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*(-?\d+)\s*\}"
 CG  = [tuple(int(v) for v in m) for m in re.findall(TUP, arr("PicopixelCyrGlyphs"))]
 cf  = re.search(r"PicopixelCyrGlyphs, 0x([0-9A-Fa-f]{4}), 0x([0-9A-Fa-f]{4})", t)
+mg  = re.search(r"PicopixelMissingGlyph\s*PROGMEM\s*=\s*" + TUP, t)
+if not cf or not mg:
+    raise SystemExit("gen_font: the Cyrillic block in picopixel_fb.h is incomplete - run tools/fonts/mkcyr.py")
 CFIRST, CLAST = int(cf.group(1), 16), int(cf.group(2), 16)
-MISS = tuple(int(v) for v in re.search(r"PicopixelMissingGlyph\s*PROGMEM\s*=\s*" + TUP, t).groups())
+MISS = tuple(int(v) for v in mg.groups())
 assert len(CG) == CLAST - CFIRST + 1
 
 rows = "\n".join("  " + " ".join(f"0x{b:02X}," for b in BM[i:i+12]) for i in range(0, len(BM), 12))

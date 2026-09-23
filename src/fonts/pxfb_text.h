@@ -1,8 +1,8 @@
 #pragma once
-// Text in the panel's small font, Latin and Cyrillic, for every place that
-// draws Picopixel through its own loop: px.text and px.width in Lua, the world
-// clock's home name, the flight board's widths. One decoder and one glyph
-// router, so no two pages can disagree about a string.
+// Text in the panel's small font, Latin and Cyrillic: px.text and px.width in
+// Lua, and the world clock's home name. One decoder and one glyph router, so
+// no two pages can disagree about a string. (The flight board still sums its
+// ASCII widths itself, flightboardNameWidth, to match the print() it draws with.)
 //
 // Why not display.print(): Adafruit GFX's print() writes one byte at a time
 // (Adafruit_GFX::write(uint8_t)) and reads the font's first/last with
