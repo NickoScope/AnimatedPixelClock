@@ -116,7 +116,10 @@ function pollNow() { return api('/api/panel').then(function (d) { learn(d); rend
 
 var pagesSig = '', stylesSig = '';
 function renderNow(d) {
-  var n = d.now, c = d.carousel, count = d.pages.length;
+  var n = d.now, c = d.carousel;
+  // Counted among the pages that exist: an empty upload slot is not one.
+  var real = d.pages.filter(function (p) { return !(p.key === 'lua' && !p.name) && p.key !== 'cards'; });
+  var count = real.length, pos = real.findIndex(function (p) { return p.i === n.page; }) + 1;
   setText('pnMode', n.off ? 'panel off' : (n.notify ? 'notification' : 'live'));
   setText('pnTitle', label(n));
   setText('pnClock', n.time);
@@ -127,7 +130,7 @@ function renderNow(d) {
   else state = 'held · resumes in ' + c.holdS + ' s';
   setText('pnState', state);
   var led = $('pnLed'); if (led) { led.classList.toggle('online', !!c.running); led.classList.toggle('offline', !c.running); }
-  setText('pnPage', (NAMES[n.key] || n.name) + (n.card ? ' · ' + n.card : '') + ' · ' + (n.page + 1) + ' of ' + count);
+  setText('pnPage', (n.key === 'lua' || n.key === 'market' ? n.name : (NAMES[n.key] || n.name)) + (n.card ? ' · ' + n.card : '') + ' · ' + (pos || n.page + 1) + ' of ' + count);
   setText('pnStyle', String(n.styleName).toLowerCase() + (n.mode !== 'clock' ? ' · ' + n.mode + ' over it' : ''));
   setText('pnNext', c.nextS != null ? 'in ' + c.nextS + ' s' : (c.enabled ? 'stays' : 'when you turn the knob'));
   setText('pnKnob', n.entered ? 'inside the page' : 'browsing pages');

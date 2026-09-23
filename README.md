@@ -3,8 +3,9 @@
 A 128x64 RGB LED wall panel on the Waveshare ESP32-S3-RGB-Matrix board. It
 started as [Keralots/AnimatedPixelClock](https://github.com/Keralots/AnimatedPixelClock),
 a retro-arcade clock, and all of that is still here. This fork adds live screens
-fed from the network, Lua effects uploaded over WiFi, a knob and a carousel,
-Home Assistant over MQTT, and an SDK that lets an AI agent drive the panel.
+fed from the network, Lua effects uploaded over WiFi, a knob, an infrared remote
+and a carousel, Home Assistant over MQTT, text in Latin and Cyrillic on every
+screen, and an SDK that lets an AI agent drive the panel.
 
 ![Nine of the panel's screens: aquarium, world clock, flight board, rail board, markets, media player, football clock, room radar, Tetris clock](img/screens.png)
 
@@ -71,11 +72,23 @@ room, a starship, the Bay of Cannes and La Gioconda. Scripts are written and
 checked on the host first with [`tools/luasim`](tools/luasim), which runs the
 same API the panel does.
 
-### The knob and the carousel
+### Text: Latin and Cyrillic, on every screen
+
+Everything the panel draws as text is UTF-8, in both of its fonts (the classic
+5x7 and the small Picopixel), capitals and lowercase: banners, cards, media
+titles, the boards, city and airport names, the original clock screens, and Lua
+effects (`px.text(x, y, s, r, g, b, "5x7")`). Write Russian as it is. The
+Cyrillic comes from the public-domain X11 misc-fixed fonts, sized to the Latin
+it stands beside; anything the fonts cannot draw shows as a solid block rather
+than vanishing. Details and tests: [AGENTS.md](AGENTS.md), section 8.
+
+### The knob, the remote and the carousel
 
 Turn the knob to walk every clock style, then every page. Click enters a page
 that has controls of its own, such as the media remote, and click again leaves
-it. Leave the knob alone for 60 seconds and the carousel
+it. An infrared receiver on the BOOT button's line adds a remote beside the
+knob: ten buttons you teach in the portal, each with a function you choose
+([src/ir](src/ir/README.md)). Leave the knob alone for 60 seconds and the carousel
 takes over, showing each page and each clock style for 15 seconds. Both numbers
 can be changed in the web portal.
 
@@ -503,7 +516,7 @@ curl -X POST http://pixelclock.local/api/notify \
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `text` | yes | Message, up to 200 bytes (200 ASCII characters) |
+| `text` | yes | Message, UTF-8, up to 200 bytes: 200 Latin letters or 100 Cyrillic ones |
 | `color` | no | Banner color as `#RRGGBB` (default white) |
 | `icon` | no | One of `bell`, `mail`, `alert`, `heart`, `check`, `cross`, `info`, `home`, `music`, `star` |
 | `duration` | no | Display time in ms, 1000-60000 (default 5000) |
