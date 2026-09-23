@@ -259,6 +259,11 @@ effect_photo  image=/path/to/photo.jpg  name=my_photo  crop=0.0,0.02,1.0,0.478
 It crops, quantises, writes the Lua, runs the panel's own checks, uploads and
 shows. `tools/luasim/photo_to_lua.py` is the same thing by hand.
 
+The panel is private, the gallery is not. A photograph goes to the gallery
+(`gallery_publish`) only with `photo_no_people=true`, meaning no person is in
+it: a landscape, a tree, the sea. A photograph of a person stays on the panel
+and in the gitignored `tools/luasim/scripts/private/`.
+
 **Six things about it, each of which cost a try:**
 
 - **The aspect ratio is the first decision, not the last.** The panel is 2:1 and
@@ -387,7 +392,9 @@ would read as an effect already there (built-in, or another case of the same
 stem) is refused. Agents publish to and remove from the gallery with MCP
 `gallery_publish` / `gallery_unpublish` / `gallery_scoreboard`, into a staging
 branch on their own machine; a maintainer brings them to GitHub with
-`gallery.py sync` (tools/agent/README.md).
+`gallery.py sync` (tools/agent/README.md). A photograph goes to the public
+gallery only with `photo_no_people=true`, when no person is in it; a photograph
+of a person never does, and the maintainer looks at every preview.
 
 *Working with them:* `/api/lua`. They run on their own task with a frame cap and
 PSRAM frame buffers, and the panel logs each one's cost - `[luafx] open <name>:
