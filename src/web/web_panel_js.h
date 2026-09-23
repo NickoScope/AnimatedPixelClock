@@ -57,7 +57,7 @@ function segSet(id, v) {
   each(g.querySelectorAll('button'), function (b) { var on = b.getAttribute('data-v') === String(v); b.classList.toggle('on', on); b.setAttribute('aria-pressed', on ? 'true' : 'false'); });
 }
 
-var NAMES = { clock: 'Clock', world: 'World clock', flights: 'Flight board', trains: 'Rail board', media: 'Media', market: 'Market', yachts: 'Yacht radar', cards: 'Card', other: 'Page' };
+var NAMES = { clock: 'Clock', world: 'World clock', flights: 'Flight board (FLIGHTS)', trains: 'Rail board (TRAINS)', media: 'Media', market: 'Market', yachts: 'Yacht radar', cards: 'Card', other: 'Page' };
 var HINTS = { clock: 'Always on - where the panel falls back to', world: 'Daylight map and the time', flights: 'Arrivals and departures', trains: 'Departures, then arrivals, for one station', media: 'Now playing on a Home Assistant player', market: 'MARKETS, TICKER, PORTFOLIO, HOLDINGS from Home Assistant', yachts: 'AIS vessels in the bay', other: 'Always visited' };
 var pageIdx = {}, lastPanel = null;
 
@@ -140,16 +140,41 @@ function renderNow(d) {
   if (sig !== stylesSig) { stylesSig = sig; renderStyles(d); }
   renderCarousel(c);
 }
+// Pages that share a key (every Lua effect is "lua", the four market pages are
+// "market") are switched on and off together by the panel (/api/panel enable
+// takes a key), so they get one switch for the group, and a row each - with
+// its own name - to show it. An upload slot with nothing in it is not a page.
+var GROUPS = { lua: ['Effects', 'Lua effects: the knob and the carousel visit each one. Switched on and off together'],
+               market: ['Markets', 'From Home Assistant: switched on and off together'] };
 function renderPages(d) {
   var host = $('pnPages'), cards = $('pnCards');
   if (host) host.innerHTML = '';
   if (cards) cards.innerHTML = '';
+  var grouped = {};
   d.pages.forEach(function (p) {
+    if (p.key === 'lua' && !p.name) return;                  // an empty upload slot
+    var group = GROUPS[p.key];
+    if (group && !grouped[p.key]) {
+      grouped[p.key] = true;
+      var head = document.createElement('div');
+      head.className = 'pn-row pn-group';
+      head.innerHTML = '<label class="check-row standalone"><input type="checkbox"' + (p.on ? ' checked' : '') +
+        '><span class="check-box" aria-hidden="true"></span><span class="check-text"><strong>' + esc(group[0]) +
+        '</strong><span class="ct-hint">' + esc(group[1]) + '</span></span></label>';
+      var gbox = head.querySelector('input');
+      gbox.addEventListener('change', function () {
+        api('/api/panel', { enable: { key: p.key, on: gbox.checked } }).then(function (r) { learn(r); renderNow(r); })
+          .catch(function (err) { gbox.checked = !gbox.checked; alert(err.message); });
+      });
+      host.appendChild(head);
+    }
     var isCard = p.key === 'cards', here = p.i === d.now.page, locked = p.key === 'clock' || p.key === 'other';
     var row = document.createElement('div');
-    row.className = 'pn-row' + (here ? ' here' : '');
+    row.className = 'pn-row' + (here ? ' here' : '') + (group ? ' pn-sub' : '');
     if (isCard) {
       row.innerHTML = '<div class="pn-name"><strong>' + esc(p.title || p.card) + '</strong><span class="ct-hint">' + esc(p.card) + '</span></div>';
+    } else if (group) {
+      row.innerHTML = '<div class="pn-name"><strong>' + esc(p.name) + '</strong></div>';
     } else {
       row.innerHTML = '<label class="check-row standalone"><input type="checkbox"' + (p.on ? ' checked' : '') + (locked ? ' disabled' : '') +
         '><span class="check-box" aria-hidden="true"></span><span class="check-text"><strong>' + esc(NAMES[p.key] || p.name) +
