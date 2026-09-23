@@ -127,7 +127,28 @@ claude mcp add ledmatrix --scope user --env LEDMATRIX_PANEL=AA:BB:CC:00:11:22 --
 - `gallery_list` - what is in `gallery/`, with sizes and previews
 - `effect_delete` - free a slot
 - `effect_walk` - one effect in or out of the knob's walk and the carousel
-  (2.5.7+; kept on the panel by name). `panel_effects` shows `inWalk` for each
+  (2.5.7+; kept on the panel by name, and the name goes along with the index,
+  so a list renumbered in between is refused rather than the neighbour
+  switched). `effect` is an index or a name. `panel_effects` shows `inWalk`
+
+**Publishing to the gallery on GitHub** (what every panel's portal lists under
+"Add from the gallery")
+- `gallery_publish` - a finished script from `tools/luasim/scripts/` into the
+  public `gallery/`: the panel's own checks, 300 frames in the simulator (an
+  error or an all-black screen is refused), a preview, a README section from
+  `about`, the index, one commit touching only `gallery/`, pushed
+- `gallery_unpublish` - take one of **your own** entries out again
+
+  Entries are marked with who published them (`-- @by <name>`, from
+  `LEDMATRIX_PUBLISHER` where the server starts); a publisher can replace or
+  remove only its own, never a person's. Anything made from a photograph is
+  refused: the repository is public. The CLI is `tools/agent/gallery.py
+  publish|unpublish` (`--dry-run`, and `--any` for a person). Both work in a
+  throwaway worktree of the remote's `main`, so the local checkout is never
+  touched. **Write access is the owner's to give**: the machine needs a key
+  GitHub accepts for pushing; without one the tool says so and changes nothing.
+  The machine also needs a C compiler, `make` and Pillow in the venv
+  (`pip install pillow`) for the simulator and the preview.
 - `effect_install` - regenerate the compiled-in effect table. This one is the old
   path: after it a **person** builds and flashes
 

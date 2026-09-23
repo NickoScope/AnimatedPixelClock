@@ -380,7 +380,12 @@ the carousel on its own, by name (kept in NVS; `/api/lua` `inWalk`, POST
 MCP `effect_walk`). "Show" still shows one that is out. The page key `lua`
 switches them all. Deleting an upload forgets its switch. The portal's
 Effects & clips page does all of this and adds from the GitHub gallery
-(`gallery/index.json`, written by `tools/gallery_index.py`).
+(`gallery/index.json`, written by `tools/gallery_index.py`). A switch may carry
+the name it saw (`walk.name`, `enable.name`): if the list moved in between the
+panel answers 409 instead of switching the neighbour. An upload whose name
+would read as an effect already there (built-in, or another case of the same
+stem) is refused. Agents publish to and remove from the gallery with MCP
+`gallery_publish` / `gallery_unpublish` (tools/agent/README.md).
 
 *Working with them:* `/api/lua`. They run on their own task with a frame cap and
 PSRAM frame buffers, and the panel logs each one's cost - `[luafx] open <name>:

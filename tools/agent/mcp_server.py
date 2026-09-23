@@ -1956,6 +1956,90 @@ async def effect_walk(args: WalkIn) -> str:
         return _say(e)
 
 
+class GalleryPublishIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(pattern=r"^[A-Za-z0-9_]{1,24}$",
+                      description="The script's stem in tools/luasim/scripts/ (my_effect for "
+                                  "my_effect.lua). The gallery shows it as MY EFFECT.")
+    about: str = Field(min_length=20, max_length=2000,
+                       description="What it is, a few sentences: the gallery README's section and "
+                                   "the commit message. Its first sentence becomes the one-line "
+                                   "description if the script has no '-- NAME - ...' title comment.")
+    dry_run: bool = Field(default=False, description="Everything but the commit and the push.")
+
+
+class GalleryRemoveIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(pattern=r"^[A-Za-z0-9_]{1,24}$", description="The gallery entry's stem.")
+    dry_run: bool = False
+
+
+def _publisher():
+    # Who this server publishes as. An entry is marked with it, and only the
+    # same publisher may replace or remove it: a person's entries are out of
+    # reach of this tool. Set LEDMATRIX_PUBLISHER where the server is started.
+    return os.environ.get("LEDMATRIX_PUBLISHER", "agent")
+
+
+def _gallery_call(fn, **kw):
+    import gallery as G  # noqa: PLC0415 - tools/agent/gallery.py
+    remote, branch = G.target()
+    try:
+        return _ok(result=fn(remote=remote, branch=branch, by=_publisher(), **kw))
+    except G.Refused as e:
+        return f"Refused: {e}"
+    except PermissionError as e:
+        return (f"{e}\nThis machine has no write access to the gallery on GitHub. That is set up "
+                "by the owner (a deploy key with write access); see tools/agent/README.md, "
+                "'Publishing to the gallery'.")
+    except Exception as e:  # noqa: BLE001
+        return f"Could not publish: {e}"
+
+
+@mcp.tool(
+    name="gallery_publish",
+    annotations={"title": "Publish an effect to the GitHub gallery", "readOnlyHint": False,
+                 "destructiveHint": False, "idempotentHint": True, "openWorldHint": True})
+async def gallery_publish(args: GalleryPublishIn) -> str:
+    """Publish a finished Lua effect to the PUBLIC gallery on GitHub.
+
+    The gallery (gallery/ in NickoScope/AnimatedPixelClock) is what every
+    panel's web portal lists under "Add from the gallery". This checks the script
+    with the panel's own rules, runs it 300 frames in the simulator (an error or
+    an all-black screen is refused), makes the preview, writes the README section
+    and the index, and pushes one commit that touches only gallery/.
+
+    Refused: a name that a built-in effect or another entry already reads as; an
+    entry a person or another publisher put there; anything made from a
+    photograph (photo_to_lua.py, chafa_to_lua.py) - the repository is public and
+    photographs of people never go into it. Publishing again under the same name
+    replaces your own entry.
+
+    Returns: {"ok": true, "result": "pushed <sha> to origin main: <files>"}
+    """
+    import gallery as G  # noqa: PLC0415
+    return _gallery_call(G.publish, stem=args.name, about=args.about, dry=args.dry_run)
+
+
+@mcp.tool(
+    name="gallery_unpublish",
+    annotations={"title": "Remove your effect from the GitHub gallery", "readOnlyHint": False,
+                 "destructiveHint": True, "idempotentHint": False, "openWorldHint": True})
+async def gallery_unpublish(args: GalleryRemoveIn) -> str:
+    """Remove an effect YOU published from the public GitHub gallery.
+
+    Only an entry marked with this server's publisher (LEDMATRIX_PUBLISHER) can be
+    removed; a person's entries are refused. The script, its preview, its README
+    section and its index line go in one commit; git history keeps them.
+    Panels that already added it keep their copy until it is deleted there
+    (panel effects: Delete in the portal, or /api/lua {"delete": stem}).
+
+    Returns: {"ok": true, "result": "pushed <sha> to origin main: <files>"}
+    """
+    import gallery as G  # noqa: PLC0415
+    return _gallery_call(G.unpublish, stem=args.name, dry=args.dry_run)
+
+
 @mcp.tool(
     name="effect_install",
     annotations={"title": "Generate the effect table", "readOnlyHint": False,

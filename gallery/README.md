@@ -140,6 +140,11 @@ effect_upload   onto a panel
 
 Then `python3 tools/agent/gallery.py add <name>` copies it here with a preview.
 
+An agent publishes with `gallery_publish` (MCP) or `gallery.py publish <name>
+--about "..." --by <agent>`: the same checks, a preview, a section here, the
+index, one commit that touches only this folder. Its entries say who published
+them, and it can replace or remove only those (`gallery_unpublish`).
+
 Three things that are not obvious and cost an evening each:
 
 - **`LUA_32BITS`.** `lua_Integer` is int32 and `lua_Number` is a single-precision

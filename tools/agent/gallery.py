@@ -33,7 +33,8 @@ chafa_to_lua.py) - the repository is public and photographs of people never go
 into it. With --by, an entry is marked "-- @by <who>", and replacing or
 unpublishing an entry someone else published is refused.
 
-The remote is `git config gallery.remote` (default origin) and the branch
+The remote is $LEDMATRIX_GALLERY_REMOTE, else `git config gallery.remote`
+(default origin), and the branch
 `git config gallery.branch` (default main); --remote and --branch override.
 
 Exit codes as elsewhere: 0 done, 2 bad arguments or refused, 3 a person must
@@ -165,8 +166,16 @@ class Refused(Exception):
     pass
 
 
+# A git hook runs with GIT_DIR, GIT_INDEX_FILE and the like pointing at the
+# repository being committed to, and they override -C: run from a hook, the
+# worktree's commit would land on the caller's branch. They are dropped.
+_GIT_ENV = {k: v for k, v in __import__("os").environ.items()
+            if not (k.startswith("GIT_") and k not in ("GIT_SSH", "GIT_SSH_COMMAND", "GIT_ASKPASS",
+                                                          "GIT_TERMINAL_PROMPT", "GIT_CONFIG_GLOBAL"))}
+
+
 def git(cwd, *a, check=True):
-    r = subprocess.run(["git", "-C", str(cwd), *a], capture_output=True, text=True)
+    r = subprocess.run(["git", "-C", str(cwd), *a], capture_output=True, text=True, env=_GIT_ENV)
     if check and r.returncode:
         raise RuntimeError(f"git {' '.join(a[:2])}: {(r.stderr or r.stdout).strip()[-400:]}")
     return r
@@ -182,16 +191,25 @@ def by_of(path):
 
 
 def builtin_names(wt):
-    spec = importlib.util.spec_from_file_location("gen_effects_wt", wt / "tools/luasim/gen_effects.py")
-    g = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(g)
+    """The names compiled into the firmware, by gen_effects.py's own rules, read
+    rather than run: running it writes the header."""
+    import ast  # noqa: PLC0415
+    tree = ast.parse((wt / "tools/luasim/gen_effects.py").read_text(encoding="utf-8"))
+    skip = next(ast.literal_eval(n.value) for n in tree.body
+                if isinstance(n, ast.Assign) and any(getattr(t, "id", "") == "SKIP" for t in n.targets))
+
+    def upload_only(path):
+        with open(path, encoding="utf-8") as f:
+            return any("@upload-only" in line for _, line in zip(range(10), f))
+
     scripts = wt / "tools/luasim/scripts"
-    return {shown(p.stem) for p in scripts.glob("*.lua") if p.name not in g.SKIP and not g.upload_only(p)}
+    return {shown(p.stem) for p in scripts.glob("*.lua") if p.name not in skip and not upload_only(p)}
 
 
-def target(args):
-    remote = args.remote or git(ROOT, "config", "gallery.remote", check=False).stdout.strip() or "origin"
-    branch = args.branch or git(ROOT, "config", "gallery.branch", check=False).stdout.strip() or "main"
+def target(remote=None, branch=None):
+    import os  # noqa: PLC0415
+    remote = remote or os.environ.get("LEDMATRIX_GALLERY_REMOTE") or git(ROOT, "config", "gallery.remote", check=False).stdout.strip() or "origin"
+    branch = branch or git(ROOT, "config", "gallery.branch", check=False).stdout.strip() or "main"
     return remote, branch
 
 
@@ -240,7 +258,7 @@ def commit_and_push(wt, remote, branch, message, dry):
     r = git(wt, "push", "-q", remote, f"HEAD:refs/heads/{branch}", check=False)
     if r.returncode:
         err = (r.stderr or "").strip()
-        if "rejected" in err or "non-fast-forward" in err or "fetch first" in err:
+        if "(fetch first)" in err or "non-fast-forward" in err:   # not "remote rejected": a hook or a rule
             raise BlockingIOError(f"{branch} moved on {remote} while this ran; run it again")
         raise PermissionError(f"the push was refused: {err[-400:]}")
     sha = git(wt, "rev-parse", "--short", "HEAD").stdout.strip()
@@ -262,8 +280,14 @@ def publish(stem, about, by=None, file=None, remote="origin", branch="main", dry
         if m in text:
             raise Refused(f"made by {m}, from a photograph: the gallery is public and takes no photographs")
     lines = [l for l in text.splitlines() if not BY.match(l) and l.strip() != "-- @upload-only"]
-    body = "\n".join(["-- @upload-only"] + ([f"-- @by {by}"] if by else []) + lines) + "\n"
     name = shown(stem)
+    # The portal's one-line description is the script's title comment
+    # ("-- NAME - what it is", tools/gallery_index.py); one is made from the
+    # first sentence of --about when the script has none.
+    if not any(re.match(r"--\s*[A-Z0-9_ ]+?\s+-\s+.+$", l) for l in lines[:6]):
+        first = re.split(r"(?<=[.!?])\s", about.strip().replace("\n", " "), maxsplit=1)[0]
+        lines.insert(0, f"-- {name} - {first[:90].rstrip('.')}")
+    body = "\n".join(["-- @upload-only"] + ([f"-- @by {by}"] if by else []) + lines) + "\n"
     for attempt in (1, 2):
         with checkout(remote, branch) as wt:
             gal = wt / "gallery"
@@ -352,14 +376,14 @@ def _run(fn, **kw):
 
 
 def cmd_publish(args):
-    remote, branch = target(args)
+    remote, branch = target(args.remote, args.branch)
     about = pathlib.Path(args.about_file).read_text(encoding="utf-8") if args.about_file else args.about
     return _run(publish, stem=args.name, about=about, by=args.by, file=args.file, remote=remote,
                 branch=branch, dry=args.dry_run, any_owner=args.any)
 
 
 def cmd_unpublish(args):
-    remote, branch = target(args)
+    remote, branch = target(args.remote, args.branch)
     return _run(unpublish, stem=args.name, by=args.by, remote=remote, branch=branch,
                 dry=args.dry_run, any_owner=args.any)
 

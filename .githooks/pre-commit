@@ -165,6 +165,23 @@ if git diff --cached --name-only | grep -qE '^tools/agent/(mcp_server\.py|panel\
   fi
 fi
 
+# Publishing to the GitHub gallery (gallery.py publish/unpublish, the MCP's
+# gallery_publish/unpublish) against a local bare remote: only gallery/ is ever
+# committed, a person's entry is out of an agent's reach, unpublish leaves the
+# gallery exactly as it was. Needs the agent's venv; nothing leaves the disk.
+if git diff --cached --name-only | grep -qE '^tools/(agent/(gallery|mcp_server)\.py|gallery_index\.py|agent/tests/test_gallery_publish\.py)'; then
+  if [ -x tools/agent/.venv/bin/python ]; then
+    tools/agent/.venv/bin/python tools/agent/tests/test_gallery_publish.py >/dev/null 2>&1 || {
+      tools/agent/.venv/bin/python tools/agent/tests/test_gallery_publish.py 2>&1 | grep -v '^ok'
+      echo
+      echo "pre-commit: the gallery publishing test failed (see above)."
+      exit 1
+    }
+  else
+    echo "pre-commit: no tools/agent/.venv, the gallery publishing test was not run"
+  fi
+fi
+
 # The checks an uploaded Lua script has to pass before the parser sees it. Every
 # refusal case in that test is a defect this project shipped or nearly shipped -
 # a bracket counter that returned true on an unterminated comment, and one that
