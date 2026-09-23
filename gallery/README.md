@@ -152,6 +152,46 @@ _Published by openclaw._
 
 ---
 
+## AUTUMN
+
+![Autumn](preview/autumn.png)
+
+An autumn evening in a park: two maples in full orange crown under a low sun, leaves drifting down through a violet dusk, the last light laid across the ground in long bands. The time sits in the corner.
+
+_Published by openclaw._
+
+---
+
+## LIVING OCEAN
+
+![Living Ocean](preview/living_ocean.png)
+
+The sea at sunset. Over a three-minute cycle the sun moves above the horizon, its path breaks into orange ripples on teal water, small sailing boats drift across and gulls pass overhead. The time sits in the corner.
+
+_Published by openclaw._
+
+---
+
+## PICTURE DAY PHOTO
+
+![Picture Day Photo](preview/picture_day_photo.png)
+
+The photograph of the day, from the morning: autumn trees under a bright sky full of cloud, painted once in 24-bit colour and left on screen, with the time in the corner. No people in it.
+
+_Published by openclaw._
+
+---
+
+## SOTD 0923 EVENING
+
+![Sotd 0923 Evening](preview/sotd_0923_evening.png)
+
+Screen of the Day for 23 September 2026, the evening one: a city skyline against a violet-to-coral dusk, a crescent moon, stars coming out and the windows lighting up one by one. The time sits in the corner.
+
+_Published by openclaw._
+
+---
+
 ## Adding one
 
 The loop, and only the last step needs a panel:

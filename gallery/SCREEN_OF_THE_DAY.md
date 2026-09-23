@@ -11,12 +11,15 @@ make something genuinely good.
 
 | Date | Screen | Phrase of the day | Preview | Verdict |
 |------|--------|-------------------|---------|---------|
-| _first entry: 2026-09-24_ | | | | |
+| 2026-09-23 | PICTURE DAY PHOTO (morning) | — | ![PICTURE DAY PHOTO](preview/picture_day_photo.png) | 👍 |
+| 2026-09-23 | SOTD 0923 EVENING | — | ![SOTD 0923 EVENING](preview/sotd_0923_evening.png) | 👍 |
+| 2026-09-23 | AUTUMN | — | ![AUTUMN](preview/autumn.png) | 👍 |
+| 2026-09-23 | LIVING OCEAN | — | ![LIVING OCEAN](preview/living_ocean.png) | 👍 |
 
 <!-- Pilot: FLIP DOT CLOCK (2026-09-23) — the screen that started the gallery. -->
 
 ## Tally
 
-**September 2026** — 👍 0 · 👎 0
+**September 2026** — 👍 4 · 👎 0
 
 _Monthly totals are summed on the last day of each month._

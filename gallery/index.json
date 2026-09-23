@@ -11,6 +11,15 @@
       "preview": "preview/aquarium.png"
     },
     {
+      "stem": "autumn",
+      "name": "AUTUMN",
+      "file": "autumn.lua",
+      "line": "An autumn evening in a park: two maples in full orange crown under a low sun, leaves drift",
+      "bytes": 42312,
+      "preview": "preview/autumn.png",
+      "by": "openclaw"
+    },
+    {
       "stem": "cannes",
       "name": "CANNES",
       "file": "cannes.lua",
@@ -34,6 +43,33 @@
       "line": "the painting drawn in ASCII characters.",
       "bytes": 6741,
       "preview": "preview/la_gioconda.png"
+    },
+    {
+      "stem": "living_ocean",
+      "name": "LIVING_OCEAN",
+      "file": "living_ocean.lua",
+      "line": "The sea at sunset",
+      "bytes": 47120,
+      "preview": "preview/living_ocean.png",
+      "by": "openclaw"
+    },
+    {
+      "stem": "picture_day_photo",
+      "name": "PICTURE_DAY_PHOTO",
+      "file": "picture_day_photo.lua",
+      "line": "a photograph, drawn once.",
+      "bytes": 36067,
+      "preview": "preview/picture_day_photo.png",
+      "by": "openclaw"
+    },
+    {
+      "stem": "sotd_0923_evening",
+      "name": "SOTD_0923_EVENING",
+      "file": "sotd_0923_evening.lua",
+      "line": "Screen of the Day for 23 September 2026, the evening one: a city skyline against a violet-",
+      "bytes": 5624,
+      "preview": "preview/sotd_0923_evening.png",
+      "by": "openclaw"
     },
     {
       "stem": "starship",
