@@ -358,6 +358,8 @@ static void buildPanel(JsonDocument &doc) {
     p["key"]  = keyName(key);
     p["name"] = panelPageName(i);
     p["on"]   = panelPageEnabled(key);
+    // An effect has its own switch too: left out of the walk by itself.
+    if (key == PANEL_KEY_LUA && panelPageName(i)[0]) p["effectOn"] = panelEffectOn(panelPageName(i));
 #if defined(CARDS_ENABLED)
     if (i >= fixed) {
       p["card"]  = cardsName((uint8_t)(i - fixed));
@@ -401,10 +403,19 @@ static void handlePanel() {
     if (!in["style"].isNull() && !(intIn(in["style"], 0, 255, &styleId) && styleKnown(styleId)))
       REJECT(400, "unknown clock style");
 
-    int enableKey = -1;
+    int enableKey = -1, enableEffect = -1;
     bool enableOn = true;
     JsonVariantConst en = in["enable"];
-    if (!en.isNull()) {
+    if (!en.isNull() && !en["page"].isNull()) {
+      // {"enable":{"page":i,"on":b}}: one Lua effect in or out of the walk.
+      long pg;
+      if (!intIn(en["page"], 0, (long)panelPageCount() - 1, &pg)) REJECT(400, "enable.page out of range");
+      if (panelPageKey((uint8_t)pg) != PANEL_KEY_LUA || !panelPageName((uint8_t)pg)[0])
+        REJECT(400, "enable.page is not an effect: switch other pages by key");
+      if (!en["on"].is<bool>()) REJECT(400, "enable.on must be true or false");
+      enableEffect = (int)pg;
+      enableOn = en["on"].as<bool>();
+    } else if (!en.isNull()) {
       const char *k = en["key"].as<const char *>();
       for (uint8_t i = 0; k && i < PANEL_KEY_COUNT; i++)
         if (!strcmp(k, KEY_NAMES[i])) enableKey = i;
@@ -445,6 +456,7 @@ static void handlePanel() {
 
     // Everything checked: apply.
     if (enableKey >= 0) panelSetPageEnabled((uint8_t)enableKey, enableOn);
+    if (enableEffect >= 0) panelSetEffectOn(panelPageName((uint8_t)enableEffect), enableOn);
     if (haveCar) panelSetCarousel(car);
     if (styleId >= 0) panelShowStyle((uint8_t)styleId);
     if (showPage >= 0) panelShowPage((uint8_t)showPage);
@@ -958,6 +970,16 @@ static void handleLua() {
     const bool hasShow = !in["show"].isNull();
     const bool hasDel  = !in["delete"].isNull();
     if (hasShow && hasDel) REJECT(400, "send show or delete, not both");
+    // {"walk":{"i":n,"on":b}}: effect n in or out of the knob's walk and the
+    // carousel, by itself (panelSetEffectOn). Show still shows it.
+    if (!in["walk"].isNull()) {
+      long wi;
+      if (!intIn(in["walk"]["i"], 0, (long)luaEffectCount() - 1, &wi)) REJECT(400, "walk.i out of range");
+      if (!in["walk"]["on"].is<bool>()) REJECT(400, "walk.on must be true or false");
+      char nm[LUA_EFFECT_NAME_CAP];
+      luaEffectName((uint8_t)wi, nm, sizeof(nm));
+      panelSetEffectOn(nm, in["walk"]["on"].as<bool>());
+    }
 #if defined(LUA_STORE_ENABLED)
     if (hasDel) {
       if (originIsForeign()) REJECT(403, "refused: this request came from another origin");
@@ -971,6 +993,7 @@ static void handleLua() {
       const int rc = luaStoreDelete(stem);
       if (rc == LUA_STORE_ABSENT) REJECT(404, "no uploaded script by that name");
       if (rc != LUA_STORE_OK) REJECT(409, "the script is in use and could not be removed");
+      panelEffectsPrune();   // a script uploaded again by the same name starts switched on
     }
 #else
     if (hasDel) REJECT(400, "this build stores no uploaded scripts");
@@ -995,6 +1018,13 @@ static void handleLua() {
     char name[LUA_EFFECT_NAME_CAP];
     luaEffectName(i, name, sizeof(name));
     list.add(name);
+  }
+  // Beside each effect: whether the knob and the carousel visit it.
+  JsonArray walk = doc["inWalk"].to<JsonArray>();
+  for (uint8_t i = 0; i < luaEffectCount(); i++) {
+    char name[LUA_EFFECT_NAME_CAP];
+    luaEffectName(i, name, sizeof(name));
+    walk.add(panelEffectOn(name));
   }
 #if defined(LUA_STORE_ENABLED)
   // What an uploading tool needs to know before it spends the upload.

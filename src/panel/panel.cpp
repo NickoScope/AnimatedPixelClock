@@ -1,5 +1,8 @@
 #include "panel.h"
 #include "../util/psram_state.h"
+#if defined(LUA_EFFECTS_ENABLED)
+#include "../lua/lua_effects.h"
+#endif
 #include "panel_pages.h"
 
 #if defined(CONTROL_ENCODER_ENABLED)
@@ -115,6 +118,12 @@ static PanelState s_saved;       // what NVS holds, field by field
 static uint32_t   s_savedStamp = 0;   // NVS "pgKnown" (known << 16 | pages), 0 when never written
 static uint32_t   s_dirtyAt = 0;
 
+// The effects switched out of the walk: their names, one per line. 512 bytes
+// hold 20 names of the longest (24 + newline), more than the 19 effect pages.
+static const size_t EFF_OFF_CAP = 512;
+static PSRAM_ARRAY(char, s_effOff, [EFF_OFF_CAP]);
+static PSRAM_ARRAY(char, s_effOffSaved, [EFF_OFF_CAP]);
+
 static void markDirty() {
   s_dirtyAt = millis();
   if (!s_dirtyAt) s_dirtyAt = 1;   // 0 means clean
@@ -223,6 +232,11 @@ void panelBegin() {
     k.debounceMs = p.getUShort("knDeb", d.knob.debounceMs);
     k.detent     = p.getChar("knDet", d.knob.detent);
     if (knobValid(k)) s_cur.knob = k;
+
+    // The effects switched out of the walk, one name per line.
+    if (p.isKey("luaOff")) p.getString("luaOff", s_effOff, EFF_OFF_CAP);
+    s_effOff[EFF_OFF_CAP - 1] = '\0';
+    memcpy(s_effOffSaved, s_effOff, EFF_OFF_CAP);
 
 #if defined(FLIGHTBOARD_DIRECT_ENABLED)
     // Custom airports before the selection: a stored selection may be one of
@@ -404,7 +418,65 @@ void panelTick() {
   }
 #endif
   if (strcmp(c.rbStn, w.rbStn) && p.putString("rbStn", c.rbStn)) memcpy(w.rbStn, c.rbStn, sizeof(w.rbStn));
+  if (strcmp(s_effOff, s_effOffSaved) && p.putString("luaOff", s_effOff)) memcpy(s_effOffSaved, s_effOff, EFF_OFF_CAP);
   p.end();
+}
+
+// ---------------------------------------------------------------- effects
+
+// The line holding name exactly, or nullptr.
+static char *effFind(const char *name) {
+  const size_t n = strlen(name);
+  if (!n) return nullptr;
+  for (char *l = s_effOff; *l;) {
+    char *e = strchr(l, '\n');
+    const size_t len = e ? (size_t)(e - l) : strlen(l);
+    if (len == n && !strncmp(l, name, n)) return l;
+    if (!e) break;
+    l = e + 1;
+  }
+  return nullptr;
+}
+
+bool panelEffectOn(const char *name) { return !name || !effFind(name); }
+
+void panelSetEffectOn(const char *name, bool on) {
+  if (!name || !*name || strchr(name, '\n')) return;
+  char *l = effFind(name);
+  if (on && l) {
+    char *e = strchr(l, '\n');
+    memmove(l, e ? e + 1 : l + strlen(l), strlen(e ? e + 1 : l + strlen(l)) + 1);
+    markDirty();
+  } else if (!on && !l) {
+    const size_t used = strlen(s_effOff), n = strlen(name);
+    if (used + n + 2 > EFF_OFF_CAP) return;   // cannot happen with 19 pages; refused rather than cut
+    memcpy(s_effOff + used, name, n);
+    s_effOff[used + n] = '\n';
+    s_effOff[used + n + 1] = '\0';
+    markDirty();
+  }
+}
+
+void panelEffectsPrune() {
+#if defined(LUA_EFFECTS_ENABLED)
+  char keep[EFF_OFF_CAP];
+  size_t k = 0;
+  for (char *l = s_effOff; *l;) {
+    char *e = strchr(l, '\n');
+    const size_t len = e ? (size_t)(e - l) : strlen(l);
+    bool exists = false;
+    char nm[LUA_EFFECT_NAME_CAP];
+    for (uint8_t i = 0; i < luaEffectCount() && !exists; i++) {
+      luaEffectName(i, nm, sizeof(nm));
+      exists = strlen(nm) == len && !strncmp(nm, l, len);
+    }
+    if (exists && k + len + 2 <= sizeof(keep)) { memcpy(keep + k, l, len); keep[k + len] = '\n'; k += len + 1; }
+    if (!e) break;
+    l = e + 1;
+  }
+  keep[k] = '\0';
+  if (strcmp(keep, s_effOff)) { memcpy(s_effOff, keep, k + 1); markDirty(); }
+#endif
 }
 
 bool panelPageEnabled(uint8_t key) {

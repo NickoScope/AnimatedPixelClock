@@ -82,6 +82,13 @@ void panelTick();           // loop(): the deferred write
 
 bool     panelPageEnabled(uint8_t key);          // PANEL_KEY_NONE is always true
 bool     panelSetPageEnabled(uint8_t key, bool on);
+// Each Lua effect can be left out of the knob's walk and the carousel on its
+// own, by its name, beside the switch for all of them (PANEL_KEY_LUA). Kept in
+// NVS. A name, not a number: an upload or a delete renumbers the effects.
+// "Show" still shows an effect that is switched off.
+bool panelEffectOn(const char *name);
+void panelSetEffectOn(const char *name, bool on);
+void panelEffectsPrune();   // forget names no effect has any more (after a delete)
 
 const PanelCarousel &panelCarousel();
 bool     panelSetCarousel(const PanelCarousel &c);   // false: out of range, nothing changed

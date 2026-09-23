@@ -147,7 +147,7 @@ function renderNow(d) {
 // "market") are switched on and off together by the panel (/api/panel enable
 // takes a key), so they get one switch for the group, and a row each - with
 // its own name - to show it. An upload slot with nothing in it is not a page.
-var GROUPS = { lua: ['Effects', 'Lua effects: the knob and the carousel visit each one. Switched on and off together'],
+var GROUPS = { lua: ['Effects', 'Lua effects. This switch is all of them; below, each one in or out of the knob and the carousel'],
                market: ['Markets', 'From Home Assistant: switched on and off together'] };
 function renderPages(d) {
   var host = $('pnPages'), cards = $('pnCards');
@@ -176,6 +176,15 @@ function renderPages(d) {
     row.className = 'pn-row' + (here ? ' here' : '') + (group ? ' pn-sub' : '');
     if (isCard) {
       row.innerHTML = '<div class="pn-name"><strong>' + esc(p.title || p.card) + '</strong><span class="ct-hint">' + esc(p.card) + '</span></div>';
+    } else if (group && p.key === 'lua') {
+      // Each effect in or out of the walk by itself; the group switch above is all of them.
+      row.innerHTML = '<label class="check-row standalone"><input type="checkbox"' + (p.effectOn !== false ? ' checked' : '') +
+        '><span class="check-box" aria-hidden="true"></span><span class="check-text"><strong>' + esc(p.name) + '</strong></span></label>';
+      var ebox = row.querySelector('input');
+      ebox.addEventListener('change', function () {
+        api('/api/panel', { enable: { page: p.i, on: ebox.checked } }).then(function (r) { learn(r); renderNow(r); })
+          .catch(function (err) { ebox.checked = !ebox.checked; alert(err.message); });
+      });
     } else if (group) {
       row.innerHTML = '<div class="pn-name"><strong>' + esc(p.name) + '</strong></div>';
     } else {
@@ -1238,7 +1247,7 @@ seg('yrSort', function (v) { api('/api/yachtradar', { bySize: v === '1' }).then(
 // ---------------------------------------------------------------- lua effects
 var luaSig = '';
 function pollLua() { return api('/api/lua').then(renderLua); }
-function pollEffects() { return Promise.all([pollLua(), pollClips()]); }
+function pollEffects() { galLoad(); return Promise.all([pollLua(), pollClips()]); }
 
 // Clips: the uploaded .pca animations in the panel's flash (/api/anim/*, the
 // clock firmware's own routes - they answer without a "success" field, so plain
@@ -1605,20 +1614,98 @@ if ($('cmFile')) {
     }).catch(function (err) { note('cmMsg', err.message, true); }).then(function () { cm.xhr = null; cmBusy(0); });
   });
 }
+var luaLast = null;
 function renderLua(d) {
+  luaLast = d;
   setText('luaTag', d.current >= 0 ? 'playing' : (d.effects.length + ' effects'));
   var sig = JSON.stringify(d), host = $('luaList');
   if (sig === luaSig || !host) return;
   luaSig = sig;
+  var up = {}, walk = d.inWalk || [];
+  ((d.uploaded || {}).scripts || []).forEach(function (s) { up[s.i] = s; });
   host.innerHTML = d.effects.length ? '' : '<p class="field-hint">No effects are loaded.</p>';
   d.effects.forEach(function (name, i) {
-    var row = document.createElement('div');
+    var row = document.createElement('div'), mine = up[i];
     row.className = 'pn-row' + (i === d.current ? ' here' : '');
-    row.innerHTML = '<div class="pn-name"><strong>' + esc(name) + '</strong></div><span class="pn-here">on screen</span><button type="button" class="btn btn-sm">Show</button>';
-    var btn = row.querySelector('button');
-    btn.addEventListener('click', function () { api('/api/lua', { show: i }).then(renderLua).catch(function (err) { flash(btn, err.message, true); }); });
+    row.innerHTML = '<label class="check-row standalone"><input type="checkbox"' + (walk[i] !== false ? ' checked' : '') +
+      '><span class="check-box" aria-hidden="true"></span><span class="check-text"><strong>' + esc(name) +
+      '</strong><span class="ct-hint">' + (mine ? 'uploaded, ' + Math.round(mine.bytes / 1024) + ' KB' : 'built in') +
+      '</span></span></label><span class="pn-here">on screen</span><button type="button" class="btn btn-sm">Show</button>' +
+      (mine ? '<button type="button" class="btn btn-sm">Delete</button>' : '');
+    var box = row.querySelector('input'), btns = row.querySelectorAll('button');
+    box.addEventListener('change', function () {
+      api('/api/lua', { walk: { i: i, on: box.checked } }).then(renderLua)
+        .catch(function (err) { box.checked = !box.checked; note('luaMsg', err.message, true); });
+    });
+    btns[0].addEventListener('click', function () { api('/api/lua', { show: i }).then(renderLua).catch(function (err) { flash(btns[0], err.message, true); }); });
+    if (mine) btns[1].addEventListener('click', function () {
+      if (!confirm('Delete ' + name + ' from the panel? It can be uploaded again.')) return;
+      api('/api/lua', { delete: mine.name }).then(function (r) { luaSig = ''; renderLua(r); renderGallery(); note('luaMsg', name + ' deleted.'); })
+        .catch(function (err) { note('luaMsg', err.message, true); });
+    });
     host.appendChild(row);
   });
+  renderGallery();
+}
+
+// ---------------------------------------------------------------- gallery
+// The list comes from GitHub (gallery/index.json, written by
+// tools/gallery_index.py); "Add" fetches the script there and uploads it here.
+var GALLERY = 'https://raw.githubusercontent.com/NickoScope/AnimatedPixelClock/main/gallery/';
+var galIndex = null, galBusy = false;
+function galLoad() {
+  if (galIndex) return;
+  galIndex = { loading: true };
+  fetch(GALLERY + 'index.json', { cache: 'no-store' }).then(function (r) {
+    if (!r.ok) throw new Error('GitHub answered ' + r.status);
+    return r.json();
+  }).then(function (j) { galIndex = j; renderGallery(); })
+    .catch(function (err) { galIndex = null; var h = $('galList'); if (h) h.innerHTML = '<p class="field-hint">The gallery could not be read: ' + esc(err.message) + '. This browser needs the internet for it.</p>'; });
+}
+function renderGallery() {
+  var host = $('galList');
+  if (!host || !galIndex || galIndex.loading || !luaLast) return;
+  var names = {}, up = luaLast.uploaded || {};
+  luaLast.effects.forEach(function (n) { names[n] = true; });
+  host.innerHTML = '';
+  (galIndex.effects || []).forEach(function (g) {
+    var shown = g.name.replace(/_/g, ' '), here = names[shown];
+    var row = document.createElement('div');
+    row.className = 'pn-row';
+    row.innerHTML = (g.preview ? '<img class="pn-thumb" alt="" src="' + GALLERY + g.preview + '">' : '') +
+      '<div class="pn-name"><strong>' + esc(shown) + '</strong><span class="ct-hint">' + esc(g.line || '') + ' · ' +
+      Math.round(g.bytes / 1024) + ' KB</span></div><button type="button" class="btn btn-sm"' + (here ? ' disabled' : '') + '>' +
+      (here ? 'On the panel' : 'Add') + '</button>';
+    var btn = row.querySelector('button');
+    if (!here) btn.addEventListener('click', function () { galAdd(g, btn); });
+    host.appendChild(row);
+  });
+  setText('galTag', (galIndex.effects || []).length + ' on GitHub');
+  if (up.count >= up.slots) note('galMsg', 'All ' + up.slots + ' upload slots are used: delete an effect above first.', true);
+}
+function galAdd(g, btn) {
+  if (galBusy) return;
+  galBusy = true;
+  btn.disabled = true;
+  btn.textContent = 'Fetching...';
+  fetch(GALLERY + g.file, { cache: 'no-store' }).then(function (r) {
+    if (!r.ok) throw new Error('GitHub answered ' + r.status);
+    return r.text();
+  }).then(function (src) {
+    btn.textContent = 'Sending...';
+    var fd = new FormData();
+    fd.append('script', new Blob([src], { type: 'text/plain' }), g.stem + '.lua');
+    return fetch('/api/lua/upload?name=' + encodeURIComponent(g.name), { method: 'POST', body: fd })
+      .then(function (r) { return r.json().then(function (j) { if (!r.ok || !j.success) throw new Error(j.error || j.message || ('the panel answered ' + r.status)); return j; }); });
+  }).then(function () {
+    note('galMsg', g.name.replace(/_/g, ' ') + ' is on the panel.');
+    luaSig = '';
+    return api('/api/lua').then(renderLua);
+  }).catch(function (err) {
+    note('galMsg', err.message, true);
+    btn.disabled = false;
+    btn.textContent = 'Add';
+  }).then(function () { galBusy = false; });
 }
 
 // ---------------------------------------------------------------- knob

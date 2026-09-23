@@ -775,6 +775,21 @@ uint8_t panelPageKey(uint8_t page) {
   }
 }
 
+// A Lua effect switched out of the walk on its own (panelEffectOn): the knob
+// and the carousel pass it, "Show" still shows it.
+static bool ctrlEffectInWalk(uint8_t page) {
+#if defined(LUA_EFFECTS_ENABLED)
+  const int16_t e = ctrlLuaEffect(page);
+  if (e >= 0 && e < (int16_t)luaEffectCount()) {
+    char nm[LUA_EFFECT_NAME_CAP];
+    luaEffectName((uint8_t)e, nm, sizeof(nm));
+    return panelEffectOn(nm);
+  }
+#endif
+  (void)page;
+  return true;
+}
+
 // The next page the knob and the carousel may land on, skipping the ones
 // switched off in the portal. The clock cannot be switched off, so the walk
 // always ends within one lap.
@@ -784,7 +799,7 @@ static uint8_t ctrlNextVisited(uint8_t from, int8_t d) {
   int p = from;
   for (int k = 0; k < n; k++) {
     p = (p + (d > 0 ? 1 : -1) + n) % n;
-    if (panelPageEnabled(panelPageKey((uint8_t)p)) && ctrlPageVisitable((uint8_t)p)) break;
+    if (panelPageEnabled(panelPageKey((uint8_t)p)) && ctrlPageVisitable((uint8_t)p) && ctrlEffectInWalk((uint8_t)p)) break;
   }
   return (uint8_t)p;
 }

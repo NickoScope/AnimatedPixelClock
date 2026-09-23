@@ -373,7 +373,15 @@ static const char PANEL_PAGES_HTML[] PROGMEM = R"PNL(<div id="panelRoot" data-f=
         </div>
         <div class="card">
           <h2 class="card-title">Effects <span class="tag" id="luaTag">--</span></h2>
+          <p class="field-hint">A ticked effect is one the knob and the carousel visit; an unticked one is left out of both and still shows with Show. Delete removes an effect you uploaded; the built-in ones stay.</p>
           <div class="pn-list" id="luaList"><p class="field-hint">Loading...</p></div>
+          <p class="field-hint" id="luaMsg"></p>
+        </div>
+        <div class="card">
+          <h2 class="card-title">Add from the gallery <span class="tag" id="galTag">GitHub</span></h2>
+          <p class="field-hint">Effects published in the project's gallery on GitHub. This browser fetches the list and the script you pick, and sends it to the panel; the panel itself does not go to the internet for it.</p>
+          <div class="pn-list" id="galList"><p class="field-hint">Loading the gallery...</p></div>
+          <p class="field-hint" id="galMsg"></p>
         </div>
         <div class="card">
           <h2 class="card-title">Clips <span class="tag" id="clipTag">--</span></h2>
