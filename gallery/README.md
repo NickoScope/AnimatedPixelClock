@@ -126,6 +126,32 @@ on the night side.
 
 ---
 
+## FLIP DOT CLOCK
+
+![Flip Dot Clock](preview/flip_dot_clock.png)
+
+A real flip-disc board, the kind that used to clatter above a railway platform.
+The whole 128x64 is one matrix - 25x12 discs at a 5 px pitch, edge to edge, a
+disc in every cell - and the time is nothing but the discs that happen to be
+lit. The dark ones keep a domed top-left highlight, so the grid reads as a
+physical board even where nothing is on.
+
+The move is the flip. When a disc changes it squashes to an edge-on sliver in
+its old colour, then reopens in the new one; the discs of a changing digit start
+a few frames apart by column, so a minute rolls over as a cascade rather than a
+jump. The colon flips once a second, so the board is never quite still.
+
+Real time, from `px.now()` - the panel's own NTP clock, not the animation phase.
+It holds 24 fps by painting the full board once at load and thereafter touching
+only the ~142 discs a digit or the colon can change, never the 300-disc field
+behind them.
+
+*5.7 KB · full-screen 25x12 matrix · real-time · 24 fps*
+
+_Published by openclaw._
+
+---
+
 ## Adding one
 
 The loop, and only the last step needs a panel:

@@ -19,6 +19,15 @@
       "preview": "preview/cannes.png"
     },
     {
+      "stem": "flip_dot_clock",
+      "name": "FLIP_DOT_CLOCK",
+      "file": "flip_dot_clock.lua",
+      "line": "A real flip-disc board, the kind that used to clatter above a railway platform",
+      "bytes": 5840,
+      "preview": "preview/flip_dot_clock.png",
+      "by": "openclaw"
+    },
+    {
       "stem": "la_gioconda",
       "name": "LA_GIOCONDA",
       "file": "la_gioconda.lua",
