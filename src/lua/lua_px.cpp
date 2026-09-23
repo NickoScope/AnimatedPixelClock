@@ -31,7 +31,7 @@ extern "C" {
 #include "vendor/lua/lauxlib.h"
 }
 
-#include "../fonts/picopixel_fb.h"
+#include "../fonts/pxfb_text.h"   // Picopixel, Latin and Cyrillic
 
 #define W LUA_PX_W
 #define H LUA_PX_H
@@ -197,43 +197,24 @@ static int l_circle(lua_State *L) {
 }
 
 // Picopixel as the rest of the firmware draws it: the corrected font, read
-// through the GFXfont tables with drawChar's bit order.
-static inline const GFXglyph &glyphFor(unsigned char c) {
-  unsigned ch = c;
-  if (ch >= 'a' && ch <= 'z') ch -= 32;
-  if (ch < PicopixelFB.first || ch > PicopixelFB.last) ch = ' ';
-  return PicopixelFB.glyph[ch - PicopixelFB.first];
-}
-
+// through the GFXfont tables with drawChar's bit order, now through
+// src/fonts/pxfb_text.h so a UTF-8 string draws its Cyrillic. Latin keeps its
+// case folding (a..z as A..Z); ASCII draws exactly as it always has.
 static int l_text(lua_State *L) {
-  int x = (int)luaL_checkinteger(L, 1);
+  const int x = (int)luaL_checkinteger(L, 1);
   const int y = (int)luaL_checkinteger(L, 2);
   const char *s = luaL_checkstring(L, 3);
   const int r = (int)luaL_checkinteger(L, 4), g = (int)luaL_checkinteger(L, 5),
             b = (int)luaL_checkinteger(L, 6);
   uint8_t *fb = canvasOf(L)->rgb;
   const int base = y + (PicopixelFB.yAdvance - 1);
-  for (const unsigned char *c = (const unsigned char *)s; *c; c++) {
-    if (x >= W) break;                         // see the note at the top
-    const GFXglyph &gl = glyphFor(*c);
-    int bit = 0, bo = gl.bitmapOffset;
-    for (int gy = 0; gy < gl.height; gy++)
-      for (int gx = 0; gx < gl.width; gx++) {
-        if (!(bit & 7)) bo++;
-        const int on = (PicopixelFB.bitmap[bo - 1] >> (7 - (bit & 7))) & 1;
-        bit++;
-        if (on) put(fb, x + gx + gl.xOffset, base + gy + gl.yOffset, r, g, b);
-      }
-    x += gl.xAdvance;
-  }
+  // stopX = W: see the note at the top
+  pxfbDraw(s, x, base, true, W, [&](int px, int py) { put(fb, px, py, r, g, b); });
   return 0;
 }
 
 static int l_width(lua_State *L) {
-  const char *s = luaL_checkstring(L, 1);
-  lua_Integer w = 0;
-  for (const unsigned char *c = (const unsigned char *)s; *c; c++) w += glyphFor(*c).xAdvance;
-  lua_pushinteger(L, w);
+  lua_pushinteger(L, pxfbWidth(luaL_checkstring(L, 1), true));
   return 1;
 }
 

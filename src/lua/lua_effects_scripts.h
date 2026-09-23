@@ -4,6 +4,7 @@
 // The Lua effects the panel carries, in the order the knob walks them. Edit a
 // script and rerun the generator; the pre-commit hook refuses a stale copy.
 // Not embedded:
+//   cyrillic_test.lua: a test card for Latin and Cyrillic text, held to parity by fx_parity
 //   demo.lua: a test card for the px.* API, not something to hang on a wall
 //   world_clock.lua: already a native page drawing the same picture (src/worldclock, WORLDCLOCK_ENABLED); a second copy would show twice in the rotation
 //   sent over the air instead, marked @upload-only: aquarium.lua, cannes.lua, starship.lua

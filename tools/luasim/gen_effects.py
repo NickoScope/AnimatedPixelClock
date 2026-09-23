@@ -21,6 +21,7 @@ OUT     = ROOT / "src/lua/lua_effects_scripts.h"
 
 SKIP = {
     "demo.lua":        "a test card for the px.* API, not something to hang on a wall",
+    "cyrillic_test.lua": "a test card for Latin and Cyrillic text, held to parity by fx_parity",
     "world_clock.lua": "already a native page drawing the same picture (src/worldclock, "
                        "WORLDCLOCK_ENABLED); a second copy would show twice in the rotation",
 }

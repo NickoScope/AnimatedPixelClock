@@ -134,24 +134,39 @@ static int l_circle(lua_State *L) {
   return 0;
 }
 
-/* Picopixel, the same corrected font the firmware draws with. */
+/* Picopixel, the same corrected font the firmware draws with, Latin and
+   Cyrillic, decoded by the firmware's own src/fonts/utf8_next.h. The routing
+   below is src/fonts/pxfb_text.h's pxfbGlyph with foldLatin = true, written
+   again in C; fx_parity holds the two to the same pixels. */
 #include "font_picopixel.inc"
+#include "../../src/fonts/utf8_next.h"
+
+static const PicoGlyph *pico_glyph(uint32_t cp, const unsigned char **bitmap) {
+  if (cp < 0x80) {
+    if (cp >= 'a' && cp <= 'z') cp -= 32;
+    if (cp < 0x20 || cp > 0x7E) cp = ' ';
+    *bitmap = kPicoBitmap;
+    return &kPicoGlyphs[cp - 0x20];
+  }
+  *bitmap = kPicoCyrBitmap;
+  if (cp >= PICO_CYR_FIRST && cp <= PICO_CYR_LAST) return &kPicoCyrGlyphs[cp - PICO_CYR_FIRST];
+  return &kPicoMissing;
+}
 
 static int l_text(lua_State *L) {
   int x = (int)luaL_checkinteger(L, 1), y = (int)luaL_checkinteger(L, 2);
   const char *s = luaL_checkstring(L, 3);
   int r = (int)luaL_checkinteger(L, 4), g = (int)luaL_checkinteger(L, 5),
       b = (int)luaL_checkinteger(L, 6);
-  for (const unsigned char *c = (const unsigned char *)s; *c; c++) {
-    unsigned ch = *c;
-    if (ch >= 'a' && ch <= 'z') ch -= 32;
-    if (ch < 0x20 || ch > 0x7E) ch = ' ';
-    const PicoGlyph *gl = &kPicoGlyphs[ch - 0x20];
+  for (const unsigned char *c = (const unsigned char *)s; *c;) {
+    if (x >= W) break;
+    const unsigned char *bm;
+    const PicoGlyph *gl = pico_glyph(utf8Next(&c), &bm);
     int bit = 0, bo = gl->off;
     for (int gy = 0; gy < gl->h; gy++)
       for (int gx = 0; gx < gl->w; gx++) {
         if (!(bit & 7)) bo++;
-        int on = (kPicoBitmap[bo - 1] >> (7 - (bit & 7))) & 1;
+        int on = (bm[bo - 1] >> (7 - (bit & 7))) & 1;
         bit++;
         if (on) put(x + gx + gl->xo, y + gy + (PICO_YADV - 1) + gl->yo, r, g, b);
       }
@@ -163,11 +178,9 @@ static int l_text(lua_State *L) {
 static int l_width(lua_State *L) {
   const char *s = luaL_checkstring(L, 1);
   int w = 0;
-  for (const unsigned char *c = (const unsigned char *)s; *c; c++) {
-    unsigned ch = *c;
-    if (ch >= 'a' && ch <= 'z') ch -= 32;
-    if (ch < 0x20 || ch > 0x7E) ch = ' ';
-    w += kPicoGlyphs[ch - 0x20].adv;
+  for (const unsigned char *c = (const unsigned char *)s; *c;) {
+    const unsigned char *bm;
+    w += pico_glyph(utf8Next(&c), &bm)->adv;
   }
   lua_pushinteger(L, w); return 1;
 }

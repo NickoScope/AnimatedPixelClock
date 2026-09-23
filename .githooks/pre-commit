@@ -100,6 +100,18 @@ if git diff --cached --name-only | grep -qE '^(tools/luasim/gen_effects\.py|tool
   }
 fi
 
+# The small font, Latin and Cyrillic: the header's generated block, the
+# simulator's copy, and the UTF-8 decoder every text path shares.
+if git diff --cached --name-only | grep -qE '^(src/fonts/|tools/fonts/|tools/luasim/gen_font\.py|tools/luasim/font_picopixel\.inc|tools/luasim/luasim\.c)'; then
+  { python3 tools/fonts/mkcyr.py --check && python3 tools/luasim/gen_font.py --check \
+    && python3 tools/fonts/check_utf8.py; } || {
+    echo
+    echo "pre-commit: the font or its UTF-8 decoder check failed (see above)."
+    echo "            run  python3 tools/fonts/mkcyr.py && python3 tools/luasim/gen_font.py"
+    exit 1
+  }
+fi
+
 # The web flasher serves real binaries to real boards, and on 2026-09-21 it came
 # to serve one labelled v2.5.0 while the panel ran different bytes under the
 # same name. Two binaries, one version, is the defect this refuses; a published

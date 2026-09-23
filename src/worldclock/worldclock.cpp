@@ -12,7 +12,7 @@
 #include <time.h>
 #include "../display/display.h"
 #endif
-#include "../fonts/picopixel_fb.h"
+#include "../fonts/pxfb_text.h"   // Picopixel, drawn the way px.text draws it
 #include "posix_tz.h"
 #include "worldmap.h"
 
@@ -132,28 +132,12 @@ static void drawDigit(int16_t x, int16_t y, uint8_t d, uint16_t col) {
       if (kDigits[d][row] & (0x20 >> bit)) display.drawPixel(x + bit, y + row, col);
 }
 
-static const GFXglyph &glyphFor(char ch) {
-  unsigned c = (unsigned char)ch;
-  if (c < PicopixelFB.first || c > PicopixelFB.last) c = ' ';
-  return PicopixelFB.glyph[c - PicopixelFB.first];
-}
-
 // Picopixel read through the GFXfont tables with drawChar's bit order, as
 // lua_px.cpp's px.text reads it - which is how the prototype draws the name.
+// Case is not folded: the name is capitals already (worldClockCheck).
 static void drawName(const char *s, uint16_t col) {
-  int16_t x = NAME_X;
-  for (; *s; s++) {
-    const GFXglyph &g = glyphFor(*s);
-    int bit = 0, bo = g.bitmapOffset;
-    for (int gy = 0; gy < g.height; gy++)
-      for (int gx = 0; gx < g.width; gx++) {
-        if (!(bit & 7)) bo++;
-        if ((PicopixelFB.bitmap[bo - 1] >> (7 - (bit & 7))) & 1)
-          display.drawPixel(x + gx + g.xOffset, NAME_BASE + gy + g.yOffset, col);
-        bit++;
-      }
-    x += g.xAdvance;
-  }
+  pxfbDraw(s, NAME_X, NAME_BASE, false, 0x7FFF,
+           [col](int x, int y) { display.drawPixel(x, y, col); });
 }
 
 // Cities are 2x2 - the dot and its gap - so they read as bigger dots on the
@@ -196,11 +180,7 @@ bool worldClockCity(uint8_t id, WcCity *out) {
   return false;
 }
 
-int worldClockNameWidth(const char *name) {
-  int w = 0;
-  for (; *name; name++) w += glyphFor(*name).xAdvance;
-  return w;
-}
+int worldClockNameWidth(const char *name) { return pxfbWidth(name, false); }
 
 const char *worldClockCheck(const WcCity &c) {
   const size_t n = strnlen(c.name, sizeof(c.name));
@@ -313,7 +293,7 @@ void worldClockFitName(const char *utf8, char *out, size_t n) {
   size_t cut = 0, whole = 0;
   int w = 0;
   for (size_t i = 0; i < m && i < WC_NAME_MAX; i++) {
-    w += glyphFor(buf[i]).xAdvance;
+    w += pxfbGlyph((unsigned char)buf[i], false).g->xAdvance;
     if (w > WC_NAME_PX) break;
     cut = i + 1;
     if (i + 1 == m || buf[i + 1] == ' ' || buf[i + 1] == '-') whole = i + 1;

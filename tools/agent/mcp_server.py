@@ -981,10 +981,21 @@ async def effect_api() -> str:
             "font": "PicopixelFB, and it is the only one. Stock Adafruit Picopixel "
                     "with the U given a flat bottom, because at 2 mm pitch the stock "
                     "U reads as V across a room.",
-            "range": "0x20..0x7E. **px.text folds lowercase onto uppercase** "
-                     "(lua_px.cpp:202), so 'a' and 'A' draw the same ink - a ramp or "
-                     "a palette built on letter case has half as many shapes as it "
+            "range": "0x20..0x7E, plus Cyrillic U+0400..U+045F (А-Я, а-я, Ё ё) "
+                     "since firmware 2.5.4: strings are UTF-8, write Russian as it is. "
+                     "**px.text folds lowercase onto uppercase** in both alphabets, so "
+                     "'a' and 'A' (and 'я' and 'Я') draw the same ink - a ramp or a "
+                     "palette built on letter case has half as many shapes as it "
                      "looks like it has.",
+            "what it cannot draw": "any other code point, and broken UTF-8, draws a "
+                                   "solid 3x5 block, 4 px of advance - on purpose, so "
+                                   "a missing glyph is seen, not silently spaced. "
+                                   "Control characters and DEL are still a space.",
+            "cyrillic shapes": "the letters shaped like Latin ones are the Latin "
+                               "pixels (А=A, В=B, Е=E, К=K, М=M, Н=H, О=O, Р=P, С=C, "
+                               "Т=T, Х=X); Д И Й Л Ц Ъ are 4 wide, Ж Ф Ш Ы Ю 5, Щ 6. "
+                               "Source: tools/fonts/mkcyr.py; the test card is "
+                               "tools/luasim/scripts/cyrillic_test.lua.",
             "glyph box": "at most 3 px wide and 5 tall for the usual characters; "
                          "W, M, #, N, & and a few others are 4-5 wide.",
             "yAdvance": 7,
