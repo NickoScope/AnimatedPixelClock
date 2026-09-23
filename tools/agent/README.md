@@ -1,6 +1,6 @@
 # An SDK for this panel, and an MCP server that wraps it
 
-Six files, and between them everything an AI agent needs to bring a panel up,
+Seven files, and between them everything an AI agent needs to bring a panel up,
 find it on your network, drive it, see what is actually happening inside it, and
 write new screens for it.
 
@@ -11,7 +11,8 @@ write new screens for it.
 | `panel.py` | the transport. One place that knows how this firmware really behaves |
 | `gallery.py` | the `gallery/` screens, and any of them onto a running panel in about a second |
 | `health.py` | a self-test: pings underneath, exercises the controls and the portal, reads the panel's counters and log ring (and the USB console if given), writes every raw log to `health-logs/<time>/` and prints a short verdict with findings. `--list`, `--panel`, `--all` choose among several panels. Also the `panel_selftest` MCP tool |
-| `mcp_server.py` | twenty-five MCP tools over stdio. This is what you register with Claude Code, Codex or anything else that speaks MCP |
+| `update.py` | firmware updates: what is new (every published release newer than the panel, with its notes), and installing one over the air with three confirmations and an honest outcome. Also the `panel_update_check` and `panel_update` MCP tools |
+| `mcp_server.py` | twenty-seven MCP tools over stdio. This is what you register with Claude Code, Codex or anything else that speaks MCP |
 
 **This SDK is the source of truth for working with a panel.** Where a fact about
 driving one has to live in exactly one place, it lives here - as a tool that
@@ -19,9 +20,14 @@ returns it - and `AGENTS.md` points at it rather than keeping its own copy that
 drifts. `panel_bringup`, `effect_api` and `effect_photo` are written that way on
 purpose: they are documents you can call.
 
-Nothing here has a flashing tool, and nothing here will get one. Building and
-uploading is a person's call, at a moment they chose, with the panel in front of
-them.
+Firmware changes one way only: `update.py` / `panel_update`, which installs a
+**published** release of this fork over the air after **three confirmations
+from the person** in front of the panel, checks the image (SHA-256 against the
+release, ESP32-S3 header) before sending it, and reports what the panel says
+afterwards - UPDATED, ROLLED BACK (the panel's own rollback: an image that does
+not prove itself in its first minute is replaced by the previous one), NOT
+APPLIED, PENDING or NOT BACK. Nothing here builds and flashes an image of its
+own: building and uploading a build is a person's call, at a moment they chose.
 
 ---
 
