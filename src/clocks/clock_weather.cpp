@@ -64,7 +64,9 @@ void displayClockWithWeather() {
   }
 
 #if defined(CLIMATE_ENABLED)
-  // The snapshot the reader keeps from loop(): no I2C on a frame.
+  // The snapshot the reader keeps from loop(): no I2C on a frame. The reader
+  // only runs while a screen shows the figure (src/climate/climate.cpp).
+  if (settings.climateEnabled && settings.climateShow == climate::kShowSplit) climateNoteShown();
   const ClimateReading in = climateGet();
   s.indoor = climate::weatherIndoor(settings.climateEnabled, settings.climateShow, in.state);
   s.inTempC = in.tempC;

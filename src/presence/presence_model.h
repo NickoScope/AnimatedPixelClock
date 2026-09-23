@@ -26,6 +26,14 @@ static const uint32_t kFreshMs = 5000;
 // No message at all for this long: the screen says so instead of drawing an
 // empty room it has no evidence for.
 static const uint32_t kLostMs = 30000;
+// Within one visit of the page, the feed has this long to say something before
+// the screen says NO FEED. A carousel visit is 15 s, shorter than kLostMs, so
+// without this a dead feed would be drawn as an empty room for the whole visit.
+// Two of the empty room's heartbeats: the contract sends targets about 1 Hz
+// with someone present and every 5 s when the room is empty (knowledge base
+// docs/16-presence-radar.md, the topic table; measured there as 60 frames a
+// minute present, 12 empty).
+static const uint32_t kVisitLostMs = 10000;
 // A slot must be filled by this many messages in a row before it is drawn. The
 // LD2450 invents and drops weak targets: on the panel, 2026-09-16, a ghost held
 // slot 2 in 134 of 143 rows near a window, and slot 1 crossed twice a minute
@@ -125,6 +133,39 @@ class Model {
     stepMs_ = 0;
     ever_ = false;
     messages_ = 0;
+    listening_ = false;
+    listenMs_ = 0;
+    heard_ = publisher_ = offline_ = false;
+  }
+
+  // The feed is heard only while a page reads the model (presence.cpp): the
+  // panel subscribes when a page that reads it comes on screen and
+  // unsubscribes when it goes. listenFrom() starts a visit. Positions from
+  // before the gap are dropped, because drawing between a sample from minutes
+  // ago and a new one would glide a dot across the room. So a person is drawn
+  // again after kConfirm messages, about two seconds at the feed's 1 Hz.
+  // What the screen says during a visit is in source().
+  void listenFrom(uint32_t nowMs) {
+    for (uint8_t i = 0; i < kSlots; i++) s_[i] = Slot();
+    for (uint8_t k = 0; k < kRing; k++) {
+      rcount_[k] = 0;
+      for (uint8_t i = 0; i < kSlots; i++) r_[i][k].ok = false;
+    }
+    head_ = 0;
+    stepMs_ = 0;
+    listening_ = true;
+    listenMs_ = nowMs;
+    heard_ = false;
+  }
+  void stopListening() { listening_ = false; }
+  bool listening() const { return listening_; }
+  bool wantsLive() const { return wantLive_; }
+
+  // The retained summary: a publisher exists, and whether the sensor itself is
+  // online. It never moves a dot (presence.cpp).
+  void onSummary(bool haveOnline, bool online) {
+    publisher_ = true;
+    if (haveOnline) offline_ = !online;
   }
 
   void setMirror(bool on) { mirror_ = on; }
@@ -138,6 +179,8 @@ class Model {
   void onMessage(uint32_t nowMs, const Report r[kSlots]) {
     lastMs_ = nowMs;
     ever_ = true;
+    heard_ = true;
+    publisher_ = true;
     messages_++;
     for (uint8_t i = 0; i < kSlots; i++) {
       Slot &s = s_[i];
@@ -189,8 +232,24 @@ class Model {
     rcount_[head_] = n;
   }
 
+  // During a visit, in order: a message this visit means the feed is live,
+  // lost after kLostMs of silence as always. Before the first one: a summary
+  // that says the sensor is offline is NO FEED at once; a board that has never
+  // seen a publisher (no summary, no targets since boot) keeps its scripted
+  // story, the screen for panels without the sensor; otherwise the room is
+  // drawn empty while the first heartbeat is awaited, and NO FEED after
+  // kVisitLostMs. Every time here is measured from inside the visit, so
+  // millis() wrapping during a long spell off screen changes nothing.
+  // Outside a visit nothing reads this but /api/info, which says "idle".
   Source source(uint32_t nowMs) const {
-    if (!wantLive_ || !ever_) return Source::Demo;
+    if (!wantLive_) return Source::Demo;
+    if (listening_) {
+      if (heard_) return since(nowMs, lastMs_) > (int32_t)kLostMs ? Source::Lost : Source::Live;
+      if (offline_) return Source::Lost;
+      if (!publisher_) return Source::Demo;
+      return since(nowMs, listenMs_) > (int32_t)kVisitLostMs ? Source::Lost : Source::Live;
+    }
+    if (!ever_) return Source::Demo;
     return since(nowMs, lastMs_) > (int32_t)kLostMs ? Source::Lost : Source::Live;
   }
 
@@ -264,8 +323,11 @@ class Model {
   Cell     r_[kSlots][kRing];
   uint8_t  rcount_[kRing] = {0};
   uint8_t  head_ = 0;
-  uint32_t lastMs_ = 0, stepMs_ = 0, messages_ = 0;
-  bool     ever_ = false, mirror_ = kMirrorDefault, wantLive_ = true;
+  uint32_t lastMs_ = 0, stepMs_ = 0, messages_ = 0, listenMs_ = 0;
+  bool     ever_ = false, mirror_ = kMirrorDefault, wantLive_ = true, listening_ = false;
+  bool     heard_ = false;       // a targets message during this visit
+  bool     publisher_ = false;   // a summary or a targets message since boot
+  bool     offline_ = false;     // the newest summary said the sensor is offline
 };
 
 }  // namespace presence

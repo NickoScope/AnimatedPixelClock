@@ -62,6 +62,11 @@ static const uint32_t kRetryMs        = 2000;    // the first failed cycles are 
 static const uint32_t kLineRecheckUs  = 5000;
 static const uint32_t kStallUs        = 100000;
 static const uint32_t kStallBackoffMs = 60000;
+// The longest wait resume() may find running: the longest interval, or a
+// back-off; and the longest pause /api/climate/pause accepts (web.cpp, 600 s).
+static const uint32_t kLongestWaitMs  = (uint32_t)kIntervalMaxS * 1000UL > kReprobeMs
+                                        ? (uint32_t)kIntervalMaxS * 1000UL : kReprobeMs;
+static const uint32_t kLongestPauseMs = 600000;
 static const int      kWireTimeout    = 5;       // Wire.endTransmission() for ESP_ERR_TIMEOUT (Wire.cpp:468)
 
 struct Counters {
@@ -233,6 +238,23 @@ class Reader {
     smooth_.reset();
   }
 
+  // After a spell in which loop() was not called (climate.cpp stops calling it
+  // while nothing needs the reading): a wait set before the spell may have
+  // ended long ago, and after 2^31 ms (24.8 days) a signed comparison reads it
+  // as far in the future. A wait longer than any this reader sets, or already
+  // over, ends now, so a cycle starts on the next pass; one still running
+  // (the interval, a back-off after a held bus) is kept. The same for a pause.
+  void resume() {
+    if (step_ != Step::Due) return;
+    const uint32_t now = port_.ms();
+    const int32_t wait = (int32_t)(dueMs_ - now);
+    if (wait < 0 || wait > (int32_t)kLongestWaitMs) dueMs_ = now;
+    if (paused_) {
+      const int32_t p = (int32_t)(pauseUntilMs_ - now);
+      if (p < 0 || p > (int32_t)kLongestPauseMs) paused_ = false;
+    }
+  }
+
   // No cycle starts for that long; 0 resumes.
   void pause(uint32_t seconds) {
     paused_ = seconds > 0;
@@ -256,6 +278,10 @@ class Reader {
   }
 
   bool running() const { return step_ != Step::Off; }
+  // No transaction in flight: the sensor is asleep and the next cycle has not
+  // begun. The only place loop() may stop being called without leaving the
+  // sensor awake mid-measurement.
+  bool betweenCycles() const { return step_ == Step::Off || step_ == Step::Due; }
   bool have() const { return have_; }
   float temperature() const { return smooth_.t; }   // smoothed, °C
   float humidity() const { return smooth_.rh; }     // smoothed, %RH

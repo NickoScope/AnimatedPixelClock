@@ -369,6 +369,40 @@ static void readerAbsent() {
   CHECK(!runUntil(r, bus, 55000, [&] { return bus.transactions != 3; }));   // then once a minute
 }
 
+// climate.cpp stops calling loop() while nothing needs the reading, but only
+// between cycles, and calls resume() when it is needed again (owner,
+// 2026-09-23: nothing runs that is not on screen).
+static void readerIdleAndResume() {
+  MockBus bus;
+  climate::Reader r(bus);
+  CHECK(runUntil(r, bus, 1000, [&] { return r.counters().reads == 1; }));
+  // Mid-cycle it is not between cycles; after the sleep command it is.
+  CHECK(runUntil(r, bus, 100, [&] { return bus.asleep(); }));
+  CHECK(r.betweenCycles());
+  // Nobody reads for 25 days: no loop() calls at all. 25 days is past 2^31 ms,
+  // so the wait set before the spell now looks like the far future.
+  bus.nowUs += 25ULL * 24 * 3600 * 1000 * 1000;
+  CHECK(r.state(bus.ms(), 10) == ClimateState::Stale);
+  // Without resume() no cycle would start for another 24 days: the negative
+  // control, on a copy of the same state (the copy shares the mock bus).
+  const uint32_t readsBefore = r.counters().reads;
+  climate::Reader stuck = r;
+  const int txBefore = bus.transactions;
+  int passes = 0;
+  const uint64_t t0 = bus.nowUs;
+  while (passes++ < 200) { bus.nowUs += 1000; stuck.loop(10); }
+  CHECK(stuck.counters().reads == readsBefore && bus.transactions == txBefore);   // 200 ms and nothing: the wrap bites
+  bus.nowUs = t0;
+  r.resume();
+  CHECK(runUntil(r, bus, 100, [&] { return r.counters().reads == readsBefore + 1; }));   // a new value at once
+  CHECK(r.state(bus.ms(), 10) == ClimateState::Ok);
+  // A wait still running is kept: resume() right after a reading changes nothing.
+  CHECK(runUntil(r, bus, 100, [&] { return bus.asleep(); }));
+  r.resume();
+  CHECK(!runUntil(r, bus, 5000, [&] { return r.counters().reads == readsBefore + 2; }));
+  CHECK(runUntil(r, bus, 6000, [&] { return r.counters().reads == readsBefore + 2; }));   // at the 10 s interval
+}
+
 int main() {
   datasheetCrc();
   datasheetFigure7();
@@ -384,6 +418,7 @@ int main() {
   readerHeldLine();
   readerStall();
   readerAbsent();
+  readerIdleAndResume();
   std::printf("%d checks, %d failed\n", g_checks, g_fail);
   return g_fail ? 1 : 0;
 }

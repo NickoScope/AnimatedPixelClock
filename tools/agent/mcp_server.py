@@ -1200,6 +1200,10 @@ async def effect_api() -> str:
             "presence.count([k])": "-> targets held k steps of 0.1 s ago",
             "presence.target(i)": "-> x_mm, y_mm, speed_cms, or nil. i is 1..3",
             "presence.trail(i,k)": "-> x_mm, y_mm, or nil",
+            "read it every frame": "the panel hears the sensor only while a script "
+                                   "reads presence, and stops 3 s after the last "
+                                   "read; each new visit starts with an empty room "
+                                   "for about 2 s",
         },
         "environment": {
             "libraries": "base, table, string, math. That is all.",

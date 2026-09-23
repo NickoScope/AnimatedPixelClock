@@ -61,6 +61,28 @@ bool s_wire = false;   // the board's bus is running (board_i2c.h)
 
 uint32_t intervalMs() { return (uint32_t)climate::clampInterval(settings.climateIntervalS) * 1000UL; }
 
+// The sensor is read only while something needs the reading (owner, 2026-09-23:
+// the panel works on what is on its screen and nothing else): the weather clock
+// showing the indoor figure, which calls climateNoteShown() every frame, or
+// Home Assistant, when the panel is its room sensor. kShownIdleMs is our
+// choice, not a measured norm: the weather clock draws many times a second, so
+// three seconds without a frame means it has gone. Between those times no
+// cycle starts; one already running finishes, so the sensor is never left
+// awake. Coming back, the reading is older than the interval, so the next pass
+// starts a cycle at once, about 15 ms to a new value.
+const uint32_t kShownIdleMs = 3000;
+uint32_t s_shownMs = 0;
+bool     s_everShown = false;
+bool     s_wanted = false;        // readingWanted() on the last climateLoop() pass
+uint32_t s_wantedSinceMs = 0;     // when it last became true
+
+bool readingWanted() {
+#if defined(MQTT_BUS_ENABLED)
+  if (settings.climateHa) return true;
+#endif
+  return s_everShown && millis() - s_shownMs <= kShownIdleMs;
+}
+
 double hundredths(float v) { return std::round((double)v * 100.0) / 100.0; }
 
 #if defined(MQTT_BUS_ENABLED)
@@ -216,7 +238,26 @@ void climateLoop() {
     return;
   }
   if (!s_wire) return;
+  const bool wanted = readingWanted();
+  if (wanted && !s_wanted) {       // back on screen, or Home Assistant switched on
+    s_wantedSinceMs = millis();
+    s_reader.resume();
+  }
+  s_wanted = wanted;
+  if (!wanted && s_reader.betweenCycles()) return;
   s_reader.loop(settings.climateIntervalS);
+}
+
+void climateNoteShown() {
+  const uint32_t now = millis();
+  // The edge is taken here, not in climateLoop(): the screen draws after the
+  // loop pass, so its first frame would otherwise see the old reading as stale.
+  if (!s_everShown || now - s_shownMs > kShownIdleMs) {
+    s_wantedSinceMs = now;
+    s_reader.resume();
+  }
+  s_shownMs = now;
+  s_everShown = true;
 }
 
 #if defined(MQTT_BUS_ENABLED)
@@ -234,6 +275,13 @@ ClimateReading climateGet() {
     r.state = ClimateState::Absent;
   } else {
     r.state = s_reader.state(now, settings.climateIntervalS);
+    // Just back from a spell unread, the last reading is older than the stale
+    // limit, but a new one is a pass away (about 15 ms) or, if that cycle
+    // fails, a retry away (kRetryMs). For that long it is not called stale, so
+    // the weather screen does not flash dashes on the way in.
+    if (r.state == ClimateState::Stale && s_reader.have() && readingWanted() &&
+        now - s_wantedSinceMs < climate::kRetryMs)
+      r.state = ClimateState::Ok;
   }
   if (s_reader.have() && settings.climateEnabled) {
     r.have = true;
@@ -272,6 +320,9 @@ void climateInfoJson(JsonObject out) {
   const ClimateReading r = climateGet();
   const climate::Counters &c = s_reader.counters();
   out["state"] = climateStateName(r.state);
+  // Nothing on screen needs the reading and Home Assistant is off, so the
+  // sensor is not being read now; the state and the last reading stay as they are.
+  out["idle"] = settings.climateEnabled && s_wire && !readingWanted();
   out["intervalS"] = climate::clampInterval(settings.climateIntervalS);
   if (r.have) {
     out["tempC"] = hundredths(r.tempC);

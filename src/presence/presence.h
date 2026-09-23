@@ -27,13 +27,17 @@
 #endif
 
 void presenceBegin();               // in setup(), after loadSettings() and mqttBusBegin()
-void presenceLoop();                // every loop() pass: the ring, at 10 Hz. No I/O.
+void presenceLoop();                // every loop() pass: the ring at 10 Hz while a page reads it; subscribes and unsubscribes
 void presenceSettingsChanged();     // after the portal or an import changed one of ours
 void presenceInfoJson(JsonObject out);   // /api/info's "presence"
 
 // ── what the Lua scene reads ────────────────────────────────────────────────
 // All of these are O(1), allocate nothing and are safe to call from draw(),
-// which asks for them 19 times a frame.
+// which asks for them 19 times a frame. They are also what turns the feed on:
+// the panel hears the MTR-1 only while a script reads these, and stops three
+// seconds after the last read (presence.cpp). Read them every frame. A script
+// that reads them now and then starts a new visit each time and sees an empty
+// room for the first two seconds of each.
 uint8_t presenceSourceCode();       // 0 the scripted story, 1 live, 2 the feed stopped
 uint8_t presenceScaleM();           // metres the fan covers: 2, 4 or 6
 bool    presenceTarget(uint8_t slot, int32_t *x, int32_t *y, int16_t *speedCms);

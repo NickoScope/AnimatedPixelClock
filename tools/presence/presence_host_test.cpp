@@ -367,6 +367,93 @@ static void confirmAndTeleport() {
   CHECK(x == -4000 && y == 7000);                   // where it is, not on a line from where it was
 }
 
+// ── listening only while a page reads the feed ─────────────────────────────
+// presence.cpp subscribes when a page reads the model and unsubscribes when it
+// stops. A visit must say NO FEED when the feed is dead, keep the story on a
+// board with no sensor, and never draw a dot or a trail from before it.
+static void listeningGap() {
+  using presence::Source;
+  Report r[kSlots];
+  int32_t x = 0, y = 0;
+
+  // A board that has never seen a publisher: the scripted story, at once.
+  {
+    presence::Model m;
+    m.reset();
+    m.listenFrom(1000);
+    CHECK(m.source(1000) == Source::Demo);
+    CHECK(m.source(1000 + presence::kVisitLostMs + 1) == Source::Demo);
+  }
+  // A publisher is known (the retained summary), nothing heard yet: an empty
+  // live room, then NO FEED after two missed heartbeats - inside a 15 s visit.
+  {
+    presence::Model m;
+    m.reset();
+    m.onSummary(true, true);
+    m.listenFrom(1000);
+    CHECK(m.source(1000) == Source::Live);
+    CHECK(m.source(1000 + presence::kVisitLostMs) == Source::Live);
+    CHECK(m.source(1000 + presence::kVisitLostMs + 1) == Source::Lost);
+    CHECK(presence::kVisitLostMs < 15000);            // shorter than a carousel visit
+  }
+  // The summary says the sensor is offline: NO FEED at once.
+  {
+    presence::Model m;
+    m.reset();
+    m.onSummary(true, false);
+    m.listenFrom(1000);
+    CHECK(m.source(1000) == Source::Lost);
+    fill(r, -1, 0, 0, 0);
+    m.onMessage(1500, r);                              // but a message that arrives is believed
+    CHECK(m.source(1500) == Source::Live);
+  }
+
+  // A person, confirmed, with a trail; then the page goes off screen.
+  presence::Model m;
+  m.reset();
+  m.listenFrom(1000);
+  fill(r, 0, 1000, 2000, 0);
+  for (uint32_t t = 1000; t <= 4000; t += 1000) m.onMessage(t, r);
+  for (uint32_t t = 3000; t <= 5000; t += presence::kStepMs) m.tick(t);
+  CHECK(m.target(4000, 0, nullptr, nullptr, nullptr));
+  CHECK(m.trail(0, 5, &x, &y) && m.count(5) == 1);    // the ring holds the person
+  m.stopListening();
+
+  // Back after more than 2^31 ms (24.8 days): millis() has wrapped against
+  // every stamp from before. The visit is timed from its own start.
+  const uint32_t back = 4000u + 0x90000000u;
+  m.listenFrom(back);
+  CHECK(m.source(back) == Source::Live);
+  CHECK(m.source(back + presence::kVisitLostMs + 1) == Source::Lost);   // a dead feed says so
+  CHECK(!m.target(back, 0, nullptr, nullptr, nullptr));
+  CHECK(m.countNow(back) == 0);
+  m.tick(back);
+  bool anyTrail = false, anyCount = false;
+  for (uint8_t k = 1; k < presence::kRing; k++) {
+    if (m.trail(0, k, &x, &y)) anyTrail = true;
+    if (m.count(k)) anyCount = true;
+  }
+  CHECK(!anyTrail && !anyCount);                     // nothing from before the gap
+
+  // The person is drawn again after kConfirm messages, where they are now,
+  // without gliding from where they were.
+  fill(r, 0, -1500, 2500, 0);
+  m.onMessage(back + 500, r);
+  CHECK(!m.target(back + 500, 0, nullptr, nullptr, nullptr));
+  m.onMessage(back + 1500, r);
+  CHECK(m.target(back + 2500, 0, &x, &y, nullptr));
+  CHECK(x == -1500 && y == 2500);
+  CHECK(m.source(back + 2500) == Source::Live);
+  // Heard this visit: the usual kLostMs from the last message.
+  CHECK(m.source(back + 1500 + presence::kLostMs) == Source::Live);
+  CHECK(m.source(back + 1500 + presence::kLostMs + 1) == Source::Lost);
+
+  // The demo chosen in the settings: the story, whatever the feed does.
+  m.setWanted(presence::kSourceDemo);
+  CHECK(m.source(back + 2500) == Source::Demo);
+  CHECK(!m.wantsLive());
+}
+
 int main() {
   units();
   contractPayload();
@@ -385,6 +472,7 @@ int main() {
   ring();
   bounds();
   clockWrap();
+  listeningGap();
   std::printf("%d checks, %d failed\n", g_checks, g_fail);
   return g_fail ? 1 : 0;
 }

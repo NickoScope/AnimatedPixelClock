@@ -2116,9 +2116,9 @@ function logInit(){
 function climateStatus(c) {
 var tag = $('#climateTag'), now = $('#climateNow');
 if (!c || !tag || !now) return;
-tag.textContent = c.state;
-if (typeof c.tempC === 'number') now.textContent = 'Now ' + c.tempC.toFixed(1) + ' \u00b0C and ' + Math.round(c.humidity) + ' %RH; the sensor itself reads ' + c.sensorTempC.toFixed(1) + ' \u00b0C and ' + Math.round(c.sensorHumidity) + ' %RH (' + c.ageS + ' s ago).';
-else now.textContent = c.state === 'absent' ? 'No SHTC3 answered on the I2C bus.' : c.state === 'off' ? 'Not reading.' : 'Looking for the sensor.';
+tag.textContent = c.idle ? c.state + ', idle' : c.state;
+if (typeof c.tempC === 'number') now.textContent = (c.idle ? 'Not reading now: nothing on screen shows it and Home Assistant is off. Last: ' : 'Now ') + c.tempC.toFixed(1) + ' \u00b0C and ' + Math.round(c.humidity) + ' %RH; the sensor itself reads ' + c.sensorTempC.toFixed(1) + ' \u00b0C and ' + Math.round(c.sensorHumidity) + ' %RH (' + c.ageS + ' s ago).';
+else now.textContent = c.state === 'absent' ? 'No SHTC3 answered on the I2C bus.' : c.state === 'off' ? 'Not reading.' : c.idle ? 'Not reading now: nothing on screen shows it and Home Assistant is off.' : 'Looking for the sensor.';
 }
 // The Remote card: ten rows from GET /api/ir, which every /api/ir/* route
 // also answers with, so each click redraws from the reply it gets.
@@ -2216,7 +2216,8 @@ var tag = $('#presenceTag'), now = $('#presenceNow');
 if (!p || !tag || !now) return;
 tag.textContent = p.source;
 var age = typeof p.lastMessageS === 'number' ? p.lastMessageS + ' s ago' : 'nothing yet';
-now.textContent = p.source === 'demo' ? 'Drawing the scripted demo, not the room.'
+now.textContent = p.source === 'idle' ? 'Not listening: the room radar is not on screen. The panel subscribes to the feed when the page comes up (' + p.visits + ' times since boot).'
+: p.source === 'demo' ? 'Drawing the scripted demo, not the room.'
 : p.source === 'lost' ? 'The last message was ' + age + ', so the page says NO FEED rather than an empty room.'
 : p.targets + ' in the room; last message ' + age + '. ' + p.messages + ' messages, ' + p.parseFailures + ' refused, JSON peak ' + p.jsonPeak + ' of ' + p.jsonBytes + ' B.';
 }

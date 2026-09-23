@@ -620,7 +620,7 @@ void setup() {
   MEMTRACE("climate");
 #endif
 #if defined(PRESENCE_ENABLED)
-  presenceBegin();  // subscribes for the MTR-1's targets on the shared bus: src/presence
+  presenceBegin();  // the MTR-1's feed, heard only while a page reads it: src/presence
   MEMTRACE("presence");
 #endif
 #if defined(IR_ENABLED)
@@ -1190,7 +1190,7 @@ void loop() {
 #endif
 #endif
 #if defined(PRESENCE_ENABLED)
-  presenceLoop();            // the room radar's trail ring, at 10 Hz. No I/O, no allocation.
+  presenceLoop();            // the radar's trail ring while a page reads it; subscribes and unsubscribes
   loopMark("presence");
 #endif
 #if defined(FX3D_ENABLED)

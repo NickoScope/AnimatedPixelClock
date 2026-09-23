@@ -31,6 +31,7 @@ void climateLoop();                     // every loop() pass: at most one I2C tr
 void climateHaLoop();                   // every loop() pass after it: the Home Assistant sensors, MQTT only
 #endif
 ClimateReading climateGet();
+void climateNoteShown();                 // a screen shows the indoor reading now: keep reading (see climate.cpp)
 const char *climateStateName(ClimateState s);
 void climateSettingsChanged();          // after the portal or an import changed a climate setting
 void climatePause(uint32_t seconds);    // no new reading for that long (0 resumes), so the stale state can be seen; not saved
