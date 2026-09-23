@@ -409,6 +409,13 @@ ok in N ms, ~N instr, heap N B, fps cap N, stack free N`. Some are slow to open
 
 World clock, flights, trains, the four market pages, media, yachts.
 
+*The knob and the remote inside a page* (click / OK to enter, the arrows act
+inside, click again to leave; the system corner shows an amber arrow meanwhile):
+flights step the airport, trains walk LISTS then STATION, market pages their
+window and list, media TUNE then VOLUME, yachts scroll, and since 2.5.9 the
+**world clock steps the home city** through the portal's cities, built-in and
+custom, keeping the choice as the portal's "home" does.
+
 *Working with them, and this is the part that surprises people:* **a board does
 not fetch while its page is off the screen.** That is deliberate - it is the
 owner's brief - so "the data is stale" usually means "nothing has looked at it".

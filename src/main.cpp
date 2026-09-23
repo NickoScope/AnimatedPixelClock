@@ -648,6 +648,30 @@ static bool     ctrlEntered = false;
 static uint32_t ctrlLastEventMs = 0;
 static const uint32_t CTRL_ENTER_TIMEOUT_MS = 30000;   // walk away and it browses again
 
+#if defined(WORLDCLOCK_ENABLED)
+// Inside the world clock the knob and the remote step the home city through
+// the built-in cities and the custom ones, and keep it (panelSetWorldHome, as
+// the portal's "home" does). Until 2026-09-23 the page had no stop at all and
+// the city could only be changed from the portal. The city made at the
+// panel's location is left out: choosing it stores it as a custom city.
+static void wcKnob(int8_t d) {
+  uint8_t ids[64];
+  uint8_t n = 0;
+  for (uint8_t i = 0; i < worldClockDefaultCount() && n < sizeof(ids); i++) ids[n++] = i;
+  for (uint8_t i = 0; i < WC_CUSTOM_MAX && n < sizeof(ids); i++)
+    if (worldClockSlotUsed(i)) ids[n++] = (uint8_t)(WC_ID_CUSTOM + i);
+  if (!n) return;
+  const uint8_t home = worldClockHome();
+  int at = -1;
+  for (uint8_t i = 0; i < n; i++) if (ids[i] == home) at = i;
+  const int next = at < 0 ? 0 : ((at + d) % (int)n + (int)n) % (int)n;
+  if (panelSetWorldHome(ids[next])) return;   // refused: leave it as it is
+  static char toast[WC_NAME_MAX + 1];         // the toast keeps the pointer
+  WcCity c;
+  if (worldClockCity(ids[next], &c)) { strncpy(toast, c.name, sizeof(toast) - 1); toast[sizeof(toast) - 1] = 0; ctrlToast(toast); }
+}
+#endif
+
 static bool ctrlPageHasControls(uint8_t page) {
 #if defined(FLIGHTBOARD_ENABLED)
   if (page == PAGE_FLIGHTBOARD) return true;
@@ -660,6 +684,9 @@ static bool ctrlPageHasControls(uint8_t page) {
 #endif
 #if defined(MEDIAPLAYER_ENABLED)
   if (page == PAGE_MEDIA) return true;
+#endif
+#if defined(WORLDCLOCK_ENABLED)
+  if (page == PAGE_WORLDCLOCK) return true;   // the home city (the owner, 2026-09-23)
 #endif
 #if defined(MARKET_ENABLED)
   if (ctrlMarketSub(page) >= 0) return true;
@@ -737,6 +764,9 @@ static const char *ctrlEnterHint(uint8_t page) {
 #endif
 #if defined(RAILBOARD_ENABLED)
   if (page == PAGE_RAILBOARD) return "TURN: LISTS";
+#endif
+#if defined(WORLDCLOCK_ENABLED)
+  if (page == PAGE_WORLDCLOCK) return "TURN: CITY";
 #endif
   (void)page;
   return "";
@@ -1124,6 +1154,9 @@ void loop() {
 #endif
 #if defined(MEDIAPLAYER_ENABLED)
     case PAGE_MEDIA:       mediaKnob(d); break;
+#endif
+#if defined(WORLDCLOCK_ENABLED)
+    case PAGE_WORLDCLOCK:  wcKnob(d); break;
 #endif
     default:               ctrlEntered = false; ctrlBrowse(d); break;
     }
