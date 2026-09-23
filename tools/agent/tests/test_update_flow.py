@@ -41,16 +41,18 @@ REL = [{"version": v, "tag": "v" + v, "date": "2026-09-2" + v[-1], "notes": f"no
         "url": "https://example/" + v, "asset": "img-" + v, "asset_name": f"OTA_ONLY_firmware-v{v}-waveshare.bin",
         "size": len(GOOD), "sums": "sums-" + v} for v in ("2.5.6", "2.5.5", "2.5.4", "2.5.3")]
 INFO = {"version": "2.5.4", "deviceName": "Panel-01", "chip": "ESP32-S3", "mac": "AA:BB:CC:00:11:22",
-        "ota": {"partition": "app0", "state": "undefined"}}
+        "uptime": 100000, "ota": {"partition": "app0", "state": "undefined"}}
 SENT = []
 
 
-def fake_get_url(url, timeout=30):
+def fake_get_url(url, timeout=30, limit=None):
     if url.startswith("img-"):
         return FAKE_IMAGE[0]
     if url.startswith("sums-"):
         v = url[5:]
-        return f"{hashlib.sha256(GOOD).hexdigest()}  OTA_ONLY_firmware-v{v}-waveshare.bin\n".encode()
+        # The sum of whatever image is being served, so a bad image passes the
+        # SHA-256 and has to be caught by the header check itself.
+        return f"{hashlib.sha256(FAKE_IMAGE[0]).hexdigest()}  OTA_ONLY_firmware-v{v}-waveshare.bin\n".encode()
     raise AssertionError(url)
 
 
@@ -58,7 +60,7 @@ FAKE_IMAGE = [GOOD]
 AFTER = [None]
 U.releases = lambda: list(REL)
 U._get = fake_get_url
-P.resolve = lambda panel=None: {"address": "10.0.0.9", "mac": INFO["mac"], "name": INFO["deviceName"]}
+P.resolve = lambda panel=None, refresh=False: {"address": "10.0.0.9", "mac": INFO["mac"], "name": INFO["deviceName"]}
 P.get = lambda address, path, timeout=12.0, tries=6: dict(AFTER[0] if AFTER[0] and path == "/api/info" and SENT else INFO)
 U.upload = lambda address, data, name, progress=None: (SENT.append(name) or (200, "OK"))
 U.time.sleep = lambda s: None
@@ -95,17 +97,17 @@ except U.UpdateError:
 # the whole way, and the outcomes
 def run(after):
     SENT.clear()
-    AFTER[0] = after
+    AFTER[0] = {"uptime": 1, **after}
     pl = U.plan()
     U.answer(pl["token"], "yes", quiet)
     U.answer(pl["token"], "update", quiet)
     return U.answer(pl["token"], "Panel-01", quiet)
 
-out = run({**INFO, "version": "2.5.6", "ota": {"partition": "app1", "state": "valid"}})
+out = run({**INFO, "uptime": 1, "version": "2.5.6", "ota": {"partition": "app1", "state": "valid"}})
 check(SENT == ["OTA_ONLY_firmware-v2.5.6-waveshare.bin"] and out["result"] == "UPDATED", "three right answers: sent once, UPDATED")
-out = run({**INFO, "version": "2.5.4", "ota": {"partition": "app0", "state": "valid", "rolledBackFrom": "app1"}})
+out = run({**INFO, "uptime": 1, "version": "2.5.4", "ota": {"partition": "app0", "state": "valid", "rolledBackFrom": "app1"}})
 check(out["result"] == "ROLLED BACK" and "app1" in out["detail"], "old version and a refused partition: ROLLED BACK")
-out = run({**INFO, "version": "2.5.4"})
+out = run({**INFO, "uptime": 1, "version": "2.5.4"})
 check(out["result"] == "ROLLED BACK", "taken (200), restarted, old version: ROLLED BACK even with no refused partition shown")
 SENT.clear()
 U.upload = lambda address, data, name, progress=None: (SENT.append(name) or (500, "Update failed: No Space"))
@@ -113,6 +115,35 @@ AFTER[0] = None
 pl = U.plan(); U.answer(pl["token"], "yes", quiet); U.answer(pl["token"], "update", quiet)
 out = U.answer(pl["token"], "Panel-01", quiet)
 check(out["result"] == "NOT APPLIED" and "No Space" in out["detail"], "the panel refuses the image: NOT APPLIED, its reason shown")
+
+# the image goes only to the panel the person named, checked at the moment of sending
+U.upload = lambda address, data, name, progress=None: (SENT.append(name) or (200, "OK"))
+out = run({**INFO, "uptime": 1, "version": "2.5.6", "ota": {"partition": "app1", "state": "undefined"}})
+check(out["result"] == "UPDATED, NOT CONFIRMED", "new version with no OTA state: not called confirmed")
+SENT.clear(); AFTER[0] = None
+pl = U.plan(); U.answer(pl["token"], "yes", quiet); U.answer(pl["token"], "update", quiet)
+INFO["mac"] = "AA:BB:CC:99:99:99"            # another panel took the address meanwhile
+try:
+    U.answer(pl["token"], "Panel-01", quiet); check(False, "a different panel at the address is refused")
+except U.UpdateError:
+    check(not SENT, "a different MAC at the address when sending: refused, nothing sent")
+INFO["mac"] = "AA:BB:CC:00:11:22"
+
+# an upload that breaks off
+def broken(address, data, name, progress=None):
+    SENT.append(name); raise ConnectionResetError("reset by peer")
+U.upload = broken
+SENT.clear()
+pl = U.plan(); U.answer(pl["token"], "yes", quiet); U.answer(pl["token"], "update", quiet)
+out = U.answer(pl["token"], "Panel-01", quiet)
+check(out["result"] == "INTERRUPTED", "an upload that breaks off: INTERRUPTED, told to power-cycle and check")
+U.upload = lambda address, data, name, progress=None: (SENT.append(name) or (200, "OK"))
+
+# a token cannot be used after its install
+try:
+    U.answer(pl["token"], "Panel-01", quiet); check(False, "a used token is refused")
+except U.UpdateError:
+    check(True, "a token is spent by its install")
 
 # images that must never be sent
 for bad, why in ((image(chip=2), "an ESP32-S2 image"), (b"\x00" + GOOD[1:], "not an ESP image")):
