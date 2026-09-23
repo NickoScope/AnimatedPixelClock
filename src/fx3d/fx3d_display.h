@@ -11,7 +11,7 @@
 // GFX's text, lines and shapes all end in, and its non-virtual ones, hidden by
 // name - `display` is always this type, and no code in src/ holds a base
 // pointer to it. The colours are converted exactly as the library does
-// (MatrixPanel_I2S_DMA::color565to888). Rotation is not supported: the
+// (MatrixDisplay::color565to888). Rotation is not supported: the
 // firmware never calls setRotation(), so the library's transform() is the
 // identity here.
 
@@ -35,70 +35,70 @@ class Fx3dDisplay : public MatrixDisplay {
   bool capturing() const { return cap_ != nullptr; }
   // fx3d's own pixels go to the panel past the capture.
   void panelPixelRGB888(int16_t x, int16_t y, uint8_t r, uint8_t g, uint8_t b) {
-    MatrixPanel_I2S_DMA::drawPixelRGB888(x, y, r, g, b);
+    MatrixDisplay::drawPixelRGB888(x, y, r, g, b);
   }
   void panelHLineRGB888(int16_t x, int16_t y, int16_t w, uint8_t r, uint8_t g, uint8_t b) {
-    MatrixPanel_I2S_DMA::drawFastHLine(x, y, w, r, g, b);
+    MatrixDisplay::drawFastHLine(x, y, w, r, g, b);
   }
 
   // Adafruit GFX's virtual entry points, as the library overrides them.
   void drawPixel(int16_t x, int16_t y, uint16_t c) override {
-    if (!cap_) return MatrixPanel_I2S_DMA::drawPixel(x, y, c);
+    if (!cap_) return MatrixDisplay::drawPixel(x, y, c);
     uint8_t r, g, b;
     color565to888(c, r, g, b);
     put(x, y, r, g, b);
   }
   void fillScreen(uint16_t c) override {
-    if (!cap_) return MatrixPanel_I2S_DMA::fillScreen(c);
+    if (!cap_) return MatrixDisplay::fillScreen(c);
     uint8_t r, g, b;
     color565to888(c, r, g, b);
     rect(0, 0, kW, kH, r, g, b);
   }
   void fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t c) override {
-    if (!cap_) return MatrixPanel_I2S_DMA::fillRect(x, y, w, h, c);
+    if (!cap_) return MatrixDisplay::fillRect(x, y, w, h, c);
     uint8_t r, g, b;
     color565to888(c, r, g, b);
     rect(x, y, w, h, r, g, b);
   }
   void fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint8_t r, uint8_t g, uint8_t b) override {
-    if (!cap_) return MatrixPanel_I2S_DMA::fillRect(x, y, w, h, r, g, b);
+    if (!cap_) return MatrixDisplay::fillRect(x, y, w, h, r, g, b);
     rect(x, y, w, h, r, g, b);
   }
   // A line shorter than one is one pixel, as the library draws it: its
   // drawFastVLine and drawFastHLine (3.0.14, the .h, lines 517-567) fall back
   // to a line of length 1 when the other side is not longer.
   void drawFastVLine(int16_t x, int16_t y, int16_t h, uint16_t c) override {
-    if (!cap_) return MatrixPanel_I2S_DMA::drawFastVLine(x, y, h, c);
+    if (!cap_) return MatrixDisplay::drawFastVLine(x, y, h, c);
     uint8_t r, g, b;
     color565to888(c, r, g, b);
     rect(x, y, 1, h < 1 ? 1 : h, r, g, b);
   }
   void drawFastVLine(int16_t x, int16_t y, int16_t h, uint8_t r, uint8_t g, uint8_t b) override {
-    if (!cap_) return MatrixPanel_I2S_DMA::drawFastVLine(x, y, h, r, g, b);
+    if (!cap_) return MatrixDisplay::drawFastVLine(x, y, h, r, g, b);
     rect(x, y, 1, h < 1 ? 1 : h, r, g, b);
   }
   void drawFastHLine(int16_t x, int16_t y, int16_t w, uint16_t c) override {
-    if (!cap_) return MatrixPanel_I2S_DMA::drawFastHLine(x, y, w, c);
+    if (!cap_) return MatrixDisplay::drawFastHLine(x, y, w, c);
     uint8_t r, g, b;
     color565to888(c, r, g, b);
     rect(x, y, w < 1 ? 1 : w, 1, r, g, b);
   }
   void drawFastHLine(int16_t x, int16_t y, int16_t w, uint8_t r, uint8_t g, uint8_t b) override {
-    if (!cap_) return MatrixPanel_I2S_DMA::drawFastHLine(x, y, w, r, g, b);
+    if (!cap_) return MatrixDisplay::drawFastHLine(x, y, w, r, g, b);
     rect(x, y, w < 1 ? 1 : w, 1, r, g, b);
   }
 
   // The library's non-virtual ones, hidden by name.
   void drawPixelRGB888(int16_t x, int16_t y, uint8_t r, uint8_t g, uint8_t b) {
-    if (!cap_) return MatrixPanel_I2S_DMA::drawPixelRGB888(x, y, r, g, b);
+    if (!cap_) return MatrixDisplay::drawPixelRGB888(x, y, r, g, b);
     put(x, y, r, g, b);
   }
   void fillScreenRGB888(uint8_t r, uint8_t g, uint8_t b) {
-    if (!cap_) return MatrixPanel_I2S_DMA::fillScreenRGB888(r, g, b);
+    if (!cap_) return MatrixDisplay::fillScreenRGB888(r, g, b);
     rect(0, 0, kW, kH, r, g, b);
   }
   void clearScreen() {
-    if (!cap_) return MatrixPanel_I2S_DMA::clearScreen();
+    if (!cap_) return MatrixDisplay::clearScreen();
     memset(cap_, 0, (size_t)kW * kH * 3);
   }
   void clearDisplay() { clearScreen(); }

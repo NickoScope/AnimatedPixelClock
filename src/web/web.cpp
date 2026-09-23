@@ -417,6 +417,18 @@ void handleDeviceInfo() {
  doc["model"] = "AnimatedPixelClock";
  doc["build"] = __DATE__ " " __TIME__;
  doc["chip"] = ESP.getChipModel();
+ {
+   // The frame pages draw into: PSRAM, copied to the single DMA frame at each
+   // display() (src/display/matrix_display.h). What that copy costs.
+   JsonObject fr = doc["frame"].to<JsonObject>();
+   fr["inPsram"] = display.frameInPsram();
+#if HUB75_FRAME_IN_PSRAM
+   fr["copyUs"] = display.blitUs;
+   fr["copyMaxUs"] = display.blitMaxUs;
+   fr["copyPixels"] = display.blitPixels;
+#endif
+   fr["refreshHz"] = display.refreshRateHz();
+ }
  doc["flashBytes"] = ESP.getFlashChipSize();
  doc["firmwareBytes"] = runningFirmwareBytes;
  doc["otaFreeBytes"] = ESP.getFreeSketchSpace();
