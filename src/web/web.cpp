@@ -520,7 +520,10 @@ void handleStatus() {
  doc["forcedClock"] = httpForceClock;
  doc["forcedAmbient"] = httpForceAmbient;
  doc["forcedViz"] = httpForceViz;
- doc["brightness"] = (settings.displayBrightness * 100) / 255; // percent
+ // Percent, rounded (see setDisplayBrightnessPercent). Never 0 for a lit panel:
+ // byte 1 would round to 0, and a client writing that back switches it off.
+ doc["brightness"] = settings.displayBrightness
+     ? max(1, (settings.displayBrightness * 100 + 127) / 255) : 0;
  doc["clockStyle"] = settings.clockStyle;
  doc["tronBikeStyle"] = settings.tronBikeStyle;
  doc["pcOnline"] = pcOnline;
@@ -656,6 +659,7 @@ void handleRename() {
  safeCopyString(settings.deviceName, name, sizeof(settings.deviceName));
  saveSettings();
  initMDNS();
+ netApplyHostname();
 
  server.send(200, "application/json", "{\"success\":true,\"name\":\"" + String(settings.deviceName) + "\"}");
 }
@@ -1922,6 +1926,7 @@ void handleSave() {
        safeCopyString(settings.deviceName, name.c_str(), sizeof(settings.deviceName));
        if (nameChanged) {
          initMDNS();  // Re-register mDNS with new name
+         netApplyHostname();
        }
      }
    }

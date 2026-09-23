@@ -15,6 +15,7 @@
 #include "improv_setup.h"
 #include <Preferences.h>
 #include <esp_wifi.h>
+#include <esp_netif.h>
 #include "ping/ping_sock.h"
 
 #if QR_SETUP_ENABLED
@@ -47,6 +48,31 @@ void saveConfigCallback() {
 }
 
 // ========== Static IP Application ==========
+// Routers name a device by the hostname in its DHCP request (option 12), not
+// by mDNS. arduino-esp32 2.0.17 sends "esp32s3-" and the last three MAC bytes
+// (esp32s3-XXXXXX) unless told otherwise, and it only pushes a name to the
+// station interface inside WiFi.mode() (WiFiGeneric.cpp: setHostname() stores
+// it, mode(WIFI_STA) applies it). The firmware never called setHostname(), so
+// a router listed the panel by that default while mDNS answered to its real
+// name. Set before every mode change, and pushed to a running interface too;
+// ESP-IDF says a change on a live interface takes effect no later than the
+// next reconnect (esp_netif.h), lwIP may carry it in a DHCP renewal before.
+//
+// The factory name "pixelclock" is left out: every unnamed panel has it, and
+// the chip's default is at least unique on the router's list. Accepted limit:
+// renaming a panel back to "pixelclock" leaves its previous name in DHCP until
+// the next reboot.
+void netApplyHostname() {
+  if (!settings.deviceName[0] || strcmp(settings.deviceName, "pixelclock") == 0) return;
+  WiFi.setHostname(settings.deviceName);
+  wifiManager.setHostname(settings.deviceName);
+  esp_netif_t *sta = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+  if (sta) {
+    const esp_err_t err = esp_netif_set_hostname(sta, settings.deviceName);
+    if (err != ESP_OK) log_w("DHCP hostname not set: %s", esp_err_to_name(err));
+  }
+}
+
 void applyStaticIP() {
   if (settings.useStaticIP) {
     IPAddress local_IP, gateway_IP, subnet_IP, dns1_IP;
@@ -81,6 +107,7 @@ bool connectManualWiFi(const char* ssid, const char* password) {
     display.display();
   }
 
+  netApplyHostname();
   WiFi.mode(WIFI_STA);
 
   // Apply static IP configuration if enabled
@@ -141,6 +168,8 @@ bool connectManualWiFi(const char* ssid, const char* password) {
 
 // ========== Network Initialization ==========
 void initNetwork() {
+  netApplyHostname();   // before WiFiManager starts the station
+
   // Apply static IP if configured
   applyStaticIP();
 
@@ -476,6 +505,7 @@ static void netRecover(const char* why) {
   WiFi.disconnect(true);
   WiFi.mode(WIFI_OFF);
   delay(200);
+  netApplyHostname();
   WiFi.mode(WIFI_STA);
   WiFi.setSleep(false);
   WiFi.begin();

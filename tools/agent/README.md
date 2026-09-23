@@ -1,6 +1,6 @@
 # An SDK for this panel, and an MCP server that wraps it
 
-Five files, and between them everything an AI agent needs to bring a panel up,
+Six files, and between them everything an AI agent needs to bring a panel up,
 find it on your network, drive it, see what is actually happening inside it, and
 write new screens for it.
 
@@ -10,7 +10,8 @@ write new screens for it.
 | `bringup.py` | a new panel: asks for a name, sets it, switches off the pages that have no source without Home Assistant. It will not make that call over a broker that is merely down |
 | `panel.py` | the transport. One place that knows how this firmware really behaves |
 | `gallery.py` | the `gallery/` screens, and any of them onto a running panel in about a second |
-| `mcp_server.py` | twenty-four MCP tools over stdio. This is what you register with Claude Code, Codex or anything else that speaks MCP |
+| `health.py` | a self-test: pings underneath, exercises the controls and the portal, reads the panel's counters and log ring (and the USB console if given), writes every raw log to `health-logs/<time>/` and prints a short verdict with findings. `--list`, `--panel`, `--all` choose among several panels. Also the `panel_selftest` MCP tool |
+| `mcp_server.py` | twenty-five MCP tools over stdio. This is what you register with Claude Code, Codex or anything else that speaks MCP |
 
 **This SDK is the source of truth for working with a panel.** Where a fact about
 driving one has to live in exactly one place, it lives here - as a tool that

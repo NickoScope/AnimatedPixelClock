@@ -53,3 +53,4 @@ gallery/*.raw
 # photograph of someone's family is not a code sample: scripts written from one
 # live here, the tools look here as well as in scripts/, and git does not.
 tools/luasim/scripts/private/
+health-logs/

@@ -378,6 +378,68 @@ async def panel_health(panel: PanelArg = None) -> str:
         return _say(e)
 
 
+class SelftestIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    panel: str | None = Field(
+        default=None, description="MAC, name or address. With several panels on the "
+        "network and none named, the answer lists them instead of guessing.")
+    read_only: bool = Field(default=False, description="Look only: no brightness, "
+                            "screen, banner or page changes.")
+    stress: bool = Field(default=False, description="A page every 0.5 s instead of 2 s, no pauses. "
+                         "A load test: it can take the panel off the network for minutes.")
+    serial: str | None = Field(default=None, description="USB console port to log too, "
+                               "e.g. /dev/cu.usbmodem2101. Opening it resets the board on macOS.")
+    include: list[str] = Field(default_factory=list, description="Page kinds skipped as "
+                               "risky to show anyway, e.g. [\"yachts\"].")
+
+
+@mcp.tool(
+    name="panel_selftest",
+    annotations={"title": "Exercise the panel and collect its logs", "readOnlyHint": False,
+                 "destructiveHint": False, "openWorldHint": True})
+async def panel_selftest(args: SelftestIn) -> str:
+    """A whole health check in one call, so the tokens go on the findings.
+
+    Runs tools/agent/health.py: pings underneath the whole run; reads
+    /api/info, /api/status, /api/panel; turns the log ring on; unless read_only,
+    moves brightness and back, the screen off and on, sends a banner, puts one
+    page of each kind on screen (reading every change back) and restores the
+    original page; loads the portal as the browser does; reads /api/info and
+    the log ring again. Takes about a minute at the normal pace.
+
+    **Read `verdict` and `findings` first.** Every finding comes from the
+    panel's own counters: a reboot, a failed allocation and whose it was (the
+    Wi-Fi task's 1,626 B buffer is how the 2026-09-22 network drop began),
+    link-watchdog restarts, lost pings, a control that did not follow. The raw
+    logs (report.json, ping.log, run.log, panel_log.txt, serial.log) are in
+    `logs`; open them only for what a finding points at.
+
+    Skips the yacht radar page unless `include` names it: up to firmware 2.5.4
+    showing it either fails to start its task or starves the radio.
+
+    Returns:
+        {"ok": true, "verdict": "PASS"|"WARN"|"FAIL", "findings": [...],
+         "summary": "text", "logs": "folder"}  or, with several panels and none
+        named, {"ok": false, "choose": [{"name","mac","address"}]}
+    """
+    import asyncio
+    import health as H
+    out = str(Path(__file__).resolve().parent.parent.parent / "health-logs" /
+              time.strftime("%Y%m%d-%H%M%S"))
+    try:
+        report, _ = await asyncio.to_thread(
+            H.run, args.panel or DEFAULT_PANEL, args.serial, args.read_only,
+            tuple(args.include), True, out, args.stress)
+    except P.ChoiceNeeded as e:
+        return json.dumps({"ok": False, "choose": [
+            {"name": x.get("name"), "mac": x.get("mac"), "address": x["address"]}
+            for x in e.panels]}, ensure_ascii=False, indent=2)
+    except Exception as e:  # noqa: BLE001
+        return _say(e)
+    return _ok(verdict=report.get("verdict"), findings=report.get("findings"),
+               summary=H.summary(report), logs=out)
+
+
 class LogIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     panel: str | None = Field(default=None, description="MAC, name or address.")

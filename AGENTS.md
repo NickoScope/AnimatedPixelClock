@@ -26,6 +26,17 @@ python3 tools/agent/discover.py --mac AA:BB:CC:00:11:22   # just that one's addr
   AA:BB:CC:00:11:22  NickoSha-64x128.local   v2.5.0   NickoSha-64x128
 ```
 
+**Is it healthy?** One command, before and after any change you make:
+
+```bash
+python3 tools/agent/health.py --panel <name|MAC|IP>   # ~1 min; --read-only to only look
+```
+
+It pings underneath, exercises the controls and the portal, and prints a
+verdict with findings from the panel's own counters; every raw log goes to
+`health-logs/<time>/`. Read the findings, open a log only for what a finding
+points at. Same thing as the `panel_selftest` MCP tool.
+
 It works from macOS (`dns-sd`) and Linux (`avahi-browse`), and it confirms every
 advertisement by asking the panel itself - a stale mDNS record for a panel that
 has gone is worse than no answer, because you would go on to talk to nothing.

@@ -25,6 +25,10 @@ void initNetwork();
 
 // Initialize mDNS service discovery
 void initMDNS();
+// The panel's name as its DHCP hostname too: what a router's device list shows.
+// Called before every Wi-Fi start, and after a rename (the router sees the new
+// name no later than the next reconnect). The factory name is not sent.
+void netApplyHostname();
 
 // Apply static IP settings if configured
 void applyStaticIP();

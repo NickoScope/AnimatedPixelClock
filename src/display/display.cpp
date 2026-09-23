@@ -184,7 +184,11 @@ void setDisplayBrightnessPercent(uint8_t percent) {
   if (percent > 100) {
     percent = 100;
   }
-  uint8_t brightness = (uint16_t)percent * 255 / 100;
+  // Rounded, and /api/status rounds back: truncating both ways lost 1% per
+  // set-and-read (98 -> 249 -> 97), so a panel set to what it reported crept
+  // darker. Found by tools/agent/health.py on 2026-09-23. Every 0..100 now
+  // survives the round trip.
+  uint8_t brightness = (uint8_t)(((uint16_t)percent * 255 + 50) / 100);
   settings.displayBrightness = brightness;
   displayForcedOff = (brightness == 0);
   applyBrightnessLevel(brightness);
