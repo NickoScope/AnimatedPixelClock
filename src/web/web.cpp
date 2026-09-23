@@ -489,6 +489,10 @@ void handleDeviceInfo() {
  doc["secsSinceHttp"] = netSecsSinceHttp();
  doc["secsSinceTraffic"] = netSecsSinceTraffic();
  doc["linkRecoveries"] = netRecoveryCount();
+ // The brightness as NVS holds it (-1 cannot open, -2 no key) and the last
+ // single-key save's outcome (-1 none yet, 0 failed, else the value + 1).
+ doc["brightnessNvs"] = savedBrightnessNvs();
+ doc["brightnessLastSave"] = lastBrightnessSave();
  doc["linkBlindS"] = netBlindSeconds();   // >0: it cannot even tell whether the link works
  doc["lastLinkRecovery"] = netLastRecoveryReason();
  WeatherData weather = getWeather();

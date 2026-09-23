@@ -14,7 +14,7 @@
 #include "../util/psram_state.h"
 
 // ========== Version ==========
-#define FIRMWARE_VERSION "2.5.7"
+#define FIRMWARE_VERSION "2.5.8"
 
 // ========== Constants ==========
 #define MAX_METRICS 20

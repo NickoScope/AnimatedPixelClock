@@ -85,6 +85,7 @@ void irDetailJson(JsonObject out);
 
 // src/ir/ir_actions.cpp: everything that is not the knob. Run from loop().
 void irRunAction(uint8_t fn, uint8_t arg);
+void irActionsTick();   // from irLoop(): the remote's brightness saved once its presses stop
 bool irActionBuilt(uint8_t fn);   // false: this firmware lacks the module behind it
 
 #endif  // IR_ENABLED

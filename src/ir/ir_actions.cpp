@@ -23,6 +23,7 @@
 #include <Arduino.h>
 
 #include "../config/config.h"
+#include "../config/settings.h"
 #include "../display/display.h"
 #include "../notify/notify.h"
 
@@ -89,6 +90,20 @@ static uint8_t nextStyleId() {
 }
 #endif
 
+// Brightness from the remote is kept across a power cycle, as the portal's is
+// (the owner, 2026-09-23). Written once the buttons have been left alone for
+// kBrightSaveMs, not on every press: one NVS key, but a row of presses is one
+// write rather than ten. 0 = nothing to save.
+static const uint32_t kBrightSaveMs = 3000;
+static uint32_t s_brightSaveAt = 0;
+
+void irActionsTick() {
+  if (s_brightSaveAt && (uint32_t)(millis() - s_brightSaveAt) >= kBrightSaveMs) {
+    s_brightSaveAt = 0;
+    saveBrightnessSetting();
+  }
+}
+
 void irRunAction(uint8_t fn, uint8_t arg) {
   if (!irActionBuilt(fn)) return;
   switch (fn) {
@@ -98,11 +113,13 @@ void irRunAction(uint8_t fn, uint8_t arg) {
     case ir::kFnBrightUp: {
       int p = brightnessPercent() + kBrightStep;
       setDisplayBrightnessPercent((uint8_t)(p > 100 ? 100 : p));
+      s_brightSaveAt = millis() | 1;   // saved once the presses stop (irActionsTick)
       break;
     }
     case ir::kFnBrightDown: {
       int p = brightnessPercent() - kBrightStep;
       setDisplayBrightnessPercent((uint8_t)(p < kBrightMin ? kBrightMin : p));
+      s_brightSaveAt = millis() | 1;
       break;
     }
 #if defined(CONTROL_ENCODER_ENABLED)

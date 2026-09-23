@@ -58,13 +58,13 @@ struct FnInfo {
 inline const FnInfo &fnInfo(uint8_t f) {
   static const FnInfo kInfo[kFnCount + 1] = {
       {"none",         "No action",                 "Other",      false},
-      {"ccw",          "Back (turn left)",          "Navigation", true},
-      {"cw",           "Forward (turn right)",      "Navigation", true},
+      {"ccw",          "Back (turn left)",          "Navigation", false},
+      {"cw",           "Forward (turn right)",      "Navigation", false},
       {"ok",           "OK / select (press)",       "Navigation", false},
       {"long",         "Long press",                "Navigation", false},
       {"power",        "Screen on / off",           "Screen",     false},
-      {"bright_up",    "Brightness +10%",           "Screen",     true},
-      {"bright_down",  "Brightness -10%",           "Screen",     true},
+      {"bright_up",    "Brightness +10%",           "Screen",     false},
+      {"bright_down",  "Brightness -10%",           "Screen",     false},
       {"home",         "Home: the clock",           "Pages",      false},
       {"next_style",   "Next clock style",          "Pages",      true},
       {"carousel",     "Carousel on / off",         "Pages",      false},
@@ -141,7 +141,7 @@ static const uint32_t kLearnWindowMs = 15000;  // long enough to pick the remote
 // src/control's 1000 ms threshold with a debounce and a lost repeat to spare.
 // Our choice.
 static const uint32_t kLongSpanMs    = 1300;
-// Holding a repeating action (brightness, volume, next style): it fires on the
+// Holding a repeating action (volume, next style): it fires on the
 // press, waits kActionDelayMs, then fires at most every kActionRepeatMs as the
 // 108 ms repeat frames arrive - about three steps a second rather than nine.
 // Our choice, the pace a TV remote's volume key keeps.
@@ -389,13 +389,14 @@ class Decoder {
     o.fn = fn;
     switch (fn) {
       case kFnCcw:
-        // A detent per frame, repeats included: holding the button walks, as
-        // turning the knob does.
-        if (m_rot > -kRotAccMax) m_rot--;
-        o.kind = Outcome::kRotate;
-        break;
       case kFnCw:
-        if (m_rot < kRotAccMax) m_rot++;
+        // One detent per press of the button; its repeat frames change nothing.
+        // The owner's word, 2026-09-23, after trying it: a remote's arrows
+        // step one page each, as a TV's do. Letting repeats walk (the knob's
+        // way) took a normal press from the clock to page 22.
+        if (repeat) break;
+        if (fn == kFnCw) { if (m_rot < kRotAccMax) m_rot++; }
+        else if (m_rot > -kRotAccMax) m_rot--;
         o.kind = Outcome::kRotate;
         break;
       case kFnOk:

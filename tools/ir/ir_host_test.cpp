@@ -390,7 +390,7 @@ static void noActionIsReportedNotRun() {
 static void aHeldActionRepeatsAtItsOwnPace() {
   Decoder d;
   teach(d);
-  d.map().setFn(B_CW, ir::kFnBrightUp, 0);
+  d.map().setFn(B_CW, ir::kFnNextStyle, 0);   // still a repeating action
   int fired = 0;
   uint32_t t = 1000;
   if (d.frame(t, code(0x22)).kind == Outcome::kAction) fired++;       // the press fires at once
@@ -408,6 +408,35 @@ static void aHeldActionRepeatsAtItsOwnPace() {
   for (t += ir::kNecRepeatMs; t <= 12000; t += ir::kNecRepeatMs)
     if (d.frame(t, repeat()).kind == Outcome::kAction) fired++;
   CHECK(fired == 1);
+}
+
+static void arrowsAndBrightnessStepOncePerPress() {
+  // The owner's word (2026-09-23): left, right and brightness change once per
+  // press, however long the button is held and however many repeats it sends.
+  Decoder d;
+  teach(d);
+  uint32_t t = 1000;
+  d.frame(t, code(0x22));
+  for (t += ir::kNecRepeatMs; t <= 3000; t += ir::kNecRepeatMs) d.frame(t, repeat());
+  CHECK(d.takeRotate() == 1);
+  t = 5000;
+  d.frame(t, code(0x11));
+  for (t += ir::kNecRepeatMs; t <= 7000; t += ir::kNecRepeatMs) d.frame(t, repeat());
+  CHECK(d.takeRotate() == -1);
+  // Two separate presses are two steps.
+  d.frame(9000, code(0x22));
+  d.frame(9600, code(0x22));
+  CHECK(d.takeRotate() == 2);
+  const uint8_t kSteps[] = {ir::kFnBrightUp, ir::kFnBrightDown};
+  for (uint8_t fn : kSteps) {
+    d.map().setFn(B_CW, fn, 0);
+    int fired = 0;
+    t = 20000 + fn * 10000;
+    if (d.frame(t, code(0x22)).kind == Outcome::kAction) fired++;
+    for (t += ir::kNecRepeatMs; t <= 20000 + fn * 10000 + 2000; t += ir::kNecRepeatMs)
+      if (d.frame(t, repeat()).kind == Outcome::kAction) fired++;
+    CHECK(fired == 1);
+  }
 }
 
 static void aLongPressButtonHoldsPastTheThreshold() {
@@ -481,6 +510,7 @@ int main() {
   aFunctionIsChosenAndKept();
   noActionIsReportedNotRun();
   aHeldActionRepeatsAtItsOwnPace();
+  arrowsAndBrightnessStepOncePerPress();
   aLongPressButtonHoldsPastTheThreshold();
   simulatingAFunctionNeedsNoButton();
   everyFunctionHasANameThatParsesBack();

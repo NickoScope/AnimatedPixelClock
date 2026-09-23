@@ -762,6 +762,31 @@ void saveClockStyle() {
   preferences.end();
 }
 
+// The brightness alone, the same one key saveSettings() writes: for the remote's
+// brightness buttons, which change nothing else (src/ir/ir_actions.cpp).
+static int16_t s_brightSaveResult = -1;   // -1 never; 0 failed; else the value written + 1
+
+bool saveBrightnessSetting() {
+  const bool open = preferences.begin("pcmonitor", false);
+  const bool ok = open && preferences.putUChar("brightness", settings.displayBrightness) == 1;
+  if (open) preferences.end();
+  s_brightSaveResult = ok ? (int16_t)settings.displayBrightness + 1 : 0;
+  Serial.printf("[settings] brightness %u %s\n", settings.displayBrightness,
+                ok ? "saved" : (open ? "NOT saved: write failed" : "NOT saved: namespace busy"));
+  return ok;
+}
+
+// What NVS holds for the brightness now, read straight from it, and the last
+// save's outcome: for /api/info, so "it did not stick" is a reading.
+int16_t savedBrightnessNvs() {
+  Preferences p;
+  if (!p.begin("pcmonitor", true)) return -1;
+  const int16_t v = p.isKey("brightness") ? p.getUChar("brightness", 0) : -2;
+  p.end();
+  return v;
+}
+int16_t lastBrightnessSave() { return s_brightSaveResult; }
+
 void saveSettings() {
   const unsigned long savedFromMs = millis();
   sanitizeBrightnessSettings();

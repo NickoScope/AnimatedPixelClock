@@ -580,6 +580,7 @@ curl -s http://$PANEL/api/info
 | `lastCrash` | the last crash from flash. **Check `thisBoot` and `sameFirmware`** before blaming your change |
 | `resetReason` | 1 power-on, 3 software, 4 panic, 5 interrupt watchdog, 6 task watchdog |
 | `linkRecoveries` | the Wi-Fi watchdog firing. Should be 0 |
+| `brightnessNvs`, `brightnessLastSave` | the brightness NVS holds (0-255; -1 cannot open, -2 no key) and the last single-key save (-1 none since boot, 0 failed, else value + 1). The remote's brightness is saved 3 s after its last press |
 | `loopMaxMs`, `loopSlowPart` | the longest `loop()` pass in the last 10 s, and which part |
 | `netBroker` | the network broker: what is on the wire, how many served, its stack high-water |
 | `climate` | the onboard sensor, raw and corrected. `idle: true` = not being read: nothing on screen shows it and Home Assistant is off |

@@ -383,6 +383,7 @@ void irBegin() {
 void irLoop() {
   if (!s_begun) return;
   consolePoll();
+  irActionsTick();   // before the receiver check: the portal's /api/ir/do presses too
 
 #if defined(IR_RX_ENABLED)
   if (!s_rxOn) return;

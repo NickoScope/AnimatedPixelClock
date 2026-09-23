@@ -157,11 +157,11 @@ Owner's list and default layout, approved 2026-09-23:
 
 | Button | Default | | Function | Held |
 |---|---|---|---|---|
-| 1 | Back (turn left) | | `ccw`, `cw` - the knob's turn | a detent per repeat frame |
+| 1 | Back (turn left) | | `ccw`, `cw` - the knob's turn | once per press |
 | 2 | Forward (turn right) | | `ok` - the knob's press | held while frames arrive |
 | 3 | OK | | `long` - a long press | once per press |
 | 4 | Long press | | `power` - screen on/off | once |
-| 5 | Screen on/off | | `bright_up`, `bright_down` - 10 %, never below 1 % | repeats |
+| 5 | Screen on/off | | `bright_up`, `bright_down` - 10 %, never below 1 %; kept across a reboot | once per press |
 | 6 | Brightness +10 % | | `home` - the clock page | once |
 | 7 | Brightness -10 % | | `next_style` - the next clock style | repeats |
 | 8 | Home: the clock | | `carousel` - on/off | once |
@@ -171,7 +171,13 @@ Owner's list and default layout, approved 2026-09-23:
 | | | | `vol_up`, `vol_down` - the media page knob's step | repeats |
 | | | | `dismiss` - clear the notification; `none` | once |
 
-A held repeating action fires on the press, then after 500 ms at most every
+The arrows and brightness step once per press, however long the button is
+held: the owner's word on 2026-09-23 after trying it, when repeats walking the
+pages like the knob took one press from the clock to page 22. Brightness set
+from the remote is saved to NVS (one key, "brightness" in `pcmonitor`) 3 s after
+the last press, so a row of presses is one write; `/api/info` reports
+`brightnessNvs` and `brightnessLastSave`. A held repeating action (next style,
+volume) fires on the press, then after 500 ms at most every
 300 ms (our choice: about three steps a second instead of nine from NEC's
 108 ms repeats). A function whose module is not in the build is not offered.
 Deliberately not on the list: reboot, factory reset, firmware update (too
