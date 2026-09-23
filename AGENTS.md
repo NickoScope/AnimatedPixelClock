@@ -589,12 +589,19 @@ only reachable by turning a knob gets tested without hands:
 ir ok           the button
 ir cw 1         one detent clockwise
 ir ccw 1        one detent anticlockwise
-ir ok 1200      a long hold (the firmware treats it as a click anyway)
+ir ok 1200      held past the 1 s threshold: a long press
+ir do home      any function by name (`ir help` lists them)
+ir press 5      remote button 5, whatever it is set to
 ir status       what the IR module thinks
 ```
 
-`/api/ir/sim` over HTTP is **inert** in this build (no receiver compiled). The
-serial console is not - do not confuse them.
+The same over HTTP, since 2.5.4 (receiver on GPIO0, ten buttons with a
+function each, src/ir/ir_map.h): `GET /api/ir` is the table and the functions
+this build offers; `/api/ir/do?fn=<name>[&page=N][&hold=ms]` runs a function,
+`/api/ir/press?btn=1..10`, `/api/ir/fn?btn=N&fn=<name>[&page=N]`,
+`/api/ir/learn?btn=N`, `/api/ir/cancel`, `/api/ir/clear?btn=N|all`. Every one
+answers with the table. `do` and `press` go down the same path a decoded frame
+does, so they drive the knob's state machine and the actions for real.
 
 ---
 

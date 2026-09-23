@@ -68,10 +68,22 @@ uint32_t irLearnRemainMs();
 bool     irClearSlot(uint8_t slot);
 void     irClearAll();
 
-// Inject a slot at the level a decoded frame reaches, so the whole chain -
-// seam, encoder state machine, pages - is exercised with no receiver soldered
-// and no codes learned. holdMs applies to the button only: 0 is a click, and
-// anything past the encoder's long-press threshold is a long press.
+// Inject a button (0..9) or a function at the level a decoded frame reaches,
+// so the whole chain - seam, encoder state machine, actions, pages - is
+// exercised with no receiver soldered and no codes learned. holdMs applies to
+// "ok" only: 0 is a click, past the encoder's long-press threshold a long press.
 bool irSimulate(uint8_t slot, uint32_t holdMs);
+bool irSimulateFn(uint8_t fn, uint8_t arg, uint32_t holdMs);
+
+// What a button does (ir::Fn), and for kFnPage which page. Kept in NVS.
+bool irSetFn(uint8_t slot, uint8_t fn, uint8_t arg);
+
+// GET /api/ir: the ten buttons, what each does, and the functions this build
+// can offer. Asked for when the Remote card is open, not polled.
+void irDetailJson(JsonObject out);
+
+// src/ir/ir_actions.cpp: everything that is not the knob. Run from loop().
+void irRunAction(uint8_t fn, uint8_t arg);
+bool irActionBuilt(uint8_t fn);   // false: this firmware lacks the module behind it
 
 #endif  // IR_ENABLED
