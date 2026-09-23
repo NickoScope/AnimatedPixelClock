@@ -1,3 +1,4 @@
+-- @upload-only
 -- minecraft.lua - a blocky world with a full day/night cycle in one minute.
 --
 -- 128x64 divides into 32 x 16 blocks of 4 px. Everything is filled rects: on a

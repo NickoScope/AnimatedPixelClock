@@ -1,3 +1,4 @@
+-- @upload-only
 -- tetris_clock.lua - HH:MM that clears itself like completed lines and is
 -- rebuilt by falling tetrominoes when the minute turns.
 --

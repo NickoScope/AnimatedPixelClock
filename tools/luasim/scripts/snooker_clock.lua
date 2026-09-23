@@ -1,3 +1,4 @@
+-- @upload-only
 -- snooker_clock.lua - a snooker table that plays frames by itself, with the
 -- time in the corner like a game's HUD.
 --

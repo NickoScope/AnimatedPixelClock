@@ -11,8 +11,10 @@
 
 #if defined(LUA_EFFECTS_ENABLED)
 
-#if LUA_EFFECT_COUNT < 1
-#error "LUA_EFFECTS_ENABLED with no embedded scripts: run tools/luasim/gen_effects.py"
+// None compiled in is fine when scripts can be uploaded (since 2026-09-23 every
+// effect lives in the gallery); with no store there would be nothing to show.
+#if LUA_EFFECT_COUNT < 1 && !defined(LUA_STORE_ENABLED)
+#error "LUA_EFFECTS_ENABLED with no embedded scripts and no store: run tools/luasim/gen_effects.py"
 #endif
 
 // setup(), once nslua_begin() has found PSRAM: the effect task and its frame

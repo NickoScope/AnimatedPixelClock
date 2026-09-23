@@ -46,7 +46,7 @@ The pages:
 | Yacht radar | Live AIS vessels in the Bay of Cannes: a sweeping plot and a vessel table | an aisstream.io key | [src/yachtradar](src/yachtradar/README.md) |
 | Media | Now playing on a Home Assistant or Music Assistant player, and the knob as its remote | Home Assistant, MQTT | [src/media](src/media/README.md) |
 | Markets | Indices, ticker, portfolio and holdings pages with an exchange tape | Home Assistant, MQTT | [src/market](src/market/README.md) |
-| Lua effects | Seven built in (football, snooker, snake and Tetris clocks, Minecraft, the room radar, La Gioconda) and up to twelve of your own | nothing; the room radar needs a presence sensor over MQTT | [src/lua](src/lua/README.md), [gallery](gallery/README.md) |
+| Lua effects | Up to 36 on a panel, loaded over the air; none are compiled in since 2.6.0. The gallery has the ones that used to be (football, snooker, snake and Tetris clocks, Minecraft, the room radar, La Gioconda) and more | nothing; the room radar needs a presence sensor over MQTT | [src/lua](src/lua/README.md), [gallery](gallery/README.md) |
 
 The weather clock, the ambient screensavers, custom GIF animations, the PC
 monitor and the audio visualizer from upstream are all still in; they are
@@ -59,9 +59,10 @@ the portal's Clock page, and, on request, as two Home Assistant sensors
 ### Lua effects over WiFi
 
 A new screen is a Lua script, sent to the running panel in about a second: no
-build, no flash, no reboot. The panel keeps **twelve** uploaded effects of up to
-**50 KB** each, beside the seven compiled in, and they survive reboots and
-OTA updates.
+build, no flash, no reboot. The panel keeps **36** effects of up to **50 KB**
+each; since 2.6.0 none are compiled into the firmware, so a freshly flashed
+panel starts with none and you add them from the portal's "Add from the
+gallery". They survive reboots and OTA updates.
 
 ```bash
 python3 tools/agent/gallery.py show aquarium      # one of the gallery's screens

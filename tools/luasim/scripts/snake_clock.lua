@@ -1,3 +1,4 @@
+-- @upload-only
 -- snake_clock.lua - HH:MM where each digit is a snake.
 --
 -- On the minute the four snakes crawl away downward and four new ones crawl in

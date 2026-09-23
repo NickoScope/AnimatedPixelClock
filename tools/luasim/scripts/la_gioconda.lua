@@ -1,3 +1,4 @@
+-- @upload-only
 -- LA GIOCONDA - the painting drawn in ASCII characters.
 --
 -- Four libraries were read before this, and none of them converts an image.

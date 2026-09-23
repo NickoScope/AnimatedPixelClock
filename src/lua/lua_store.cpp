@@ -54,7 +54,9 @@ void rescan() {
   // Built aside and published in one critical section, so a reader never sees
   // a list that is half rebuilt. The filesystem walk itself is far too slow to
   // hold a spinlock across.
-  Entry   fresh[LUA_USER_MAX];
+  // In PSRAM, not on the loop task's stack: at 36 slots it is 2 KB, the whole
+  // -Wstack-usage ratchet. Only loop() rescans, so one buffer is enough.
+  static PSRAM_ARRAY(Entry, fresh, [LUA_USER_MAX]);
   uint8_t kept = 0;
   if (!s_usable) {
     portENTER_CRITICAL(&s_mux);

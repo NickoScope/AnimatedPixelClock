@@ -76,8 +76,10 @@ def c_string(src):
 def generate():
     scripts = [p for p in sorted(SCRIPTS.glob("*.lua"))
                if p.name not in SKIP and not upload_only(p)]
-    if not scripts:
-        raise SystemExit("gen_effects: no scripts to embed")
+    # None is a valid answer since 2026-09-23: the owner moved every effect to
+    # the gallery, loaded over the air. The table then has one empty row, never
+    # indexed (every use is guarded by i < LUA_EFFECT_COUNT), because C++ has
+    # no zero-length array.
     body = []
     table = []
     for p in scripts:
@@ -116,8 +118,8 @@ struct LuaEffectScript {{
 }};
 
 {chr(10).join(body)}
-static const LuaEffectScript kLuaEffectScripts[LUA_EFFECT_COUNT] = {{
-{chr(10).join(table)}
+static const LuaEffectScript kLuaEffectScripts[LUA_EFFECT_COUNT ? LUA_EFFECT_COUNT : 1] = {{
+{chr(10).join(table) if table else '  {"", "", "", 0},   // none compiled in: never read'}
 }};
 
 #endif  // LUA_EFFECTS_TABLE

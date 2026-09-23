@@ -63,23 +63,20 @@
 // pages are an enum fixed at build time, so the slots are reserved whether or
 // not anything is in them; an empty one is simply not visitable.
 //
-// Raised from 4 on 2026-09-22, with the arithmetic done rather than guessed.
-// What a slot actually costs:
+// Raised from 4 on 2026-09-22, and to 36 on 2026-09-23 when the owner moved
+// every effect out of the image into the gallery (none compiled in now, so
+// these are all of them). What a slot costs:
 //
-//   * 56 bytes of INTERNAL RAM in s_list[], permanently (lua_store.cpp:18 -
-//     Entry is two 25-byte names and a uint32, padded). 4 slots were 224 B;
-//     12 are 672. **+448 B of the roughly 21 KB free internal heap**, and that
-//     heap is this board's scarce one - it is the only real price here.
-//   * the same 56 bytes again in rescan()'s `fresh[]`, on the LOOP TASK's
-//     8 KB stack, but only while a rescan runs. 672 B of frame is well inside
-//     the -Wstack-usage=2048 ratchet this build enforces.
+//   * 56 bytes of PSRAM in s_list[] and again in rescan()'s buffer (both
+//     PSRAM_ARRAY since the radio-memory work; not the internal heap).
 //   * one entry in the page enum (main.cpp), which ctrlPageVisitable() hides
-//     while the slot is empty.
+//     while the slot is empty, and one name in the carousel's off-list
+//     (panel.cpp, EFF_OFF_CAP).
 //
-// What a slot does NOT cost: PSRAM (a script's buffer is allocated at the
-// file's real size when it loads, and freed when the effect closes) and disk
-// (LittleFS had 20.3 MB free with four scripts on it).
-#define LUA_USER_MAX 12
+// What a slot does NOT cost: a script's buffer (allocated at the file's real
+// size when it loads, and freed when the effect closes) or disk (LittleFS had
+// 23 MB free with nine scripts on it; 36 at the 50 KB ceiling is 1.8 MB).
+#define LUA_USER_MAX 36
 
 // The largest script accepted. Raised from 24 KB on 2026-09-22: aquarium.lua
 // reached 24,059 B of the old 24,576 and the next change to it would have had

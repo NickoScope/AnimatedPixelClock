@@ -56,13 +56,12 @@ def build(gal=None):
 
 
 def builtin_drift(gal=None):
-    """Gallery copies of compiled-in effects that no longer match their source.
+    """Gallery copies that no longer match their source in tools/luasim/scripts.
 
-    While an effect is both built in (tools/luasim/scripts/<stem>.lua, no
-    @upload-only) and in the gallery (the owner's decision, 2026-09-23: keep
-    both for now), the gallery copy is the source plus its tag and title lines.
-    An edit to one and not the other would ship two different effects under
-    one name."""
+    A script kept in both places (the former built-ins since 2026-09-23, and the
+    older gallery screens) is the same effect: the gallery copy is the source
+    plus its tag and title lines. An edit to one and not the other would ship
+    two different effects under one name."""
     gal = pathlib.Path(gal) if gal else GAL
     out = []
     for f in sorted(gal.glob("*.lua")):
@@ -70,13 +69,11 @@ def builtin_drift(gal=None):
         if not src.exists():
             continue
         s = src.read_text(encoding="utf-8")
-        if "@upload-only" in "\n".join(s.splitlines()[:10]):
-            continue
         body = [l for l in f.read_text(encoding="utf-8").splitlines(keepends=True)
                 if not (l.startswith("-- @upload-only") or l.startswith("-- @by ") or
                         re.match(r"--\s*[A-Z0-9_ ]+?\s+-\s+.+$", l))]
         head = [l for l in s.splitlines(keepends=True)
-                if not re.match(r"--\s*[A-Z0-9_ ]+?\s+-\s+.+$", l)]
+                if not (l.startswith("-- @upload-only") or re.match(r"--\s*[A-Z0-9_ ]+?\s+-\s+.+$", l))]
         if "".join(body) != "".join(head):
             out.append(f.name)
     return out

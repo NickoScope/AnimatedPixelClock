@@ -1,3 +1,4 @@
+-- @upload-only
 -- football_clock.lua - a football match that plays itself: Atletico Madrid
 -- against Real Madrid, told apart by their kit colours only, with a
 -- broadcast score bug and the real time in the corner.

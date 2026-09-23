@@ -1,3 +1,4 @@
+-- @upload-only
 -- room_radar.lua - who is in the room, as a 24 GHz radar sees it.
 --
 -- The HLK-LD2450 reports up to three people, each as X and Y in millimetres

@@ -198,7 +198,7 @@ is showing.
 
 
 Since 2026-09-21 a Lua effect can be sent to a running panel and shown straight
-away. Four uploaded scripts fit beside the compiled-in ones, they survive a
+away. Thirty-six fit (none are compiled in since 2.6.0), they survive a
 firmware update, and the whole loop is one MCP call:
 
 ```bash
@@ -376,8 +376,10 @@ they cannot fail from outside. The carousel walks them by itself when
 
 ### b. Lua effect pages — one page each
 
-Scripted faces: football, Minecraft, room radar, snake, snooker, Tetris. Each is
-a page of its own so the knob and carousel walk them singly.
+Scripted screens, each a page of its own so the knob and the carousel walk them
+singly. **Since 2.6.0 none are compiled in**: every effect is uploaded (up to 36,
+`LUA_USER_MAX`), the former built-ins (football, Minecraft, room radar, snake,
+snooker, Tetris, La Gioconda) included, from the gallery.
 
 *Switching them:* since 2.5.7 each effect is in or out of the knob's walk and
 the carousel on its own, by name (kept in NVS; `/api/lua` `inWalk`, POST
@@ -905,10 +907,9 @@ The file name is not cosmetic: `gen_effects.py:59-60` refuses anything outside
 upper-cased - `football_clock.lua` becomes `FOOTBALL CLOCK`. The generator also
 runs in the pre-commit hook with `--check`, so a stale header blocks a commit.
 
-**There is no upload route.** Scripts are compiled into `.rodata`; `POST
-/api/lua` takes only `show`. The 12 KB stack is sized on that assumption
-(`lua_effects.cpp:55-62`) - if scripts ever arrive at run time it has to go back
-to 32 KB.
+**The compiled-in route is empty since 2.6.0** (`gen_effects.py` finds every
+script marked `@upload-only` and emits LUA_EFFECT_COUNT 0). Scripts arrive over
+`/api/lua/upload` and are validated and tried before they are kept.
 
 ### b. A C++ page
 

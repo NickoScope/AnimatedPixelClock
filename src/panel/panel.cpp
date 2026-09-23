@@ -120,7 +120,7 @@ static uint32_t   s_dirtyAt = 0;
 
 // The effects switched out of the walk: their names, one per line. 512 bytes
 // hold 20 names of the longest (24 + newline), more than the 19 effect pages.
-static const size_t EFF_OFF_CAP = 512;
+static const size_t EFF_OFF_CAP = 1024;   // 36 names of up to 24 letters and a newline: 900 B
 static PSRAM_ARRAY(char, s_effOff, [EFF_OFF_CAP]);
 static PSRAM_ARRAY(char, s_effOffSaved, [EFF_OFF_CAP]);
 
@@ -467,7 +467,7 @@ bool panelSetEffectOn(const char *name, bool on) {
 
 void panelEffectsPrune() {
 #if defined(LUA_EFFECTS_ENABLED)
-  char keep[EFF_OFF_CAP];
+  static PSRAM_ARRAY(char, keep, [EFF_OFF_CAP]);   // not on the loop task's stack
   size_t k = 0;
   for (char *l = s_effOff; *l;) {
     char *e = strchr(l, '\n');
