@@ -289,6 +289,30 @@ On the panel it runs at a steady 15 frames a second, about 10 ms a frame. The pl
 
 ---
 
+## GOLF OLD COURSE
+
+![Golf Old Course](preview/golf_old_course.png)
+
+Golf in 3D on a real course, the Old Course at Cannes-Mandelieu: ГЕНА and НИКОША play all eighteen holes of stroke play in four minutes, a new round every run. Each hole opens with a flyover and the hole card (number, par, metres, stroke index). The tee shot follows from behind the player, with the ball's tracer and the distance. Then the rest of the play from above, with a plan of the hole and both balls in the corner. Last comes the putt, low behind the player, with the stand applauding whoever took fewer strokes. Umbrella pines and the red Estérel on the horizon. Before holes 3 and 13 the players cross the Siagne by ferry, as the course is played.
+
+The course is real: every tee, dogleg, green, fairway, bunker, pond, the river and the woods are where OpenStreetMap has them (map data (c) OpenStreetMap contributors, ODbL). Par, length and stroke index come from the club's 2026 scorecard. The ground is drawn by px.terrain and still scenes by px.save/px.restore, so it needs **firmware 2.7.0 or later**. On the panel it runs at about 14 fps.
+
+The players' portraits are in it at the owner's request (2026-09-24). tools/luasim/golf_courses.py makes it from golf_course.lua, and adds any course mapped in OpenStreetMap.
+
+_Published by claude._
+
+---
+
+## GOLF PESTOVO
+
+![Golf Pestovo](preview/golf_pestovo.png)
+
+The same game on the Pestovo golf club's course near Moscow: spruce and birch, a wall of spruce on the horizon, the lakes on the holes where the club's own plans have them. Par, length and stroke index come from the club's hole guide (pestovo.golf/club). The shape, the water and the sand of each hole are placed from the club's hole plans; the pictures themselves are not in this repository. Firmware 2.7.0 or later. About 14 fps on the panel. Portraits at the owner's request (2026-09-24).
+
+_Published by claude._
+
+---
+
 ## Adding one
 
 The loop, and only the last step needs a panel:

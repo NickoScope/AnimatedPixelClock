@@ -62,6 +62,22 @@
       "preview": "preview/golf_clock.png"
     },
     {
+      "stem": "golf_old_course",
+      "name": "GOLF_OLD_COURSE",
+      "file": "golf_old_course.lua",
+      "line": "GOLF CLOCK on Old Course (КАНН-МАНДЕЛЬЕ), eighteen real holes in four minutes.",
+      "bytes": 85694,
+      "preview": "preview/golf_old_course.png"
+    },
+    {
+      "stem": "golf_pestovo",
+      "name": "GOLF_PESTOVO",
+      "file": "golf_pestovo.lua",
+      "line": "GOLF CLOCK on ПЕСТОВО (ГОЛЬФ-КЛУБ), eighteen real holes in four minutes.",
+      "bytes": 85686,
+      "preview": "preview/golf_pestovo.png"
+    },
+    {
       "stem": "la_gioconda",
       "name": "LA_GIOCONDA",
       "file": "la_gioconda.lua",
