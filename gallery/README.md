@@ -339,6 +339,8 @@ At night the tank lights come on when somebody is in the room. Night creatures c
 
 **How it is drawn.** It needs firmware 2.7.1 or later. Each pose of each animal (its size, its turn and its beat of the tail) is drawn once, cut out with px.grab and stamped with px.blit after that. The stamp is mirrored when the animal swims the other way, dimmed by the light at its depth and hazed by the water between it and the glass. The reef is cut out the same way. On the panel it runs at about 15 fps.
 
+How it works, with the tank running and the numbers from the panel: [in English](https://nickoscope.github.io/AnimatedPixelClock/oceanarium/en.html), [по-русски](https://nickoscope.github.io/AnimatedPixelClock/oceanarium/).
+
 ---
 
 ## Adding one
