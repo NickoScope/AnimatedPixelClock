@@ -38,6 +38,15 @@
 --
 -- The canvas is never cleared between frames, so every layer is repainted in
 -- order and nothing needs erasing.
+--
+-- WHAT STANDS STILL IS DRAWN ONCE (firmware 2.7.0, px.save/px.restore). The
+-- water's gradient, the sand bed, the stones and the moss ball do not move;
+-- they are drawn once, saved, and every later frame starts from that picture.
+-- They depend only on how lit the tank is, and that changes over tens of
+-- seconds, so the picture is made again when the light moves a step. On
+-- firmware without the helpers the tank draws everything every frame, as
+-- before. The branch stays in the moving layer: the light shafts pass behind
+-- it.
 
 PERIOD = 60.0
 FPS = 15
@@ -339,7 +348,7 @@ local function draw_shafts(t, lift)
   for s = 1, 4 do
     local base = 12 + (s - 1) * 33 + 9 * sin(t * 0.13 + s)
     local lean = 0.4 + 0.25 * sin(t * 0.11 + s * 2.1)
-    for b = 0, 15 do
+    for b = 0, 14 do                       -- to y 48: the sand bed starts below
       local y = 3 + b * 3
       local w = 3 + b * 0.6
       local x = base + y * lean - w * 0.5
@@ -354,7 +363,7 @@ end
 local function draw_caustics(t, lift)
   -- Two sines of different wavelength crossing, so the net drifts and never
   -- repeats on the eye. Brightness dies with depth, because light does.
-  for c = 0, 8 do
+  for c = 0, 7 do                          -- the last row fell on the sand, which hid it
     local y0 = 4 + c * 6
     local fade = 1 - y0 / 56
     if fade > 0 then
@@ -401,7 +410,7 @@ local function draw_wood(lift)
   end
 end
 
-local function draw_sand(t, lift)
+local function draw_sand_bed(lift)
   local cr, cg, cb = floor(122 * lift), floor(102 * lift), floor(70 * lift)
   local dr, dg, db = floor(58 * lift), floor(46 * lift), floor(32 * lift)
   for i = 1, #RUNS do
@@ -412,6 +421,14 @@ local function draw_sand(t, lift)
       rect(r[1], top + 3, r[2], H - top - 3, dr, dg, db, true)
     end
   end
+  for i = 1, 7 do
+    local st = STONE[i]
+    circle(st.x, st.y, st.r, floor(92 * lift), floor(84 * lift), floor(72 * lift), true)
+    pixel(st.x - st.r, st.y - st.r, floor(138 * lift), floor(126 * lift), floor(106 * lift))
+  end
+end
+
+local function draw_sand(t, lift)
   -- Caustics land on the bottom too, and that is what sells a lit tank: the
   -- same wave that brightens the water walks bright patches across the sand.
   for i = 0, 15 do
@@ -420,11 +437,6 @@ local function draw_sand(t, lift)
     local k = lift * (0.5 + 0.5 * sin(t * 1.1 + i * 1.3))
     line(x, top, x + 5, top, floor(150 * k), floor(128 * k), floor(92 * k))
     line(x + 1, top + 1, x + 4, top + 1, floor(110 * k), floor(94 * k), floor(68 * k))
-  end
-  for i = 1, 7 do
-    local st = STONE[i]
-    circle(st.x, st.y, st.r, floor(92 * lift), floor(84 * lift), floor(72 * lift), true)
-    pixel(st.x - st.r, st.y - st.r, floor(138 * lift), floor(126 * lift), floor(106 * lift))
   end
 end
 
@@ -460,9 +472,9 @@ local function draw_plants(t, lift, calm)
            floor(14 * lift), floor((70 + 5 * j) * lift), floor(34 * lift))
     end
   end
-  -- The moss ball, which does nothing and belongs in every tank.
+  -- The moss ball, which does nothing and belongs in every tank (its body is
+  -- in the still picture).
   local mr = DUNE[MOSS_X] - MOSS_R + 1
-  circle(MOSS_X, mr, MOSS_R, floor(16 * lift), floor(64 * lift), floor(30 * lift), true)
   for j = 1, 7 do
     local a = j * 0.9 + 0.2 * sin(t * 0.4 + j)
     pixel(floor(MOSS_X + cos(a) * MOSS_R), floor(mr + sin(a) * MOSS_R),
@@ -749,6 +761,7 @@ end
 
 -- ── the frame ───────────────────────────────────────────────────────────────
 local tprev = nil
+local still_lift = nil                     -- the light the saved picture was made at
 
 function draw()
   local t = px.t() * PERIOD
@@ -771,7 +784,15 @@ function draw()
   if lift > 1.12 then lift = 1.12 end
   local calm = 1 - startle
 
-  draw_water(t, lift)
+  -- The still picture: made again only when the light has moved a step.
+  local lq = floor(lift * 50 + 0.5) / 50
+  if not (still_lift == lq and px.restore and px.restore()) then
+    draw_water(t, lq)
+    draw_sand_bed(lq)
+    local mr = DUNE[MOSS_X] - MOSS_R + 1
+    circle(MOSS_X, mr, MOSS_R, floor(16 * lq), floor(64 * lq), floor(30 * lq), true)
+    if px.save then px.save(); still_lift = lq end
+  end
   draw_shafts(t, lift)
   draw_caustics(t, lift)
   draw_lamp(t, lift)
