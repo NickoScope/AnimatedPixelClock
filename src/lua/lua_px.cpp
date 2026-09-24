@@ -328,8 +328,9 @@ static int l_restore(lua_State *L) {
   return n;
 }
 
-// Charged like px.terrain: the pixels touched, a sixteenth each (a copy is
-// a few cycles a pixel, a Lua instruction a hundred-odd).
+// Charged like px.terrain: a quarter of an instruction a pixel touched, which
+// is about what a stamp costs on the panel against a Lua instruction (the gate
+// audit's estimate, 2026-09-24: a sixteenth under-charged it three to four times).
 static int l_grab(lua_State *L) {
   unsigned long work = 0;
   const int n = px_grab_lua(L, canvasOf(L)->rgb, W, H, &work);

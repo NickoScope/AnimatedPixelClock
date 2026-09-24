@@ -26,8 +26,8 @@
 //
 // Shared by the firmware (src/lua/lua_px.cpp) and luasim, like px_terrain.h;
 // fx_parity.py compares them. Every loop is bounded by the canvas: a C loop
-// never reaches the instruction hook. *work returns the pixels touched, which
-// the firmware charges against the frame's budget.
+// never reaches the instruction hook. *work returns a quarter of the pixels
+// touched, which the firmware charges against the frame's budget.
 // ============================================================
 #ifndef PX_SPRITE_H
 #define PX_SPRITE_H
@@ -57,7 +57,7 @@ static int px_grab_lua(lua_State *L, const unsigned char *fb, int fbw, int fbh,
   int x0 = x < 0 ? 0 : x, y0 = y < 0 ? 0 : y;
   int x1 = x + w > fbw ? fbw : x + w, y1 = y + h > fbh ? fbh : y + h;
   if (w < 1 || h < 1 || x0 >= x1 || y0 >= y1) { lua_pushnil(L); return 1; }
-  *work += (unsigned long)((x1 - x0) * (y1 - y0)) / 16;
+  *work += (unsigned long)((x1 - x0) * (y1 - y0)) / 4;
   // Trim to what is not black.
   int bx0 = x1, by0 = y1, bx1 = x0 - 1, by1 = y0 - 1;
   for (int yy = y0; yy < y1; yy++) {
@@ -112,7 +112,7 @@ static int px_blit_lua(lua_State *L, unsigned char *fb, int fbw, int fbh,
   int c0 = x < 0 ? -x : 0, c1 = x + sw > fbw ? fbw - x : sw;
   int r0 = y < 0 ? -y : 0, r1 = y + sh > fbh ? fbh - y : sh;
   if (c0 >= c1 || r0 >= r1) return 0;
-  *work += (unsigned long)((c1 - c0) * (r1 - r0)) / 16;
+  *work += (unsigned long)((c1 - c0) * (r1 - r0)) / 4;
   for (int r = r0; r < r1; r++) {
     const unsigned char *row = s + 2 + (size_t)r * sw * 3;
     unsigned char *d = fb + ((size_t)(y + r) * fbw + x + c0) * 3;
