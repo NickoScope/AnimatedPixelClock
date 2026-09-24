@@ -109,9 +109,9 @@ COURSES[#COURSES + 1] = {id = "pestovo", name = "ПЕСТОВО", sub = "ГОЛ�
 -- COURSES END
 
 -- ---------------------------------------------------------------- drawing
-local function R(x, y, w, h, r, g, b) px.rect(floor(x), floor(y), floor(w), floor(h), r, g, b, true) end
-local function C(x, y, rad, r, g, b) px.circle(floor(x), floor(y), floor(rad), r, g, b, true) end
-local function P(x, y, r, g, b) px.pixel(floor(x), floor(y), r, g, b) end
+local function R(x, y, w, h, r, g, b) px.rect(floor(x), floor(y), floor(w), floor(h), floor(r), floor(g), floor(b), true) end
+local function C(x, y, rad, r, g, b) px.circle(floor(x), floor(y), floor(rad), floor(r), floor(g), floor(b), true) end
+local function P(x, y, r, g, b) px.pixel(floor(x), floor(y), floor(r), floor(g), floor(b)) end
 local function T(x, y, s, c, font) px.text(floor(x), floor(y), s, c[1], c[2], c[3], font or "small") end
 local function TW(s, font) return px.width(s, font or "small") end
 
@@ -267,7 +267,15 @@ local function lay_shots(h, strokes)
       kind = "rough"
     else
       local left = full - i + 1
-      pos = pos + (0.93 - pos) / left * (0.8 + rnd() * 0.4)
+      local prev = pos
+      if i == 1 and h.par >= 4 and h.len then
+        -- the drive: 190-250 m for club players, one in ten a mishit of 120-170
+        local d = (rnd() < 0.1) and (120 + rnd() * 50) or (190 + rnd() * 60)
+        pos = min(0.8, d / h.len)
+      else
+        pos = pos + (0.93 - pos) / left * (0.8 + rnd() * 0.4)
+        if h.len then pos = min(pos, prev + (170 + rnd() * 50) / h.len) end   -- a fairway wood at most
+      end
       off = (rnd() - 0.5) * 12
       kind = (abs(off) > 4) and "rough" or "fairway"
       if pen and i == 1 then kind = "water"; pos = h.wf or pos; off = h.woff or 0 end
@@ -318,6 +326,8 @@ local function make_round(id)
   for n = 1, HOLES do
     local h = make_hole(course.holes[n])
     h.n = n
+    h.course_id = course.id
+    h.mpp = h.len / h.total              -- metres in one pixel of the plan
     h.p = {}
     for pl = 1, 2 do
       local d = hole_diff(g.hcp[pl], h.par, h.si)
@@ -430,71 +440,6 @@ local function draw_clock()
   T(W - w - 1, H - 7, s, {230, 230, 230})
 end
 
--- ---------------------------------------------------------------- the hole
-local function draw_course(h)
-  px.clear(18, 60, 22)                                   -- rough
-  for _, t in ipairs(h.trees) do
-    C(t[1], t[2], t[3], 10, 38, 14)
-    P(t[1] - 1, t[2] - 1, 30, 80, 30)
-  end
-  for _, w in ipairs(h.water) do C(w[1], w[2], w[3], 25, 75, 175) end
-  for _, w in ipairs(h.water) do C(w[1] + 1, w[2], w[3] - 1, 35, 100, 215) end
-  if h.fw > 0 then                                       -- the fairway, where the map has it
-    for i = 0, 24 do
-      local x, y = along(h, h.fw0 + (h.fw1 - h.fw0) * i / 24, 0)
-      C(x, y, h.fw, 60, 150, 55)
-    end
-  end
-  for _, b in ipairs(h.bunkers) do C(b[1], b[2], b[3], 215, 195, 130) end
-  local g = h.green
-  local gr = max(5, g[3])                                -- a real green is a dot on a par 5
-  C(g[1], g[2], gr, 90, 205, 80)
-  C(g[1], g[2], gr - 2, 110, 220, 95)
-  R(h.tx - 3, h.ty - 3, 6, 6, 70, 170, 70)                -- the tee box
-  -- the flag
-  px.line(floor(h.gx), floor(h.gy), floor(h.gx), floor(h.gy) - 8, 230, 230, 230)
-  R(h.gx + 1, h.gy - 8, 4, 3, 240, 40, 40)
-  P(h.gx, h.gy, 0, 0, 0)
-end
-
--- The plan plays every shot but the hole's last one between SCENE_END and
--- MAP_END; the last one is the full-screen putt.
-local function ball_state(h, ht)
-  local pos = {{f = 0, off = 0}, {f = 0, off = 0}}
-  local flying, holed, lastmsg = nil, {false, false}, nil
-  local n = #h.order - 1
-  local sl = (MAP_END - SCENE_END - 0.05) / max(1, n)
-  for k = 1, n do
-    local ev = h.order[k]
-    local t0 = SCENE_END + (k - 1) * sl
-    if ht < t0 then break end
-    local u = min(1, (ht - t0) / (sl * 0.75))
-    local s = ev.s
-    if u < 1 then flying = {pl = ev.pl, from = pos[ev.pl], to = s, u = u} end
-    pos[ev.pl] = {f = s.f, off = s.off, kind = s.kind}
-    if u >= 1 and s.kind == "water" then lastmsg = {pl = ev.pl, text = "В ВОДЕ", until_t = t0 + sl * 2.5} end
-    if u >= 1 and ev.i == #h.p[ev.pl].shots then
-      holed[ev.pl] = true
-      local d = h.p[ev.pl].diff
-      lastmsg = {pl = ev.pl, text = (h.p[ev.pl].strokes == 1) and "В ОДИН УДАР!" or WORD[d] or ("+" .. d),
-                 until_t = t0 + sl * 3}
-    end
-  end
-  return pos, flying, holed, lastmsg
-end
-
-local function draw_ball(h, f, off, pl, height)
-  local x, y = along(h, f, off)
-  if height and height > 0 then
-    P(x, y, 10, 30, 10)                                   -- the shadow
-    y = y - height
-  end
-  local c = COL[pl]
-  P(x - 1, y, c[1], c[2], c[3]); P(x + 1, y, c[1], c[2], c[3])
-  P(x, y - 1, c[1], c[2], c[3]); P(x, y + 1, c[1], c[2], c[3])
-  P(x, y, 255, 255, 255)
-end
-
 -- the score line: name and to-par for each, the hole in the middle
 local function draw_score(g, upto, n, h)
   R(0, 0, W, 8, 0, 0, 0)
@@ -506,194 +451,782 @@ local function draw_score(g, upto, n, h)
   T((W - TW(mid)) // 2, 1, mid, {255, 200, 60})
 end
 
--- ---------------------------------------------------------------- close-ups
--- A golfer seen face-on, the target to the right: feet at (x, fy), the arms
--- at angle a from the shoulder (0 hanging down, negative the backswing,
--- positive the follow-through), the club along them.
-local SHIRT = { {40, 70, 170}, {70, 165, 70} }
-local CAP = { {30, 40, 110}, {35, 120, 75} }
-local SKIN = {235, 180, 140}
+-- ---------------------------------------------------------------- the world
+-- Each hole becomes ground you can stand on. The map above is in screen
+-- pixels (the tee at x 8, the cup at x 114); the world is in metres with the
+-- tee at the origin, X towards the green, Y to the player's right, Z up.
+-- A pixel of the map is the hole's scorecard length over its drawn length.
+local sin, cos, atan, exp = math.sin, math.cos, math.atan, math.exp
+local function clamp(v, a, b) if v < a then return a elseif v > b then return b end return v end
+local function mix(a, b, t) return a + (b - a) * t end
 
-local function golfer(x, fy, pl, a, club, putter)
-  local sh, cp = SHIRT[pl], CAP[pl]
-  px.line(floor(x - 2), floor(fy - 8), floor(x - 3), floor(fy - 1), 45, 45, 60)     -- legs
-  px.line(floor(x + 2), floor(fy - 8), floor(x + 3), floor(fy - 1), 45, 45, 60)
-  R(x - 4, fy - 1, 3, 1, 240, 240, 240); R(x + 2, fy - 1, 3, 1, 240, 240, 240)      -- shoes
-  R(x - 3, fy - 15, 7, 7, sh[1], sh[2], sh[3])                                         -- shirt
-  R(x - 3, fy - 9, 7, 1, 30, 30, 40)                                                   -- belt
-  C(x, fy - 18, 3, SKIN[1], SKIN[2], SKIN[3])                                          -- head
-  R(x - 3, fy - 22, 7, 2, cp[1], cp[2], cp[3])                                         -- cap
-  R(x + 2, fy - 20, 3, 1, cp[1], cp[2], cp[3])
-  if pl == 2 then R(x - 2, fy - 16, 5, 2, 90, 60, 40) end                              -- the beard
-  local sx, sy = x, fy - 14
-  local arm = 7
-  local hx, hy = sx + math.sin(a) * arm, sy + math.cos(a) * arm
-  px.line(floor(sx), floor(sy), floor(hx), floor(hy), SKIN[1], SKIN[2], SKIN[3])
-  px.line(floor(sx + 1), floor(sy), floor(hx + 1), floor(hy), SKIN[1] - 30, SKIN[2] - 30, SKIN[3] - 30)
-  local ca = a * (putter and 1 or 1.2)                                                 -- the wrists hinge
-  local cx, cy = hx + math.sin(ca) * club, hy + math.cos(ca) * club
-  px.line(floor(hx), floor(hy), floor(cx), floor(cy), 190, 190, 200)
-  R(cx - 1, cy, 3, 1, putter and 170 or 120, putter and 170 or 120, putter and 180 or 130)
+-- The look of each course: its grass, sand and water, its trees and what
+-- stands on its horizon.
+local STYLE = {
+  old_course = {                         -- the Riviera in September: dry, bright, pines
+    top = {38, 98, 196}, hor = {168, 204, 236}, haze = {178, 196, 212},
+    rough = {86, 124, 50}, cut = {100, 148, 58}, fair = {108, 166, 62}, green = {104, 190, 74},
+    fringe = {96, 172, 64}, sand = {236, 222, 182}, water = {38, 92, 128}, deep = {26, 64, 96},
+    tee = {100, 172, 66}, far = {58, 84, 46}, ridge = {132, 92, 110}, ridge2 = {104, 76, 98},
+    trees = "pine", crowd = true,
+  },
+  pestovo = {                            -- the Moscow region: lush, spruce and birch
+    top = {66, 124, 206}, hor = {192, 214, 234}, haze = {186, 204, 216},
+    rough = {60, 120, 50}, cut = {76, 148, 60}, fair = {84, 168, 68}, green = {96, 198, 80},
+    fringe = {86, 178, 70}, sand = {230, 210, 156}, water = {44, 84, 122}, deep = {30, 58, 90},
+    tee = {90, 178, 72}, far = {32, 66, 44}, ridge = {40, 72, 64}, ridge2 = {30, 58, 52},
+    trees = "spruce", crowd = true,
+  },
+}
+
+-- ---------------------------------------------------------------- the ground
+-- A grid of ground cells for the hole on screen, built once when the hole
+-- starts: the colour of each cell already lit by the sun, and its height.
+local SUN = {-0.45, -0.35, 0.82}           -- from the front left, high
+local grid, grid_key = nil, nil
+
+local function to_world(h, x, y) return (x - h.tx) * h.mpp, (y - h.ty) * h.mpp end
+
+local function seg_d(px_, py_, ax, ay, bx, by)
+  local dx, dy = bx - ax, by - ay
+  local l2 = dx * dx + dy * dy
+  local t = (l2 > 0) and clamp(((px_ - ax) * dx + (py_ - ay) * dy) / l2, 0, 1) or 0
+  local ex, ey = px_ - ax - t * dx, py_ - ay - t * dy
+  return sqrt(ex * ex + ey * ey), t
 end
 
--- the arms' angle through a swing: u 0..1; impact at IMPACT
-local IMPACT = 0.55
-local function swing(u, back, through)
+local function world_of(h)
+  if h.world then return h.world end
+  local wp = {}
+  for i, p in ipairs(h.pts) do local x, y = to_world(h, p[1], p[2]); wp[i] = {x, y} end
+  local cum = {0}
+  for i = 2, #wp do cum[i] = cum[i - 1] + sqrt((wp[i][1] - wp[i - 1][1]) ^ 2 + (wp[i][2] - wp[i - 1][2]) ^ 2) end
+  local function circ(list, s)
+    local out = {}
+    for i, c in ipairs(list) do local x, y = to_world(h, c[1], c[2]); out[i] = {x, y, c[3] * h.mpp * (s or 1)} end
+    return out
+  end
+  local gx, gy = to_world(h, h.green[1], h.green[2])
+  local w = {
+    line = wp, cum = cum, len = cum[#cum],
+    green = {gx, gy, max(5, h.green[3]) * h.mpp * 0.9},
+    cup = {wp[#wp][1], wp[#wp][2]},
+    bunkers = circ(h.bunkers, 0.9), water = circ(h.water, 1.05), trees = circ(h.trees),
+    fw = h.fw * h.mpp,
+  }
+  h.world = w
+  return w
+end
+
+-- the distance from the centre line and how far along it (0..1)
+local function line_pos(w, x, y)
+  local best, bf = 1e9, 0
+  for i = 1, #w.line - 1 do
+    local a, b = w.line[i], w.line[i + 1]
+    local d, t = seg_d(x, y, a[1], a[2], b[1], b[2])
+    if d < best then best, bf = d, (w.cum[i] + t * (w.cum[i + 1] - w.cum[i])) / w.len end
+  end
+  return best, bf
+end
+
+local K_ROUGH, K_CUT, K_FAIR, K_FRINGE, K_GREEN, K_SAND, K_WATER, K_TEE = 1, 2, 3, 4, 5, 6, 7, 8
+
+local function build_grid(h, st, key)
+  local w = world_of(h)
+  local L = w.len
+  local cell = clamp(h.mpp * 0.7, 1.0, 3.0)
+  local x0, x1 = -60, L + 70
+  local y0, y1 = -(34 + 60) * h.mpp * 0.5 - 40, (34 + 60) * h.mpp * 0.5 + 40
+  local nx, ny = floor((x1 - x0) / cell) + 1, floor((y1 - y0) / cell) + 1
+  local HT, KIND = {}, {}
+  -- the land: gentle swells everywhere, the rough rising towards the woods
+  -- so the hole sits in its own valley, as the clubs' plans draw it
+  local ph = (h.n or 1) * 1.7
+  for j = 0, ny - 1 do
+    local y = y0 + j * cell
+    for i = 0, nx - 1 do
+      local x = x0 + i * cell
+      local d, f = line_pos(w, x, y)
+      local k = K_ROUGH
+      local hh = 0.9 * sin(x * 0.041 + ph) * cos(y * 0.057 + ph * 0.7) + 0.6 * sin(x * 0.013 + y * 0.021 + ph)
+      hh = hh + min(5, 0.03 * max(0, d - w.fw - 14) ^ 1.1)
+      if w.fw > 0 and d < w.fw and f >= h.fw0 and f <= h.fw1 then k = K_FAIR
+      elseif w.fw > 0 and d < w.fw + 3 and f >= h.fw0 - 0.02 and f <= h.fw1 + 0.02 then k = K_CUT end
+      local idx = j * nx + i + 1
+      HT[idx], KIND[idx] = hh, k
+    end
+  end
+  local function stamp(cx, cy, r, fn)
+    local i0, i1 = floor((cx - r - x0) / cell), floor((cx + r - x0) / cell) + 1
+    local j0, j1 = floor((cy - r - y0) / cell), floor((cy + r - y0) / cell) + 1
+    for j = max(0, j0), min(ny - 1, j1) do
+      for i = max(0, i0), min(nx - 1, i1) do
+        local x, y = x0 + i * cell, y0 + j * cell
+        local d = sqrt((x - cx) ^ 2 + (y - cy) ^ 2)
+        if d <= r then fn(j * nx + i + 1, d / r) end
+      end
+    end
+  end
+  for _, wa in ipairs(w.water) do
+    stamp(wa[1], wa[2], wa[3], function(i, q) KIND[i] = K_WATER; HT[i] = -0.9 end)
+  end
+  -- the green and the tee over any water the map lays too close
+  -- the green raised a little, its collar around it
+  local g = w.green
+  stamp(g[1], g[2], g[3] + 2.5, function(i, q)
+    local r = (g[3] + 2.5)
+    if q * r > g[3] then KIND[i] = K_FRINGE else KIND[i] = K_GREEN end
+    HT[i] = HT[i] * 0.3 + 0.7 * (1 - q * q)
+  end)
+  -- the tee: a flat raised box
+  stamp(0, 0, 6, function(i, q) KIND[i] = K_TEE; HT[i] = 0.6 end)
+  for _, b in ipairs(w.bunkers) do
+    stamp(b[1], b[2], b[3], function(i, q)
+      if KIND[i] ~= K_GREEN then KIND[i] = K_SAND; HT[i] = HT[i] - 0.7 * (1 - q * q) end
+    end)
+  end
+  -- colour and light
+  local R_, G_, B_ = {}, {}, {}
+  local base = {st.rough, st.cut, st.fair, st.fringe, st.green, st.sand, st.water, st.tee}
+  for j = 0, ny - 1 do
+    for i = 0, nx - 1 do
+      local idx = j * nx + i + 1
+      local k = KIND[idx]
+      local c = base[k]
+      local x, y = x0 + i * cell, y0 + j * cell
+      local l = 1
+      if k ~= K_WATER then
+        local hl = HT[(i > 0) and idx - 1 or idx] - HT[(i < nx - 1) and idx + 1 or idx]
+        local hu = HT[(j > 0) and idx - nx or idx] - HT[(j < ny - 1) and idx + nx or idx]
+        local nx_, ny_, nz_ = hl / (2 * cell), hu / (2 * cell), 1
+        local nl = sqrt(nx_ * nx_ + ny_ * ny_ + 1)
+        l = 0.62 + 0.55 * max(0, (nx_ * SUN[1] + ny_ * SUN[2] + nz_ * SUN[3]) / nl)
+      end
+      -- mowing: stripes across the fairway, a check on the green and the tee
+      if k == K_FAIR then l = l * (((floor(x / 9)) % 2 == 0) and 1.07 or 0.94)
+      elseif k == K_GREEN or k == K_TEE then l = l * (((floor(x / 3) + floor(y / 3)) % 2 == 0) and 1.05 or 0.96)
+      elseif k == K_ROUGH then l = l * (0.92 + 0.16 * (((i * 7 + j * 13) % 11) / 10))
+      elseif k == K_SAND then l = l * (0.95 + 0.08 * (((i * 5 + j * 3) % 7) / 6)) end
+      R_[idx], G_[idx], B_[idx] = c[1] * l, c[2] * l, c[3] * l
+    end
+  end
+  -- the shade under the trees, thrown away from the sun
+  for _, t in ipairs(w.trees) do
+    stamp(t[1] + 3, t[2] + 2.5, t[3] * 2.2 + 2, function(i, q)
+      if KIND[i] ~= K_WATER then R_[i], G_[i], B_[i] = R_[i] * 0.72, G_[i] * 0.72, B_[i] * 0.72 end
+    end)
+  end
+  grid = {x0 = x0, y0 = y0, cell = cell, nx = nx, ny = ny, H = HT, K = KIND, R = R_, G = G_, B = B_, h = h}
+  grid_key = key
+end
+
+local function ground_at(x, y)
+  local i, j = floor((x - grid.x0) / grid.cell), floor((y - grid.y0) / grid.cell)
+  if i < 0 or j < 0 or i >= grid.nx or j >= grid.ny then return 0 end
+  return grid.H[j * grid.nx + i + 1]
+end
+
+-- ---------------------------------------------------------------- the camera
+-- cam: x, y, z (metres), yaw (radians, 0 along X), hor (the horizon's screen
+-- row: the tilt), f (focal length in pixels).
+local ZFAR = 900
+
+local function look_at(cam, tx, ty, tz, row)
+  cam.yaw = atan(ty - cam.y, tx - cam.x)
+  local d = sqrt((tx - cam.x) ^ 2 + (ty - cam.y) ^ 2)
+  cam.hor = row - (cam.z - tz) * cam.f / max(1, d)
+  return cam
+end
+
+local function project(cam, x, y, z)
+  local rx, ry = x - cam.x, y - cam.y
+  local c, s = cos(cam.yaw), sin(cam.yaw)
+  local depth = rx * c + ry * s
+  if depth < 0.4 then return nil end
+  local lat = -rx * s + ry * c
+  local k = cam.f / depth
+  return 63.5 + lat * k, cam.hor + (cam.z - z) * k, k, depth
+end
+
+-- ---------------------------------------------------------------- the sky
+local frame_no = 0
+
+local function draw_sky(cam, st)
+  local hor = floor(cam.hor)
+  if hor <= 0 then return end
+  local top, hz = st.top, st.hor
+  for y = 0, min(H - 1, hor) do
+    local t = clamp((y + (cam.hor - hor)) / max(1, cam.hor), 0, 1) ^ 1.6
+    px.rect(0, y, W, 1, floor(mix(top[1], hz[1], t)), floor(mix(top[2], hz[2], t)), floor(mix(top[3], hz[3], t)), true)
+  end
+  -- the sun, fixed in the world behind the player's left shoulder
+  local sa = -2.2
+  local sx = 63.5 + math.tan(((sa - cam.yaw + math.pi) % (2 * math.pi)) - math.pi) * cam.f
+  if abs(((sa - cam.yaw + math.pi) % (2 * math.pi)) - math.pi) < 1.2 then
+    px.glow(sx, cam.hor - 26, 7, 255, 240, 200, 0.9)
+  end
+  -- clouds drifting
+  local drift = frame_no * 0.0006
+  for c = 0, 5 do
+    local a = c * 1.05 + drift
+    local rel = ((a - cam.yaw + math.pi) % (2 * math.pi)) - math.pi
+    if abs(rel) < 0.9 then
+      local cx = 63.5 + math.tan(rel) * cam.f
+      local cy = cam.hor - 10 - (c * 7) % 17
+      for k = 0, 5 do
+        local ox, oy, rr = (k - 2.5) * 3.2, ((k * 3) % 4) - 2, 3 + (k * 5) % 3
+        for yy = -rr, rr do
+          for xx = -rr - 1, rr + 1 do
+            if xx * xx * 0.7 + yy * yy * 1.6 <= rr * rr then
+              local x, y = floor(cx + ox + xx), floor(cy + oy + yy)
+              if x >= 0 and x < W and y >= 0 and y < hor then px.blend(x, y, 255, 255, 255, 0.10) end
+            end
+          end
+        end
+      end
+    end
+  end
+  -- what stands on the horizon: the course's own skyline
+  for col = 0, W - 1 do
+    local a = cam.yaw + atan((col - 63.5) / cam.f)
+    local hgt
+    if st.trees == "pine" then           -- the Estérel's red rock behind the pines
+      hgt = 5 + 4 * sin(a * 3 + 1) + 2.5 * sin(a * 7.3) + 1.5 * sin(a * 17)
+      if hgt > 0 then px.rect(col, floor(cam.hor - hgt), 1, floor(hgt) + 1, st.ridge[1], st.ridge[2], st.ridge[3], true) end
+      local p = 2 + 1.5 * sin(a * 23) + ((floor(a * 40) % 3 == 0) and 2 or 0)
+      px.rect(col, floor(cam.hor - p), 1, floor(p) + 1, st.ridge2[1] // 2, st.ridge2[2] // 2 + 10, st.ridge2[3] // 2, true)
+    else                                 -- a spruce wall, tip after tip
+      local tip = (a * 60) % 1
+      hgt = 5 + 2 * sin(a * 5) + 3 * (1 - abs(tip - 0.5) * 2)
+      px.rect(col, floor(cam.hor - hgt), 1, floor(hgt) + 1, st.ridge[1], st.ridge[2], st.ridge[3], true)
+    end
+  end
+end
+
+-- ---------------------------------------------------------------- the land
+-- Voxel space: for every column of the screen walk out from the camera and
+-- draw each piece of ground that rises above what is already drawn.
+local function draw_land(cam, st)
+  local g = grid
+  local c0, s0 = cos(cam.yaw), sin(cam.yaw)
+  local haze, far, water, deep, hz = st.haze, st.far, st.water, st.deep, st.hor
+  local x0, y0, cell, nx, ny = g.x0, g.y0, g.cell, g.nx, g.ny
+  local GH, GK, GR, GG, GB = g.H, g.K, g.R, g.G, g.B
+  local fog0, fogk = 140, 1 / 900
+  for col = 0, W - 1 do
+    local ra = atan((col - 63.5) / cam.f)
+    local a = cam.yaw + ra
+    local dx, dy, cr = cos(a), sin(a), cos(ra)
+    local yb = H
+    local z = 0.6
+    while z < ZFAR do
+      local x, y = cam.x + dx * z, cam.y + dy * z
+      local i, j = floor((x - x0) / cell), floor((y - y0) / cell)
+      local r, gg, b, hgt
+      local kind = 0
+      if i >= 0 and j >= 0 and i < nx and j < ny then
+        local idx = j * nx + i + 1
+        hgt, kind = GH[idx], GK[idx]
+        r, gg, b = GR[idx], GG[idx], GB[idx]
+      else                               -- beyond the hole: woods rising to the skyline
+        local ox = max(x0 - x, x - (x0 + nx * cell), 0)
+        local oy = max(y0 - y, y - (y0 + ny * cell), 0)
+        local u = min(1, max(ox, oy) / 60)
+        hgt = 4 + 10 * u + 2 * sin(x * 0.05) * cos(y * 0.07)
+        local l = 0.85 + 0.25 * (((floor(x / 7) * 7 + floor(y / 7) * 13) % 5) / 4)
+        r, gg, b = far[1] * l, far[2] * l, far[3] * l
+      end
+      local depth = z * cr
+      local sy = cam.hor + (cam.z - hgt) * cam.f / depth
+      if sy < yb then
+        if kind == K_WATER then           -- the sky in the water, more of it far away
+          local t = clamp(depth / 300, 0.1, 0.5)
+          local sk = st.top
+          r, gg, b = mix(deep[1], sk[1], t), mix(deep[2], sk[2], t), mix(deep[3], sk[3], t)
+          if ((i * 7 + j * 13 + frame_no) % 37) == 0 then r, gg, b = 200, 225, 250 end
+        end
+        local t = clamp((depth - fog0) * fogk, 0, 1)
+        t = t * t
+        r, gg, b = mix(r, haze[1], t), mix(gg, haze[2], t), mix(b, haze[3], t)
+        local top = floor(sy)
+        if top < 0 then top = 0 end
+        if yb > top then px.rect(col, top, 1, yb - top, floor(clamp(r, 0, 255)), floor(clamp(gg, 0, 255)), floor(clamp(b, 0, 255)), true) end
+        yb = top
+        if yb <= 0 then break end
+      end
+      z = z * 1.028 + 0.04
+    end
+  end
+end
+
+-- ---------------------------------------------------------------- things standing
+local function draw_tree(cam, st, t, seedk)
+  local gz = ground_at(t[1], t[2])
+  local sx, sy, k, depth = project(cam, t[1], t[2], gz)
+  if not sx or sx < -40 or sx > W + 40 or depth > ZFAR then return end
+  local fogt = clamp((depth - 140) / 900, 0, 1) ^ 2
+  local function col(c, l)
+    l = l or 1
+    return floor(mix(c[1] * l, st.haze[1], fogt)), floor(mix(c[2] * l, st.haze[2], fogt)), floor(mix(c[3] * l, st.haze[3], fogt))
+  end
+  if st.trees == "pine" then            -- the umbrella pine: a bare trunk, a flat dark crown
+    local th = (9 + (seedk % 4)) * k
+    local tw = max(1, floor(0.5 * k))
+    local r, g, b = col({110, 72, 44})
+    px.rect(floor(sx - tw / 2), floor(sy - th), tw, floor(th) + 1, r, g, b, true)
+    local cw, ch = (5 + seedk % 3) * k, 2.4 * k
+    local cy = sy - th
+    for yy = floor(-ch), floor(ch * 0.6) do
+      local q = yy / ch
+      local half = cw * sqrt(max(0, 1 - q * q))
+      local l = (yy < 0) and 1.25 or 0.8
+      local r2, g2, b2 = col({44, 84, 40}, l)
+      px.rect(floor(sx - half), floor(cy + yy), floor(2 * half) + 1, 1, r2, g2, b2, true)
+    end
+    if k > 1.2 then                      -- a lit edge on the sun's side
+      local r3, g3, b3 = col({92, 138, 62})
+      px.rect(floor(sx - cw * 0.7), floor(cy - ch * 0.8), floor(cw * 0.6), 1, r3, g3, b3, true)
+    end
+  else                                  -- spruce, and now and then a birch
+    if seedk % 5 == 0 then
+      local th = 8 * k
+      local r, g, b = col({230, 230, 225})
+      px.rect(floor(sx), floor(sy - th), max(1, floor(0.35 * k)), floor(th) + 1, r, g, b, true)
+      local rr = max(1, floor(3 * k))
+      local r2, g2, b2 = col({110, 158, 66})
+      px.circle(floor(sx), floor(sy - th - rr * 0.6), rr, r2, g2, b2, true)
+      local r3, g3, b3 = col({140, 186, 84})
+      if rr > 2 then px.circle(floor(sx - rr * 0.3), floor(sy - th - rr), max(1, rr // 2), r3, g3, b3, true) end
+    else
+      local th = (14 + (seedk % 5)) * k
+      local bw = 3.4 * k
+      local rows = max(1, floor(th))
+      for yy = 0, rows do
+        local q = yy / rows
+        local half = bw * q * (0.85 + 0.15 * (((yy // max(1, floor(k))) % 3) / 2))
+        local r, g, b = col({26, 70, 40}, 0.8 + 0.3 * (1 - q))
+        px.rect(floor(sx - half), floor(sy - th + yy), floor(2 * half) + 1, 1, r, g, b, true)
+        if half > 1.5 then
+          local r2, g2, b2 = col({50, 104, 60})
+          px.rect(floor(sx - half), floor(sy - th + yy), max(1, floor(half * 0.4)), 1, r2, g2, b2, true)
+        end
+      end
+    end
+  end
+end
+
+local function draw_flag(cam, x, y)
+  local gz = ground_at(x, y)
+  local sx, sy, k = project(cam, x, y, gz)
+  if not sx then return end
+  local ph = 2.3 * k
+  px.line(floor(sx), floor(sy), floor(sx), floor(sy - max(3, ph)), 235, 235, 235)
+  local fw, fh = max(2, floor(0.8 * k)), max(1, floor(0.5 * k))
+  local wave = floor(sin(frame_no * 0.4) * 0.5 + 0.5)
+  px.rect(floor(sx) + 1, floor(sy - max(3, ph)), fw, fh + wave, 235, 40, 40, true)
+  if k > 6 then                           -- the cup, close up
+    px.rect(floor(sx - 0.06 * k), floor(sy), max(2, floor(0.12 * k)), max(1, floor(0.03 * k)), 10, 10, 10, true)
+  end
+end
+
+local function draw_ball3d(cam, x, y, z, pl, big)
+  local gz = ground_at(x, y)
+  local gx_, gy_, k = project(cam, x, y, gz)
+  local bx, by = project(cam, x, y, gz + max(0, z) + 0.05)
+  if not bx then return end
+  if z > 0.3 and gx_ then px.pixel(floor(gx_), floor(gy_), 20, 40, 20) end   -- the shadow
+  local c = COL[pl]
+  local rr = max(0, floor(0.03 * k))
+  if rr >= 1 then
+    px.circle(floor(bx), floor(by), rr, 250, 250, 250, true)
+  else
+    if big then
+      px.pixel(floor(bx) - 1, floor(by), c[1], c[2], c[3]); px.pixel(floor(bx) + 1, floor(by), c[1], c[2], c[3])
+      px.pixel(floor(bx), floor(by) - 1, c[1], c[2], c[3]); px.pixel(floor(bx), floor(by) + 1, c[1], c[2], c[3])
+    end
+    px.pixel(floor(bx), floor(by), 255, 255, 255)
+    if not big then
+      px.pixel(floor(bx) + 1, floor(by), 235, 235, 235)
+      px.pixel(floor(bx), floor(by) + 1, 170, 170, 170); px.pixel(floor(bx) + 1, floor(by) + 1, 150, 150, 150)
+    end
+  end
+end
+
+-- the ball's flight as the broadcasts draw it: a line behind the ball
+local function tracer(cam, ax, ay, bx, by, apex, u, pl, putt)
+  local c = COL[pl]
+  local px0, py0
+  local steps = 24
+  for s = 0, steps do
+    local q = s / steps * u
+    local x, y = mix(ax, bx, q), mix(ay, by, q)
+    local z = putt and 0 or 4 * apex * q * (1 - q)
+    local gz = ground_at(x, y)
+    local sx, sy = project(cam, x, y, gz + z + 0.05)
+    if sx and px0 then
+      px.line(floor(px0), floor(py0), floor(sx), floor(sy), floor(c[1] * 0.9), floor(c[2] * 0.9), floor(c[3] * 0.9))
+    end
+    px0, py0 = sx, sy
+  end
+end
+
+-- the spectators behind a green: a stand of little people
+local function draw_crowd(cam, cx, cy, dirx, diry, clap)
+  local nxp, nyp = -diry, dirx
+  local people = {}
+  for i = 0, 17 do
+    local off = (i - 8.5) * 1.5
+    local back = 21 + (i % 3) * 1.6
+    people[#people + 1] = {cx + dirx * back + nxp * off, cy + diry * back + nyp * off, i}
+  end
+  table.sort(people, function(a, b)
+    local da = (a[1] - cam.x) ^ 2 + (a[2] - cam.y) ^ 2
+    local db = (b[1] - cam.x) ^ 2 + (b[2] - cam.y) ^ 2
+    return da > db
+  end)
+  for _, p in ipairs(people) do
+    local gi, gj = floor((p[1] - grid.x0) / grid.cell), floor((p[2] - grid.y0) / grid.cell)
+    local dry = not (gi >= 0 and gj >= 0 and gi < grid.nx and gj < grid.ny and grid.K[gj * grid.nx + gi + 1] == K_WATER)
+    local gz = ground_at(p[1], p[2])
+    if dry then
+    local sx, sy, k = project(cam, p[1], p[2], gz)
+    if sx and sx > -4 and sx < W + 4 then
+      local i = p[3]
+      local shirt = {(i * 71) % 200 + 40, (i * 37) % 170 + 60, (i * 53) % 200 + 40}
+      local bh, hw = 1.7 * k, max(1, floor(0.25 * k))
+      px.rect(floor(sx - hw), floor(sy - bh * 0.5), hw * 2, floor(bh * 0.5) + 1, 50, 50, 70, true)       -- legs
+      px.rect(floor(sx - hw), floor(sy - bh * 0.85), hw * 2, floor(bh * 0.38) + 1, shirt[1], shirt[2], shirt[3], true)
+      px.circle(floor(sx), floor(sy - bh * 0.93), max(1, floor(0.13 * k)), 225, 180, 140, true)
+      if clap > 0 and ((floor(clap * 10) + i) % 2 == 0) then
+        px.pixel(floor(sx - hw - 1), floor(sy - bh), 255, 225, 190); px.pixel(floor(sx + hw), floor(sy - bh), 255, 225, 190)
+      end
+    end
+    end
+  end
+end
+
+-- ---------------------------------------------------------------- the golfer
+-- Seen from behind, down the line of the shot: feet at (x, fy), height hpx.
+-- u is the swing: address, the backswing to the top, impact, the finish.
+local SHIRT = { {40, 80, 190}, {60, 160, 70} }
+local CAP = { {30, 40, 110}, {235, 235, 235} }
+local SKIN = {232, 178, 138}
+
+local function swing_angle(u)
   local e = function(x) return x * x * (3 - 2 * x) end
-  if u < 0.12 then return 0.05 end
-  if u < 0.45 then return 0.05 + (back - 0.05) * e((u - 0.12) / 0.33) end
-  if u < IMPACT then return back + (0 - back) * e((u - 0.45) / (IMPACT - 0.45)) end
-  if u < 0.8 then return through * e((u - IMPACT) / (0.8 - IMPACT)) end
-  return through
+  if u < 0.1 then return 0 end
+  if u < 0.5 then return -2.6 * e((u - 0.1) / 0.4) end          -- to the top
+  if u < 0.62 then return -2.6 + 2.6 * e((u - 0.5) / 0.12) end  -- down to the ball
+  if u < 0.85 then return 2.7 * e((u - 0.62) / 0.23) end         -- the finish
+  return 2.7
 end
 
+local function golfer_back(x, fy, hpx, pl, u, club_len, fixed_a)
+  local s = hpx / 40
+  local sh, cp = SHIRT[pl], CAP[pl]
+  local a = fixed_a or swing_angle(u)
+  local turn = fixed_a and 0 or clamp(a / 2.6, -1, 1)
+  -- legs, a little flexed
+  local function thick(x0, y0, x1, y1, w, r, g, b)
+    for k = 0, w - 1 do px.line(floor(x0 + k), floor(y0), floor(x1 + k), floor(y1), r, g, b) end
+  end
+  thick(x - 5 * s, fy - 16 * s, x - 6 * s, fy - 1, max(2, floor(3 * s)), 50, 56, 80)
+  thick(x + 2 * s, fy - 16 * s, x + 3 * s, fy - 1, max(2, floor(3 * s)), 42, 48, 70)
+  R(x - 8 * s, fy - 2 * s, 5 * s, 2 * s, 240, 240, 240); R(x + 2 * s, fy - 2 * s, 5 * s, 2 * s, 225, 225, 225)
+  -- hips and back, turning with the swing
+  local tw = 11 * s * (1 - 0.18 * abs(turn))
+  local cx = x + turn * 1.5 * s
+  R(cx - tw / 2, fy - 18 * s, tw, 3 * s, 40, 44, 60)                          -- belt line
+  for yy = 0, floor(13 * s) do                                                -- the shirt, lit from the left
+    local q = yy / (13 * s)
+    local w2 = tw * (0.92 + 0.12 * q)
+    for xx = 0, floor(w2) do
+      local l = 0.75 + 0.4 * (1 - xx / max(1, w2))
+      P(cx - w2 / 2 + xx, fy - 31 * s + yy, clamp(sh[1] * l, 0, 255), clamp(sh[2] * l, 0, 255), clamp(sh[3] * l, 0, 255))
+    end
+  end
+  -- the head from behind, the cap
+  local hx, hy = cx + turn * 1.2 * s, fy - 35 * s
+  C(hx, hy, 4 * s, 78, 54, 36)                                                 -- the back of the head
+  C(hx + 3.4 * s, hy + 0.5 * s, max(1, 1.1 * s), SKIN[1] * 0.9, SKIN[2] * 0.9, SKIN[3] * 0.9)   -- an ear
+  R(hx - 2.5 * s, hy + 3 * s, 5 * s, 2 * s, SKIN[1] * 0.8, SKIN[2] * 0.8, SKIN[3] * 0.8)        -- the neck
+  R(hx - 4.5 * s, hy - 4.5 * s, 9 * s, 3.5 * s, cp[1], cp[2], cp[3])
+  -- arms and club: the hands on a circle round the left shoulder
+  local shx, shy = cx - 2 * s, fy - 28 * s
+  local arm = 11 * s
+  local hxx, hyy = shx + sin(a + 0.25) * arm, shy + cos(a + 0.25) * arm
+  local sk = SKIN
+  px.line(floor(shx), floor(shy), floor(hxx), floor(hyy), sk[1], sk[2], sk[3])
+  px.line(floor(shx + 4 * s), floor(shy), floor(hxx + 1), floor(hyy), floor(sk[1] * 0.85), floor(sk[2] * 0.85), floor(sk[3] * 0.85))
+  local ca = a * 1.25 + 0.2
+  local cl = (club_len or 20) * s
+  local ex, ey = hxx + sin(ca) * cl, hyy + cos(ca) * cl
+  px.line(floor(hxx), floor(hyy), floor(ex), floor(ey), 200, 200, 210)
+  R(ex - 1, ey - 1, 3, 2, 150, 150, 160)
+end
+
+-- ---------------------------------------------------------------- on screen
 local function label(s, pl)
   local w = TW(s, "5x7")
-  R(0, 0, w + 3, 9, 0, 0, 0)
-  T(1, 1, s, COL[pl], "5x7")
+  R(0, H - 9, w + 3, 9, 0, 0, 0)
+  T(1, H - 8, s, COL[pl], "5x7")
 end
 
-local function sky(y1, top, bot)
-  for i = 0, 5 do
-    local k = i / 5
-    R(0, floor(y1 * i / 6), W, floor(y1 / 6) + 1,
-      floor(top[1] + (bot[1] - top[1]) * k), floor(top[2] + (bot[2] - top[2]) * k), floor(top[3] + (bot[3] - top[3]) * k))
-  end
+local function hole_card(g, h, a)
+  local s1 = "ЛУНКА " .. h.n .. "  ПАР " .. h.par
+  local s2 = h.len .. " М  ИНДЕКС " .. h.si
+  local w = max(TW(s1, "5x7"), TW(s2)) + 6
+  local x = 4
+  R(x, 12, w, 20, 0, 0, 0)
+  R(x, 12, 2, 20, 255, 200, 60)
+  T(x + 4, 14, s1, {255, 215, 90}, "5x7")
+  T(x + 4, 24, s2, {230, 230, 230})
 end
 
-local function treeline(y)
-  for i = 0, 16 do
-    local x = i * 8 + (i * 37) % 5
-    C(x, y + (i * 13) % 3, 4 + (i * 7) % 3, 20, 70 + (i * 11) % 20, 30)
-  end
+local function scene_base(h, st)
+  local key = h.course_id .. ":" .. h.n
+  if grid_key ~= key then build_grid(h, st, key) end
 end
 
--- The drive (or the tee shot of the ace): the swing, then the ball away into
--- the sky with its trail, and the distance.
-local function scene_drive(h, sc, u)
-  sky(36, {70, 130, 230}, {170, 210, 250})
-  treeline(34)
-  for i = 0, 6 do                                        -- mown stripes
-    local c = (i % 2 == 0) and {70, 165, 60} or {80, 180, 70}
-    R(0, 38 + i * 4, W, 4, c[1], c[2], c[3])
-  end
-  R(28, 55, 16, 3, 95, 190, 85)                          -- the tee box
-  local pl = sc.pl
-  local a = swing(u, -2.5, 2.4)
-  golfer(34, 56, pl, a, 9, false)
-  local v = (u - IMPACT) / (1 - IMPACT)
-  if v < 0 then
-    P(38, 55, 255, 255, 255)                             -- teed up
-  else
-    for k = 4, 0, -1 do                                  -- the ball and its trail
-      local vv = max(0, v - k * 0.05)
-      local bx = 38 + vv * 110
-      local by = 55 - math.sin(min(1, vv) * 2.2) * 44 - vv * 6
-      local c = 255 - k * 45
-      P(bx, by, c, c, c)
+local function world_trees(h)
+  local w = world_of(h)
+  if w.all_trees then return w.all_trees end
+  -- the mapped trees, and a wood along both sides of the hole where the map
+  -- has only rough: a hole is never played in an empty field
+  local t = {}
+  for i, tr in ipairs(w.trees) do t[#t + 1] = {tr[1], tr[2], i} end
+  local step = 16
+  local n = 0
+  for d = -30, w.len + 50, step do
+    for side = -1, 1, 2 do
+      n = n + 1
+      local f = clamp(d / w.len, 0, 1)
+      local px_, py_ = along(h, f, 0)
+      local cx, cy = to_world(h, px_, py_)
+      local off = side * (max(w.fw, 12) + 26 + ((n * 37) % 17))
+      local x, y = cx + (d - f * w.len), cy + off
+      local ok = true
+      for _, wa in ipairs(w.water) do if (x - wa[1]) ^ 2 + (y - wa[2]) ^ 2 < (wa[3] + 6) ^ 2 then ok = false end end
+      local gd = (x - w.green[1]) ^ 2 + (y - w.green[2]) ^ 2
+      if gd < (w.green[3] + 14) ^ 2 then ok = false end
+      if ok then t[#t + 1] = {x, y, n * 3 + 1} end
     end
   end
-  local what = (sc.kind == "ace") and "ПАР 3" or "УДАР С ТИ"
+  w.all_trees = t
+  return t
+end
+
+local function draw_things(cam, st, h, extra)
+  local list = {}
+  for _, t in ipairs(world_trees(h)) do
+    local rx, ry = t[1] - cam.x, t[2] - cam.y
+    list[#list + 1] = {d = rx * rx + ry * ry, t = t}
+  end
+  table.sort(list, function(a, b) return a.d > b.d end)
+  local w = world_of(h)
+  local cupd = (w.cup[1] - cam.x) ^ 2 + (w.cup[2] - cam.y) ^ 2
+  local flag_done = false
+  for _, e in ipairs(list) do
+    if not flag_done and e.d < cupd then draw_flag(cam, w.cup[1], w.cup[2]); flag_done = true end
+    draw_tree(cam, st, e.t, e.t[3])
+  end
+  if not flag_done then draw_flag(cam, w.cup[1], w.cup[2]) end
+  if extra then extra() end
+end
+
+local function render(cam, st, h, extra)
+  px.clear(st.haze[1], st.haze[2], st.haze[3])
+  draw_sky(cam, st)
+  draw_land(cam, st)
+  draw_things(cam, st, h, extra)
+end
+
+-- a ball's world position from the plan's fraction and offset
+local function ball_world(h, f, off)
+  local x, y = along(h, f, off)
+  return to_world(h, x, y)
+end
+
+-- ---------------------------------------------------------------- the scenes
+-- The seconds inside a hole: the flyover with the hole card, the tee shot
+-- from behind the player, the rest of the play from above, the last putt.
+local FLY_END, TEE_END, PLAY_END = 1.0, 2.6, 4.4
+local SWING_S, FLIGHT_S = 0.55, 0.9
+
+local function scene_fly(g, h, st, u)
+  local w = world_of(h)
+  local L = w.len
+  local e = u * u * (3 - 2 * u)
+  local cam = {x = mix(-0.25 * L - 30, 0.35 * L, e), y = mix(-10, 5, e), z = mix(0.35 * L + 50, 0.16 * L + 28, e), f = 96}
+  local tx, ty = w.cup[1], w.cup[2]
+  look_at(cam, mix(0.6 * L, tx, e), mix(0, ty, e), 0, 40)
+  render(cam, st, h)
+  if u < 0.8 then hole_card(g, h) end
+end
+
+local function scene_tee(g, h, st, u, ht)
+  local w = world_of(h)
+  local ev = h.order[1]
+  local pl = ev.pl
+  local s = ev.s
+  local lx, ly = ball_world(h, s.f, s.off)
+  if h.scene.kind == "ace" then lx, ly = w.cup[1], w.cup[2] end
+  -- down the line: behind the tee, the player on the left of it
+  local dirx, diry = lx, ly
+  local dl = sqrt(dirx * dirx + diry * diry)
+  dirx, diry = dirx / dl, diry / dl
+  local cam = {x = -dirx * 5.5 + diry * 1.4, y = -diry * 5.5 - dirx * 1.4, z = 0.6 + 1.6, f = 110}
+  look_at(cam, dirx * 160 + diry * 1.4, diry * 160 - dirx * 1.4, 0, 22)
+  local st_ = ht - FLY_END
+  local swing_u = clamp(st_ / SWING_S, 0, 1)
+  local fu = clamp((st_ - SWING_S * 0.62) / FLIGHT_S, 0, 1)
+  local apex = (h.par == 3) and 22 or clamp(dl * 0.12, 8, 34)
+  render(cam, st, h, function()
+    if fu > 0 then
+      tracer(cam, 0, 0, lx, ly, apex, fu, pl)
+      local q = fu
+      draw_ball3d(cam, mix(0, lx, q), mix(0, ly, q), 4 * apex * q * (1 - q), pl, true)
+    end
+  end)
+  -- the player and the ball on its peg, in front of everything
+  local bx, by = project(cam, 0, 0, ground_at(0, 0) + 0.05)
+  if bx then
+    golfer_back(bx - 17, by + 1, 34, pl, swing_u, 20)
+    if fu <= 0 then P(bx, by - 1, 255, 255, 255); P(bx, by, 200, 180, 140) end
+  end
+  local what = (h.par == 3) and "УДАР НА ГРИН" or "УДАР С ТИ"
   label(NAMES[pl] .. ": " .. what, pl)
-  if v > 0.35 and sc.kind ~= "ace" then
-    local d = h.dist .. " М"
-    T(W - TW(d, "5x7") - 2, 1, d, {255, 230, 120}, "5x7")
+  if fu >= 1 and h.scene.kind ~= "ace" then
+    local d = floor(dl) .. " М"
+    R(W - TW(d, "5x7") - 4, 10, TW(d, "5x7") + 4, 9, 0, 0, 0)
+    T(W - TW(d, "5x7") - 2, 11, d, {255, 230, 120}, "5x7")
   end
 end
 
--- The chip, or the splash out of a bunker: a short swing, the ball up and down
--- onto the green and rolling towards the flag.
-local function scene_chip(h, sc, u)
-  sky(22, {90, 150, 235}, {180, 215, 250})
-  treeline(20)
-  R(0, 24, W, 40, 35, 105, 40)                           -- rough
-  R(62, 36, 66, 28, 90, 200, 80)                         -- the green
-  C(62, 50, 14, 90, 200, 80)
-  local fx, fy2 = 108, 46
-  px.line(fx, fy2, fx, fy2 - 18, 235, 235, 235)
-  R(fx + 1, fy2 - 18, 6, 4, 240, 40, 40)
-  R(fx - 2, fy2, 5, 2, 10, 10, 10)                       -- the cup
-  local bunker = sc.kind == "bunker"
-  if bunker then C(34, 57, 12, 220, 200, 140); R(18, 57, 32, 7, 220, 200, 140) end
-  local pl = sc.pl
-  golfer(30, 58, pl, swing(u, -1.3, 1.1), 8, false)
-  local v = (u - IMPACT) / (1 - IMPACT)
-  local bx, by
-  if v < 0 then bx, by = 34, 57
-  elseif v < 0.6 then
-    local w = v / 0.6
-    bx, by = 34 + w * 58, 57 - math.sin(w * 3.1416) * 26 - w * 11
-  else
-    local w = min(1, (v - 0.6) / 0.4)
-    bx, by = 92 + (1 - (1 - w) * (1 - w)) * 12, 46
-  end
-  if bunker and v >= 0 and v < 0.35 then                 -- the sand
-    for k = 0, 14 do
-      local ang = -0.3 - (k % 7) * 0.35
-      local r = v * 60 * (0.5 + (k % 3) * 0.25)
-      P(34 + math.cos(ang) * r, 56 + math.sin(ang) * r * 0.8, 230, 210, 150)
+-- the rest of the hole from above: every shot between the first tee shot and
+-- the last putt, one after the other, with their tracers
+local function play_state(h, ht)
+  local pos = {{f = 0, off = 0}, {f = 0, off = 0}}
+  local first = h.order[1]
+  pos[first.pl] = {f = first.s.f, off = first.s.off}
+  local n = #h.order - 1
+  local flying, holed, msg = nil, {false, false}, nil
+  if n < 2 then return pos, flying, holed, msg end
+  local sl = (PLAY_END - TEE_END - 0.1) / (n - 1)
+  for k = 2, n do
+    local ev = h.order[k]
+    local t0 = TEE_END + (k - 2) * sl
+    if ht < t0 then break end
+    local u = min(1, (ht - t0) / (sl * 0.8))
+    local s = ev.s
+    if u < 1 then flying = {pl = ev.pl, from = pos[ev.pl], to = s, u = u} end
+    pos[ev.pl] = {f = s.f, off = s.off}
+    if u >= 1 and s.kind == "water" then msg = {pl = ev.pl, text = "В ВОДЕ", until_t = t0 + sl * 3} end
+    if u >= 1 and ev.i == #h.p[ev.pl].shots then
+      holed[ev.pl] = true
+      local d = h.p[ev.pl].diff
+      msg = {pl = ev.pl, text = WORD[d] or ("+" .. d), until_t = t0 + sl * 3}
     end
   end
-  P(bx, by, 255, 255, 255); P(bx + 1, by, 200, 200, 200)
-  label(NAMES[pl] .. (bunker and ": ИЗ БУНКЕРА" or ": ЧИП"), pl)
+  return pos, flying, holed, msg
 end
 
--- The last putt of the hole, full screen, then the applause for whoever took
--- fewer strokes here (both, politely, on a halved hole).
-local function crowd(clap, y)
-  for i = 0, 25 do
-    local x = 3 + i * 5
-    local yy = y + (i % 2) * 3
-    local c = {(i * 71) % 200 + 40, (i * 37) % 180 + 50, (i * 53) % 200 + 40}
-    R(x - 2, yy + 3, 4, 4, c[1], c[2], c[3])            -- shoulders
-    C(x, yy + 1, 2, 225, 180, 140)                       -- head
-    if clap > 0 and ((floor(clap * 8) + i) % 2 == 0) then
-      P(x - 2, yy - 2, 255, 220, 180); P(x + 2, yy - 2, 255, 220, 180)
-      P(x, yy - 3, 255, 255, 255)
-    end
+local function scene_play(g, h, st, ht)
+  local w = world_of(h)
+  local L = w.len
+  local u = (ht - TEE_END) / (PLAY_END - TEE_END)
+  local cam = {f = 100}
+  local mx, my = to_world(h, along(h, 0.62, 0))
+  if h.n % 2 == 1 then                    -- from behind, high, as the clubs' plans look
+    cam.x, cam.y, cam.z = -0.12 * L + u * 0.1 * L, -0.06 * L, 0.2 * L + 26
+  else                                    -- from the side, over the left of the hole
+    cam.x, cam.y, cam.z = 0.3 * L + u * 0.12 * L, -0.4 * L - 28, 0.2 * L + 22
   end
+  look_at(cam, mx, my, 0, 38)
+  local pos, flying, holed, msg = play_state(h, ht)
+  render(cam, st, h, function()
+    for pl = 1, 2 do
+      if not holed[pl] and not (flying and flying.pl == pl) then
+        local x, y = ball_world(h, pos[pl].f, pos[pl].off)
+        draw_ball3d(cam, x, y, 0, pl, true)
+      end
+    end
+    if flying then
+      local a, b = flying.from, flying.to
+      local ax, ay = ball_world(h, a.f or 0, a.off or 0)
+      local bx, by = ball_world(h, b.f or 0, b.off or 0)
+      local d = sqrt((bx - ax) ^ 2 + (by - ay) ^ 2)
+      local putt = b.kind == "putt"
+      local apex = putt and 0 or clamp(d * 0.13, 2, 30)
+      tracer(cam, ax, ay, bx, by, apex, flying.u, flying.pl, putt)
+      local q = flying.u
+      draw_ball3d(cam, mix(ax, bx, q), mix(ay, by, q), putt and 0 or 4 * apex * q * (1 - q), flying.pl, true)
+    end
+  end)
+  if msg and ht < msg.until_t then label(NAMES[msg.pl] .. ": " .. msg.text, msg.pl) end
 end
 
-local function scene_putt(h, u)
+local function scene_putt(g, h, st, ht)
+  local w = world_of(h)
   local ev = h.final
   local pl = ev.pl
-  R(0, 0, W, 16, 25, 25, 35)                             -- the stand
+  local u = (ht - PLAY_END) / (HOLE_S - PLAY_END)
   local win = (h.p[1].strokes < h.p[2].strokes) and 1 or (h.p[2].strokes < h.p[1].strokes) and 2 or 0
-  local roll = min(1, u / 0.6)
-  local after = max(0, (u - 0.6) / 0.4)
-  crowd(after > 0 and (win > 0 and after or after * 0.4) or 0, 3)
-  R(0, 16, W, 1, 240, 240, 240)                          -- the rope
-  for i = 0, 5 do                                        -- the green, receding
-    local g = 150 + i * 12
-    R(0, 17 + i * 8, W, 8, 60 + i * 6, g, 55 + i * 5)
+  local cx, cy = w.cup[1], w.cup[2]
+  local bx, by = ball_world(h, ev.from, (h.p[pl].shots[ev.i - 1] or {off = 0}).off or 0)
+  if ev.from <= 0 then bx, by = ball_world(h, 0.97, 1.5) end
+  local dx, dy = cx - bx, cy - by
+  local dl = sqrt(dx * dx + dy * dy)
+  if dl < 1.5 then dx, dy, dl = 1, 0.3, 1.04 end
+  dx, dy = dx / dl, dy / dl
+  local dist = max(1.5, min(dl, 14, w.green[3] * 0.85))   -- a putt starts on the green
+  bx, by = cx - dx * dist, cy - dy * dist
+  local roll = clamp(u / 0.55, 0, 1)
+  local after = clamp((u - 0.55) / 0.45, 0, 1)
+  local q = 1 - (1 - roll) * (1 - roll)
+  local cam = {f = 110}
+  local reverse = (h.n % 2 == 0)
+  if reverse then                         -- from behind the hole, the ball coming at us
+    cam.x, cam.y = cx + dx * 2.6, cy + dy * 2.6
+    cam.z = ground_at(cx, cy) + 0.45
+    look_at(cam, bx, by, ground_at(bx, by), 30)
+  else                                    -- behind the ball, low, the flag ahead
+    cam.x, cam.y = bx - dx * 4.6 + dy * 1.0, by - dy * 4.6 - dx * 1.0
+    cam.z = ground_at(bx, by) + 1.05
+    look_at(cam, cx, cy, ground_at(cx, cy), 30)
+    cam.hor = 45 - (cam.z - ground_at(bx, by)) * cam.f / 4.6   -- the ball above the caption
+    cam.yaw = cam.yaw - 0.32                                   -- the hole right of centre, the player left
   end
-  local cx, cy = 100, 38
-  px.line(cx, cy, cx, cy - 18, 235, 235, 235)
-  R(cx + 1, cy - 18, 7, 4, 240, 40, 40)
-  R(cx - 3, cy, 7, 2, 10, 10, 10)                        -- the cup
-  golfer(24, 54, pl, swing(min(1, u / 0.35), -0.35, 0.35), 7, true)
-  if roll < 1 then
-    local w = 1 - (1 - roll) * (1 - roll)                -- slowing down
-    local bx = 28 + (cx - 28) * w
-    local by = 53 + (cy - 53) * w + math.sin(w * 3.1416) * 3
-    if u > 0.12 then P(bx, by, 255, 255, 255); P(bx, by + 1, 150, 150, 150) end
+  render(cam, st, h, function()
+    if not reverse then draw_crowd(cam, cx, cy, dx, dy, (after > 0) and ((win > 0) and after or after * 0.4) or 0) end
+    if roll < 1 then
+      tracer(cam, bx, by, cx, cy, 0, q, pl, true)
+      draw_ball3d(cam, mix(bx, cx, q), mix(by, cy, q), 0, pl, false)
+    end
+  end)
+  if not reverse then                     -- the player over the putt: a short pendulum
+    local sx, sy = project(cam, bx, by, ground_at(bx, by))
+    if sx then
+      local a = (u < 0.12) and -0.45 * sin(u / 0.12 * 3.1416) or 0.3 * min(1, (u - 0.12) / 0.1)
+      golfer_back(sx - 24, sy + 1, 34, pl, nil, 13, a)
+    end
   end
   if after > 0 then
     local s, c
     if win > 0 then
       s, c = "БРАВО, " .. NAMES[win] .. "!", COL[win]
-      for k = 0, 20 do                                   -- confetti
+      for k = 0, 22 do                                   -- confetti
         local x = (k * 29 + floor(after * 40) * 3) % W
-        local y = 18 + (k * 17 + floor(after * 60)) % 44
+        local y = 10 + (k * 17 + floor(after * 60)) % 36
         local cc = ({{255, 80, 80}, {255, 220, 60}, {80, 200, 255}, {255, 255, 255}})[k % 4 + 1]
         P(x, y, cc[1], cc[2], cc[3])
       end
     else
       s, c = "ЛУНКА ПОПОЛАМ", {255, 215, 90}
     end
-    local w = TW(s, "5x7")
-    R((W - w) // 2 - 2, 44, w + 4, 18, 0, 0, 0)
-    T((W - w) // 2, 45, s, c, "5x7")
+    local tw = TW(s, "5x7")
+    R((W - tw) // 2 - 2, 44, tw + 4, 18, 0, 0, 0)
+    T((W - tw) // 2, 45, s, c, "5x7")
     local d = win > 0 and h.p[win].diff or h.p[1].diff
     local wd = (win > 0 and h.p[win].strokes or h.p[1].strokes) .. " - " .. (WORD[d] or ("+" .. d))
     T((W - TW(wd, "5x7")) // 2, 54, wd, {230, 230, 230}, "5x7")
@@ -702,77 +1235,99 @@ local function scene_putt(h, u)
   end
 end
 
--- The ace: fireworks over the green and the whole stand on its feet.
-local function scene_ace(h, u)
-  local pl = h.scene.pl
-  R(0, 0, W, H, 8, 10, 30)
-  crowd(u, 40)
-  for b = 0, 4 do                                        -- the fireworks
-    local t0 = b * 0.18
-    local v = (u - t0) / 0.5
-    if v > 0 and v < 1 then
-      local bx, by = 16 + b * 24, 10 + (b * 7) % 14
-      local c = ({{255, 90, 60}, {255, 220, 60}, {90, 200, 255}, {140, 255, 120}, {255, 120, 255}})[b + 1]
-      for k = 0, 11 do
-        local ang = k * 0.5236
-        P(bx + math.cos(ang) * v * 12, by + math.sin(ang) * v * 9,
-          floor(c[1] * (1 - v * 0.6)), floor(c[2] * (1 - v * 0.6)), floor(c[3] * (1 - v * 0.6)))
-      end
+local function scene_ace(g, h, st, ht)
+  local w = world_of(h)
+  local u = (ht - TEE_END) / (HOLE_S - TEE_END)
+  local cx, cy = w.cup[1], w.cup[2]
+  local cam = {x = cx - 9, y = cy + 4, z = ground_at(cx, cy) + 2.2, f = 100}
+  look_at(cam, cx, cy, ground_at(cx, cy), 42)
+  render(cam, st, h, function() draw_crowd(cam, cx, cy, 0.9, -0.4, u) end)
+  for b = 0, 5 do                                        -- fireworks
+    local v = (u * 1.6 - b * 0.15) % 1
+    local bx_, by_ = 14 + b * 20, 8 + (b * 7) % 12
+    local c = ({{255, 90, 60}, {255, 220, 60}, {90, 200, 255}, {140, 255, 120}, {255, 120, 255}, {255, 255, 255}})[b + 1]
+    for k = 0, 11 do
+      local ang = k * 0.5236
+      P(bx_ + cos(ang) * v * 12, by_ + sin(ang) * v * 8,
+        floor(c[1] * (1 - v * 0.6)), floor(c[2] * (1 - v * 0.6)), floor(c[3] * (1 - v * 0.6)))
     end
   end
   local s = "HOLE IN ONE!"
-  if (u * 4) % 1 < 0.75 then T((W - TW(s, "5x7")) // 2, 20, s, {255, 215, 60}, "5x7") end
-  local n = NAMES[pl] .. " - ЛУНКА " .. h.n
-  T((W - TW(n, "5x7")) // 2, 30, n, COL[pl], "5x7")
+  if (u * 4) % 1 < 0.75 then
+    R((W - TW(s, "5x7")) // 2 - 2, 26, TW(s, "5x7") + 4, 9, 0, 0, 0)
+    T((W - TW(s, "5x7")) // 2, 27, s, {255, 215, 60}, "5x7")
+  end
+  label(NAMES[h.scene.pl] .. " - ЛУНКА " .. h.n, h.scene.pl)
 end
 
 -- ---------------------------------------------------------------- screens
+local function panorama(g, h, st, t, radius)
+  scene_base(h, st)
+  local w = world_of(h)
+  local cx, cy = w.cup[1], w.cup[2]
+  local a = t * 0.08 + 2.4
+  local cam = {x = cx + cos(a) * radius, y = cy + sin(a) * radius, z = 14 + radius * 0.25, f = 96}
+  look_at(cam, cx, cy, 0, 44)
+  render(cam, st, h)
+end
+
 local function draw_intro(g, t)
-  px.clear(8, 30, 12)
+  local st = STYLE[g.course.id]
+  local h = g.holes[1]
+  panorama(g, h, st, t, 70)
+  R(0, 0, W, 9, 0, 0, 0)
   local title = g.course.name .. " - ПАР " .. g.course.par
   T((W - TW(title)) // 2, 1, title, {255, 215, 90})
-  local aw, ah = avatar(8, 12, 1)
-  local bw, bh = avatar(W - 8 - 24, 12, 2)
-  T(36, 16, NAMES[1], COL[1])
-  T(36, 24, "HCP " .. g.hcp[1], {200, 200, 200})
-  local n2 = NAMES[2]
-  T(W - 36 - TW(n2), 34, n2, COL[2])
-  local h2 = "HCP " .. g.hcp[2]
-  T(W - 36 - TW(h2), 42, h2, {200, 200, 200})
-  if (t * 2) % 1 < 0.7 then T((W - TW("VS")) // 2, 27, "VS", {255, 90, 60}) end
-  local left = floor(INTRO - t + 0.99)
-  local s = "СТАРТ " .. left
-  T((W - TW(s)) // 2, 50, s, {230, 230, 230})
+  local function card(x, pl, right)
+    R(x, 12, 58, 34, 0, 0, 0)
+    local aw = avatar(right and (x + 58 - 26) or (x + 2), 14, pl)
+    local tx = right and (x + 2) or (x + 28)
+    T(tx, 16, NAMES[pl], COL[pl])
+    T(tx, 26, "HCP " .. g.hcp[pl], {210, 210, 210})
+  end
+  card(2, 1, false)
+  card(W - 60, 2, true)
+  if (t * 2) % 1 < 0.7 then
+    R(57, 48, 14, 8, 0, 0, 0)
+    T((W - TW("VS")) // 2, 49, "VS", {255, 90, 60})
+  end
+  local s = g.course.sub
+  R(0, H - 8, TW(s) + 3, 8, 0, 0, 0)
+  T(1, H - 7, s, {230, 230, 230})
 end
 
 local function draw_result(g, t)
-  px.clear(10, 16, 40)
+  local st = STYLE[g.course.id]
+  local h = g.holes[HOLES]
+  panorama(g, h, st, t + 30, 45)
+  R(0, 0, W, 9, 0, 0, 0)
   local title = "ИТОГ - " .. g.course.name
   T((W - TW(title)) // 2, 1, title, {255, 215, 90})
-  avatar(4, 10, 1)
-  avatar(W - 28, 10, 2)
   for pl = 1, 2 do
-    local x = (pl == 1) and 30 or (W - 30)
+    local x = (pl == 1) and 2 or (W - 44)
+    R(x, 11, 42, 26, 0, 0, 0)
     local lines = {NAMES[pl], tostring(g.total[pl]), topar_s(g.topar[pl])}
     for i, s in ipairs(lines) do
-      local w = TW(s)
-      local c = (i == 1) and COL[pl] or {220, 220, 220}
-      T((pl == 1) and x or (x - w), 10 + (i - 1) * 8, s, c)
+      T(x + 2, 12 + (i - 1) * 8, s, (i == 1) and COL[pl] or {225, 225, 225})
     end
   end
-  -- birdies or better, one line across: 5x7, whose Д reads as Д
   local b = "БЕРДИ " .. g.birdies[1] .. " : " .. g.birdies[2]
-  T((W - TW(b, "5x7")) // 2, 35, b, {220, 220, 220}, "5x7")
+  R((W - TW(b, "5x7")) // 2 - 2, 38, TW(b, "5x7") + 4, 9, 0, 0, 0)
+  T((W - TW(b, "5x7")) // 2, 39, b, {225, 225, 225}, "5x7")
   local win
   if g.total[1] < g.total[2] then win = "ПОБЕДИЛ " .. NAMES[1] .. "!"
   elseif g.total[2] < g.total[1] then win = "ПОБЕДИЛ " .. NAMES[2] .. "!"
   else win = "НИЧЬЯ!" end
   local c = (g.total[1] < g.total[2]) and COL[1] or (g.total[2] < g.total[1]) and COL[2] or {255, 215, 90}
-  if (t * 2) % 1 < 0.8 then T((W - TW(win, "5x7")) // 2, 48, win, c, "5x7") end
+  if (t * 2) % 1 < 0.8 then
+    R((W - TW(win, "5x7")) // 2 - 2, 49, TW(win, "5x7") + 4, 9, 0, 0, 0)
+    T((W - TW(win, "5x7")) // 2, 50, win, c, "5x7")
+  end
 end
 
 -- ---------------------------------------------------------------- draw
 function draw()
+  frame_no = frame_no + 1
   local n = px.now()
   -- the round of this two-minute period: periods start on even minutes
   local id = ((n.year % 100) * 400 + n.yday) * 720 + (n.hour * 60 + n.min) // 2
@@ -782,55 +1337,28 @@ function draw()
 
   if t < INTRO then
     draw_intro(g, t)
+    return
   elseif t >= RESULT_AT then
     draw_result(g, t - RESULT_AT)
-  else
-    local hn = floor((t - INTRO) / HOLE_S) + 1
-    local ht = (t - INTRO) - (hn - 1) * HOLE_S
-    local h = g.holes[hn]
-    if ht >= CARD_END and ht < SCENE_END then
-      local u = (ht - CARD_END) / (SCENE_END - CARD_END)
-      local k = h.scene.kind
-      if k == "chip" or k == "bunker" then scene_chip(h, h.scene, u) else scene_drive(h, h.scene, u) end
-      return
-    end
-    if ht >= MAP_END then
-      local u = (ht - MAP_END) / (HOLE_S - MAP_END)
-      if h.scene.kind == "ace" then scene_ace(h, u) else scene_putt(h, u) end
-      return
-    end
-    draw_course(h)
-    local pos, flying, holed, msg = ball_state(h, ht)
-    for pl = 1, 2 do
-      if not holed[pl] and not (flying and flying.pl == pl) then
-        draw_ball(h, pos[pl].f, pos[pl].off, pl, 0)
-      end
-    end
-    if flying then
-      local u, a, b = flying.u, flying.from, flying.to
-      local f = (a.f or 0) + ((b.f or 0) - (a.f or 0)) * u
-      local off = (a.off or 0) + ((b.off or 0) - (a.off or 0)) * u
-      local arc = (b.kind == "putt") and 0 or (4 * u * (1 - u)) * min(12, 30 * ((b.f or 0) - (a.f or 0)) + 3)
-      draw_ball(h, f, off, flying.pl, arc)
-    end
-    -- the score so far: holes finished, and this one once a ball is in
-    local upto = {0, 0}
-    for k = 1, hn - 1 do
-      upto[1] = upto[1] + g.holes[k].p[1].diff
-      upto[2] = upto[2] + g.holes[k].p[2].diff
-    end
-    for pl = 1, 2 do if holed[pl] then upto[pl] = upto[pl] + h.p[pl].diff end end
-    draw_score(g, upto, hn, h)
-    if ht < CARD_END then
-      local s = "ЛУНКА " .. hn .. " - " .. h.len .. " М"
-      R(0, H - 8, TW(s) + 3, 8, 0, 0, 0)
-      T(1, H - 7, s, {255, 215, 90})
-    elseif msg and ht < msg.until_t then
-      -- 5x7, not the small font: its Д reads as А at this size
-      local s = NAMES[msg.pl] .. ": " .. msg.text
-      R(0, H - 9, TW(s, "5x7") + 2, 9, 0, 0, 0)
-      T(1, H - 8, s, COL[msg.pl], "5x7")
-    end
-    draw_clock()
+    return
   end
+  local hn = floor((t - INTRO) / HOLE_S) + 1
+  local ht = (t - INTRO) - (hn - 1) * HOLE_S
+  local h = g.holes[hn]
+  local st = STYLE[g.course.id]
+  scene_base(h, st)
+  if ht < FLY_END then scene_fly(g, h, st, ht / FLY_END)
+  elseif ht < TEE_END then scene_tee(g, h, st, ht - 0, ht)
+  elseif h.scene.kind == "ace" then scene_ace(g, h, st, ht)
+  elseif ht < PLAY_END then scene_play(g, h, st, ht)
+  else scene_putt(g, h, st, ht) end
+  -- the score so far: holes finished, and this one once a ball is in
+  local upto = {0, 0}
+  for k = 1, hn - 1 do
+    upto[1] = upto[1] + g.holes[k].p[1].diff
+    upto[2] = upto[2] + g.holes[k].p[2].diff
+  end
+  if ht >= HOLE_S - 0.8 then for pl = 1, 2 do upto[pl] = upto[pl] + h.p[pl].diff end end
+  draw_score(g, upto, hn, h)
+  draw_clock()
 end
