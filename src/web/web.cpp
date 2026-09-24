@@ -344,6 +344,12 @@ void setupWebServer() {
    return;
  }
  s_otaSeen = false;
+ if (!Update.hasError() && !Update.isFinished()) {
+   // The file part started and never ended: the transfer was cut.
+   Update.abort();
+   server.send(500, "text/plain", "Update failed: the upload was cut off; the firmware was not changed.");
+   return;
+ }
  if (Update.hasError()) {
    // Surface the real reason (non-200 so the UI knows it failed). The common
    // case once the firmware outgrows an older default partition table is a
@@ -378,6 +384,10 @@ void setupWebServer() {
  } else {
  Update.printError(Serial);
  }
+ } else if (upload.status == UPLOAD_FILE_ABORTED) {
+ Update.abort();
+ s_otaSeen = false;
+ Serial.println("Update: the upload was cut off");
  }
  });
 

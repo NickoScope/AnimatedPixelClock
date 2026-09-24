@@ -18,6 +18,7 @@
 #define UPLOAD_ROUTE_H
 
 #include <WebServer.h>
+#include <esp_task_wdt.h>
 
 class UploadRoute : public RequestHandler {
  public:
@@ -37,7 +38,9 @@ class UploadRoute : public RequestHandler {
   void upload(WebServer &, String uri, HTTPUpload &) override {
     if (canUpload(uri)) chunk_();
   }
-  void raw(WebServer &, String, HTTPRaw &) override {}
+  // Fed per chunk like the upload handlers: a large or slow body keeps loop()
+  // inside the library's read loop, past the 15 s task watchdog otherwise.
+  void raw(WebServer &, String, HTTPRaw &) override { esp_task_wdt_reset(); }
 
  private:
   const char *uri_;
