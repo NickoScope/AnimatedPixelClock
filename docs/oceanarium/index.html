@@ -66,6 +66,7 @@
     display: block;
     width: 100%;
     max-width: 100%;
+    height: auto;
     aspect-ratio: 2 / 1;
     image-rendering: pixelated;
     image-rendering: crisp-edges;
@@ -147,7 +148,7 @@
   @media (max-width: 640px) { .presses { grid-template-columns: 1fr; } }
 
   .sheet { margin-top: 22px; }
-  .sheet img { image-rendering: pixelated; width: 100%; max-width: 100%; border-radius: 6px; display: block; }
+  .sheet img { image-rendering: pixelated; width: 100%; max-width: 100%; height: auto; border-radius: 6px; display: block; }
 
   footer { margin-top: 56px; padding-top: 22px; border-top: 1px solid var(--rule); color: var(--muted); font-size: 14px; }
   footer .led { font: 400 9px/1.8 var(--led); color: var(--glass); }
