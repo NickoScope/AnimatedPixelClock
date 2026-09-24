@@ -33,6 +33,7 @@
 //     sky = {r,g,b}, deep = {r,g,b},          -- what water shows, near and far
 //     sun = {x,y,z},                          -- towards the sun, any length
 //     colw = 1, step = 1.028, zfar = 900, grass = 60, frame = 0,
+//     bilinear = 5000,   -- metres within which heights blend from four cells
 //   }
 // Numbers must be numbers: a number given as a string ("1.03") is ignored and
 // the default used. step is held to 1.02..1.5, zfar to 2 km, colw to 1..8.
@@ -62,7 +63,11 @@ static void pxt_get(lua_State *L, int t, const char *k) {
 static inline float pxt_clamp(float v, float a, float b) { return v >= a ? (v <= b ? v : b) : a; }
 static inline int pxt_finite(float v) { return v == v && v - v == 0.0f; }
 // float to int only after the value is held to +-2^24, where the cast is defined
-static inline int pxt_floori(float v) { return (int)floorf(pxt_clamp(v, -16777216.0f, 16777216.0f)); }
+static inline int pxt_floori(float v) {
+  v = pxt_clamp(v, -16777216.0f, 16777216.0f);
+  const int t = (int)v;                    // truncates towards zero; exact floor after the fix-up,
+  return t - (v < (float)t);               // and no floorf call (a library call on the Xtensa)
+}
 // hashes wrap as unsigned, where overflow is defined
 static inline int pxt_hmod(unsigned v, unsigned m) { return (int)(v % m); }
 
@@ -111,6 +116,13 @@ static const unsigned char *pxt_str(lua_State *L, int t, const char *k, size_t *
 // 2 km from 1.021 up; the golf's 1.03 needs about 210 to 900 m. One call is
 // thus at most 128 x 320 samples, whatever the arguments say.
 #define PX_TERRAIN_MAX_STEPS 320
+
+// The one hot loop in px.*: the firmware is built with -Os, and this function
+// alone is worth optimising for speed (GCC only; the host compilers ignore it).
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC push_options
+#pragma GCC optimize("O2")
+#endif
 
 // Returns the number of samples taken in *work (the firmware charges them to
 // the frame's budget: src/lua/lua_px.cpp).
@@ -170,6 +182,11 @@ static int px_terrain_lua(lua_State *L, unsigned char *fb, int fbw, int fbh, uns
   const float zfar = pxt_clamp(pxt_num(L, T, "zfar", 900), 1, 2000);
   const float grass = pxt_clamp(pxt_num(L, T, "grass", 60), 0, 2000);
   const int frame = (int)pxt_clamp(pxt_num(L, T, "frame", 0), 0, 1e6f);
+  // beyond this the height is the cell's own, not blended from four: far off
+  // the difference is under a pixel, and it is one read of PSRAM, not four
+  const float bilinear = pxt_clamp(pxt_num(L, T, "bilinear", 5000), 0, 5000);
+  unsigned long samples = 0;               // counted here, not through *work: a store through
+                                           // a pointer every step, the compiler cannot keep it
 
   const float gx1 = gx0 + nx * cell, gy1 = gy0 + ny * cell;
   const float inv = 1.0f / cell;
@@ -181,7 +198,7 @@ static int px_terrain_lua(lua_State *L, unsigned char *fb, int fbw, int fbh, uns
     int yb = fbh;
     float z = 0.6f;
     for (int stepn = 0; stepn < PX_TERRAIN_MAX_STEPS && z < zfar; stepn++) {
-      (*work)++;
+      samples++;
       const float x = cam.x + dx * z, y = cam.y + dy * z;
       const float fi = (x - gx0) * inv, fj = (y - gy0) * inv;
       const int i = pxt_floori(fi), j = pxt_floori(fj);
@@ -191,10 +208,12 @@ static int px_terrain_lua(lua_State *L, unsigned char *fb, int fbw, int fbh, uns
       const int inside = i >= 0 && j >= 0 && i < nx - 1 && j < ny - 1;
       const int idx = inside ? j * nx + i : 0;
       float h, fx = 0, fy = 0;
-      if (inside) {
+      if (inside && z < bilinear) {
         fx = fi - i; fy = fj - j;
         h = hbase + hscale * ((hgt[idx] * (1 - fx) + hgt[idx + 1] * fx) * (1 - fy) +
                               (hgt[idx + nx] * (1 - fx) + hgt[idx + nx + 1] * fx) * fy);
+      } else if (inside) {
+        h = hbase + hscale * hgt[idx];
       } else {
         // beyond the hole: woods rising towards the skyline
         float ox = gx0 - x; if (x - gx1 > ox) ox = x - gx1; if (ox < 0) ox = 0;
@@ -262,8 +281,13 @@ static int px_terrain_lua(lua_State *L, unsigned char *fb, int fbw, int fbh, uns
       z = z * step + 0.04f;
     }
   }
+  *work = samples;
   lua_settop(L, 1);
   return 0;
 }
+
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC pop_options
+#endif
 
 #endif

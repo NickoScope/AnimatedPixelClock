@@ -749,7 +749,7 @@ end
 -- camera and fills the ground that rises above what it already has.
 -- One argument table for every frame: garbage made each frame is what the
 -- collector has to walk, in PSRAM, and on the panel that shows as a stall.
-local TP = {fog0 = 140, fogr = 900, farh = 4, sun = SUN, colw = 1, step = 1.03, zfar = ZFAR, grass = 60}
+local TP = {fog0 = 140, fogr = 900, farh = 4, sun = SUN, colw = 1, step = 1.04, zfar = ZFAR, grass = 60, bilinear = 80}
 local function draw_land(cam, st)
   TP.grid, TP.cam, TP.kinds, TP.frame = grid.pt, cam, kinds_of(st), frame_no
   TP.haze, TP.far, TP.sky, TP.deep = st.haze, st.far, st.top, st.deep
