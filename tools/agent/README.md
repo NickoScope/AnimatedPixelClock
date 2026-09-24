@@ -135,6 +135,10 @@ claude mcp add ledmatrix --scope user --env LEDMATRIX_PANEL=AA:BB:CC:00:11:22 --
 - `gallery_list` - what is in `gallery/`, with sizes and previews
 - `effect_delete` - free a slot
 - `effect_walk` - one effect in or out of the knob's walk and the carousel
+- `effect_press` - press the running effect's button (firmware 2.7.3+), as the knob's click or the
+  remote's OK on its page would: the script reads it as `px.button()`. `times` for effects that
+  count quick presses (OCEANARIUM: 1 its lights, 2 a day in five minutes, 3 back to now). Sent
+  once each, never retried, so a lost answer cannot turn into an extra press
   (2.5.7+; kept on the panel by name, and the name goes along with the index,
   so a list renumbered in between is refused rather than the neighbour
   switched). `effect` is an index or a name. `panel_effects` shows `inWalk`
@@ -370,14 +374,17 @@ own - so this bit on the very first run of `discover.py`.
 The loop, which needs a panel only at the very end:
 
 ```
-effect_api      → the whole drawing API and every budget
+effect_api      → the whole drawing API and every budget (px.save/restore,
+                  px.grab/blit sprites, px.button, px.terrain included)
 effect_write    → tools/luasim/scripts/<name>.lua
 effect_preview  → luasim + render.py → a GIF you can look at
 effect_check    → fx_parity.py: the firmware's real runtime and real budgets
-effect_install  → regenerates src/lua/lua_effects_scripts.h
-                  ↓
-              a person builds and flashes
+effect_upload   → onto the panel over the air; it runs it off screen first
+panel_show_effect, effect_press → on screen, and its button pressed
 ```
+
+(`effect_install`, compiling a script into the image for a person to build and
+flash, is left from before 2.6.0 and almost never what you want.)
 
 `luasim` compiles the *same vendored Lua 5.4.8* against a host copy of the `px`
 API, so what it draws is what the panel draws. `fx_parity.py` goes further: it

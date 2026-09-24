@@ -801,7 +801,8 @@ async def panel_enable_page(args: EnableIn) -> str:
 
 class EffectIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    index: int = Field(ge=0, le=31, description="Effect index from panel_effects.")
+    index: int = Field(ge=0, le=35, description="Effect index from panel_effects (36 slots, "
+                                                 "LUA_USER_MAX in src/lua/lua_store.h).")
     panel: str | None = None
 
 
@@ -1168,6 +1169,42 @@ async def effect_api() -> str:
             "px.get(x,y)": "-> r,g,b (0,0,0 off-canvas)",
             "px.blend(x,y,r,g,b,a)": "a is alpha, a number",
             "px.glow(cx,cy,rad,r,g,b[,amp])": "amp defaults to 1.0",
+            "px.save() / px.restore()": "firmware 2.6.6+. The canvas put aside (one "
+                                        "copy, 24 KB of the effect's heap) and back; "
+                                        "restore -> true, or false if nothing was saved. "
+                                        "Draw what stands still once, save it, and start "
+                                        "each frame with restore. src/lua/px_snapshot.h",
+            "px.grab(x,y,w,h)": "firmware 2.7.1+. -> sprite, dx, dy, or nil if the "
+                                "rectangle is all black. Black (0,0,0) is transparent and "
+                                "the sprite is trimmed to what is not; dx, dy say where its "
+                                "top-left is from (x, y). A sprite is a string: width and "
+                                "height in its first two bytes, then RGB, so string.char "
+                                "builds one too. src/lua/px_sprite.h",
+            "px.blit(s,x,y[,flip[,mul[,r,g,b,a]]])": "firmware 2.7.1+. The sprite's "
+                                "top-left at (x, y), clipped, transparent pixels skipped. "
+                                "flip mirrors it; mul (0..4, default 1) scales every "
+                                "colour; then it is mixed toward (r,g,b) by a (0..1). "
+                                "Charged to the frame's budget at a quarter of an "
+                                "instruction a pixel. The idiom: draw each pose ONCE on "
+                                "the canvas before the frame's background, grab it, and "
+                                "stamp it after - aquarium.lua and oceanarium.lua. Draw "
+                                "near-black instead of black inside a sprite, or it "
+                                "becomes a hole.",
+            "px.button()": "firmware 2.7.3+. -> how many times the effect's button "
+                           "was pressed: the knob's click or the remote's OK on an "
+                           "effect page, or effect_press / POST /api/lua "
+                           "{\"click\":true}. A count since boot, not a state: keep "
+                           "the last value and react when it changes. Group quick "
+                           "presses over a window (oceanarium.lua uses 0.45 s: the "
+                           "remote holds the switch 250 ms after its last frame, so "
+                           "its clicks come ~0.4 s apart). nil on older firmware: "
+                           "rawget(px, \"button\").",
+            "px.terrain{grid, cam, kinds, ...}": "firmware 2.6.3+. Ground going into "
+                           "the distance in one native call (voxel space): a height "
+                           "field of a byte a cell seen from a camera, lit, a pattern "
+                           "per kind of ground, water with the sky in it, haze. "
+                           "Arguments and limits in src/lua/px_terrain.h; used by "
+                           "golf_course.lua.",
         },
         "text": {
             "font": "PicopixelFB, and it is the only one. Stock Adafruit Picopixel "
@@ -1239,7 +1276,10 @@ async def effect_api() -> str:
         },
         "environment": {
             "libraries": "base, table, string, math. That is all.",
-            "removed": "dofile, loadfile, load, collectgarbage are nil",
+            "removed": "dofile, loadfile, load, collectgarbage, pcall and xpcall "
+                       "are nil (src/lua/nslua_sandbox.cpp kRemoved): an error in "
+                       "draw() cannot be caught, so check arguments before a call "
+                       "rather than after",
             "absent": "io, os, debug, package are not compiled in. coroutine is "
                       "compiled but deliberately not opened - a new thread would "
                       "escape the instruction budget.",
@@ -1321,7 +1361,9 @@ async def effect_api() -> str:
             ],
             "what to spend it on instead": [
                 "MOTION, which is code and costs almost nothing: aquarium.lua is "
-                "24 KB of code and animates for ever at 15 fps. A stored "
+                "35 KB of code and animates for ever at 15 fps, and oceanarium.lua "
+                "is 134 KB of code for 119 kinds of animal and not one stored "
+                "picture. A stored "
                 "full-screen frame at 256 colours is 16 KB, so even 120 KB is seven "
                 "frames - useless as animation. Procedural motion is the only kind "
                 "that scales here.",
@@ -1400,11 +1442,14 @@ async def effect_api() -> str:
                                                       "gallery/ without being "
                                                       "asked to.",
         },
-        "installing": "Scripts are compiled into the firmware image. Write with "
-                      "effect_write, look at it with effect_preview, measure it with "
-                      "effect_check, generate the header with effect_install - then a "
-                      "PERSON builds and flashes. There is no upload route and no "
-                      "flashing tool here.",
+        "installing": "Over the air since 2.5.x, and nothing is compiled in since "
+                      "2.6.0. Write with effect_write, look at it with effect_preview, "
+                      "measure it with effect_check, then effect_upload puts it on a "
+                      "panel in about a second - the panel runs it off screen first "
+                      "(the upload trial) and refuses what would not run. "
+                      "panel_show_effect shows it; effect_press presses its button. "
+                      "effect_install (compiling one into the image) is almost never "
+                      "what you want: it needs a build and a flash only a person does.",
     }, ensure_ascii=False, indent=2)
 
 
@@ -1954,6 +1999,49 @@ async def effect_walk(args: WalkIn) -> str:
             return f"No effect {args.effect!r} on this panel. It has: {', '.join(names)}."
         d = P.post(a, "/api/lua", {"walk": {"i": i, "name": names[i], "on": args.on}})
         return _ok(effect=d["effects"][i], inWalk=d["inWalk"][i])
+    except Exception as e:  # noqa: BLE001
+        return _say(e)
+
+
+class PressIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    times: int = Field(default=1, ge=1, le=5,
+                       description="How many presses, for effects that count quick presses "
+                                   "(OCEANARIUM: 1 its tank lights, 2 the day-in-five-minutes "
+                                   "demo, 3 back to the real time).")
+    gap_ms: int = Field(default=150, ge=50, le=2000,
+                        description="Pause between presses. Below the effect's own window for "
+                                    "grouping them (0.45 s in OCEANARIUM) they count as one "
+                                    "gesture; above it, as separate ones.")
+    panel: str | None = None
+
+
+@mcp.tool(
+    name="effect_press",
+    annotations={"title": "Press the effect's button", "readOnlyHint": False,
+                 "destructiveHint": False, "idempotentHint": False, "openWorldHint": True})
+async def effect_press(args: PressIn) -> str:
+    """Press the running effect's button, as the knob's click or the remote's OK would.
+
+    Firmware 2.7.3+ (POST /api/lua {"click":true}). The script reads it as
+    px.button(); what a press does is the effect's own business, and an effect
+    that does not read px.button ignores it. Each press is sent once, never
+    retried: a retry after a lost answer could land as a second press.
+
+    Returns: {"ok": true, "pressed": N, "effect": "NAME" or null}
+    """
+    try:
+        p = _pick(args.panel)
+        a = p["address"]
+        d = P.get(a, "/api/lua")
+        names = d.get("effects") or []
+        cur = d.get("current", -1)
+        for k in range(args.times):
+            if k:
+                time.sleep(args.gap_ms / 1000.0)
+            P.post(a, "/api/lua", {"click": True}, tries=1)
+        return _ok(pressed=args.times,
+                   effect=names[cur] if isinstance(cur, int) and 0 <= cur < len(names) else None)
     except Exception as e:  # noqa: BLE001
         return _say(e)
 

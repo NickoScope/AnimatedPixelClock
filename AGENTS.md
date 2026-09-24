@@ -216,6 +216,7 @@ Over HTTP directly:
 ```bash
 curl -X POST -F "script=@my_effect.lua" "http://$PANEL/api/lua/upload?name=my_effect"
 curl -X POST -H 'Content-Type: application/json' -d '{"show":7}' "http://$PANEL/api/lua"
+curl -X POST -H 'Content-Type: application/json' -d '{"click":true}' "http://$PANEL/api/lua"   # the effect's button, 2.7.3+
 curl -X POST -H 'Content-Type: application/json' -d '{"delete":"my_effect"}' "http://$PANEL/api/lua"
 ```
 
@@ -421,6 +422,13 @@ flights step the airport, trains walk LISTS then STATION, market pages their
 window and list, media TUNE then VOLUME, yachts scroll, and since 2.5.9 the
 **world clock steps the home city** through the portal's cities, built-in and
 custom, keeping the choice as the portal's "home" does.
+
+*On an effect page the click is the effect's own* (firmware 2.7.3): nothing is
+entered, the knob's click or the remote's OK (which holds the same switch)
+goes to the running effect as `px.button()`, and `POST /api/lua
+{"click":true}` (MCP `effect_press`) does the same. An effect that does not
+read it ignores it. OCEANARIUM counts quick presses over 0.45 s: 1 its tank
+lights, 2 a day in five minutes, 3 back to the real time.
 
 *Working with them, and this is the part that surprises people:* **a board does
 not fetch while its page is off the screen.** That is deliberate - it is the
