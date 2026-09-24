@@ -94,6 +94,7 @@ zoneinfo for every zone in `src/worldclock/tzdb.h`.
 | `px.get(x,y)` | → `r,g,b` already on the canvas |
 | `px.blend(x,y,r,g,b,a)` | alpha-blend one pixel |
 | `px.glow(x,y,rad,r,g,b,amp)` | a radial light, falling off as `(1-d/rad)²` |
+| `px.save()`, `px.restore()` | since 2.6.6: the canvas put aside, and back (`restore` -> true, or false if nothing was saved). For a still camera: draw the unchanging picture once, save it, and each later frame restore it and draw only what moves. [`src/lua/px_snapshot.h`](../../src/lua/px_snapshot.h) |
 | `px.terrain{grid, cam, kinds, ...}` | since 2.6.3: ground going into the distance, drawn natively (voxel space) - a height field of a byte a cell seen from a camera, lit by the sun, a pattern per kind of ground, water with the sky in it, haze. Arguments and limits in [`src/lua/px_terrain.h`](../../src/lua/px_terrain.h); used by `golf_course.lua`, exercised by `terrain_test.lua` |
 
 The raster calls **overwrite**. That is right for shapes and wrong for light: a

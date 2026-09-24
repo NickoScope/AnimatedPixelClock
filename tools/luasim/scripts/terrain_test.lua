@@ -1,5 +1,5 @@
 -- @upload-only
--- TERRAIN TEST - px.terrain under every argument it clamps, for fx_parity.
+-- TERRAIN TEST - px.terrain under every argument it clamps, and px.save/restore, for fx_parity.
 --
 -- Not a screen for the panel: fx_parity.py renders every script here through
 -- luasim and fxhost and compares them pixel for pixel, and the golf scripts
@@ -45,6 +45,13 @@ local KINDS = k(86, 124, 50, 3, 1, 8) .. k(100, 148, 58, 0, 1, 0) .. k(108, 166,
 local frame = 0
 function draw()
   frame = frame + 1
+  -- px.save / px.restore: every fourth frame is the third one's picture put
+  -- back, with a mark drawn over it; the first restore comes before any save
+  if frame == 1 and px.restore() then error("restore before any save said true") end
+  if frame % 4 == 0 and px.restore() then
+    px.rect(60, 30, 8, 4, 255, 60, 60, true)
+    return
+  end
   local t = px.t() * 6.2832
   px.clear(150, 190, 230)
   local cam = {x = 128 + cos(t) * 150, y = sin(t) * 150, z = 30 + 20 * sin(t * 2), f = 100}
@@ -59,4 +66,5 @@ function draw()
   if frame % 3 == 0 then
     px.terrain{grid = GRID, cam = {x = 10, y = 0, z = 3, yaw = 0.1, hor = 30, f = 110}, kinds = KINDS, frame = frame}
   end
+  if frame % 4 == 3 then px.save() end
 end

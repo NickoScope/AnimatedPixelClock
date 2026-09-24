@@ -263,13 +263,17 @@ static int l_glow(lua_State *L) {
 }
 
 #include "../../src/lua/px_terrain.h"   /* px.terrain, shared with the firmware */
+#include "../../src/lua/px_snapshot.h"  /* px.save, px.restore, shared with the firmware */
+static int l_save(lua_State *L)    { return px_save_lua(L, fb, sizeof(fb)); }
+static int l_restore(lua_State *L) { return px_restore_lua(L, fb, sizeof(fb)); }
 static int l_terrain(lua_State *L) { unsigned long work; return px_terrain_lua(L, fb, W, H, &work); }
 
 static const luaL_Reg px_lib[] = {
   {"get", l_get}, {"blend", l_blend}, {"glow", l_glow},
   {"size", l_size}, {"t", l_t}, {"now", l_now}, {"clear", l_clear},
   {"pixel", l_pixel}, {"rect", l_rect}, {"line", l_line}, {"circle", l_circle},
-  {"text", l_text}, {"width", l_width}, {"terrain", l_terrain}, {NULL, NULL}
+  {"text", l_text}, {"width", l_width}, {"terrain", l_terrain},
+  {"save", l_save}, {"restore", l_restore}, {NULL, NULL}
 };
 
 int main(int argc, char **argv) {

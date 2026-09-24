@@ -34,6 +34,7 @@ extern "C" {
 #include "../fonts/pxfb_text.h"   // Picopixel, Latin and Cyrillic
 #include "../fonts/sys_text.h"    // the system font: the classic 5x7 too
 #include "px_terrain.h"            // px.terrain, shared with luasim
+#include "px_snapshot.h"           // px.save, px.restore, shared with luasim
 #include "lua_fx.h"                // LuaFx::charge
 
 #define W LUA_PX_W
@@ -313,11 +314,15 @@ static int l_terrain(lua_State *L) {
   return 0;
 }
 
+static int l_save(lua_State *L)    { return px_save_lua(L, canvasOf(L)->rgb, LUA_PX_BYTES); }
+static int l_restore(lua_State *L) { return px_restore_lua(L, canvasOf(L)->rgb, LUA_PX_BYTES); }
+
 static const luaL_Reg kPxLib[] = {
   {"get", l_get}, {"blend", l_blend}, {"glow", l_glow},
   {"size", l_size}, {"t", l_t}, {"now", l_now}, {"clear", l_clear},
   {"pixel", l_pixel}, {"rect", l_rect}, {"line", l_line}, {"circle", l_circle},
-  {"text", l_text}, {"width", l_width}, {"terrain", l_terrain}, {NULL, NULL}
+  {"text", l_text}, {"width", l_width}, {"terrain", l_terrain},
+  {"save", l_save}, {"restore", l_restore}, {NULL, NULL}
 };
 
 void luaPxOpen(lua_State *L, LuaPxCanvas *canvas) {

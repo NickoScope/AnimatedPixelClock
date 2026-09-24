@@ -556,7 +556,7 @@ local function grid_new(h, st)
   local w = world_of(h)
   local L = w.len
   local cell = clamp(h.mpp * 1.0, 2.2, 4.0)
-  local half = 0.26 * L + 46
+  local half = 0.2 * L + 40
   local gr = {h = h, st = st, x0 = -50, y0 = -half, cell = cell,
               nx = floor((L + 110) / cell) + 1, ny = floor(2 * half / cell) + 1,
               rows = {{}, {}, {}}, j = 0}
@@ -578,11 +578,23 @@ local function grid_new(h, st)
     local x = gr.x0 + i * gr.cell
     S1[i], SA[i], CA[i] = sin(x * 0.041 + ph), sin(x * 0.013), cos(x * 0.013)
   end
-  gr.S1, gr.SA, gr.CA, gr.dA, gr.fA = S1, SA, CA, {}, {}
+  gr.S1, gr.SA, gr.CA = S1, SA, CA
+  gr.A, gr.B, gr.M = {j = -9, d = {}, f = {}}, {j = -9, d = {}, f = {}}, {d = {}, f = {}}
   return gr
 end
 
 -- a few rows of the grid, straight into the byte strings; true when finished
+-- one row's distances into buf: every other column worked out, the rest halved
+local function fill_row(gr, w, buf, j)
+  local x0, cell, nx = gr.x0, gr.cell, gr.nx
+  local y = gr.y0 + j * cell
+  local d, f = buf.d, buf.f
+  for i = 0, nx - 1, 2 do d[i], f[i] = line_pos(w, x0 + i * cell, y) end
+  if (nx - 1) % 2 == 1 then d[nx - 1], f[nx - 1] = line_pos(w, x0 + (nx - 1) * cell, y) end
+  for i = 1, nx - 2, 2 do d[i], f[i] = (d[i - 1] + d[i + 1]) * 0.5, (f[i - 1] + f[i + 1]) * 0.5 end
+  buf.j = j
+end
+
 local function grid_step(gr, cells)
   local h = gr.h
   local w = world_of(h)
@@ -599,20 +611,30 @@ local function grid_step(gr, cells)
       if abs(ci[2] - y) <= ci[3] then here[#here + 1] = ci end
     end
     -- The distance to the line, the dear part of a cell (a segment at a
-    -- time), is worked out at every other cell and halved between: a distance
-    -- field is smooth, and a cell is 2-4 m. The swells come from sines laid
-    -- out once a grid by column and once a row (sin(a + b) = sa cb + ca sb).
-    local dA, fA = gr.dA, gr.fA
-    for i = 0, nx - 1, 2 do dA[i], fA[i] = line_pos(w, x0 + i * cell, y) end
-    if (nx - 1) % 2 == 1 then dA[nx - 1], fA[nx - 1] = line_pos(w, x0 + (nx - 1) * cell, y) end
+    -- time), is worked out at every other cell of every other row and
+    -- averaged between: a distance field is smooth, and a cell is 2-4 m. The
+    -- swells come from sines laid out once a grid by column and once a row
+    -- (sin(a + b) = sa cb + ca sb).
+    local R
+    if j % 2 == 0 or j == ny - 1 then
+      if gr.B.j == j then gr.A, gr.B = gr.B, gr.A else fill_row(gr, w, gr.A, j) end
+      R = gr.A
+    else
+      if gr.A.j ~= j - 1 then fill_row(gr, w, gr.A, j - 1) end
+      fill_row(gr, w, gr.B, j + 1)
+      local a, b, m = gr.A, gr.B, gr.M
+      for i = 0, nx - 1 do
+        m.d[i], m.f[i] = (a.d[i] + b.d[i]) * 0.5, (a.f[i] + b.f[i]) * 0.5
+      end
+      R = m
+    end
+    local dA, fA = R.d, R.f
     local cy = 0.9 * cos(y * 0.057 + ph * 0.7)
     local sb, cb = sin(y * 0.021 + ph), cos(y * 0.021 + ph)
     local S1, SA, CA = gr.S1, gr.SA, gr.CA
     for i = 0, nx - 1 do
       local x = x0 + i * cell
-      local d, f
-      if i % 2 == 0 or i == nx - 1 then d, f = dA[i], fA[i]
-      else d, f = (dA[i - 1] + dA[i + 1]) * 0.5, (fA[i - 1] + fA[i + 1]) * 0.5 end
+      local d, f = dA[i], fA[i]
       local k = K_ROUGH
       local hh = S1[i] * cy + 0.6 * (SA[i] * cb + CA[i] * sb)
       if d > fw + 14 then hh = hh + min(5, 0.03 * (d - fw - 14) ^ 1.1) end
@@ -915,7 +937,7 @@ end
 -- the spectators behind a green: a stand of little people
 local function draw_crowd(cam, cx, cy, dirx, diry, clap)
   local nxp, nyp = -diry, dirx
-  local people = {}
+  local people, hands = {}, {}
   for i = 0, 17 do
     local off = (i - 8.5) * 1.5
     local back = 21 + (i % 3) * 1.6
@@ -938,10 +960,22 @@ local function draw_crowd(cam, cx, cy, dirx, diry, clap)
       px.rect(floor(sx - hw), floor(sy - bh * 0.5), hw * 2, floor(bh * 0.5) + 1, 50, 50, 70, true)       -- legs
       px.rect(floor(sx - hw), floor(sy - bh * 0.85), hw * 2, floor(bh * 0.38) + 1, shirt[1], shirt[2], shirt[3], true)
       px.circle(floor(sx), floor(sy - bh * 0.93), max(1, floor(0.13 * k)), 225, 180, 140, true)
+      hands[#hands + 1] = {floor(sx), floor(sy - bh), hw, i}
       if clap > 0 and ((floor(clap * 10) + i) % 2 == 0) then
         px.pixel(floor(sx - hw - 1), floor(sy - bh), 255, 225, 190); px.pixel(floor(sx + hw), floor(sy - bh), 255, 225, 190)
       end
     end
+    end
+  end
+  return hands
+end
+
+-- the stand's hands, drawn over a saved picture of it
+local function claps(hands, clap)
+  if not hands or clap <= 0 then return end
+  for _, hd in ipairs(hands) do
+    if (floor(clap * 10) + hd[4]) % 2 == 0 then
+      px.pixel(hd[1] - hd[3] - 1, hd[2], 255, 225, 190); px.pixel(hd[1] + hd[3], hd[2], 255, 225, 190)
     end
   end
 end
@@ -1125,6 +1159,19 @@ local function things_with_house(cam, st, h, extra)
   draw_things(cam, st, h, extra)
 end
 
+-- A camera that stands still sees the same ground, trees and sky every frame:
+-- they are drawn once, px.save()d, and every later frame px.restore()s them
+-- and draws only what moves. Most of a frame's work on the panel was drawing
+-- the same picture again (the owner, 2026-09-24: "доводи до 15 кадров").
+local bg_key, bg_data = nil, nil
+local function background(key, draw_still)
+  if bg_key == key and px.restore() then return bg_data end
+  bg_data = draw_still()
+  px.save()
+  bg_key = key
+  return bg_data
+end
+
 local function render(cam, st, h, extra)
   px.clear(st.haze[1], st.haze[2], st.haze[3])
   draw_sky(cam, st)
@@ -1227,13 +1274,11 @@ local function scene_tee(g, h, st, u, ht)
   local swing_u = clamp(st_ / SWING_S, 0, 1)
   local fu = clamp((st_ - SWING_S * 0.62) / FLIGHT_S, 0, 1)
   local apex = (h.par == 3) and 22 or clamp(dl * 0.12, 8, 34)
-  render(cam, st, h, function()
-    if fu > 0 then
-      tracer(cam, 0, 0, lx, ly, apex, fu, pl)
-      local q = fu
-      draw_ball3d(cam, mix(0, lx, q), mix(0, ly, q), 4 * apex * q * (1 - q), pl, true)
-    end
-  end)
+  background(round_id .. ":" .. h.n .. ":tee", function() render(cam, st, h) end)
+  if fu > 0 then
+    tracer(cam, 0, 0, lx, ly, apex, fu, pl)
+    draw_ball3d(cam, mix(0, lx, fu), mix(0, ly, fu), 4 * apex * fu * (1 - fu), pl, true)
+  end
   -- the player and the ball on its peg, in front of everything
   local bx, by = project(cam, 0, 0, ground_at(0, 0) + 0.05)
   if bx then
@@ -1316,7 +1361,7 @@ end
 local function scene_play(g, h, st, ht)
   local w = world_of(h)
   local L = w.len
-  local u = (ht - TEE_END) / (PLAY_END - TEE_END)
+  local u = 0.5                            -- a still camera: its picture is drawn once
   local cam = {f = 96}
   local mx, my = to_world(h, along(h, 0.6, 0))
   if h.n % 2 == 1 then                    -- from behind, high, as the clubs' plans look
@@ -1327,7 +1372,8 @@ local function scene_play(g, h, st, ht)
   look_at(cam, mx, my, 0, 34)
   local pos, flying, holed, msg = play_state(h, ht)
   TP.fog0, TP.fogr = 260, 1500            -- seen from above: the hole clear to the green
-  render(cam, st, h, function()
+  background(round_id .. ":" .. h.n .. ":play", function() render(cam, st, h) end)
+  do
     for pl = 1, 2 do
       if not holed[pl] and not (flying and flying.pl == pl) then
         local x, y = ball_world(h, pos[pl].f, pos[pl].off)
@@ -1345,7 +1391,7 @@ local function scene_play(g, h, st, ht)
       local q = flying.u
       draw_ball3d(cam, mix(ax, bx, q), mix(ay, by, q), putt and 0 or 4 * apex * q * (1 - q), flying.pl, true)
     end
-  end)
+  end
   TP.fog0, TP.fogr = 140, 900
   minimap(h, pos, flying, holed)
   if msg and ht < msg.until_t then label(NAMES[msg.pl] .. ": " .. msg.text, msg.pl) end
@@ -1384,13 +1430,16 @@ local function scene_putt(g, h, st, ht)
     cam.hor = 45 - (cam.z - ground_at(bx, by)) * cam.f / back  -- the ball above the caption
     cam.yaw = cam.yaw - (low and 0.1 or 0.32)                  -- the hole right of centre, the player left
   end
-  render(cam, st, h, function()
-    if not reverse then draw_crowd(cam, cx, cy, dx, dy, (after > 0) and ((win > 0) and after or after * 0.4) or 0) end
-    if roll < 1 then
-      tracer(cam, bx, by, cx, cy, 0, q, pl, true)
-      draw_ball3d(cam, mix(bx, cx, q), mix(by, cy, q), 0, pl, false)
-    end
+  local hands = background(round_id .. ":" .. h.n .. ":putt", function()
+    local hs
+    render(cam, st, h, function() if not reverse then hs = draw_crowd(cam, cx, cy, dx, dy, 0) end end)
+    return hs
   end)
+  claps(hands, (after > 0) and ((win > 0) and after or after * 0.4) or 0)
+  if roll < 1 then
+    tracer(cam, bx, by, cx, cy, 0, q, pl, true)
+    draw_ball3d(cam, mix(bx, cx, q), mix(by, cy, q), 0, pl, false)
+  end
   if not reverse then                     -- the player over the putt: a short pendulum
     local sx, sy = project(cam, bx, by, ground_at(bx, by))
     if sx then
@@ -1428,7 +1477,12 @@ local function scene_ace(g, h, st, ht)
   local cx, cy = w.cup[1], w.cup[2]
   local cam = {x = cx - 9, y = cy + 4, z = ground_at(cx, cy) + 2.2, f = 100}
   look_at(cam, cx, cy, ground_at(cx, cy), 42)
-  render(cam, st, h, function() draw_crowd(cam, cx, cy, 0.9, -0.4, u) end)
+  local hands = background(round_id .. ":" .. h.n .. ":ace", function()
+    local hs
+    render(cam, st, h, function() hs = draw_crowd(cam, cx, cy, 0.9, -0.4, 0) end)
+    return hs
+  end)
+  claps(hands, u)
   for b = 0, 5 do                                        -- fireworks
     local v = (u * 1.6 - b * 0.15) % 1
     local bx_, by_ = 14 + b * 20, 8 + (b * 7) % 12
@@ -1460,7 +1514,7 @@ end
 local function draw_intro(g, t, have_ground)
   local st = STYLE[g.course.id]
   local h = g.holes[1]
-  if have_ground then panorama(g, h, st, t, 70)
+  if have_ground then background(round_id .. ":intro", function() panorama(g, h, st, 0, 70) end)
   else                                     -- until the first hole is made: the evening sky
     for y = 0, H - 1, 4 do
       local k = y / H
@@ -1493,13 +1547,13 @@ local function draw_result(g, t)
   local h = g.holes[HOLES]
   -- the last green and the clubhouse behind it, from the fairway, moving in
   local w = world_of(h)
-  local fx, fy = to_world(h, along(h, 0.72 + t * 0.006, 0))
-  local cam = {x = fx, y = fy, z = ground_at(fx, fy) + 14 - t, f = 100}
+  local fx, fy = to_world(h, along(h, 0.74, 0))
+  local cam = {x = fx, y = fy, z = ground_at(fx, fy) + 12, f = 100}
   local a2, b2 = w.line[#w.line - 1], w.line[#w.line]
   local dx, dy = b2[1] - a2[1], b2[2] - a2[2]
   local dl = sqrt(dx * dx + dy * dy)
   look_at(cam, w.cup[1] + dx / dl * 25, w.cup[2] + dy / dl * 25, 0, 40)
-  render(cam, st, h)
+  background(round_id .. ":result", function() render(cam, st, h) end)
   R(0, 0, W, 9, 0, 0, 0)
   local title = "ИТОГ - " .. g.course.name
   T((W - TW(title)) // 2, 1, title, {255, 215, 90})
@@ -1542,6 +1596,7 @@ local function cells_left(n)
   return (gr.ny - gr.j) * gr.nx
 end
 
+local by_now_on_screen = 0                 -- the hole on screen, set by draw()
 local function work(t)
   local j = jobs[1]
   if not j then return end
@@ -1549,14 +1604,19 @@ local function work(t)
     if not grids[jj.n] then grids[jj.n] = grid_new(jj.h, jj.st) end
   end
   -- the most a frame must do for every queued hole to be ready when it starts
+  -- A frame that works harder is a slower frame, and a slower frame leaves
+  -- fewer frames: pushing without a ceiling spiralled the panel down to 6 fps.
+  -- So the hole on screen, if it is ever late, may take up to 1500 cells a
+  -- frame, and the one to come no more than 700.
   local need, acc = 150, 0
   for _, jj in ipairs(jobs) do
     acc = acc + (cells_left(jj.n) or 0)
     local by = INTRO + (jj.n - 1) * HOLE_S          -- when hole n comes on screen
     local frames = (by - t) / frame_dt - 2
-    need = max(need, (frames >= 1) and acc / frames or 2500)
+    need = max(need, (frames >= 1) and acc / frames or 1500)
   end
-  if grid_step(grids[j.n], min(2500, floor(need) + 1)) then table.remove(jobs, 1) end
+  local cap = (by_now_on_screen and j.n <= by_now_on_screen) and 1500 or 700
+  if grid_step(grids[j.n], min(cap, floor(need) + 1)) then table.remove(jobs, 1) end
 end
 
 local function ready(n) return grids[n] and grids[n].done end
@@ -1600,6 +1660,7 @@ function draw()
     if dt > 0 and dt < 1 then frame_dt = frame_dt * 0.85 + dt * 0.15 end
   end
   last_t = t
+  by_now_on_screen = hn
   work(t)
 
   if t < INTRO then
