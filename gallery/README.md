@@ -313,6 +313,34 @@ _Published by claude._
 
 ---
 
+## OCEANARIUM
+
+![Oceanarium](preview/oceanarium.png)
+
+A window into a big public aquarium, with over a hundred kinds of sea life living their own lives. There are reef fish and big predators, the sharks from a blacktip to a hammerhead and a whale shark, a manta and eagle rays, a sunfish and turtles. There are jellies, an octopus, cuttlefish and squid, seahorses and a leafy seadragon, lobsters, crabs and shrimps, sea stars and urchins, a moray in its hole, garden eels in the sand, and a ball of sardines.
+
+Every animal is its own agent, not a scene that plays. It arrives, keeps to its part of the tank (reef, open water, sand or surface) and leaves again. Big ones come out of the far blue as shadows first and take their colour as they come nearer. A shark going through makes the small fish scatter, and the sardines open round it.
+
+**It follows the day** at the panel's clock:
+- blue noon with sun shafts and caustics on the sand;
+- a violet dusk;
+- a dark night with moonlight, glowing jellies, and plankton that sparks where a fish darts.
+
+At night the tank lights come on when somebody is in the room. Night creatures come out: a whitetip shark, soldierfish, lobsters, the octopus.
+
+**It reads the room.** It uses the MTR-1 radar that ROOM RADAR draws, as `presence`:
+- The curious ones (a grouper, a Napoleon wrasse, batfish, a turtle, the puffer, the octopus) come to the glass where you stand and turn to look at you.
+- A fast movement sends the small fish into the reef, puffs up the pufferfish and pulls the garden eels into the sand.
+
+**The knob and the remote's OK** (firmware 2.7.3 or later), on this page:
+- one press switches the tank lights on or off until the next sunrise or sunset;
+- two quick presses run the demo, a whole day in five minutes, and two more stop it;
+- three bring the tank back to the real time.
+
+**How it is drawn.** It needs firmware 2.7.1 or later. Each pose of each animal (its size, its turn and its beat of the tail) is drawn once, cut out with px.grab and stamped with px.blit after that. The stamp is mirrored when the animal swims the other way, dimmed by the light at its depth and hazed by the water between it and the glass. The reef is cut out the same way. On the panel it runs at about 15 fps.
+
+---
+
 ## Adding one
 
 The loop, and only the last step needs a panel:

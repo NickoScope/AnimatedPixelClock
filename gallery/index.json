@@ -103,6 +103,14 @@
       "preview": "preview/minecraft.png"
     },
     {
+      "stem": "oceanarium",
+      "name": "OCEANARIUM",
+      "file": "oceanarium.lua",
+      "line": "a window into a great public aquarium, a hundred-odd kinds of",
+      "bytes": 136965,
+      "preview": "preview/oceanarium.png"
+    },
+    {
       "stem": "picture_day_photo",
       "name": "PICTURE_DAY_PHOTO",
       "file": "picture_day_photo.lua",
