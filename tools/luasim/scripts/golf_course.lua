@@ -518,6 +518,9 @@ local function world_of(h)
     seg[i] = {ax, ay, dx, dy, max(1e-6, dx * dx + dy * dy), cum[i], cum[i + 1] - cum[i]}
   end
   w.seg = seg
+  local sf = {}
+  for _, g in ipairs(seg) do for k = 1, 7 do sf[#sf + 1] = g[k] end end
+  w.segf = sf
   h.world = w
   return w
 end
@@ -525,14 +528,14 @@ end
 -- the distance from the centre line and how far along it (0..1)
 local function line_pos(w, x, y)
   local best, bf = 1e9, 0
-  local seg = w.seg
-  for i = 1, #seg do
-    local s = seg[i]
-    local t = ((x - s[1]) * s[3] + (y - s[2]) * s[4]) / s[5]
+  local sf = w.segf                         -- seven numbers a segment, flat: fewer lookups
+  for i = 1, #sf, 7 do
+    local ax, ay, dx, dy = sf[i], sf[i + 1], sf[i + 2], sf[i + 3]
+    local t = ((x - ax) * dx + (y - ay) * dy) / sf[i + 4]
     if t < 0 then t = 0 elseif t > 1 then t = 1 end
-    local ex, ey = x - s[1] - t * s[3], y - s[2] - t * s[4]
+    local ex, ey = x - ax - t * dx, y - ay - t * dy
     local d = ex * ex + ey * ey
-    if d < best then best, bf = d, s[6] + t * s[7] end
+    if d < best then best, bf = d, sf[i + 5] + t * sf[i + 6] end
   end
   return sqrt(best), bf / w.len
 end
@@ -566,6 +569,14 @@ local function grid_new(h, st)
   for _, bk in ipairs(w.bunkers) do c[#c + 1] = {bk[1], bk[2], bk[3], "sand"} end
   for _, t in ipairs(w.trees) do c[#c + 1] = {t[1] + 3, t[2] + 2.5, t[3] * 2.2 + 2, "shade"} end
   gr.circles = c
+  -- the column sines of the swells, once a grid
+  local ph = (h.n or 1) * 1.7
+  local S1, SA, CA = {}, {}, {}
+  for i = 0, gr.nx - 1 do
+    local x = gr.x0 + i * gr.cell
+    S1[i], SA[i], CA[i] = sin(x * 0.041 + ph), sin(x * 0.013), cos(x * 0.013)
+  end
+  gr.S1, gr.SA, gr.CA, gr.dA, gr.fA = S1, SA, CA, {}, {}
   return gr
 end
 
@@ -586,11 +597,23 @@ local function grid_step(gr)
     for _, ci in ipairs(gr.circles) do
       if abs(ci[2] - y) <= ci[3] then here[#here + 1] = ci end
     end
+    -- The distance to the line, the dear part of a cell (a segment at a
+    -- time), is worked out at every other cell and halved between: a distance
+    -- field is smooth, and a cell is 2-4 m. The swells come from sines laid
+    -- out once a grid by column and once a row (sin(a + b) = sa cb + ca sb).
+    local dA, fA = gr.dA, gr.fA
+    for i = 0, nx - 1, 2 do dA[i], fA[i] = line_pos(w, x0 + i * cell, y) end
+    if (nx - 1) % 2 == 1 then dA[nx - 1], fA[nx - 1] = line_pos(w, x0 + (nx - 1) * cell, y) end
+    local cy = 0.9 * cos(y * 0.057 + ph * 0.7)
+    local sb, cb = sin(y * 0.021 + ph), cos(y * 0.021 + ph)
+    local S1, SA, CA = gr.S1, gr.SA, gr.CA
     for i = 0, nx - 1 do
       local x = x0 + i * cell
-      local d, f = line_pos(w, x, y)
+      local d, f
+      if i % 2 == 0 or i == nx - 1 then d, f = dA[i], fA[i]
+      else d, f = (dA[i - 1] + dA[i + 1]) * 0.5, (fA[i - 1] + fA[i + 1]) * 0.5 end
       local k = K_ROUGH
-      local hh = 0.9 * sin(x * 0.041 + ph) * cos(y * 0.057 + ph * 0.7) + 0.6 * sin(x * 0.013 + y * 0.021 + ph)
+      local hh = S1[i] * cy + 0.6 * (SA[i] * cb + CA[i] * sb)
       if d > fw + 14 then hh = hh + min(5, 0.03 * (d - fw - 14) ^ 1.1) end
       if fw > 0 and f >= fw0 - 0.02 and f <= fw1 + 0.02 then
         if d < fw and f >= fw0 and f <= fw1 then k = K_FAIR elseif d < fw + 3 then k = K_CUT end
@@ -755,65 +778,76 @@ local function draw_land(cam, st)
 end
 
 -- ---------------------------------------------------------------- things standing
+-- a colour pulled towards the haze: three numbers, no table, no closure
+local function fogged(r, g, b, l, fogt, hz)
+  return floor(mix(r * l, hz[1], fogt)), floor(mix(g * l, hz[2], fogt)), floor(mix(b * l, hz[3], fogt))
+end
+
 local function draw_tree(cam, st, t, seedk)
   local gz = ground_at(t[1], t[2])
   local sx, sy, k, depth = project(cam, t[1], t[2], gz)
   if not sx or sx < -40 or sx > W + 40 or depth > ZFAR then return end
   local fogt = clamp((depth - 140) / 900, 0, 1) ^ 2
+  local hz = st.haze
+  local rect = px.rect
   if k < 0.35 then                          -- far off: a dab of dark green, 2-5 px tall
-    local c = (st.trees == "pine") and {44, 84, 40} or {26, 70, 40}
-    local th = max(2, floor(((st.trees == "pine") and 11 or 15) * k))
-    px.rect(floor(sx), floor(sy - th), (k > 0.2) and 2 or 1, th, floor(mix(c[1], st.haze[1], fogt)),
-            floor(mix(c[2], st.haze[2], fogt)), floor(mix(c[3], st.haze[3], fogt)), true)
+    local pine = st.trees == "pine"
+    local th = max(2, floor((pine and 11 or 15) * k))
+    local r, g, b = fogged(pine and 44 or 26, pine and 84 or 70, 40, 1, fogt, hz)
+    rect(floor(sx), floor(sy - th), (k > 0.2) and 2 or 1, th, r, g, b, true)
     return
-  end
-  local function col(c, l)
-    l = l or 1
-    return floor(mix(c[1] * l, st.haze[1], fogt)), floor(mix(c[2] * l, st.haze[2], fogt)), floor(mix(c[3] * l, st.haze[3], fogt))
   end
   if st.trees == "pine" then            -- the umbrella pine: a bare trunk, a flat dark crown
     local th = (9 + (seedk % 4)) * k
     local tw = max(1, floor(0.5 * k))
-    local r, g, b = col({110, 72, 44})
-    px.rect(floor(sx - tw / 2), floor(sy - th), tw, floor(th) + 1, r, g, b, true)
+    local r, g, b = fogged(110, 72, 44, 1, fogt, hz)
+    rect(floor(sx - tw / 2), floor(sy - th), tw, floor(th) + 1, r, g, b, true)
     local cw, ch = (5 + seedk % 3) * k, 2.4 * k
     local cy = sy - th
+    local lr, lg, lb = fogged(44, 84, 40, 1.25, fogt, hz)     -- the lit top of the crown
+    local dr, dg, db = fogged(44, 84, 40, 0.8, fogt, hz)      -- its shaded underside
     local band = max(1, floor(ch / 5))      -- a close crown in bands, not a rect a row
     for yy = floor(-ch), floor(ch * 0.6), band do
       local q = (yy + band * 0.5) / ch
       local half = cw * sqrt(max(0, 1 - q * q))
-      local l = (yy < 0) and 1.25 or 0.8
-      local r2, g2, b2 = col({44, 84, 40}, l)
-      px.rect(floor(sx - half), floor(cy + yy), floor(2 * half) + 1, band, r2, g2, b2, true)
+      if yy < 0 then rect(floor(sx - half), floor(cy + yy), floor(2 * half) + 1, band, lr, lg, lb, true)
+      else rect(floor(sx - half), floor(cy + yy), floor(2 * half) + 1, band, dr, dg, db, true) end
     end
     if k > 1.2 then                      -- a lit edge on the sun's side
-      local r3, g3, b3 = col({92, 138, 62})
-      px.rect(floor(sx - cw * 0.7), floor(cy - ch * 0.8), floor(cw * 0.6), 1, r3, g3, b3, true)
+      local r3, g3, b3 = fogged(92, 138, 62, 1, fogt, hz)
+      rect(floor(sx - cw * 0.7), floor(cy - ch * 0.8), floor(cw * 0.6), 1, r3, g3, b3, true)
     end
   else                                  -- spruce, and now and then a birch
     if seedk % 5 == 0 then
       local th = 8 * k
-      local r, g, b = col({230, 230, 225})
-      px.rect(floor(sx), floor(sy - th), max(1, floor(0.35 * k)), floor(th) + 1, r, g, b, true)
+      local r, g, b = fogged(230, 230, 225, 1, fogt, hz)
+      rect(floor(sx), floor(sy - th), max(1, floor(0.35 * k)), floor(th) + 1, r, g, b, true)
       local rr = max(1, floor(3 * k))
-      local r2, g2, b2 = col({110, 158, 66})
-      px.circle(floor(sx), floor(sy - th - rr * 0.6), rr, r2, g2, b2, true)
-      local r3, g3, b3 = col({140, 186, 84})
-      if rr > 2 then px.circle(floor(sx - rr * 0.3), floor(sy - th - rr), max(1, rr // 2), r3, g3, b3, true) end
+      r, g, b = fogged(110, 158, 66, 1, fogt, hz)
+      px.circle(floor(sx), floor(sy - th - rr * 0.6), rr, r, g, b, true)
+      if rr > 2 then
+        r, g, b = fogged(140, 186, 84, 1, fogt, hz)
+        px.circle(floor(sx - rr * 0.3), floor(sy - th - rr), max(1, rr // 2), r, g, b, true)
+      end
     else
       local th = (14 + (seedk % 5)) * k
       local bw = 3.4 * k
       local rows = max(1, floor(th))
-      local band = max(1, rows // 16)          -- a close spruce in bands, not a rect a row
+      local band = max(1, rows // 10)          -- a close spruce in bands, not a rect a row
+      -- three tones down the tree, and the lit left edge: worked out once
+      local t1r, t1g, t1b = fogged(26, 70, 40, 1.05, fogt, hz)
+      local t2r, t2g, t2b = fogged(26, 70, 40, 0.92, fogt, hz)
+      local t3r, t3g, t3b = fogged(26, 70, 40, 0.82, fogt, hz)
+      local er, eg, eb = fogged(50, 104, 60, 1, fogt, hz)
+      local kk = max(1, floor(k))
       for yy = 0, rows, band do
         local q = yy / rows
-        local half = bw * q * (0.85 + 0.15 * (((yy // max(1, floor(k))) % 3) / 2))
-        local r, g, b = col({26, 70, 40}, 0.8 + 0.3 * (1 - q))
-        px.rect(floor(sx - half), floor(sy - th + yy), floor(2 * half) + 1, band, r, g, b, true)
-        if half > 1.5 then
-          local r2, g2, b2 = col({50, 104, 60})
-          px.rect(floor(sx - half), floor(sy - th + yy), max(1, floor(half * 0.4)), band, r2, g2, b2, true)
-        end
+        local half = bw * q * (0.85 + 0.15 * (((yy // kk) % 3) / 2))
+        local x0, w0, y = floor(sx - half), floor(2 * half) + 1, floor(sy - th + yy)
+        if q < 0.33 then rect(x0, y, w0, band, t1r, t1g, t1b, true)
+        elseif q < 0.66 then rect(x0, y, w0, band, t2r, t2g, t2b, true)
+        else rect(x0, y, w0, band, t3r, t3g, t3b, true) end
+        if half > 1.5 then rect(x0, y, max(1, floor(half * 0.4)), band, er, eg, eb, true) end
       end
     end
   end
@@ -1056,17 +1090,20 @@ local function draw_things(cam, st, h, extra)
     for _, t in ipairs(world_trees(h)) do list[#list + 1] = {d = 0, t = t} end
     w0.sortlist = list
   end
+  local fx, fy = cos(cam.yaw), sin(cam.yaw)
   for _, e in ipairs(list) do
     local rx, ry = e.t[1] - cam.x, e.t[2] - cam.y
-    e.d = rx * rx + ry * ry
+    e.d = (rx * fx + ry * fy > 0.4) and (rx * rx + ry * ry) or -1   -- behind the camera: -1
   end
   table.sort(list, farther)
   local w = world_of(h)
   local cupd = (w.cup[1] - cam.x) ^ 2 + (w.cup[2] - cam.y) ^ 2
   local flag_done = false
   for _, e in ipairs(list) do
-    if not flag_done and e.d < cupd then draw_flag(cam, w.cup[1], w.cup[2]); flag_done = true end
-    draw_tree(cam, st, e.t, e.t[3])
+    if e.d >= 0 then                        -- the ones behind the camera sort last and are skipped
+      if not flag_done and e.d < cupd then draw_flag(cam, w.cup[1], w.cup[2]); flag_done = true end
+      draw_tree(cam, st, e.t, e.t[3])
+    end
   end
   if not flag_done then draw_flag(cam, w.cup[1], w.cup[2]) end
   if extra then extra() end
