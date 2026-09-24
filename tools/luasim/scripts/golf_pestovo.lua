@@ -63,50 +63,51 @@ local COL = { {110, 170, 255}, {110, 235, 110} }    -- Гена blue, Никош
 
 -- ---------------------------------------------------------------- the courses
 -- Made by tools/luasim/golf_courses.py build; do not edit by hand. Each hole:
--- "par,metres,stroke index,fairway half-width,fairway from %,to %|the line
+-- "par,metres,stroke index,fairway half-width,fairway from %,to %,water at
+-- %,its offset in tenths of a pixel|the line
 -- from the tee to the cup|the green|bunkers|water|trees", points two
 -- characters (x/2, y), circles three (x/2, y, r).
 COURSES = {}
 -- COURSES BEGIN (tools/luasim/golf_courses.py build)
 COURSES[#COURSES + 1] = {id = "old_course", name = "OLD COURSE", sub = "КАНН-МАНДЕЛЬЕ", holes = {
-  "4,343,9,6,29,100|4aZSva|va3|ra2sS2vh2ab4||6R25Y2AQ2GK3KJ3NB3UC2YB2bD3eC3fJ3iB3iI3mD2mK2pC2qJ2uP2#C3#J3",
-  "3,155,5,7,65,100|4WvW|uX7|kV4wM4||2B32I33P36D26K29C29e2Al2Cd2Gf3Gm3Ke3Kl3NB3Ok3QD2Qf2Rm2Ue2Ul2Yk2cm3fl3gs3ik3jr3",
-  "5,421,11,2,24,100|4RKbvR|uS3|uR2sN24e28B32l2||2W33r36t2AQ2Al2EP2Dk2Er2HR3Gf3KC3KQ3OP3SR2UC2YP2bD3eC3fJ3iB3jP3mK2pC2sB2tI2wK3",
-  "4,399,1,3,25,100|4ZgTvZ|uZ3|sa2uS20i2vn22n2tt2||3r36t2As2Er2Ht3Ks3fl3id3jr3mK2mf2mm2mt2qJ2qQ2ql2uP2xR3wf3xt3zX3#l3",
-  "3,104,17,7,51,100|4WvW|wX9|eP4tJ4||2B32I32k33r36K26m26t2AJ2Al2As2DI2Dk2Er2GK3Gf3Gm3KC3NB3OI3QD2Rm2St2UC2Vs2Yr2ct3",
-  "3,187,3,6,72,100|4WvW|uW6|tP3ad4wi4aG3Cr4||9e2Cd2GY3Gf3Ke3Kl3Nd3Ok3Qf2Ue2Ul2Vs2Yk2Yr2cm3ct3gs3mf2mt2ql2qs2ur2xt3#Q3#e3#l3",
-  "4,349,13,4,28,100|4XcVvX|vY3|rW2wT2sc2cf28L3Ms24C2||3P32W32d36R26f2AJ2AQ2Al2CB2EP2Dk2GD3GK3Gm3KJ3Kl3OI3Nd3Qf2Ue2gs3jr3qs2wf3zX3#e3",
-  "4,248,15,5,42,100|4YeUvY|vY5|ua2SS4sQ3||2d32k36R26m26t29e2Cd2Gf3Gm3Ke3Ks3Ok3Or3Qf2St2UJ2Vs2Yk2bf3cm3fl3jr3ql2qs2ur2#e3",
-  "5,450,7,4,32,100|4MSgkVvM|vM3|oR2uJ2kP2ch2Qo25C2#I2St26g2mB2||2I36K26m2AJ2DI2CW2Cd2HR3Gm3KJ3Ks3SR2VQ2YP2fJ3gs3iI3mD2mK2mt2sW2ur2xR3wm3xt3#l3",
-  "4,386,2,3,71,100|4WiWvW|vW3|eW3Na2mR2KQ22d24N27j21i2Hj2uJ2|$s2|2B36R26t29e2EP2GK3KC3Ke3OI3RK2UC2Ue2YI2Yk2bf3fJ3fl3iI3ik3mf2qQ2qs2sd2xR3wm3#Q3",
-  "5,420,16,3,28,100|4eSOve|ve3|oa2sf2ua2eR2oV2eb2$l2Yl2Iq3iA2|1P34P36P38P3EK3GK3IK3LF3OA3CM2|2W32k35Y2AQ28X2EP2Gf3Ke3OI3QY2UJ2Ue2YI2cK3eC3fJ3iB3mD2mf2mt2qQ2tI2ur2wD3xR3#J3",
-  "4,272,14,5,38,100|4ScavS|wS4|sV4Md4Al3||2I33P33r36f26m2AQ2DI2Cd2GK3Gf3KJ3Ks3OI3RK2UJ2VQ2YB2Yr2ct3eC3gs3jr3pC2ql2tk2wf3",
-  "5,476,6,4,22,100|4dSPkRvd|ud3|wf2vZ2UV3Mi3Ik2Io2Kp2Um2Nr2|1A31F31K34A34F36A36F38A3BA3EA3YU3aU3cU3cZ3fZ3iZ3ie3kZ3ke3me3pe3se3sj3uj3wj3$o3|2k36m2As2Yd2bf3ee3mt2",
-  "4,326,12,5,23,100|4ZmTvZ|vZ4|sT3xU2uf4ib3oM3zc2zW25l2|1A34U36P36e38K38P38U38j3Bj3Bo3Ej3Eo3Gj3Go3Ij3Io3Lj3Lo3Oj3Oo3Qo3So3|DI2GD3GK3KJ3NB3OI3QD2Qf2UC2UJ2Ue2YI2Yk2bf3cm3ct3ee3",
-  "5,477,4,4,0,100|4RXbvR|uR3|uW2PR3EM2GN2xb4KM3uf4EH2yh2wk2|zA3$o3#s3|2W32k33r36m29e2Cd2Gm3Ht3Kl3Ok3Rm2Vs2Yk2Yr2cR3cm3gQ3fl3gs3jr3mK2mt2qJ2pe2sB2tI2",
-  "3,134,18,7,72,100|4WvW|uV9|aY4oQ4iO4kh4wK4Ys4||",
-  "3,157,8,7,63,100|4WvW|uW8|mh4yJ4||2k33r36f26m26t2Al2As2Dk2Er2Gm3Ht3Kl3Ks3Or3St2Vs2Yr2ct3gs3jr3mt2qs2",
-  "4,351,10,6,27,100|4WXWvW|vV4|7Q28j22F2|sZ3ue3wZ3|",
+  "4,343,9,6,29,100,0,0|4aZSva|va3|ra2sS2vh2ab4||6R25Y2AQ2GK3KJ3NB3UC2YB2bD3eC3fJ3iB3iI3mD2mK2pC2qJ2uP2#C3#J3",
+  "3,155,5,7,65,100,0,0|4WvW|uX7|kV4wM4||2B32I33P36D26K29C29e2Al2Cd2Gf3Gm3Ke3Kl3NB3Ok3QD2Qf2Rm2Ue2Ul2Yk2cm3fl3gs3ik3jr3",
+  "5,421,11,2,24,100,0,0|4RKbvR|uS3|uR2sN24e28B32l2||2W33r36t2AQ2Al2EP2Dk2Er2HR3Gf3KC3KQ3OP3SR2UC2YP2bD3eC3fJ3iB3jP3mK2pC2sB2tI2wK3",
+  "4,399,1,3,25,100,0,0|4ZgTvZ|uZ3|sa2uS20i2vn22n2tt2||3r36t2As2Er2Ht3Ks3fl3id3jr3mK2mf2mm2mt2qJ2qQ2ql2uP2xR3wf3xt3zX3#l3",
+  "3,104,17,7,51,100,0,0|4WvW|wX9|eP4tJ4||2B32I32k33r36K26m26t2AJ2Al2As2DI2Dk2Er2GK3Gf3Gm3KC3NB3OI3QD2Rm2St2UC2Vs2Yr2ct3",
+  "3,187,3,6,72,100,0,0|4WvW|uW6|tP3ad4wi4aG3Cr4||9e2Cd2GY3Gf3Ke3Kl3Nd3Ok3Qf2Ue2Ul2Vs2Yk2Yr2cm3ct3gs3mf2mt2ql2qs2ur2xt3#Q3#e3#l3",
+  "4,349,13,4,28,100,0,0|4XcVvX|vY3|rW2wT2sc2cf28L3Ms24C2||3P32W32d36R26f2AJ2AQ2Al2CB2EP2Dk2GD3GK3Gm3KJ3Kl3OI3Nd3Qf2Ue2gs3jr3qs2wf3zX3#e3",
+  "4,248,15,5,42,100,0,0|4YeUvY|vY5|ua2SS4sQ3||2d32k36R26m26t29e2Cd2Gf3Gm3Ke3Ks3Ok3Or3Qf2St2UJ2Vs2Yk2bf3cm3fl3jr3ql2qs2ur2#e3",
+  "5,450,7,4,32,100,0,0|4MSgkVvM|vM3|oR2uJ2kP2ch2Qo25C2#I2St26g2mB2||2I36K26m2AJ2DI2CW2Cd2HR3Gm3KJ3Ks3SR2VQ2YP2fJ3gs3iI3mD2mK2mt2sW2ur2xR3wm3xt3#l3",
+  "4,386,2,3,71,100,0,0|4WiWvW|vW3|eW3Na2mR2KQ22d24N27j21i2Hj2uJ2|$s2|2B36R26t29e2EP2GK3KC3Ke3OI3RK2UC2Ue2YI2Yk2bf3fJ3fl3iI3ik3mf2qQ2qs2sd2xR3wm3#Q3",
+  "5,420,16,3,28,100,0,0|4eSOve|ve3|oa2sf2ua2eR2oV2eb2$l2Yl2Iq3iA2|1P34P36P38P3EK3GK3IK3LF3OA3CM2|2W32k35Y2AQ28X2EP2Gf3Ke3OI3QY2UJ2Ue2YI2cK3eC3fJ3iB3mD2mf2mt2qQ2tI2ur2wD3xR3#J3",
+  "4,272,14,5,38,100,0,0|4ScavS|wS4|sV4Md4Al3||2I33P33r36f26m2AQ2DI2Cd2GK3Gf3KJ3Ks3OI3RK2UJ2VQ2YB2Yr2ct3eC3gs3jr3pC2ql2tk2wf3",
+  "5,476,6,4,22,100,95,38|4dSPkRvd|ud3|wf2vZ2UV3Mi3Ik2Io2Kp2Um2Nr2|1A31F31K34A34F36A36F38A3BA3EA3YU3aU3cU3cZ3fZ3iZ3ie3kZ3ke3me3pe3se3sj3uj3wj3$o3|2k36m2As2Yd2bf3ee3mt2",
+  "4,326,12,5,23,100,0,0|4ZmTvZ|vZ4|sT3xU2uf4ib3oM3zc2zW25l2|1A34U36P36e38K38P38U38j3Bj3Bo3Ej3Eo3Gj3Go3Ij3Io3Lj3Lo3Oj3Oo3Qo3So3|DI2GD3GK3KJ3NB3OI3QD2Qf2UC2UJ2Ue2YI2Yk2bf3cm3ct3ee3",
+  "5,477,4,4,0,100,0,0|4RXbvR|uR3|uW2PR3EM2GN2xb4KM3uf4EH2yh2wk2|zA3$o3#s3|2W32k33r36m29e2Cd2Gm3Ht3Kl3Ok3Rm2Vs2Yk2Yr2cR3cm3gQ3fl3gs3jr3mK2mt2qJ2pe2sB2tI2",
+  "3,134,18,7,72,100,0,0|4WvW|uV9|aY4oQ4iO4kh4wK4Ys4||",
+  "3,157,8,7,63,100,0,0|4WvW|uW8|mh4yJ4||2k33r36f26m26t2Al2As2Dk2Er2Gm3Ht3Kl3Ks3Or3St2Vs2Yr2ct3gs3jr3mt2qs2",
+  "4,351,10,6,27,100,95,30|4WXWvW|vV4|7Q28j22F2|sZ3ue3wZ3|",
 }}
 COURSES[#COURSES + 1] = {id = "pestovo", name = "ПЕСТОВО", sub = "ГОЛЬФ-КЛУБ", holes = {
-  "4,373,5,7,19,85|4QFcQXaTkYvQ|vQ6|ob2uX3oh2iJ4|LU3LZ3Oj3|6j3MW3wH2",
-  "4,272,13,7,19,82|4aFdOUYPjPva|va6|sV3mV2uh2sN2uP3iC2mj2qE2mB2|IK3IP3IU3IZ3Ie3Ij3Io3LK3LP3LU3LZ3Le3Lj3Lo3OK3OP3OU3OZ3Oe3Oj3Oo3QK3QP3QU3QZ3Qe3Qj3Qo3SP3SU3SZ3Se3Sj3So3VU3VZ3Ve3Vj3Ye3|1r3",
-  "5,486,9,7,25,78|4IEOMaUjfkvI|vI6|uK2sR2qK3cd3||5V36c3CB2Mr3",
-  "3,192,11,0,0,0|4qEeOPXCkZvq|vq7|no4|OZ3Oe3Oj3Oo3QU3QZ3Qe3Qj3Qo3SU3SZ3Se3Sj3So3VZ3Ve3Vj3Vo3Yj3Yo3aj3ao3ce3cj3co3fo3|wV2",
-  "4,411,1,7,17,79|4kEeNUXMhIvk|vk6|kH2sV2us3rQ2|ke3|1r3Yd2",
-  "4,377,15,7,18,85|4QETPQaWkcvQ|vQ6|uN4mp4|4A36A38A3BA3BF3BK3BP3BU3EF3|",
-  "4,406,3,7,19,83|4QETPUZWjcvQ|vQ6|sX3lS2jM3||2I32W36c39e2Cd2",
-  "3,181,7,0,0,0|4dEcPkallHvd|vd7|vS2ul2sH3pA3|LU3OK3OP3OU3OZ3QU3QZ3Qe3SZ3Se3Sj3So3VZ3Ve3Vj3Vo3YZ3Ye3Yj3Yo3aU3aZ3ae3aj3ao3cP3cU3cZ3ce3cj3co3fP3fU3fZ3fe3fj3fo3iP3iU3iZ3ie3ij3io3|1P3AJ28X2",
-  "5,507,17,7,18,84|4dEYOVZPkTvd|vd6|uf2qd2sQ4hH3||8Q2Ke3",
-  "5,491,12,7,19,85|4WEOPXabkevW|vW6|ua2sT2ir3||4O3Gj2",
-  "4,382,16,7,26,84|4dEVPcZPkQvd|vd6|sV4li4|IZ3LP3LU3LZ3OP3OU3OZ3QP3QU3QZ3SU3SZ3Se3Sj3VU3VZ3Ve3Vj3Ye3Yj3aj3|4O34q3XW2",
-  "4,383,2,7,18,85|4WEVPWaRkbvW|vW6|qY4gL3||2I32d36H34O36j3AJ2CP2Dk2",
-  "3,185,18,0,0,0|4bEcPiablKvb|vb7||Yo3aj3ao3ce3cj3co3fZ3fe3fj3fo3ie3ij3io3|2W32d32k34O34q3AJ28s2",
-  "4,374,4,7,21,85|4iEQPQaKkYvi|vi6|cl4|Gj3Go3IZ3Ie3Ij3Io3LZ3Le3Lj3Lo3OZ3Oe3Oj3Oo3QZ3Qe3Qj3Qo3Se3Sj3So3Vj3Vo3|6H34O3UX2Ue2",
-  "5,533,8,7,19,76|4LDQKaShefvL|vL6|uM2oY2dZ3Uq2||6H3AJ2DI2CW2IQ3WP2",
-  "4,423,14,7,18,85|4dEWQPackbvd|vd6|uj2kn2|8o3Bo3Eo3Ij3LK3LP3LU3LZ3Le3Lj3OK3OP3OU3OZ3Oe3Oj3QP3QU3QZ3Qe3Qj3|2W34O34q3KC3",
-  "3,199,10,0,0,0|4cEZOUZQkZvc|vc7|wm3sm4qK2sI4||1P3QA3UC2",
-  "4,375,6,7,30,84|4SETPUZZkavS|vS6|wK2oi4tG2uF2||2I3",
+  "4,373,5,7,19,85,35,-3|4QFcQXaTkYvQ|vQ6|ob2uX3oh2iJ4|LU3LZ3Oj3|6j3MW3wH2",
+  "4,272,13,7,19,82,25,-9|4aFdOUYPjPva|va6|sV3mV2uh2sN2uP3iC2mj2qE2mB2|IK3IP3IU3IZ3Ie3Ij3Io3LK3LP3LU3LZ3Le3Lj3Lo3OK3OP3OU3OZ3Oe3Oj3Oo3QK3QP3QU3QZ3Qe3Qj3Qo3SP3SU3SZ3Se3Sj3So3VU3VZ3Ve3Vj3Ye3|1r3",
+  "5,486,9,7,25,78,0,0|4IEOMaUjfkvI|vI6|uK2sR2qK3cd3||5V36c3CB2Mr3",
+  "3,192,11,0,0,0,35,64|4qEeOPXCkZvq|vq7|no4|OZ3Oe3Oj3Oo3QU3QZ3Qe3Qj3Qo3SU3SZ3Se3Sj3So3VZ3Ve3Vj3Vo3Yj3Yo3aj3ao3ce3cj3co3fo3|wV2",
+  "4,411,1,7,17,79,0,0|4kEeNUXMhIvk|vk6|kH2sV2us3rQ2|ke3|1r3Yd2",
+  "4,377,15,7,18,85,0,0|4QETPQaWkcvQ|vQ6|uN4mp4|4A36A38A3BA3BF3BK3BP3BU3EF3|",
+  "4,406,3,7,19,83,0,0|4QETPUZWjcvQ|vQ6|sX3lS2jM3||2I32W36c39e2Cd2",
+  "3,181,7,0,0,0,70,-1|4dEcPkallHvd|vd7|vS2ul2sH3pA3|LU3OK3OP3OU3OZ3QU3QZ3Qe3SZ3Se3Sj3So3VZ3Ve3Vj3Vo3YZ3Ye3Yj3Yo3aU3aZ3ae3aj3ao3cP3cU3cZ3ce3cj3co3fP3fU3fZ3fe3fj3fo3iP3iU3iZ3ie3ij3io3|1P3AJ28X2",
+  "5,507,17,7,18,84,0,0|4dEYOVZPkTvd|vd6|uf2qd2sQ4hH3||8Q2Ke3",
+  "5,491,12,7,19,85,0,0|4WEOPXabkevW|vW6|ua2sT2ir3||4O3Gj2",
+  "4,382,16,7,26,84,50,-2|4dEVPcZPkQvd|vd6|sV4li4|IZ3LP3LU3LZ3OP3OU3OZ3QP3QU3QZ3SU3SZ3Se3Sj3VU3VZ3Ve3Vj3Ye3Yj3aj3|4O34q3XW2",
+  "4,383,2,7,18,85,0,0|4WEVPWaRkbvW|vW6|qY4gL3||2I32d36H34O36j3AJ2CP2Dk2",
+  "3,185,18,0,0,0,55,48|4bEcPiablKvb|vb7||Yo3aj3ao3ce3cj3co3fZ3fe3fj3fo3ie3ij3io3|2W32d32k34O34q3AJ28s2",
+  "4,374,4,7,21,85,0,0|4iEQPQaKkYvi|vi6|cl4|Gj3Go3IZ3Ie3Ij3Io3LZ3Le3Lj3Lo3OZ3Oe3Oj3Oo3QZ3Qe3Qj3Qo3Se3Sj3So3Vj3Vo3|6H34O3UX2Ue2",
+  "5,533,8,7,19,76,0,0|4LDQKaShefvL|vL6|uM2oY2dZ3Uq2||6H3AJ2DI2CW2IQ3WP2",
+  "4,423,14,7,18,85,40,0|4dEWQPackbvd|vd6|uj2kn2|8o3Bo3Eo3Ij3LK3LP3LU3LZ3Le3Lj3OK3OP3OU3OZ3Oe3Oj3QP3QU3QZ3Qe3Qj3|2W34O34q3KC3",
+  "3,199,10,0,0,0,0,0|4cEZOUZQkZvc|vc7|wm3sm4qK2sI4||1P3QA3UC2",
+  "4,375,6,7,30,84,0,0|4SETPUZZkavS|vS6|wK2oi4tG2uF2||2I3",
 }}
 -- COURSES END
 
@@ -157,6 +158,9 @@ local function decode_hole(row)
   local nums = {}
   for v in f[1]:gmatch("[^,]+") do nums[#nums + 1] = tonumber(v) end
   local h = {par = nums[1], len = nums[2], si = nums[3], fw = nums[4], fw0 = nums[5] / 100, fw1 = nums[6] / 100}
+  -- the water that can catch a ball, worked out by golf_courses.py
+  h.water_near = (nums[7] or 0) > 0
+  if h.water_near then h.wf, h.woff = nums[7] / 100, nums[8] / 10 end
   local pts, cum = {}, {0}
   for i = 1, #f[2] - 1, 2 do pts[#pts + 1] = {DEC[f[2]:byte(i)] * 2, DEC[f[2]:byte(i + 1)]} end
   for i = 2, #pts do
@@ -197,26 +201,12 @@ local function along(h, f, off)
   return a[1] + dx * k - dy / n * (off or 0), a[2] + dy * k + dx / n * (off or 0)
 end
 
--- A round's copy of a hole: the fixed shape plus this round's play. The
--- water that can catch a ball is the pond or river nearest the line, between
--- a fifth of the way and the green.
+-- A round's copy of a hole: the fixed shape plus this round's play. Which
+-- water can catch a ball comes with the course data (golf_courses.py works
+-- it out once; on the panel it was half a second at the start of a round).
 local function make_hole(base)
   local h = {}
   for k, v in pairs(base) do h[k] = v end
-  local best
-  for _, w in ipairs(base.water) do
-    for i = 4, 19 do
-      local x, y = along(base, i / 20, 0)
-      local d = sqrt((w[1] - x) ^ 2 + (w[2] - y) ^ 2) - w[3]
-      if d <= 4 and (not best or d < best.d) then best = {d = d, f = i / 20, x = w[1], y = w[2]} end
-    end
-  end
-  if best then
-    h.water_near, h.wf = true, best.f
-    local x, y = along(base, best.f, 0)
-    local x2, y2 = along(base, best.f, 1)
-    h.woff = max(-8, min(8, (best.x - x) * (x2 - x) + (best.y - y) * (y2 - y)))
-  end
   return h
 end
 
@@ -1453,7 +1443,7 @@ end
 
 -- ---------------------------------------------------------------- draw
 -- The grid of the next hole is made while this one plays, a slice a frame.
-local jobs, grids, planned = {}, {}, 0
+local jobs, grids = {}, {}
 
 local function work()
   local j = jobs[1]
@@ -1477,21 +1467,26 @@ function draw()
   local id = ((n.year % 100) * 400 + n.yday) * 720 + (n.hour * 60 + n.min) // 2
   if id ~= round_id then
     round, round_id = make_round(id), id
-    jobs, grids, planned = {}, {}, 1
-    jobs[1] = {n = 1, h = round.holes[1], st = STYLE[round.course.id]}
+    jobs, grids = {}, {}
   end
   local g = round
   local st = STYLE[g.course.id]
   local t = px.t() * PERIOD
   local hn = (t < INTRO) and 0 or min(HOLES, floor((t - INTRO) / HOLE_S) + 1)
-  if hn >= 1 and planned == hn and hn < HOLES then   -- while hole n plays, make n + 1
-    jobs[#jobs + 1] = {n = hn + 1, h = g.holes[hn + 1], st = st}
-    planned = hn + 1
-  end
-  -- a hole that has gone by needs neither its job nor its grid; the one on
-  -- screen and the next keep theirs, finished or not
-  while jobs[1] and jobs[1].n < hn do table.remove(jobs, 1) end
+  -- The hole on screen (the first during the introduction) and the next one
+  -- are always made or queued, the one on screen first - also when the page is
+  -- opened in the middle of a round. A hole gone by loses its job and grid.
+  while jobs[1] and jobs[1].n < max(1, hn) do table.remove(jobs, 1) end
   for k in pairs(grids) do if k < hn then grids[k] = nil end end
+  for n = max(1, hn), min(HOLES, max(1, hn) + 1) do
+    local queued = false
+    for _, j in ipairs(jobs) do if j.n == n then queued = true end end
+    if not queued and not (grids[n] and grids[n].done) then
+      if grids[n] then grids[n] = nil end   -- half made and not queued: start again
+      jobs[#jobs + 1] = {n = n, h = g.holes[n], st = st}
+    end
+  end
+  table.sort(jobs, function(a, b) return a.n < b.n end)
   -- the tee shot is the dearest scene to draw; the grid waits for the rest
   local ht0 = (hn >= 1) and ((t - INTRO) - (hn - 1) * HOLE_S) or 0
   if not (hn >= 1 and ht0 >= FLY_END and ht0 < TEE_END) then work() end

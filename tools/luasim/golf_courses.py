@@ -523,11 +523,52 @@ def enc_c(c):
     return enc(c[0] / 2) + enc(c[1]) + enc(c[2])
 
 
+def water_near(h):
+    """The pond or river nearest the line between a fifth of the way and the
+    green, worked out here once instead of on the panel every round: the same
+    sums golf_course.lua made in make_hole, on the same quantised points.
+    Returns (f in hundredths, the lateral offset in tenths of a pixel) or (0, 0)."""
+    pts = [(clamp(int(round(p[0] / 2)), 0, 63) * 2, clamp(int(round(p[1])), 0, 63)) for p in h["cl"]]
+    cum = [0.0]
+    for i in range(1, len(pts)):
+        cum.append(cum[-1] + math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]))
+    total = cum[-1]
+
+    def along(f, off):
+        f = clamp(f, 0, 1)
+        d = f * total
+        i = 0
+        while i < len(pts) - 2 and cum[i + 1] < d:
+            i += 1
+        (ax, ay), (bx, by) = pts[i], pts[i + 1]
+        seg = cum[i + 1] - cum[i]
+        k = (d - cum[i]) / seg if seg > 0 else 0
+        dx, dy = bx - ax, by - ay
+        n = math.hypot(dx, dy) or 1
+        return ax + dx * k - dy / n * off, ay + dy * k + dx / n * off
+
+    best = None
+    for w in h["water"]:
+        wx, wy, wr = clamp(int(round(w[0] / 2)), 0, 63) * 2, clamp(int(round(w[1])), 0, 63), clamp(int(round(w[2])), 0, 63)
+        for i in range(4, 20):
+            x, y = along(i / 20, 0)
+            d = math.hypot(wx - x, wy - y) - wr
+            if d <= 4 and (best is None or d < best[0]):
+                best = (d, i / 20, wx, wy)
+    if not best:
+        return 0, 0
+    x, y = along(best[1], 0)
+    x2, y2 = along(best[1], 1)
+    woff = clamp((best[2] - x) * (x2 - x) + (best[3] - y) * (y2 - y), -8, 8)
+    return int(round(best[1] * 100)), int(round(woff * 10))
+
+
 def lua_course(doc):
     rows = []
     for h in doc["holes"]:
         fw = h["fw"]
-        s = (f'{h["par"]},{h["len"]},{h["hcp"]},{fw[0]},{fw[1]},{fw[2]}|'
+        wf, woff = water_near(h)
+        s = (f'{h["par"]},{h["len"]},{h["hcp"]},{fw[0]},{fw[1]},{fw[2]},{wf},{woff}|'
              + "".join(enc_pt(p) for p in h["cl"]) + "|" + enc_c(h["green"]) + "|"
              + "".join(enc_c(c) for c in h["bunkers"]) + "|"
              + "".join(enc_c(c) for c in h["water"]) + "|"
