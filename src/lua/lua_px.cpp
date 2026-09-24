@@ -33,6 +33,7 @@ extern "C" {
 
 #include "../fonts/pxfb_text.h"   // Picopixel, Latin and Cyrillic
 #include "../fonts/sys_text.h"    // the system font: the classic 5x7 too
+#include "px_sprite.h"             // px.grab, px.blit, shared with luasim
 #include "px_terrain.h"            // px.terrain, shared with luasim
 #include "px_snapshot.h"           // px.save, px.restore, shared with luasim
 #include "lua_fx.h"                // LuaFx::charge
@@ -327,12 +328,28 @@ static int l_restore(lua_State *L) {
   return n;
 }
 
+// Charged like px.terrain: the pixels touched, a sixteenth each (a copy is
+// a few cycles a pixel, a Lua instruction a hundred-odd).
+static int l_grab(lua_State *L) {
+  unsigned long work = 0;
+  const int n = px_grab_lua(L, canvasOf(L)->rgb, W, H, &work);
+  LuaFx::charge(L, (uint32_t)work);
+  return n;
+}
+static int l_blit(lua_State *L) {
+  unsigned long work = 0;
+  px_blit_lua(L, canvasOf(L)->rgb, W, H, &work);
+  LuaFx::charge(L, (uint32_t)work);
+  return 0;
+}
+
 static const luaL_Reg kPxLib[] = {
   {"get", l_get}, {"blend", l_blend}, {"glow", l_glow},
   {"size", l_size}, {"t", l_t}, {"now", l_now}, {"clear", l_clear},
   {"pixel", l_pixel}, {"rect", l_rect}, {"line", l_line}, {"circle", l_circle},
   {"text", l_text}, {"width", l_width}, {"terrain", l_terrain},
-  {"save", l_save}, {"restore", l_restore}, {NULL, NULL}
+  {"save", l_save}, {"restore", l_restore}, {"grab", l_grab}, {"blit", l_blit},
+  {NULL, NULL}
 };
 
 void luaPxOpen(lua_State *L, LuaPxCanvas *canvas) {

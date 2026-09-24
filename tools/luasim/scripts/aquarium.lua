@@ -163,6 +163,7 @@ end
 
 -- ── the inhabitants ─────────────────────────────────────────────────────────
 local FISH = {}
+local LOOK = { gold = 1, angel = 2, barb = 3, neon = 4, cory = 5, guppy = 6 }
 local function spawn(name, n)
   local sp = SPECIES[name]
   for i = 1, n do
@@ -178,6 +179,9 @@ local function spawn(name, n)
       rx = 14 + rnd() * 22, tw = rnd() * 6.28,
       var = GUPPY_FIN[(i - 1) % 3 + 1],
       shuffle = rnd() * 6.28,
+      -- Which set of cut-out poses it wears: one a species, and one for each
+      -- guppy's fin colour.
+      look = LOOK[name] + (name == "guppy" and (i - 1) % 3 or 0),
     }
   end
 end
@@ -523,9 +527,10 @@ local function draw_bubbles(t, dt, lift)
   end
 end
 
--- One fish. Three vertical segments a column - back, flank, belly - which is
--- what makes a body look round rather than flat.
-local function draw_fish(f, t, dt, lift, fx, pull, push)
+-- One fish moves: its journey, the room's pull, the glass, the turn and the
+-- beat of its tail. Nothing here draws, so the whole shoal moves before the
+-- frame is painted, and the poses it needs can be cut out first.
+local function move_fish(f, t, dt, fx, pull, push)
   local sp = f.sp
 
   -- Its journey through the tank. The corydoras stays on the bottom, so it
@@ -603,36 +608,26 @@ local function draw_fish(f, t, dt, lift, fx, pull, push)
   if fore < 0.22 then fore = 0.22 end
 
   f.ph = f.ph + dt * (4 + 9 * push + 5 * abs(f.vx) / 24)
+  f.si, f.dir, f.fore = si, dir, fore
+end
 
-  -- Distance is haze as well as size: the back of the tank is behind more
-  -- water, and water is not clear.
-  local haze = 0.58 + 0.42 * f.dep
-  local br = lift * haze * (0.62 + 0.38 * (1 - f.y / 58))
+-- One fish drawn in a pose. Three vertical segments a column - back, flank,
+-- belly - which is what makes a body look round rather than flat.
+local function paint_fish(f, bx, by, si, dir, fore, ph, br, sheen)
+  local sp = f.sp
+  local prof, len = sp.prof[si], sp.plen[si]
+  local tallS = sp.tall * SCALE[si]
   local fin = f.name == "guppy" and f.var or sp.fin
   local bk, md, bl = sp.back, sp.mid, sp.belly
   local fr, fg, fb = floor(fin[1] * br), floor(fin[2] * br), floor(fin[3] * br)
-
-  local bx, by = floor(f.x), floor(f.y)
   local half_len = floor(len / 2)
-
-  -- A shadow on the sand for the near half of the tank. Two calls, and most of
-  -- what puts a fish IN the water rather than on the glass.
-  if f.dep > 0.55 and not sp.bottom then
-    local sy = DUNE[floor(f.x)] + 1
-    local sw = floor(len * 0.4 * fore)
-    if sy < H - 1 and sw > 1 then
-      line(bx - sw, sy, bx + sw, sy, floor(34 * lift), floor(28 * lift), floor(20 * lift))
-      line(bx - sw + 1, sy + 1, bx + sw - 1, sy + 1,
-           floor(46 * lift), floor(38 * lift), floor(26 * lift))
-    end
-  end
 
   for c = 0, len - 1 do
     local hh = prof[c]
     if hh >= 0.5 then
       -- The wiggle grows toward the tail; a fish that waggles its face reads
       -- as wrong without being nameable.
-      local wig = 0.9 * sin(f.ph - c * 0.55) * (c / len)
+      local wig = 0.9 * sin(ph - c * 0.55) * (c / len)
       local x = bx + floor(dir * (half_len - c) * fore)
       local yc = by + floor(wig)
       local h = floor(hh)
@@ -658,13 +653,13 @@ local function draw_fish(f, t, dt, lift, fx, pull, push)
   end
 
   -- Where the lamp catches the back. Only worth it on the nearer half.
-  if sp.sheen and f.dep > 0.4 then
+  if sp.sheen and sheen then
     local sh = sp.sheen
     local sr, sg, sb = floor(sh[1] * br), floor(sh[2] * br), floor(sh[3] * br)
     for c = floor(len * 0.3), floor(len * 0.72) do
       local hh = prof[c]
       if hh >= 1.5 then
-        local wig = 0.9 * sin(f.ph - c * 0.55) * (c / len)
+        local wig = 0.9 * sin(ph - c * 0.55) * (c / len)
         pixel(bx + floor(dir * (half_len - c) * fore),
               by + floor(wig) - floor(hh) + 1, sr, sg, sb)
       end
@@ -673,9 +668,9 @@ local function draw_fish(f, t, dt, lift, fx, pull, push)
 
   -- The tail, from where the body actually ends this frame, wiggle included:
   -- detached, it reads as a flag being towed.
-  local tb = floor(2.2 * sin(f.ph - 0.55 * (len - 1)))
+  local tb = floor(2.2 * sin(ph - 0.55 * (len - 1)))
   local tailx = bx - floor(dir * half_len * fore)
-  local taily = by + floor(0.9 * sin(f.ph - (len - 1) * 0.55))
+  local taily = by + floor(0.9 * sin(ph - (len - 1) * 0.55))
   if sp.tail == "veil" then
     local tl = f.name == "gold" and 6 or 3
     local grow = f.name == "gold" and 0.42 or 0.3
@@ -741,6 +736,81 @@ local function draw_fish(f, t, dt, lift, fx, pull, push)
   end
 end
 
+-- A shadow on the sand for the near half of the tank. Two calls, and most of
+-- what puts a fish IN the water rather than on the glass.
+local function shadow_fish(f, lift)
+  local sp = f.sp
+  if f.dep > 0.55 and not sp.bottom then
+    local len = sp.plen[f.si]
+    local bx = floor(f.x)
+    local sy = DUNE[bx] + 1
+    local sw = floor(len * 0.4 * f.fore)
+    if sy < H - 1 and sw > 1 then
+      line(bx - sw, sy, bx + sw, sy, floor(34 * lift), floor(28 * lift), floor(20 * lift))
+      line(bx - sw + 1, sy + 1, bx + sw - 1, sy + 1,
+           floor(46 * lift), floor(38 * lift), floor(26 * lift))
+    end
+  end
+end
+
+-- POSES CUT OUT ONCE (firmware 2.7.1, px.grab/px.blit). A fish in a given
+-- pose - its size of five, its turn of five, its tail at one of six beats -
+-- looks the same every time, so each pose is drawn once, full bright and
+-- facing right, on black, and cut out. After that the fish is one px.blit a
+-- frame: mirrored when it swims left, dimmed by the water it is behind. Poses
+-- are cut as the fish first reach them, a few a frame, and a fish whose pose
+-- is not cut yet is drawn as before.
+local NPH = 6                               -- beats of the tail
+local TWO_PI = 6.283185307
+local FORE = { 0.22, 0.415, 0.61, 0.805, 1.0 }
+local POSE, poses = {}, 0
+local POSE_MAX = 700                        -- about 0.6 MB at the most
+local CUT_PER_FRAME = 4
+local CX, CY = 64, 32                       -- where a pose is drawn to be cut
+
+local function pose_of(f)
+  local fi = floor((f.fore - 0.22) / 0.195 + 0.5) + 1
+  if fi < 1 then fi = 1 elseif fi > 5 then fi = 5 end
+  local pi = floor((f.ph % TWO_PI) / TWO_PI * NPH + 0.5) % NPH
+  return f.look * 1000 + f.si * 100 + fi * 10 + pi, fi, pi
+end
+
+local function cut_poses()
+  local cut = 0
+  for i = 1, #FISH do
+    if cut >= CUT_PER_FRAME or poses >= POSE_MAX then return end
+    local f = FISH[i]
+    local key, fi, pi = pose_of(f)
+    if POSE[key] == nil then
+      px.clear(0, 0, 0)
+      paint_fish(f, CX, CY, f.si, 1, FORE[fi], pi * TWO_PI / NPH, 1, f.si >= 3)
+      local s, dx, dy = px.grab(0, 0, W, H)
+      POSE[key] = s and { s, CX - dx, CY - dy, s:byte(1) } or false
+      poses, cut = poses + 1, cut + 1
+    end
+  end
+end
+
+-- The haze a fish is behind, and how far down it swims.
+local function fish_br(f, lift)
+  return lift * (0.58 + 0.42 * f.dep) * (0.62 + 0.38 * (1 - f.y / 58))
+end
+
+local function draw_fish(f, lift)
+  shadow_fish(f, lift)
+  local br = fish_br(f, lift)
+  local bx, by = floor(f.x), floor(f.y)
+  if px.blit then
+    local p = POSE[(pose_of(f))]
+    if p then
+      if f.dir > 0 then px.blit(p[1], bx - p[2], by - p[3], false, br)
+      else px.blit(p[1], bx - (p[4] - 1 - p[2]), by - p[3], true, br) end
+      return
+    end
+  end
+  paint_fish(f, bx, by, f.si, f.dir, f.fore, f.ph, br, f.dep > 0.4)
+end
+
 -- ── the snail ───────────────────────────────────────────────────────────────
 -- It crosses the sand at about a pixel every two seconds and turns at the edge.
 -- Six calls, and it is the slowest thing on the panel.
@@ -784,6 +854,13 @@ function draw()
   if lift > 1.12 then lift = 1.12 end
   local calm = 1 - startle
 
+  -- The fish move first, so the poses they need can be cut out on the
+  -- canvas before the frame is painted over it.
+  local fx = focus * W
+  local pull = haveF * near * (1 - startle)
+  for i = 1, #FISH do move_fish(FISH[i], t, dt, fx, pull, startle) end
+  if px.blit and px.save then cut_poses() end
+
   -- The still picture: made again only when the light has moved a step.
   local lq = floor(lift * 50 + 0.5) / 50
   if not (still_lift == lq and px.restore and px.restore()) then
@@ -807,9 +884,7 @@ function draw()
   -- second is indistinguishable and the list is nearly sorted each time.
   sortIn = sortIn - dt
   if sortIn <= 0 then sort(ORDER, byDepth); sortIn = 0.5 end
-  local fx = focus * W
-  local pull = haveF * near * (1 - startle)
-  for i = 1, #ORDER do draw_fish(ORDER[i], t, dt, lift, fx, pull, startle) end
+  for i = 1, #ORDER do draw_fish(ORDER[i], lift) end
   draw_bubbles(t, dt, lift)
 
   -- The time, down on the sand where white has something to sit on.

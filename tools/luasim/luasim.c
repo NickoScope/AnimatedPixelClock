@@ -267,13 +267,17 @@ static int l_glow(lua_State *L) {
 static int l_save(lua_State *L)    { return px_save_lua(L, fb, sizeof(fb)); }
 static int l_restore(lua_State *L) { return px_restore_lua(L, fb, sizeof(fb)); }
 static int l_terrain(lua_State *L) { unsigned long work; return px_terrain_lua(L, fb, W, H, &work); }
+#include "../../src/lua/px_sprite.h"    /* px.grab, px.blit, shared with the firmware */
+static int l_grab(lua_State *L)    { unsigned long work; return px_grab_lua(L, fb, W, H, &work); }
+static int l_blit(lua_State *L)    { unsigned long work; return px_blit_lua(L, fb, W, H, &work); }
 
 static const luaL_Reg px_lib[] = {
   {"get", l_get}, {"blend", l_blend}, {"glow", l_glow},
   {"size", l_size}, {"t", l_t}, {"now", l_now}, {"clear", l_clear},
   {"pixel", l_pixel}, {"rect", l_rect}, {"line", l_line}, {"circle", l_circle},
   {"text", l_text}, {"width", l_width}, {"terrain", l_terrain},
-  {"save", l_save}, {"restore", l_restore}, {NULL, NULL}
+  {"save", l_save}, {"restore", l_restore}, {"grab", l_grab}, {"blit", l_blit},
+  {NULL, NULL}
 };
 
 int main(int argc, char **argv) {

@@ -842,6 +842,7 @@ includes the Lua loop around the call):
 | `px.text`, 5 letters | 0.02 ms | |
 | **`px.glow`, r 10** | **5.6 ms** | 100 of them: over 500 ms |
 | `px.save` / `px.restore` (2.6.6) | a 24 KB copy, a fraction of a ms | a still scene drawn once and restored each frame: the golf's frames went from ~75 k to ~30 k instructions |
+| `px.grab` / `px.blit` (2.7.1) | a sprite stamped in one call, mirrored and dimmed in C | a pose drawn once, cut out and stamped: the aquarium's fish went from about forty calls each to one |
 | `px.terrain` (2.6.3, native) | not measured on the panel yet | a whole 3D view in one call; each ground sample is charged to the frame's budget as one instruction |
 
 What follows from that:
