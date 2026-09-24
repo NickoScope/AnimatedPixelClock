@@ -344,13 +344,19 @@ static int l_blit(lua_State *L) {
   return 0;
 }
 
+// px.button() -> the click count (lua_px.h): a script reacts when it changes.
+static int l_button(lua_State *L) {
+  lua_pushinteger(L, (lua_Integer)(canvasOf(L)->clicks & 0x7fffffff));
+  return 1;
+}
+
 static const luaL_Reg kPxLib[] = {
   {"get", l_get}, {"blend", l_blend}, {"glow", l_glow},
   {"size", l_size}, {"t", l_t}, {"now", l_now}, {"clear", l_clear},
   {"pixel", l_pixel}, {"rect", l_rect}, {"line", l_line}, {"circle", l_circle},
   {"text", l_text}, {"width", l_width}, {"terrain", l_terrain},
   {"save", l_save}, {"restore", l_restore}, {"grab", l_grab}, {"blit", l_blit},
-  {NULL, NULL}
+  {"button", l_button}, {NULL, NULL}
 };
 
 void luaPxOpen(lua_State *L, LuaPxCanvas *canvas) {

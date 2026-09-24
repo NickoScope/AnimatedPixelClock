@@ -50,6 +50,7 @@ struct Job {
   std::string script, out;
   int frames = 0, startMin = 12 * 60 + 34, yday = 255, utcH = 2, year = 2026;
   bool sweep = false, exact = false, gen = true, panel = false;
+  std::string clicks;   // --clicks f1,f2,...: px.button counts these frames once reached
   int rc = 0;
 };
 
@@ -91,6 +92,16 @@ void *run(void *arg) {
   for (int fr = 0; fr < j.frames; fr++) {
     LuaPxClock &c = canvas.clock;
     c.phase = j.frames > 1 ? (double)fr / (double)j.frames : 0.0;
+    if (!j.clicks.empty()) {                  // as luasim: how many listed frames have come
+      uint32_t n = 0;
+      for (const char *p = j.clicks.c_str(); *p;) {
+        if (atoi(p) <= fr) n++;
+        p = strchr(p, ',');
+        if (!p) break;
+        p++;
+      }
+      canvas.clicks = n;
+    }
     if (j.sweep) {
       const int m = (j.startMin + fr * 1440 / (j.frames > 0 ? j.frames : 1)) % 1440;
       c.hour = m / 60; c.min = m % 60; c.sec = 0;
@@ -131,7 +142,7 @@ void *run(void *arg) {
 int main(int argc, char **argv) {
   if (argc < 4) {
     fprintf(stderr, "usage: fxhost script.lua frames out.raw [--start HH:MM] [--yday N] "
-                    "[--utc H] [--year Y] [--sweep] [--exact] [--incremental] [--panel-limits]\n");
+                    "[--utc H] [--year Y] [--sweep] [--clicks f1,f2] [--exact] [--incremental] [--panel-limits]\n");
     return 2;
   }
   Job j;
@@ -145,6 +156,7 @@ int main(int argc, char **argv) {
     else if (!strcmp(argv[a], "--utc") && a + 1 < argc)    j.utcH = atoi(argv[++a]);
     else if (!strcmp(argv[a], "--year") && a + 1 < argc)   j.year = atoi(argv[++a]);
     else if (!strcmp(argv[a], "--sweep"))                  j.sweep = true;
+    else if (!strcmp(argv[a], "--clicks") && a + 1 < argc) j.clicks = argv[++a];
     else if (!strcmp(argv[a], "--exact"))                  j.exact = true;
     else if (!strcmp(argv[a], "--incremental"))            j.gen = false;
     else if (!strcmp(argv[a], "--panel-limits"))           j.panel = true;

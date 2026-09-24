@@ -56,7 +56,7 @@
 //   GET  /api/yachtradar    keyPresent, stream, vessels
 //   POST /api/yachtradar    {"bySize":b}
 //   GET  /api/lua           effects, current            (LUA_EFFECTS_ENABLED only)
-//   POST /api/lua           {"show":i}
+//   POST /api/lua           {"show":i} | {"click":true} (px.button)
 //   GET  /api/clips         card {mounted, type, totalKB, freeKB}, reason, maxFrames, maxBytes,
 //                           current, playing, clips [{name, bytes, frames, ms}],
 //                           stream {state idle|playing|failed, clip, frames, reads, readAvgMs,
@@ -1012,6 +1012,9 @@ static void handleLua() {
     if (hasDel) REJECT(400, "this build stores no uploaded scripts");
 #endif
     if (showI >= 0) luaEffectShow((uint8_t)showI);
+    // {"click":true}: the effect's button (px.button), as the knob's click or
+    // the remote's OK on its page. For the portal and for Home Assistant.
+    if (in["click"].is<bool>() && in["click"].as<bool>()) luaEffectsClick();
   }
   JsonDocument doc(&s_alloc);
   doc["success"] = true;

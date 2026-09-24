@@ -270,6 +270,9 @@ static int l_terrain(lua_State *L) { unsigned long work; return px_terrain_lua(L
 #include "../../src/lua/px_sprite.h"    /* px.grab, px.blit, shared with the firmware */
 static int l_grab(lua_State *L)    { unsigned long work; return px_grab_lua(L, fb, W, H, &work); }
 static int l_blit(lua_State *L)    { unsigned long work; return px_blit_lua(L, fb, W, H, &work); }
+/* px.button: --clicks f1,f2,... clicks the effect's button at those frames */
+static int g_clicks = 0;
+static int l_button(lua_State *L)  { lua_pushinteger(L, g_clicks); return 1; }
 
 static const luaL_Reg px_lib[] = {
   {"get", l_get}, {"blend", l_blend}, {"glow", l_glow},
@@ -277,7 +280,7 @@ static const luaL_Reg px_lib[] = {
   {"pixel", l_pixel}, {"rect", l_rect}, {"line", l_line}, {"circle", l_circle},
   {"text", l_text}, {"width", l_width}, {"terrain", l_terrain},
   {"save", l_save}, {"restore", l_restore}, {"grab", l_grab}, {"blit", l_blit},
-  {NULL, NULL}
+  {"button", l_button}, {NULL, NULL}
 };
 
 int main(int argc, char **argv) {
@@ -288,6 +291,7 @@ int main(int argc, char **argv) {
   }
   const int frames = atoi(argv[2]);
   int start_min = g_hour * 60 + g_min, sweep = 0;
+  const char *clicks = NULL;
   for (int a = 4; a < argc; a++) {
     if (!strcmp(argv[a], "--start") && a + 1 < argc) {
       int hh = 0, mm = 0; sscanf(argv[++a], "%d:%d", &hh, &mm); start_min = hh * 60 + mm;
@@ -295,6 +299,7 @@ int main(int argc, char **argv) {
     else if (!strcmp(argv[a], "--utc") && a + 1 < argc)   g_utc  = atoi(argv[++a]);
     else if (!strcmp(argv[a], "--year") && a + 1 < argc)  g_year = atoi(argv[++a]);
     else if (!strcmp(argv[a], "--sweep"))                 sweep  = 1;   /* a whole day over the frames */
+    else if (!strcmp(argv[a], "--clicks") && a + 1 < argc) clicks = argv[++a];
   }
   g_hour = start_min / 60 % 24; g_min = start_min % 60;
 
@@ -317,6 +322,11 @@ int main(int argc, char **argv) {
 
   for (int f = 0; f < frames; f++) {
     g_phase = frames > 1 ? (double)f / (double)frames : 0.0;
+    if (clicks) {                  /* how many of the listed frames have come */
+      int n = 0; const char *p = clicks;
+      while (*p) { if (atoi(p) <= f) n++; p = strchr(p, ','); if (!p) break; p++; }
+      g_clicks = n;
+    }
     if (sweep) {
       const int m = (start_min + f * 1440 / (frames > 0 ? frames : 1)) % 1440;
       g_hour = m / 60; g_min = m % 60; g_sec = 0;

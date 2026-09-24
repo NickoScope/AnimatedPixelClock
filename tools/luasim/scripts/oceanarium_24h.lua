@@ -20,8 +20,9 @@ DEMO_DAY = 300
 -- sun shafts and caustics walking on the sand, a warm violet dusk, a dark
 -- night of moonlight, glowing jellies and plankton sparking where a fish
 -- darts. At night the tank lights (the backlight) come on when somebody comes
--- into the room and go out when it has been empty for a minute; a firmware
--- with px.button() lets a click of the knob switch them on and off.
+-- into the room and go out when it has been empty for a minute; a click of the
+-- knob or the remote's OK on this page switches them by hand (px.button,
+-- firmware 2.7.2), until the next sunrise or sunset.
 --
 -- **The room.** The Apollo MTR-1 radar that ROOM RADAR draws, bound into Lua
 -- as `presence`. The curious ones - a grouper, a Napoleon wrasse, a batfish,
@@ -116,19 +117,21 @@ local WARM_TOP, WARM_DEEP = { 112, 84, 132 }, { 14, 22, 62 }
 local NIGHT_TOP, NIGHT_DEEP = { 16, 38, 80 }, { 4, 12, 30 }
 local LAMP_TOP, LAMP_DEEP = { 60, 168, 222 }, { 10, 62, 112 }
 
--- DEMO_DAY (seconds), when a copy of the script sets it, runs the clock of
--- the light that fast - a whole day in a few minutes - and leaves the animals
--- at their own pace. The time shown is the demo's.
-local DEMO_DAY = rawget(_G, "DEMO_DAY")
-local demoT, demoStart = 0, nil
+-- The tank's clock. Normally the panel's; in the demo (two quick clicks, or
+-- DEMO_DAY set by a copy of the script) the light runs a whole day in five
+-- minutes while the animals keep their own pace. Two clicks again stop the
+-- run where it is; three bring the tank back to the time it really is. The
+-- time shown is the tank's.
+local CLK = { rate = 1, off = 0 }            -- off: hours the tank is ahead of the panel
+CLK.demo = 24 * 3600 / (rawget(_G, "DEMO_DAY") or 300)
+if rawget(_G, "DEMO_DAY") then CLK.rate = CLK.demo end
 local function clock_h()
   local now = px.now()
   local h = now.hour + now.min / 60 + (now.sec or 0) / 3600
-  if DEMO_DAY then
-    demoStart = demoStart or h
-    h = (demoStart + demoT / DEMO_DAY * 24) % 24
-  end
-  return h, now
+  return (h + CLK.off) % 24, now
+end
+local function clock_run(dt)
+  if CLK.rate ~= 1 then CLK.off = (CLK.off + dt * (CLK.rate - 1) / 3600) % 24 end
 end
 
 local function sun_now()
@@ -147,7 +150,7 @@ local function light_update(dt, first)
   local L = LIGHT
   if first then L.day, L.warm = day, warm
   else
-    local tau = DEMO_DAY and 0.8 or 8
+    local tau = CLK.rate > 1 and 0.8 or 8
     L.day = lp(L.day, day, dt, tau)
     L.warm = lp(L.warm, warm, dt, tau)
   end
@@ -157,7 +160,7 @@ local function light_update(dt, first)
   top = cmix(top, WARM_TOP, L.warm * 0.55)
   deep = cmix(deep, WARM_DEEP, L.warm * 0.3)
   -- The tank's own lights only add: at noon they change nothing.
-  local k = L.lamp * (1 - 0.8 * L.day)
+  local k = L.lamp * (1 - 0.55 * L.day)
   for i = 1, 3 do
     top[i] = mix(top[i], max(top[i], LAMP_TOP[i]), k)
     deep[i] = mix(deep[i], max(deep[i], LAMP_DEEP[i]), k)
@@ -242,26 +245,57 @@ local function no_room(dt)
   R.awake = 1
 end
 
--- The tank lights. A click of the knob (px.button, when the firmware has it)
--- switches them by hand; left alone they follow the room at night.
-local lampHand = nil                        -- nil: automatic; true/false: by hand
-local lastClicks = nil
-local function lamp_update()
+-- The knob's click or the remote's OK on this page (px.button, firmware
+-- 2.7.2+), counted over three quarters of a second:
+--   one    the tank lights on or off, by hand, until the next sunrise or
+--          sunset; then the tank's own rule again (at night on while somebody
+--          is in the room)
+--   two    the demo: a day in five minutes; two again stop it where it is
+--   three  back to the time it really is
+-- One click waits out the window before it acts: it cannot know sooner that
+-- no second one is coming.
+-- hand: nil automatic, true/false by hand; handDay: whether it was day when
+-- the hand chose; last: the count last seen; n, at: clicks in the window.
+local IN = { hand = nil, handDay = nil, last = nil, n = 0, at = 0, said = nil, till = -1 }
+local MULTI = 0.75
+
+local function press(n, T)
+  local s
+  if n == 1 then
+    if IN.hand == nil then IN.hand = LIGHT.lampWant < 0.5 else IN.hand = not IN.hand end
+    IN.handDay = LIGHT.day > 0.5
+    s = IN.hand and "ПОДСВЕТКА ВКЛ" or "ПОДСВЕТКА ВЫКЛ"
+  elseif n == 2 then
+    if CLK.rate > 1 then CLK.rate = 1; s = "ДЕМО ВЫКЛ"
+    else CLK.rate = CLK.demo; s = "ДЕМО: СУТКИ ЗА 5 МИН" end
+  else
+    CLK.rate, CLK.off, IN.hand = 1, 0, nil
+    s = "ТЕКУЩЕЕ ВРЕМЯ"
+  end
+  IN.said, IN.till = s, T + 2.5
+end
+
+local function lamp_update(T)
   local btn = rawget(px, "button")
   if btn then
     local n = btn()
-    if lastClicks and n ~= lastClicks then
-      if lampHand == nil then lampHand = LIGHT.lamp < 0.5 else lampHand = not lampHand end
-    end
-    lastClicks = n
+    if IN.last and n ~= IN.last then IN.n, IN.at = IN.n + (n - IN.last), T end
+    IN.last = n
   end
-  if lampHand ~= nil then LIGHT.lampWant = lampHand and 1 or 0
+  if IN.n > 0 and T - IN.at > MULTI then
+    press(IN.n, T)
+    IN.n = 0
+  end
+  local isDay = LIGHT.day > 0.5
+  if IN.hand ~= nil and IN.handDay ~= isDay then IN.hand = nil end
+  if IN.hand ~= nil then LIGHT.lampWant = IN.hand and 1 or 0
   else
     local dark = LIGHT.day < 0.35
-    if RAD and not DEMO_DAY then
+    if RAD and CLK.rate == 1 and CLK.off == 0 then
       LIGHT.lampWant = (dark and ROOM.awake > 0.5) and 1 or 0
     else
-      -- no radar to ask: the tank's evening hours, as a public aquarium keeps
+      -- the demo, or no radar to ask: the tank's evening hours, as a public
+      -- aquarium keeps them
       local h = floor(clock_h())
       LIGHT.lampWant = (dark and h >= 17 and h < 23) and 1 or 0
     end
@@ -2632,6 +2666,16 @@ local function draw_eels(e)
   end
 end
 
+-- What the clicks did, for a moment at the top of the glass.
+local function draw_caption()
+  local said = IN.said
+  if not said or T > IN.till then return end
+  -- 5x7: in the small font Д reads as А
+  local x = floor((W - px.width(said, "5x7")) / 2)
+  text(x + 1, 4, said, 8, 12, 18, "5x7")
+  text(x, 3, said, 250, 236, 170, "5x7")
+end
+
 local function draw_clock()
   local h = clock_h()
   local s = string.format("%02d:%02d", floor(h), floor((h % 1) * 60))
@@ -2731,12 +2775,12 @@ function draw()
   DT = dt
   T = T + dt
   if T > 7200 then T = T - 7200 end
-  demoT = demoT + dt
+  clock_run(dt)
   frameNo = frameNo + 1
 
   light_update(dt, false)
   if RAD and RAD.state() == 1 then read_room(dt) else no_room(dt) end
-  lamp_update()
+  lamp_update(T)
   populate(dt)
 
   -- the hunters this frame
@@ -2831,5 +2875,6 @@ function draw()
 
   draw_sparks()
   draw_snow(true)
+  draw_caption()
   draw_clock()
 end

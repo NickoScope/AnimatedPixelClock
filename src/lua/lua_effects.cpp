@@ -44,6 +44,7 @@
 #include <math.h>
 #include <string.h>
 #include <time.h>
+#include <atomic>
 
 #include "../control/clock_style.h"   // ctrlToast
 #include "../display/display.h"
@@ -146,6 +147,9 @@ void publishError(uint32_t word, const char *msg) {
 
 LuaFx       s_fx;       // task only
 LuaPxCanvas s_canvas;   // task only
+// Clicks for px.button: counted on loop() (luaEffectsClick), read by the task
+// into s_canvas before each draw.
+std::atomic<uint32_t> s_clicks{0};
 
 // An effect is either compiled into the image or uploaded to LittleFS, and
 // everything here addresses the two as one list: the built-in ones first, in
@@ -210,6 +214,7 @@ void runTrial() {
   Trial &t = s_trial;
   memset(s_work, 0, LUA_PX_BYTES);
   fillClock(s_canvas.clock, 60.0);
+  s_canvas.clicks = s_clicks.load(std::memory_order_relaxed);
   int64_t t0 = esp_timer_get_time();
   bool ok = s_fx.open("upload", t.src, t.len, &s_canvas, kLuaFxPanelLimits);
   t.openMs = (uint32_t)((esp_timer_get_time() - t0) / 1000);
@@ -221,6 +226,7 @@ void runTrial() {
     uint8_t over = 0;
     for (uint8_t k = 0; k < kTrialFrames && ok; k++) {
       fillClock(s_canvas.clock, s_fx.periodSeconds());
+      s_canvas.clicks = s_clicks.load(std::memory_order_relaxed);
       t0 = esp_timer_get_time();
       const bool drew = s_fx.draw();
       const uint32_t ms = (uint32_t)((esp_timer_get_time() - t0) / 1000);
@@ -320,6 +326,7 @@ void effectTask(void *) {
 #endif
         memset(s_work, 0, LUA_PX_BYTES);      // luasim starts every run on black
         fillClock(s_canvas.clock, 60.0);      // for a script that reads px.now() at load
+        s_canvas.clicks = s_clicks.load(std::memory_order_relaxed);
         const int64_t t0 = esp_timer_get_time();
         const bool ok = src && s_fx.open(id, src, srcLen, &s_canvas, kLuaFxPanelLimits);
         if (!src) {
@@ -367,6 +374,7 @@ void effectTask(void *) {
     }
 
     fillClock(s_canvas.clock, s_fx.periodSeconds());
+    s_canvas.clicks = s_clicks.load(std::memory_order_relaxed);
     const int64_t t0 = esp_timer_get_time();
     if (!s_fx.draw()) {
       // One frame past its time budget is dropped, not fatal: WiFi shares this
@@ -540,6 +548,8 @@ void luaEffectsReload() {
   s_wantWord = selWord(s_seq, s_selected);
   if (s_task) xTaskNotifyGive(s_task);
 }
+
+void luaEffectsClick() { s_clicks.fetch_add(1, std::memory_order_relaxed); }
 
 uint32_t luaEffectsStackFreeMin() {
   // uxTaskGetStackHighWaterMark is in words on some ports and bytes on Xtensa;

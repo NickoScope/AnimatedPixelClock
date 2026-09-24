@@ -33,6 +33,10 @@ struct LuaPxClock {
 struct LuaPxCanvas {
   uint8_t   *rgb;      // LUA_PX_BYTES, row-major, R G B
   LuaPxClock clock;
+  // px.button(): clicks of the knob or the remote's OK on an effect page since
+  // the panel started. A script compares it with the last value it saw; the
+  // count itself means nothing. Filled in by the host before each call.
+  uint32_t   clicks;
 };
 
 // Set the global table `px` in L, bound to canvas. The canvas must outlive L.

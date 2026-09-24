@@ -1103,6 +1103,12 @@ void loop() {
     if (ctrlPage >= ctrlPageCount()) { ctrlPage = PAGE_CLOCK; ctrlEntered = false; }  // card expired
 #endif
     if (e == CTRL_PRESS) {
+#if defined(LUA_EFFECTS_ENABLED)
+      // An effect page has nothing to enter: its click belongs to the effect
+      // (px.button) - the knob's, and the remote's OK, which holds this same
+      // switch. OCEANARIUM switches its tank lights with it.
+      if (ctrlLuaEffect(ctrlPage) >= 0) { luaEffectsClick(); continue; }
+#endif
 #if defined(MEDIAPLAYER_ENABLED)
       // Three stops where the other pages have two: TUNE, VOLUME, out.
       if (ctrlPage == PAGE_MEDIA) {
