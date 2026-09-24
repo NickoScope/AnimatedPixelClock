@@ -118,7 +118,10 @@ static const unsigned char *pxt_str(lua_State *L, int t, const char *k, size_t *
 #define PX_TERRAIN_MAX_STEPS 320
 
 // The one hot loop in px.*: the firmware is built with -Os, and this function
-// alone is worth optimising for speed (GCC only; the host compilers ignore it).
+// is worth optimising for speed (GCC only; the host compilers ignore it). Not
+// perfectly contained: GCC 8 keeps some alignment settings global, so the rest
+// of lua_px.cpp also comes out a few bytes differently aligned (the audit of
+// 2026-09-24, comparing object files) - harmless, and only in that file.
 #if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC push_options
 #pragma GCC optimize("O2")
