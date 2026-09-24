@@ -9,7 +9,7 @@ script, out = sys.argv[1], sys.argv[2]
 start = sys.argv[3] if len(sys.argv) > 3 else "10:00"
 raw = pathlib.Path(out + ".raw")
 subprocess.run(["./luasim", script, "1800", str(raw), "--start", start], check=True,
-               cwd="/Users/apple/AnimatedPixelClock-netbroker/tools/luasim", capture_output=True)
+               cwd=pathlib.Path(__file__).resolve().parent, capture_output=True)
 b = np.frombuffer(raw.read_bytes(), dtype=np.uint8)
 n = len(b) // (W * H * 3)
 frames = b[: n * W * H * 3].reshape(n, H, W, 3).astype(np.float32)
