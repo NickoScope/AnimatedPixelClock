@@ -471,6 +471,9 @@ local STYLE = {
     fringe = {96, 172, 64}, sand = {236, 222, 182}, water = {38, 92, 128}, deep = {26, 64, 96},
     tee = {100, 172, 66}, far = {58, 84, 46}, ridge = {132, 92, 110}, ridge2 = {104, 76, 98},
     trees = "pine", crowd = true,
+    ferry = {[3] = true, [13] = true},   -- the Siagne between 2 and 3, and back between 12 and 13
+    river = "СИАНЬ",
+    house = {wall = {236, 222, 196}, roof = {176, 78, 52}, win = {60, 70, 90}},   -- the 1891 clubhouse
   },
   pestovo = {                            -- the Moscow region: lush, spruce and birch
     top = {66, 124, 206}, hor = {192, 214, 234}, haze = {186, 204, 216},
@@ -478,6 +481,7 @@ local STYLE = {
     fringe = {86, 178, 70}, sand = {230, 210, 156}, water = {44, 84, 122}, deep = {30, 58, 90},
     tee = {90, 178, 72}, far = {32, 66, 44}, ridge = {40, 72, 64}, ridge2 = {30, 58, 52},
     trees = "spruce", crowd = true,
+    house = {wall = {120, 84, 60}, roof = {60, 64, 72}, win = {150, 190, 220}},   -- timber and glass
   },
 }
 
@@ -726,10 +730,19 @@ local function draw_land(cam, st)
       local i, j = floor((x - x0) / cell), floor((y - y0) / cell)
       local r, gg, b, hgt
       local kind = 0
-      if i >= 0 and j >= 0 and i < nx and j < ny then
+      if i >= 0 and j >= 0 and i < nx - 1 and j < ny - 1 then
         local idx = j * nx + i + 1
-        hgt, kind = GH[idx], GK[idx]
+        kind = GK[idx]
         r, gg, b = GR[idx], GG[idx], GB[idx]
+        -- the height between the four corners, so a slope is a slope, not steps
+        local fx, fy = (x - x0) / cell - i, (y - y0) / cell - j
+        local h00, h10, h01, h11 = GH[idx], GH[idx + 1], GH[idx + nx], GH[idx + nx + 1]
+        hgt = (h00 * (1 - fx) + h10 * fx) * (1 - fy) + (h01 * (1 - fx) + h11 * fx) * fy
+        if z < 60 and kind ~= K_WATER then          -- blades of grass, up close
+          local n = ((floor(x * 3) * 73 + floor(y * 3) * 151) % 17) / 16
+          local l = 0.93 + 0.14 * n
+          r, gg, b = r * l, gg * l, b * l
+        end
       else                               -- beyond the hole: woods rising to the skyline
         local ox = max(x0 - x, x - (x0 + nx * cell), 0)
         local oy = max(y0 - y, y - (y0 + ny * cell), 0)
@@ -1018,6 +1031,38 @@ local function world_trees(h)
   return t
 end
 
+local function draw_house(cam, st, x, y)
+  local c = st.house
+  if not c then return end
+  local gz = ground_at(x, y)
+  local sx, sy, k, depth = project(cam, x, y, gz)
+  if not sx or depth > ZFAR then return end
+  local fogt = clamp((depth - 140) / 900, 0, 1) ^ 2
+  local function col(cc, l)
+    l = l or 1
+    return floor(mix(cc[1] * l, st.haze[1], fogt)), floor(mix(cc[2] * l, st.haze[2], fogt)), floor(mix(cc[3] * l, st.haze[3], fogt))
+  end
+  local w, hh, roof = 26 * k, 8 * k, 4.5 * k
+  local x0, top = sx - w / 2, sy - hh
+  local r, g, b = col(c.wall)
+  px.rect(floor(x0), floor(top), floor(w) + 1, floor(hh) + 1, r, g, b, true)
+  local r2, g2, b2 = col(c.wall, 0.8)                         -- the shaded side
+  px.rect(floor(x0 + w), floor(top + 1 * k), floor(5 * k) + 1, floor(hh - 1 * k) + 1, r2, g2, b2, true)
+  local r3, g3, b3 = col(c.roof)
+  for yy = 0, floor(roof) do                                 -- the roof
+    local q = yy / max(1, roof)
+    px.rect(floor(x0 - 1 * k + q * 3 * k), floor(top - roof + yy), floor(w + 2 * k - q * 6 * k + 5 * k * (1 - q)) + 1, 1, r3, g3, b3, true)
+  end
+  local r4, g4, b4 = col(c.win)
+  if k > 0.35 then                                           -- two rows of windows
+    for row = 0, 1 do
+      for i = 0, 7 do
+        px.rect(floor(x0 + (1.5 + i * 3.1) * k), floor(top + (1.5 + row * 3.4) * k), max(1, floor(1.5 * k)), max(1, floor(1.8 * k)), r4, g4, b4, true)
+      end
+    end
+  end
+end
+
 local function draw_things(cam, st, h, extra)
   local list = {}
   for _, t in ipairs(world_trees(h)) do
@@ -1036,11 +1081,23 @@ local function draw_things(cam, st, h, extra)
   if extra then extra() end
 end
 
+-- the clubhouse stands behind the last green
+local function things_with_house(cam, st, h, extra)
+  if h.n == HOLES and st.house then
+    local w = world_of(h)
+    local a, b = w.line[#w.line - 1], w.line[#w.line]
+    local dx, dy = b[1] - a[1], b[2] - a[2]
+    local dl = sqrt(dx * dx + dy * dy)
+    draw_house(cam, st, w.cup[1] + dx / dl * 55, w.cup[2] + dy / dl * 55)
+  end
+  draw_things(cam, st, h, extra)
+end
+
 local function render(cam, st, h, extra)
   px.clear(st.haze[1], st.haze[2], st.haze[3])
   draw_sky(cam, st)
   draw_land(cam, st)
-  draw_things(cam, st, h, extra)
+  things_with_house(cam, st, h, extra)
 end
 
 -- a ball's world position from the plan's fraction and offset
@@ -1064,6 +1121,59 @@ local function scene_fly(g, h, st, u)
   look_at(cam, mix(0.6 * L, tx, e), mix(0, ty, e), 0, 40)
   render(cam, st, h)
   if u < 0.8 then hole_card(g, h) end
+end
+
+-- The Old Course's own moment: the players take the ferry across the Siagne
+-- to the far holes, and back again.
+local function scene_ferry(g, h, st, u)
+  px.clear(st.haze[1], st.haze[2], st.haze[3])
+  for y = 0, 24 do                                         -- the sky
+    local t = y / 24
+    px.rect(0, y, W, 1, floor(mix(st.top[1], st.hor[1], t)), floor(mix(st.top[2], st.hor[2], t)), floor(mix(st.top[3], st.hor[3], t)), true)
+  end
+  for col = 0, W - 1 do                                    -- the Estérel, far
+    local hg = 6 + 4 * sin(col * 0.05 + 1) + 2 * sin(col * 0.17)
+    px.rect(col, floor(25 - hg), 1, floor(hg) + 1, st.ridge[1], st.ridge[2], st.ridge[3], true)
+  end
+  px.rect(0, 25, W, 6, 70, 104, 50, true)                  -- the far bank
+  for i = 0, 9 do                                          -- its pines
+    local x = 6 + i * 13 + (i * 7) % 5
+    px.rect(x, 17, 1, 9, 100, 70, 44, true)
+    px.rect(x - 4, 15, 9, 2, 44, 84, 40, true); px.rect(x - 3, 14, 7, 1, 70, 110, 55, true)
+  end
+  for y = 31, 55 do                                        -- the river, lighter far away
+    local t = (y - 31) / 24
+    local r, g2, b = mix(90, st.deep[1], t), mix(140, st.deep[2], t), mix(170, st.deep[3], t)
+    px.rect(0, y, W, 1, floor(r), floor(g2), floor(b), true)
+  end
+  for k = 0, 40 do                                         -- ripples
+    local x = (k * 37 + floor(u * 30) * (k % 3 + 1)) % W
+    local y = 33 + (k * 11) % 22
+    px.rect(x, y, 3 + k % 3, 1, 150, 190, 215, true)
+  end
+  px.rect(0, 56, W, 8, 80, 118, 56, true)                  -- the near bank
+  -- the ferry: a flat deck on a cable, the two players on it
+  local fx = floor(mix(-30, 70, u))
+  local fy = 44
+  px.line(0, 38, W - 1, 38, 60, 60, 60)                    -- the cable
+  px.rect(fx, fy, 36, 4, 120, 90, 60, true)
+  px.rect(fx, fy + 4, 36, 1, 60, 45, 30, true)
+  px.rect(fx + 2, fy - 3, 32, 1, 200, 200, 200, true)      -- the rail
+  for i = 0, 4 do px.rect(fx + 2 + i * 8, fy - 3, 1, 3, 180, 180, 180, true) end
+  px.line(fx + 18, fy - 3, fx + 18, 38, 90, 90, 90)
+  for pl = 1, 2 do
+    local x = fx + 8 + (pl - 1) * 14
+    local sh = SHIRT[pl]
+    px.rect(x, fy - 7, 3, 4, sh[1], sh[2], sh[3], true)
+    px.rect(x, fy - 3, 1, 3, 50, 50, 70, true); px.rect(x + 2, fy - 3, 1, 3, 50, 50, 70, true)
+    px.circle(x + 1, fy - 9, 1, SKIN[1], SKIN[2], SKIN[3], true)
+    px.rect(x - 1, fy - 11, 4, 1, CAP[pl][1], CAP[pl][2], CAP[pl][3], true)
+    px.rect(x + 4, fy - 9, 2, 6, 60, 60, 60, true)           -- the bag
+  end
+  local s = "ПАРОМ ЧЕРЕЗ " .. st.river
+  R(0, H - 9, TW(s, "5x7") + 3, 9, 0, 0, 0)
+  T(1, H - 8, s, {255, 215, 90}, "5x7")
+  if u > 0.55 then hole_card(g, h) end
 end
 
 local function scene_tee(g, h, st, u, ht)
@@ -1301,7 +1411,16 @@ end
 local function draw_result(g, t)
   local st = STYLE[g.course.id]
   local h = g.holes[HOLES]
-  panorama(g, h, st, t + 30, 45)
+  -- the last green and the clubhouse behind it, from the fairway, moving in
+  scene_base(h, st)
+  local w = world_of(h)
+  local fx, fy = to_world(h, along(h, 0.72 + t * 0.006, 0))
+  local cam = {x = fx, y = fy, z = ground_at(fx, fy) + 14 - t, f = 100}
+  local a2, b2 = w.line[#w.line - 1], w.line[#w.line]
+  local dx, dy = b2[1] - a2[1], b2[2] - a2[2]
+  local dl = sqrt(dx * dx + dy * dy)
+  look_at(cam, w.cup[1] + dx / dl * 25, w.cup[2] + dy / dl * 25, 0, 40)
+  render(cam, st, h)
   R(0, 0, W, 9, 0, 0, 0)
   local title = "ИТОГ - " .. g.course.name
   T((W - TW(title)) // 2, 1, title, {255, 215, 90})
@@ -1349,7 +1468,8 @@ function draw()
   local h = g.holes[hn]
   local st = STYLE[g.course.id]
   scene_base(h, st)
-  if ht < FLY_END then scene_fly(g, h, st, ht / FLY_END)
+  if ht < FLY_END and st.ferry and st.ferry[h.n] then scene_ferry(g, h, st, ht / FLY_END)
+  elseif ht < FLY_END then scene_fly(g, h, st, ht / FLY_END)
   elseif ht < TEE_END then scene_tee(g, h, st, ht - 0, ht)
   elseif h.scene.kind == "ace" then scene_ace(g, h, st, ht)
   elseif ht < PLAY_END then scene_play(g, h, st, ht)
