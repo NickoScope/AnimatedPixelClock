@@ -246,7 +246,7 @@ local function no_room(dt)
 end
 
 -- The knob's click or the remote's OK on this page (px.button, firmware
--- 2.7.3+), counted over 0.35 s:
+-- 2.7.3+), counted over 0.45 s:
 --   one    the tank lights on or off, by hand, until the next sunrise or
 --          sunset; then the tank's own rule again (at night on while somebody
 --          is in the room)
@@ -257,7 +257,7 @@ end
 -- hand: nil automatic, true/false by hand; handDay: whether it was day when
 -- the hand chose; last: the count last seen; n, at: clicks in the window.
 local IN = { hand = nil, handDay = nil, last = nil, n = 0, at = 0, said = nil, till = -1 }
-local MULTI = 0.35                          -- the owner's choice, 2026-09-24
+local MULTI = 0.45                          -- the owner's choice, 2026-09-24
 
 local function press(n, T)
   local s
