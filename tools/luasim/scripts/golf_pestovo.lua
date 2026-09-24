@@ -583,12 +583,11 @@ local function grid_new(h, st)
 end
 
 -- a few rows of the grid, straight into the byte strings; true when finished
-local CELLS_A_SLICE = 380
-local function grid_step(gr)
+local function grid_step(gr, cells)
   local h = gr.h
   local w = world_of(h)
   local x0, y0, cell, nx, ny = gr.x0, gr.y0, gr.cell, gr.nx, gr.ny
-  local rows = max(1, CELLS_A_SLICE // nx)
+  local rows = max(1, cells // nx)
   local ph = (h.n or 1) * 1.7
   local fw, fw0, fw1 = w.fw, h.fw0, h.fw1
   local hr, kr, lr = gr.rows[1], gr.rows[2], gr.rows[3]
@@ -877,6 +876,9 @@ local function draw_ball3d(cam, x, y, z, pl, big)
   if z > 0.3 and gx_ then px.pixel(floor(gx_), floor(gy_), 20, 40, 20) end   -- the shadow
   local c = COL[pl]
   local rr = max(0, floor(0.03 * k))
+  if big and rr < 1 then                    -- far off: a stem over the ball, as the broadcasts mark it
+    px.line(floor(bx), floor(by) - 2, floor(bx), floor(by) - 5, c[1], c[2], c[3])
+  end
   if rr >= 1 then
     px.circle(floor(bx), floor(by), rr, 250, 250, 250, true)
   else
@@ -1139,7 +1141,7 @@ end
 -- ---------------------------------------------------------------- the scenes
 -- The seconds inside a hole: the flyover with the hole card, the tee shot
 -- from behind the player, the rest of the play from above, the last putt.
-local FLY_END, TEE_END, PLAY_END = 1.0, 2.6, 4.4
+local FLY_END, TEE_END, PLAY_END = 0.8, 2.3, 4.5
 local SWING_S, FLIGHT_S = 0.55, 0.9
 
 local function scene_fly(g, h, st, u)
@@ -1149,7 +1151,9 @@ local function scene_fly(g, h, st, u)
   local cam = {x = mix(-0.25 * L - 30, 0.35 * L, e), y = mix(-10, 5, e), z = mix(0.35 * L + 50, 0.16 * L + 28, e), f = 96}
   local tx, ty = w.cup[1], w.cup[2]
   look_at(cam, mix(0.6 * L, tx, e), mix(0, ty, e), 0, 40)
+  TP.fog0, TP.fogr = 260, 1500            -- from high up the haze starts farther
   render(cam, st, h)
+  TP.fog0, TP.fogr = 140, 900
   if u < 0.8 then hole_card(g, h) end
 end
 
@@ -1273,19 +1277,56 @@ local function play_state(h, ht)
   return pos, flying, holed, msg
 end
 
+-- The hole as a plan in the top right corner, both balls on it: where each
+-- player is, all the time (the owner, 2026-09-24: "нет целостной картины").
+local MAP_X, MAP_Y, MAP_W, MAP_H = W - 40, 9, 39, 18
+local function minimap(h, pos, flying, holed)
+  local sx, sy = MAP_W / 128, MAP_H / 48
+  local function at(x, y) return MAP_X + x * sx, MAP_Y + (y - 8) * sy end
+  R(MAP_X - 1, MAP_Y - 1, MAP_W + 2, MAP_H + 2, 10, 24, 12)
+  for i = 1, #h.pts - 1 do                 -- the line of play
+    local ax, ay = at(h.pts[i][1], h.pts[i][2])
+    local bx, by = at(h.pts[i + 1][1], h.pts[i + 1][2])
+    px.line(floor(ax), floor(ay), floor(bx), floor(by), 70, 150, 60)
+  end
+  for i = 1, #h.water, 3 do                -- water, sampled
+    local w = h.water[i]
+    local x, y = at(w[1], w[2]); P(x, y, 50, 110, 210)
+  end
+  local gx, gy = at(h.green[1], h.green[2])
+  R(gx - 1, gy - 1, 3, 3, 120, 220, 100)
+  P(gx, gy - 2, 240, 40, 40)                -- the flag
+  for pl = 1, 2 do
+    if not holed[pl] then
+      local f, off = pos[pl].f, pos[pl].off
+      if flying and flying.pl == pl then
+        local a, b = flying.from, flying.to
+        f = (a.f or 0) + ((b.f or 0) - (a.f or 0)) * flying.u
+        off = (a.off or 0) + ((b.off or 0) - (a.off or 0)) * flying.u
+      end
+      local x, y = along(h, f, off)
+      x, y = at(x, y)
+      local c = COL[pl]
+      R(x - 1, y - 1, 3, 3, c[1], c[2], c[3])
+      P(x, y, 255, 255, 255)
+    end
+  end
+end
+
 local function scene_play(g, h, st, ht)
   local w = world_of(h)
   local L = w.len
   local u = (ht - TEE_END) / (PLAY_END - TEE_END)
-  local cam = {f = 100}
-  local mx, my = to_world(h, along(h, 0.62, 0))
+  local cam = {f = 96}
+  local mx, my = to_world(h, along(h, 0.6, 0))
   if h.n % 2 == 1 then                    -- from behind, high, as the clubs' plans look
-    cam.x, cam.y, cam.z = -0.12 * L + u * 0.1 * L, -0.06 * L, 0.2 * L + 26
+    cam.x, cam.y, cam.z = -0.06 * L + u * 0.08 * L, -0.05 * L, 0.22 * L + 30
   else                                    -- from the side, over the left of the hole
-    cam.x, cam.y, cam.z = 0.3 * L + u * 0.12 * L, -0.4 * L - 28, 0.2 * L + 22
+    cam.x, cam.y, cam.z = 0.34 * L + u * 0.1 * L, -0.36 * L - 24, 0.22 * L + 26
   end
-  look_at(cam, mx, my, 0, 38)
+  look_at(cam, mx, my, 0, 34)
   local pos, flying, holed, msg = play_state(h, ht)
+  TP.fog0, TP.fogr = 260, 1500            -- seen from above: the hole clear to the green
   render(cam, st, h, function()
     for pl = 1, 2 do
       if not holed[pl] and not (flying and flying.pl == pl) then
@@ -1305,6 +1346,8 @@ local function scene_play(g, h, st, ht)
       draw_ball3d(cam, mix(ax, bx, q), mix(ay, by, q), putt and 0 or 4 * apex * q * (1 - q), flying.pl, true)
     end
   end)
+  TP.fog0, TP.fogr = 140, 900
+  minimap(h, pos, flying, holed)
   if msg and ht < msg.until_t then label(NAMES[msg.pl] .. ": " .. msg.text, msg.pl) end
 end
 
@@ -1483,14 +1526,37 @@ local function draw_result(g, t)
 end
 
 -- ---------------------------------------------------------------- draw
--- The grid of the next hole is made while this one plays, a slice a frame.
+-- The grid of the next hole is made while this one plays, a slice every frame,
+-- as big as the time left needs. The panel does not always run at 15 fps (9 to
+-- 13 was measured), so the slice is sized from the frames actually coming:
+-- the cells still to make, over the time until the hole starts, at the frame
+-- time measured. Sized for 15 fps it fell behind at 9, and the page showed a
+-- plain field in its place (the owner, 2026-09-24: "пустой экран").
 local jobs, grids = {}, {}
+local last_t, frame_dt = nil, 1 / 12
 
-local function work()
+local function cells_left(n)
+  local gr = grids[n]
+  if gr and gr.done then return 0 end
+  if not gr then return nil end
+  return (gr.ny - gr.j) * gr.nx
+end
+
+local function work(t)
   local j = jobs[1]
   if not j then return end
-  if not grids[j.n] then grids[j.n] = grid_new(j.h, j.st) end
-  if grid_step(grids[j.n]) then table.remove(jobs, 1) end
+  for _, jj in ipairs(jobs) do             -- every queued grid exists, so its size is known
+    if not grids[jj.n] then grids[jj.n] = grid_new(jj.h, jj.st) end
+  end
+  -- the most a frame must do for every queued hole to be ready when it starts
+  local need, acc = 150, 0
+  for _, jj in ipairs(jobs) do
+    acc = acc + (cells_left(jj.n) or 0)
+    local by = INTRO + (jj.n - 1) * HOLE_S          -- when hole n comes on screen
+    local frames = (by - t) / frame_dt - 2
+    need = max(need, (frames >= 1) and acc / frames or 2500)
+  end
+  if grid_step(grids[j.n], min(2500, floor(need) + 1)) then table.remove(jobs, 1) end
 end
 
 local function ready(n) return grids[n] and grids[n].done end
@@ -1528,9 +1594,13 @@ function draw()
     end
   end
   table.sort(jobs, function(a, b) return a.n < b.n end)
-  -- the tee shot is the dearest scene to draw; the grid waits for the rest
-  local ht0 = (hn >= 1) and ((t - INTRO) - (hn - 1) * HOLE_S) or 0
-  if not (hn >= 1 and ht0 >= FLY_END and ht0 < TEE_END) then work() end
+  -- the frame time, from the clock the round runs on
+  if last_t then
+    local dt = t - last_t
+    if dt > 0 and dt < 1 then frame_dt = frame_dt * 0.85 + dt * 0.15 end
+  end
+  last_t = t
+  work(t)
 
   if t < INTRO then
     grid = grids[1]
