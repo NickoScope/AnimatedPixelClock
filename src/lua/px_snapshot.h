@@ -20,7 +20,9 @@
 
 #include <string.h>
 
-static char pxs_key;   // its address is the registry key
+// Its address is the registry key. Include this header in one file of a
+// program only: a second file would have its own key, and its own snapshot.
+static char pxs_key;
 
 static unsigned char *pxs_buffer(lua_State *L, size_t bytes, int create) {
   lua_rawgetp(L, LUA_REGISTRYINDEX, &pxs_key);

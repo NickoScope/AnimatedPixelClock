@@ -314,8 +314,18 @@ static int l_terrain(lua_State *L) {
   return 0;
 }
 
-static int l_save(lua_State *L)    { return px_save_lua(L, canvasOf(L)->rgb, LUA_PX_BYTES); }
-static int l_restore(lua_State *L) { return px_restore_lua(L, canvasOf(L)->rgb, LUA_PX_BYTES); }
+// A 24 KB copy is charged as 1000 instructions, the way px.terrain charges its
+// samples: a loop of them then meets the budget and the deadline like any other.
+static int l_save(lua_State *L) {
+  px_save_lua(L, canvasOf(L)->rgb, LUA_PX_BYTES);
+  LuaFx::charge(L, 1000);
+  return 0;
+}
+static int l_restore(lua_State *L) {
+  const int n = px_restore_lua(L, canvasOf(L)->rgb, LUA_PX_BYTES);
+  LuaFx::charge(L, 1000);
+  return n;
+}
 
 static const luaL_Reg kPxLib[] = {
   {"get", l_get}, {"blend", l_blend}, {"glow", l_glow},
