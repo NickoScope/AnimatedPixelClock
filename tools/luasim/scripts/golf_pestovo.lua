@@ -1199,8 +1199,9 @@ local function scene_fly(g, h, st, u)
   local tx, ty = w.cup[1], w.cup[2]
   look_at(cam, mix(0.6 * L, tx, e), mix(0, ty, e), 0, 40)
   TP.fog0, TP.fogr = 260, 1500            -- from high up the haze starts farther
+  TP.colw = 2                             -- the one scene drawn whole every frame, and fast
   render(cam, st, h)
-  TP.fog0, TP.fogr = 140, 900
+  TP.fog0, TP.fogr, TP.colw = 140, 900, 1
   if u < 0.8 then hole_card(g, h) end
 end
 
