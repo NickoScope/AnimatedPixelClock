@@ -80,6 +80,13 @@ public:
   // The Watch runs its persistent state the same way. Takes effect at open().
   void setGenerationalGc(bool on) { generationalGc_ = on; }
 
+  // Work a native px call did, charged to the running load or draw as if it
+  // were that many instructions, and the deadline checked there and then: a C
+  // loop never reaches the count hook, so without this a script calling
+  // px.terrain in a loop could hold its core until the watchdog (the audit of
+  // 2026-09-24). Raises the same Lua errors as the hook.
+  static void charge(lua_State *L, uint32_t instructions);
+
   // Allocator and hook are C callbacks; they reach the object through these.
   static void *alloc(void *ud, void *ptr, size_t osize, size_t nsize);
   static void  hook(lua_State *L, lua_Debug *ar);

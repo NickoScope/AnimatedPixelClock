@@ -16,7 +16,9 @@ import json, pathlib, re, sys
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 GAL = ROOT / "gallery"
 OUT = GAL / "index.json"
-MAX_BYTES = 51200   # LUA_USER_SRC_MAX, src/lua/lua_store.h
+# LUA_USER_SRC_MAX from src/lua/lua_store.h itself, so the two cannot drift
+_m = re.search(r"#define LUA_USER_SRC_MAX \((\d+)U \* 1024U\)", (ROOT / "src/lua/lua_store.h").read_text())
+MAX_BYTES = int(_m.group(1)) * 1024
 
 
 def build(gal=None):

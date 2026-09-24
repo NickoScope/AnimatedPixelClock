@@ -14,7 +14,7 @@ or through the MCP server, which is the same thing an agent would do:
 effect_upload  name=starship  from_gallery=true
 ```
 
-A panel holds **36** effects at once, up to 50 KB each. Since firmware 2.6.0
+A panel holds **36** effects at once, each as big as it needs (up to 512 KB since firmware 2.6.3). Since firmware 2.6.0
 none are compiled in: this gallery is where every effect comes from, the
 former built-ins included.
 `tools/agent/gallery.py list` says what is here; `panel_effects` says what is on
@@ -64,7 +64,7 @@ water is the tell of a drawn tank. A corydoras shuffles along the sand on its
 pectorals, a snail crosses at a pixel every two seconds, and every fish in the
 near half of the tank has a shadow under it.
 
-*31.4 KB of the 50 KB a script may be · ~48,000 instructions a frame · 12-15 fps*
+*31.4 KB · ~48,000 instructions a frame · 12-15 fps*
 
 ---
 

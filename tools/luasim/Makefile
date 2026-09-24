@@ -3,7 +3,7 @@ LUA_DIR := ../../src/lua/vendor/lua
 LUA_SRC := $(filter-out $(LUA_DIR)/lua.c $(LUA_DIR)/luac.c, $(wildcard $(LUA_DIR)/*.c))
 CFLAGS  := -O2 -I$(LUA_DIR) -Wall -Wno-unused-function
 
-luasim: luasim.c font_picopixel.inc ../../src/fonts/utf8_next.h ../../src/fonts/classic_font.h $(LUA_SRC)
+luasim: luasim.c font_picopixel.inc ../../src/fonts/utf8_next.h ../../src/fonts/classic_font.h ../../src/lua/px_terrain.h $(LUA_SRC)
 	$(CC) $(CFLAGS) -o $@ luasim.c $(LUA_SRC) -lm
 
 font_picopixel.inc: ../../src/fonts/picopixel_fb.h gen_font.py

@@ -75,7 +75,7 @@
 //
 // What a slot does NOT cost: a script's buffer (allocated at the file's real
 // size when it loads, and freed when the effect closes) or disk (LittleFS had
-// 23 MB free with nine scripts on it; 36 at the 50 KB ceiling is 1.8 MB).
+// 23 MB free with nine scripts on it; a script takes only its own size there).
 #define LUA_USER_MAX 36
 
 // How big a script may be: as big as it needs, the way a filesystem works
@@ -94,6 +94,10 @@
 //     PSRAM has 15.6 MB free; the Lua heap is capped at 4 MB separately.
 //   * LUA_STORE_FS_RESERVE, 512 KB of LittleFS, stays free for everything else
 //     that lives there: settings, animations, the upload's temporary file.
+//
+// Two consequences worth knowing. A replacement is written beside the old
+// file and renamed over it, so replacing a big script needs room for both at
+// once. And with 512 KB or less free, no upload is taken at all.
 //
 // Nesting depth, not length, is what bounds the parser's C stack, and that is
 // LUA_USER_DEPTH_MAX and LUAI_MAXCCALLS below.
@@ -115,6 +119,10 @@ size_t      luaStoreFreeBytes();
 // How big an upload may be now: the filesystem's free room less the reserve,
 // never over LUA_USER_SRC_MAX. 0 when the filesystem is full.
 size_t      luaStoreRoomBytes();
+// After luaStoreWrite refused: was it the size (true) or the filesystem, and
+// the room the upload began with.
+bool        luaStoreUploadTooBig();
+uint32_t    luaStoreUploadRoom();
 
 uint8_t     luaStoreCount();
 

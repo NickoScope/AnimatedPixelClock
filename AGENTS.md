@@ -219,10 +219,14 @@ curl -X POST -H 'Content-Type: application/json' -d '{"show":7}' "http://$PANEL/
 curl -X POST -H 'Content-Type: application/json' -d '{"delete":"my_effect"}' "http://$PANEL/api/lua"
 ```
 
-`GET /api/lua` reports `uploaded{count,slots,builtIn,maxBytes,maxDepth,fsFree,scripts}`
+`GET /api/lua` reports `uploaded{count,slots,builtIn,maxBytes,ceiling,maxDepth,fsFree,scripts}`
+(`maxBytes` is how big an upload may be right now, `ceiling` the most it ever may)
 and `stackFreeMin`.
 
-**What the panel refuses, and why it is not fussiness.** Over 50 KB; nothing
+**What the panel refuses, and why it is not fussiness.** More than the
+filesystem has room for - since 2.6.3 a script may be as big as it needs, like
+a file: the room is LittleFS's free space less 512 KB kept for everything else,
+under a 512 KB ceiling set by parse time (`maxBytes` says how much now); nothing
 called `draw`; blocks and brackets nested deeper than 16. That last one is the
 interesting one: the effect task has a 12 KB stack and Lua's parser recurses
 with the source's nesting at up to 384 bytes a level, so depth is the one thing
@@ -811,7 +815,7 @@ luasim can be refused by the panel. The hard limits (`kLuaFxPanelLimits`,
 | a frame, `draw()` | **500 ms** and 2,000,000 instructions | the frame is dropped; 3 in a row stop the effect |
 | the load, the chunk body | 3,000 ms and 20,000,000 instructions | it does not open |
 | Lua heap | 4 MB | error |
-| source | 51,200 B, nesting depth 16 | refused at upload |
+| source | the filesystem's room (`maxBytes`, at most 512 KB), nesting depth 16 | refused at upload |
 
 **The upload is the test.** Since 2.5.9 the panel runs every upload once, off
 screen, before it keeps it: the load and 4 frames. More than 1 of the 4 frames
@@ -837,6 +841,7 @@ includes the Lua loop around the call):
 | `px.line`, 128 px | 0.04 ms | |
 | `px.text`, 5 letters | 0.02 ms | |
 | **`px.glow`, r 10** | **5.6 ms** | 100 of them: over 500 ms |
+| `px.terrain` (2.6.3, native) | not measured on the panel yet | a whole 3D view in one call; each ground sample is charged to the frame's budget as one instruction |
 
 What follows from that:
 - Never do a per-pixel pass with `blend` or `glow` every frame.
@@ -1020,7 +1025,7 @@ written, not after it fails on the panel. Section 7 has the detail.
   as a richer palette - the panel resolves far less colour than a file can
   carry, and the arithmetic above says why. It buys duration and motion: more
   phases, more states, more things that move. A stored full-screen frame at 256
-  colours is 16 KB, so 50 KB is three frames and useless as animation; but
+  colours is 16 KB, so even 120 KB is seven frames and useless as animation; but
   `aquarium.lua` is 24 KB of *code* and animates for ever at 15 fps. Shape and
   movement read at 2 mm pitch. Extra colours do not. `effect_api` carries this
   rule with its derivation.

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "maxBytes": 51200,
+  "maxBytes": 524288,
   "effects": [
     {
       "stem": "aquarium",

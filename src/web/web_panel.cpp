@@ -1064,6 +1064,9 @@ static void handleLua() {
 // are slow, loop() stays inside handleClient for the whole transfer, and the
 // task watchdog has to be fed per chunk or the board reboots mid-upload.
 static const char *s_luaUpErr = nullptr;
+// The one buffer every upload message is written into: the handler runs on
+// loop()'s task only, and one upload's messages never overlap.
+static char s_luaUpMsg[160];
 static String      s_luaUpName;
 // A POST with no file part never reaches the chunk handler at all, and without
 // this the done handler would answer success with the name and index left over
@@ -1106,33 +1109,30 @@ static void handleLuaUploadChunk() {
     for (uint8_t j = 0; j < luaEffectCount() && !replacing; j++) {
       luaEffectName(j, other, sizeof(other));
       if (!strcmp(other, shown)) {
-        static char kept[96];
-        snprintf(kept, sizeof(kept), "an effect called %s is already on the panel: pick another name", shown);
-        s_luaUpErr = kept;
+        snprintf(s_luaUpMsg, sizeof(s_luaUpMsg), "an effect called %s is already on the panel: pick another name", shown);
+        s_luaUpErr = s_luaUpMsg;
         return;
       }
     }
     if (!luaStoreBegin(s_luaUpName.c_str(), err, sizeof(err))) {
-      static char kept[160];
-      strncpy(kept, err, sizeof(kept) - 1);
-      kept[sizeof(kept) - 1] = 0;
-      s_luaUpErr = kept;
+      snprintf(s_luaUpMsg, sizeof(s_luaUpMsg), "%s", err);
+      s_luaUpErr = s_luaUpMsg;
     }
   } else if (upload.status == UPLOAD_FILE_WRITE) {
     if (s_luaUpErr) return;
     if (!luaStoreWrite(upload.buf, upload.currentSize)) {
-      static char big[96];
-      snprintf(big, sizeof(big), "the script does not fit: over the %u B the filesystem has room for",
-               (unsigned)luaStoreRoomBytes());
-      s_luaUpErr = big;
+      if (luaStoreUploadTooBig())
+        snprintf(s_luaUpMsg, sizeof(s_luaUpMsg), "the script does not fit: over the %u B the filesystem had room for",
+                 (unsigned)luaStoreUploadRoom());
+      else
+        snprintf(s_luaUpMsg, sizeof(s_luaUpMsg), "the filesystem would not take the write");
+      s_luaUpErr = s_luaUpMsg;
     }
   } else if (upload.status == UPLOAD_FILE_END) {
     if (s_luaUpErr) { luaStoreAbort(); return; }
     if (!luaStoreFinish(err, sizeof(err))) {
-      static char kept[160];
-      strncpy(kept, err, sizeof(kept) - 1);
-      kept[sizeof(kept) - 1] = 0;
-      s_luaUpErr = kept;
+      snprintf(s_luaUpMsg, sizeof(s_luaUpMsg), "%s", err);
+      s_luaUpErr = s_luaUpMsg;
     } else if (luaEffectCurrent() >= (int16_t)(luaEffectCount() - luaStoreCount())) {
       // An uploaded script is on screen, and the file under one of them has
       // just changed. Reopen it: without this, replacing the script that is

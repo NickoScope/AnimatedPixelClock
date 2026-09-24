@@ -122,7 +122,7 @@ claude mcp add ledmatrix --scope user --env LEDMATRIX_PANEL=AA:BB:CC:00:11:22 --
 
 **Putting one on a panel, with no flash at all**
 - `effect_upload` - a script onto a running panel over the air, into one of
-  36 slots, up to 50 KB each (none compiled in since 2.6.0). `from_gallery=true` takes it straight out of
+  36 slots, each script as big as it needs - the filesystem's room, up to 512 KB since 2.6.3 (none compiled in since 2.6.0). `from_gallery=true` takes it straight out of
   `gallery/`. Since 2.5.7 a name that would read as an effect already on the
   panel (a built-in's, or another case of the same stem) is refused; the same
   stem replaces. Since 2.5.9 the panel also **runs it before it keeps it**: the

@@ -89,6 +89,16 @@ void LuaFx::hook(lua_State *L, lua_Debug *ar) {
   }
 }
 
+void LuaFx::charge(lua_State *L, uint32_t instructions) {
+  LuaFx *fx = *static_cast<LuaFx **>(lua_getextraspace(L));
+  if (!fx) return;
+  fx->used_ += instructions;
+  if (fx->used_ >= fx->budget_)
+    luaL_error(L, "over the instruction budget (%d)", (int)fx->budget_);
+  if (nowMs() - fx->startMs_ >= fx->deadlineMs_)
+    luaL_error(L, "over the time budget (%d ms)", (int)fx->deadlineMs_);
+}
+
 void LuaFx::arm(uint32_t instructions, uint32_t ms) {
   budget_ = instructions;
   used_ = 0;

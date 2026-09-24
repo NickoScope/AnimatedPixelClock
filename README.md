@@ -59,8 +59,8 @@ the portal's Clock page, and, on request, as two Home Assistant sensors
 ### Lua effects over WiFi
 
 A new screen is a Lua script, sent to the running panel in about a second: no
-build, no flash, no reboot. The panel keeps **36** effects of up to **50 KB**
-each; since 2.6.0 none are compiled into the firmware, so a freshly flashed
+build, no flash, no reboot. The panel keeps **36** effects, each as big as it
+needs (the filesystem's room, up to 512 KB since 2.6.3); since 2.6.0 none are compiled into the firmware, so a freshly flashed
 panel starts with none and you add them from the portal's "Add from the
 gallery". They survive reboots and OTA updates.
 

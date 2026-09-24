@@ -263,7 +263,7 @@ static int l_glow(lua_State *L) {
 }
 
 #include "../../src/lua/px_terrain.h"   /* px.terrain, shared with the firmware */
-static int l_terrain(lua_State *L) { return px_terrain_lua(L, fb, W, H); }
+static int l_terrain(lua_State *L) { unsigned long work; return px_terrain_lua(L, fb, W, H, &work); }
 
 static const luaL_Reg px_lib[] = {
   {"get", l_get}, {"blend", l_blend}, {"glow", l_glow},

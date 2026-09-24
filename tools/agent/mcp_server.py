@@ -26,7 +26,7 @@ distinguishes "changed" from "was already so".
 **A new screen no longer needs a flash.** effect_upload sends a Lua script to a
 running panel over the air, where it is stored on LittleFS and shown beside the
 compiled-in ones. The loop is write, preview, measure, upload, watch. Twelve
-uploaded scripts of up to 50 KB fit at once.
+uploaded scripts fit at once, each as big as it needs (the filesystem's room, up to 512 KB).
 
 **Firmware changes only one way: panel_update.** A published, checksummed
 release of this fork, three confirmations from the person in front of the panel
@@ -1322,7 +1322,7 @@ async def effect_api() -> str:
             "what to spend it on instead": [
                 "MOTION, which is code and costs almost nothing: aquarium.lua is "
                 "24 KB of code and animates for ever at 15 fps. A stored "
-                "full-screen frame at 256 colours is 16 KB, so 50 KB is three "
+                "full-screen frame at 256 colours is 16 KB, so even 120 KB is seven "
                 "frames - useless as animation. Procedural motion is the only kind "
                 "that scales here.",
                 "LONGER SEQUENCES: more phases, more states, a story that does not "
@@ -1335,9 +1335,10 @@ async def effect_api() -> str:
             ],
         },
         "budgets": {
-            "sourceBytes": "50 KB a script, and twelve uploaded scripts at once "
-                           "beside the seven compiled in. Both were raised from "
-                           "24 KB and four on 2026-09-22; `panel_effects` reports "
+            "sourceBytes": "As big as a script needs since 2.6.3: the filesystem's "
+                           "room less 512 KB kept, up to a 512 KB ceiling (maxBytes "
+                           "and ceiling in /api/lua); 36 uploaded scripts at once, "
+                           "none compiled in. `panel_effects` reports "
                            "what THIS panel's firmware says, and that reading beats "
                            "this line if they ever disagree.",
             "nestingDepth": "16 levels of brackets and blocks, which is what the "
@@ -1365,8 +1366,8 @@ async def effect_api() -> str:
                                     "colours. A photograph through the Lua path "
                                     "gets 256, and at 128x64 that is the "
                                     "difference between a picture and a poster.",
-            "how it fits": "8,192 pixels as full RGB would be 49,152 characters "
-                           "against a 50 KB limit. Quantised to 256 with "
+            "how it fits": "8,192 pixels as full RGB would be 49,152 characters, "
+                           "and the parse and the heap pay for every one. Quantised to 256 with "
                            "Floyd-Steinberg it is two base64 characters a pixel "
                            "= 20 KB, which fits with room for the code.",
             "do NOT run-length encode it": "It was tried. Dithering is what "
@@ -1795,7 +1796,8 @@ async def effect_upload(args: UploadIn) -> str:
     is why it exists: write, preview, measure, upload, watch it run.
 
     The panel takes it seriously before it accepts it. A script is refused if it
-    is over 50 KB, if nothing in it is called draw, or if its blocks and
+    is bigger than the filesystem has room for (maxBytes in /api/lua, at most
+    512 KB since 2.6.3), if nothing in it is called draw, or if its blocks and
     brackets nest deeper than 16. That is not tidiness: the effect task has a
     12 KB stack and Lua's parser recurses with the source's nesting, at up to
     384 bytes a level. Blocks count as well as brackets, because the expensive
@@ -1808,7 +1810,7 @@ async def effect_upload(args: UploadIn) -> str:
     can reach the limit. A script that needs to catch its own errors cannot;
     an effect is a draw loop and its failures are caught around draw() anyway.
 
-    Four uploaded scripts fit. Names are per-slot: uploading over an existing
+    36 uploaded scripts fit. Names are per-slot: uploading over an existing
     name replaces it and does not need a free slot.
 
     **Run `effect_check` first.** The panel enforces size and depth but nothing

@@ -34,6 +34,7 @@ extern "C" {
 #include "../fonts/pxfb_text.h"   // Picopixel, Latin and Cyrillic
 #include "../fonts/sys_text.h"    // the system font: the classic 5x7 too
 #include "px_terrain.h"            // px.terrain, shared with luasim
+#include "lua_fx.h"                // LuaFx::charge
 
 #define W LUA_PX_W
 #define H LUA_PX_H
@@ -302,7 +303,15 @@ static int l_glow(lua_State *L) {
   return 0;
 }
 
-static int l_terrain(lua_State *L) { return px_terrain_lua(L, canvasOf(L)->rgb, W, H); }
+// A sample of the ground costs about what a Lua instruction does on the panel
+// (100-odd cycles), so each one is charged as one: the frame's instruction
+// budget and its deadline see the native work too.
+static int l_terrain(lua_State *L) {
+  unsigned long work = 0;
+  px_terrain_lua(L, canvasOf(L)->rgb, W, H, &work);
+  LuaFx::charge(L, (uint32_t)work);
+  return 0;
+}
 
 static const luaL_Reg kPxLib[] = {
   {"get", l_get}, {"blend", l_blend}, {"glow", l_glow},
