@@ -34,6 +34,8 @@
 //     sun = {x,y,z},                          -- towards the sun, any length
 //     colw = 1, step = 1.028, zfar = 900, grass = 60, frame = 0,
 //   }
+// Numbers must be numbers: a number given as a string ("1.03") is ignored and
+// the default used. step is held to 1.02..1.5, zfar to 2 km, colw to 1..8.
 // ============================================================
 #ifndef PX_TERRAIN_H
 #define PX_TERRAIN_H
@@ -104,9 +106,10 @@ static const unsigned char *pxt_str(lua_State *L, int t, const char *k, size_t *
   return NULL;
 }
 
-// The most steps a column may take. With the step at its lowest (1.01) from
-// 0.6 m this reaches past 2 km; the golf's 1.03 needs about 230 to 900 m.
-// So one call is at most 128 x 320 samples, whatever the arguments say.
+// The most steps a column may take. A step multiplies the distance, so 320
+// steps reach about 1.5 km at the lowest step allowed (1.02) and the full
+// 2 km from 1.021 up; the golf's 1.03 needs about 210 to 900 m. One call is
+// thus at most 128 x 320 samples, whatever the arguments say.
 #define PX_TERRAIN_MAX_STEPS 320
 
 // Returns the number of samples taken in *work (the firmware charges them to
@@ -163,7 +166,7 @@ static int px_terrain_lua(lua_State *L, unsigned char *fb, int fbw, int fbh, uns
   const float fogr = pxt_clamp(pxt_num(L, T, "fogr", 900), 1, 1e6f);
   const float farh = pxt_clamp(pxt_num(L, T, "farh", 4), -1e4f, 1e4f);
   const int colw = (int)pxt_clamp(pxt_num(L, T, "colw", 1), 1, 8);
-  const float step = pxt_clamp(pxt_num(L, T, "step", 1.028f), 1.01f, 1.5f);
+  const float step = pxt_clamp(pxt_num(L, T, "step", 1.028f), 1.02f, 1.5f);
   const float zfar = pxt_clamp(pxt_num(L, T, "zfar", 900), 1, 2000);
   const float grass = pxt_clamp(pxt_num(L, T, "grass", 60), 0, 2000);
   const int frame = (int)pxt_clamp(pxt_num(L, T, "frame", 0), 0, 1e6f);
