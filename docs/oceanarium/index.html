@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="Живой океанариум на светодиодной панели 128×64: как он устроен, что в нём живёт и сколько это считает.">
+<title>Океанариум на светодиодах</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800&family=Golos+Text:wght@400;500;600&family=Press+Start+2P&display=swap">
+<style>
+  /* One deliberate world: the aquarium room with the lights down. */
+  :root {
+    color-scheme: dark;
+    --abyss: #041421;
+    --deep: #0a2638;
+    --deep-2: #0e3149;
+    --glass: #8fe3ea;
+    --sand: #e6cd98;
+    --coral: #ff8a70;
+    --text: #e4f1f4;
+    --muted: #93b4c3;
+    --rule: rgba(143, 227, 234, 0.16);
+    --bezel: #01070c;
+    --display: "Unbounded", "Arial Black", system-ui, sans-serif;
+    --body: "Golos Text", "Segoe UI", system-ui, sans-serif;
+    --led: "Press Start 2P", ui-monospace, "Courier New", monospace;
+  }
+  html { background: var(--abyss); }
+  body {
+    background: var(--abyss);
+    background-image:
+      radial-gradient(120% 60% at 50% -10%, rgba(80, 180, 210, 0.22), transparent 60%),
+      radial-gradient(80% 50% at 50% 110%, rgba(230, 205, 152, 0.07), transparent 70%);
+    color: var(--text);
+    font: 400 17px/1.62 var(--body);
+    padding-inline: 18px;
+    padding-block: 0 48px;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; }
+  .col { max-width: 660px; }
+
+  header { padding-block: 44px 20px; }
+  .eyebrow {
+    font: 400 10px/1.8 var(--led);
+    color: var(--glass);
+    letter-spacing: 0.06em;
+  }
+  h1 {
+    font: 800 clamp(40px, 9vw, 92px)/0.98 var(--display);
+    letter-spacing: -0.02em;
+    margin: 14px 0 18px;
+    text-wrap: balance;
+  }
+  h1 span { color: var(--glass); }
+  .lede { font-size: clamp(18px, 2.3vw, 21px); color: var(--text); max-width: 640px; margin: 0; }
+
+  /* The panel: pixels kept as pixels, in a black bezel. */
+  .panel {
+    background: var(--bezel);
+    border-radius: 10px;
+    padding: clamp(8px, 1.6vw, 16px);
+    box-shadow: 0 0 0 1px rgba(143, 227, 234, 0.12), 0 30px 80px -30px rgba(40, 160, 200, 0.45);
+  }
+  .panel img {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    aspect-ratio: 2 / 1;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    border-radius: 2px;
+  }
+  .hero { margin-block: 26px 10px; }
+  .caption { font-size: 14px; color: var(--muted); margin-top: 10px; }
+  .caption b { font: 400 9px/1 var(--led); color: var(--sand); margin-right: 8px; }
+
+  section { padding-block: 44px 8px; border-top: 1px solid var(--rule); margin-top: 40px; }
+  h2 {
+    font: 600 clamp(24px, 3.6vw, 34px)/1.15 var(--display);
+    margin: 0 0 16px;
+    text-wrap: balance;
+  }
+  h3 { font: 600 18px/1.3 var(--display); margin: 0 0 8px; color: var(--sand); }
+  p { margin: 0 0 14px; }
+  .muted { color: var(--muted); }
+
+  /* A day on the panel: three moments side by side. */
+  .trio { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-top: 22px; }
+  .trio .panel { padding: 7px; border-radius: 8px; }
+  @media (max-width: 720px) { .trio { grid-template-columns: 1fr; } }
+
+  /* How a fish is born: a real sequence, so it is numbered. */
+  .steps { list-style: none; padding: 0; margin: 22px 0 0; display: grid; gap: 14px; counter-reset: s; }
+  .steps li {
+    counter-increment: s;
+    display: grid;
+    grid-template-columns: 46px 1fr;
+    gap: 14px;
+    align-items: start;
+  }
+  .steps li::before {
+    content: counter(s);
+    font: 400 16px/46px var(--led);
+    text-align: center;
+    color: var(--abyss);
+    background: var(--glass);
+    border-radius: 6px;
+    height: 46px;
+  }
+  .steps b { color: var(--text); }
+
+  /* The numbers are the point of this part, so they get the LED face. */
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    gap: 1px;
+    background: var(--rule);
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    overflow: hidden;
+    margin-top: 22px;
+  }
+  .stat { background: var(--deep); padding: 20px 18px 18px; }
+  .stat .n {
+    font: 400 clamp(20px, 3vw, 26px)/1.25 var(--led);
+    color: var(--sand);
+    font-variant-numeric: tabular-nums;
+    display: block;
+    margin-bottom: 10px;
+    word-break: break-word;
+  }
+  .stat .n small { font-size: 0.55em; color: var(--glass); }
+  .stat .l { font-size: 15px; color: var(--muted); line-height: 1.45; }
+  .stat .l b { color: var(--text); font-weight: 500; }
+
+  .who { columns: 2 260px; column-gap: 32px; margin-top: 18px; }
+  .who div { break-inside: avoid; margin-bottom: 16px; }
+  .who h3 { font-size: 15px; margin-bottom: 4px; }
+  .who p { font-size: 15.5px; color: var(--muted); margin: 0; }
+
+  .presses { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-top: 20px; }
+  .press { background: var(--deep); border: 1px solid var(--rule); border-radius: 10px; padding: 16px; }
+  .dots { display: flex; gap: 7px; margin-bottom: 12px; }
+  .dots i { width: 14px; height: 14px; border-radius: 50%; background: var(--coral); display: block; box-shadow: 0 0 10px rgba(255, 138, 112, 0.6); }
+  .press p { margin: 0; font-size: 15.5px; }
+  @media (max-width: 640px) { .presses { grid-template-columns: 1fr; } }
+
+  .sheet { margin-top: 22px; }
+  .sheet img { image-rendering: pixelated; width: 100%; max-width: 100%; border-radius: 6px; display: block; }
+
+  footer { margin-top: 56px; padding-top: 22px; border-top: 1px solid var(--rule); color: var(--muted); font-size: 14px; }
+  footer .led { font: 400 9px/1.8 var(--led); color: var(--glass); }
+
+</style>
+<style>
+  .lang { display: flex; justify-content: flex-end; gap: 14px; padding-top: 18px; font: 400 9px/1.8 var(--led); }
+  .lang a, .lang span { color: var(--muted); text-decoration: none; }
+  .lang a:hover, .lang a:focus-visible { color: var(--glass); }
+  .lang span { color: var(--glass); }
+  a { color: var(--glass); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav class="lang" aria-label="Язык"><span>РУССКИЙ</span><a href="en.html" hreflang="en">ENGLISH</a></nav>
+  <header>
+    <div class="eyebrow">128 × 64 СВЕТОДИОДА · ESP32-S3 · LUA</div>
+    <h1>Океан<span>ариум</span></h1>
+    <p class="lede">Окно в большой океанариум размером с книжную полку. Больше сотни видов морских обитателей живут там своей жизнью: приплывают и уплывают, прячутся, охотятся, спят. Свет в воде меняется вместе с настоящим временем суток.</p>
+  </header>
+
+  <div class="panel hero">
+    <img src="day.gif" alt="Океанариум днём: косяки жёлтых рыб, акула в толще воды, риф с кораллами и солнечные лучи" width="128" height="64">
+  </div>
+  <p class="caption"><b>12:00</b>Полдень на панели, в настоящем темпе, 15 кадров в секунду. Ни одна рыба здесь не следует сценарию.</p>
+
+  <section>
+    <div class="col">
+      <h2>Каждый сам по себе</h2>
+      <p>Это не мультфильм, который крутится по кругу. У каждого жителя своя маленькая программа. Она решает, куда плыть дальше, в какой части аквариума держаться, когда пора уходить. Рифовые рыбы кружат у кораллов, скаты и тунцы идут в открытой воде, крабы и омары бродят по песку.</p>
+      <p>Когда через аквариум проходит акула, мелочь бросается в рифы, а шар из сардин расступается вокруг неё. Крупные гости появляются из синей глубины сначала тенью и обретают цвет, подплывая ближе: вода на расстоянии — это дымка.</p>
+      <p>Если в комнате есть человек, радар присутствия это видит. Самые любопытные (групер, рыба-наполеон, рыбы-летучие мыши, черепаха, иглобрюх, осьминог) подплывают к стеклу туда, где вы стоите, и поворачиваются к вам. Резко махнёте рукой — мелкие рыбы спрячутся, иглобрюх раздуется шаром, а садовые угри втянутся в песок.</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="col">
+      <h2>Сутки в аквариуме</h2>
+      <p>Свет идёт по часам панели. В полдень вода голубая, сквозь неё бьют солнечные лучи, по песку бегут блики. К вечеру вода становится фиолетовой. Ночью всё синее и тёмное, светят только луна и медузы, а там, где метнулась рыба, вспыхивает планктон. Выходят ночные жители: белопёрая акула, рыбы-солдаты, омары, осьминог.</p>
+    </div>
+    <div class="trio">
+      <figure style="margin:0">
+        <div class="panel"><img src="day.gif" alt="День" width="128" height="64"></div>
+        <figcaption class="caption"><b>ДЕНЬ</b>Солнечные лучи и блики на песке</figcaption>
+      </figure>
+      <figure style="margin:0">
+        <div class="panel"><img src="lamp.gif" alt="Вечер с подсветкой" width="128" height="64"></div>
+        <figcaption class="caption"><b>ВЕЧЕР</b>Включена подсветка аквариума</figcaption>
+      </figure>
+      <figure style="margin:0">
+        <div class="panel"><img src="night.gif" alt="Ночь: светящиеся медузы и искры планктона" width="128" height="64"></div>
+        <figcaption class="caption"><b>НОЧЬ</b>Светятся медузы, искрит планктон</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section>
+    <div class="col">
+      <h2>Как рождается рыба</h2>
+      <p>На экране нет ни одной готовой картинки. Всё, от полосатой рыбы-бабочки до китовой акулы, программа рисует сама, по описанию. У каждого вида есть форма тела (их 12: веретено, диск, шар, коробочка, акула…), окраска спины, боков и брюха, узор (их 20 видов: полосы, пятна, маска, сетка, чешуйки с ободком), плавники, хвост и глаз.</p>
+    </div>
+    <ol class="steps col">
+      <li><div><b>Нарисовать позу один раз.</b> Когда рыба впервые оказывается в новом положении (другой размер, поворот, взмах хвоста), программа рисует её точка за точкой, с объёмом: сверху светлее, по краям темнее, с бликом на боку.</div></li>
+      <li><div><b>Вырезать как штамп.</b> Готовую позу вырезают из экрана и запоминают. Для этого мы написали в прошивке панели два новых умения, px.grab и px.blit.</div></li>
+      <li><div><b>Ставить 15 раз в секунду.</b> Дальше рыба ставится одним движением, как штампом. Если плывёт в другую сторону — зеркально. Если далеко — меньше, темнее и синее. Тысяча поз вместо тысячи рисований.</div></li>
+    </ol>
+  </section>
+
+  <section>
+    <div class="col">
+      <h2>Кнопка</h2>
+      <p>Всё управление — одна кнопка: крутилка на панели или OK на пульте.</p>
+    </div>
+    <div class="presses">
+      <div class="press"><div class="dots"><i></i></div><p><b>Одно нажатие.</b> Включить или выключить подсветку аквариума.</p></div>
+      <div class="press"><div class="dots"><i></i><i></i></div><p><b>Два быстрых.</b> Сутки за пять минут: смотреть, как меняется свет.</p></div>
+      <div class="press"><div class="dots"><i></i><i></i><i></i></div><p><b>Три быстрых.</b> Вернуться к настоящему времени.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="col">
+      <h2>В цифрах</h2>
+      <p class="muted">Всё измерено на самой панели или в её точной копии на компьютере.</p>
+    </div>
+    <div class="stats">
+      <div class="stat"><span class="n">119</span><span class="l"><b>видов</b> морских обитателей</span></div>
+      <div class="stat"><span class="n">134<small> КБ</small></span><span class="l"><b>программа на Lua</b>, 2 878 строк и 118 функций</span></div>
+      <div class="stat"><span class="n">8 192</span><span class="l"><b>светодиода</b> (128 × 64), каждый любого цвета</span></div>
+      <div class="stat"><span class="n">15<small> к/с</small></span><span class="l"><b>кадров в секунду</b>, каждый рисуется за 37–47 мс</span></div>
+      <div class="stat"><span class="n">≈680 000</span><span class="l"><b>команд Lua в секунду</b> днём: около 45 000 на кадр</span></div>
+      <div class="stat"><span class="n">410<small> нс</small></span><span class="l"><b>на одну команду</b> у крошечного процессора ESP32-S3, по замеру</span></div>
+      <div class="stat"><span class="n">1 000 000</span><span class="l"><b>команд при запуске</b>: за 1–2 секунды нарезается весь риф</span></div>
+      <div class="stat"><span class="n">22</span><span class="l"><b>декорации рифа</b>, 7 из них колышутся</span></div>
+      <div class="stat"><span class="n">239</span><span class="l"><b>появлений за 10 минут</b> днём, 69 разных видов, до 53 одновременно</span></div>
+      <div class="stat"><span class="n">1 354</span><span class="l"><b>поз в памяти</b> через 10 минут, всего 370 КБ картинок</span></div>
+      <div class="stat"><span class="n">≈0,5<small> МБ</small></span><span class="l"><b>памяти занято</b> из 4 МБ, отведённых эффекту</span></div>
+      <div class="stat"><span class="n">≈30<small> мин</small></span><span class="l"><b>от слова «Вперёд!»</b> до первой рыбы на настоящей панели</span></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="col"><h2>Кто там живёт</h2></div>
+    <div class="who">
+      <div><h3>Рифовые рыбы · 65</h3><p>Рыба-клоун в своей актинии, голубой и жёлтый хирурги, мавританский идол, рыбы-бабочки, рыбы-ангелы, крылатка, иглобрюх, кузовок, спинороги, рыба-попугай, наполеон, групер, рыбы-летучие мыши, косяки фузилёров и снэпперов.</p></div>
+      <div><h3>Акулы · 11</h3><p>Китовая, молот, черноперая и белопёрая рифовые, серая, песчаная тигровая, зебровая, усатая, эполетовая, пила-рыба и рохля.</p></div>
+      <div><h3>Скаты и камбала · 5</h3><p>Манта, пятнистый орляк, хвостоколы на песке и павлинья камбала.</p></div>
+      <div><h3>Медузы · 6</h3><p>Аурелия, морская крапива, львиная грива, полосатая, «яичница» и радужный гребневик.</p></div>
+      <div><h3>Головоногие · 6</h3><p>Осьминог и синекольчатый осьминог, каракатицы, кальмары и наутилус.</p></div>
+      <div><h3>Ракообразные · 6</h3><p>Лангуст, омар, крабы, креветка-чистильщик и радужная рак-богомол.</p></div>
+      <div><h3>Черепахи и коньки · 6</h3><p>Зелёная черепаха, бисса, логгерхед, два морских конька и лиственный морской дракон.</p></div>
+      <div><h3>На дне и стаями · 14</h3><p>Морские звёзды, ежи, голотурия, морские лилии, мурена в норе, садовые угри, шар из сардин и река анчоусов.</p></div>
+    </div>
+    <div class="sheet"><img src="preview.png" alt="Шесть моментов суток на панели: утро, полдень, закат, вечер с подсветкой, ночь, рассвет" width="1548" height="518"></div>
+    <p class="caption">Шесть моментов одних суток: 10:30, 13:00, 19:40, 21:30, 02:00, 06:40.</p>
+  </section>
+
+  <footer>
+    <div class="led">24.09.2026</div>
+    <p style="margin:6px 0 0">Николай и Claude. Сделано за один вечер вместе с новыми умениями прошивки, которые вышли в <a href="https://github.com/NickoScope/AnimatedPixelClock/releases/tag/v2.7.3">версии 2.7.3</a>. Сам эффект лежит в <a href="https://github.com/NickoScope/AnimatedPixelClock/tree/main/gallery#oceanarium">галерее</a>, прошить панель можно <a href="../">веб-прошивальщиком</a>.</p>
+  </footer>
+</div>
+</body>
+</html>

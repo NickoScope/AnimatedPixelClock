@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="A living oceanarium on a 128×64 LED panel: how it works, who lives in it, and what it takes to run.">
+<title>Oceanarium in LEDs</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800&family=Golos+Text:wght@400;500;600&family=Press+Start+2P&display=swap">
+<style>
+  /* One deliberate world: the aquarium room with the lights down. */
+  :root {
+    color-scheme: dark;
+    --abyss: #041421;
+    --deep: #0a2638;
+    --deep-2: #0e3149;
+    --glass: #8fe3ea;
+    --sand: #e6cd98;
+    --coral: #ff8a70;
+    --text: #e4f1f4;
+    --muted: #93b4c3;
+    --rule: rgba(143, 227, 234, 0.16);
+    --bezel: #01070c;
+    --display: "Unbounded", "Arial Black", system-ui, sans-serif;
+    --body: "Golos Text", "Segoe UI", system-ui, sans-serif;
+    --led: "Press Start 2P", ui-monospace, "Courier New", monospace;
+  }
+  html { background: var(--abyss); }
+  body {
+    background: var(--abyss);
+    background-image:
+      radial-gradient(120% 60% at 50% -10%, rgba(80, 180, 210, 0.22), transparent 60%),
+      radial-gradient(80% 50% at 50% 110%, rgba(230, 205, 152, 0.07), transparent 70%);
+    color: var(--text);
+    font: 400 17px/1.62 var(--body);
+    padding-inline: 18px;
+    padding-block: 0 48px;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; }
+  .col { max-width: 660px; }
+
+  header { padding-block: 44px 20px; }
+  .eyebrow {
+    font: 400 10px/1.8 var(--led);
+    color: var(--glass);
+    letter-spacing: 0.06em;
+  }
+  h1 {
+    font: 800 clamp(40px, 9vw, 92px)/0.98 var(--display);
+    letter-spacing: -0.02em;
+    margin: 14px 0 18px;
+    text-wrap: balance;
+  }
+  h1 span { color: var(--glass); }
+  .lede { font-size: clamp(18px, 2.3vw, 21px); color: var(--text); max-width: 640px; margin: 0; }
+
+  /* The panel: pixels kept as pixels, in a black bezel. */
+  .panel {
+    background: var(--bezel);
+    border-radius: 10px;
+    padding: clamp(8px, 1.6vw, 16px);
+    box-shadow: 0 0 0 1px rgba(143, 227, 234, 0.12), 0 30px 80px -30px rgba(40, 160, 200, 0.45);
+  }
+  .panel img {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    aspect-ratio: 2 / 1;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    border-radius: 2px;
+  }
+  .hero { margin-block: 26px 10px; }
+  .caption { font-size: 14px; color: var(--muted); margin-top: 10px; }
+  .caption b { font: 400 9px/1 var(--led); color: var(--sand); margin-right: 8px; }
+
+  section { padding-block: 44px 8px; border-top: 1px solid var(--rule); margin-top: 40px; }
+  h2 {
+    font: 600 clamp(24px, 3.6vw, 34px)/1.15 var(--display);
+    margin: 0 0 16px;
+    text-wrap: balance;
+  }
+  h3 { font: 600 18px/1.3 var(--display); margin: 0 0 8px; color: var(--sand); }
+  p { margin: 0 0 14px; }
+  .muted { color: var(--muted); }
+
+  /* A day on the panel: three moments side by side. */
+  .trio { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-top: 22px; }
+  .trio .panel { padding: 7px; border-radius: 8px; }
+  @media (max-width: 720px) { .trio { grid-template-columns: 1fr; } }
+
+  /* How a fish is born: a real sequence, so it is numbered. */
+  .steps { list-style: none; padding: 0; margin: 22px 0 0; display: grid; gap: 14px; counter-reset: s; }
+  .steps li {
+    counter-increment: s;
+    display: grid;
+    grid-template-columns: 46px 1fr;
+    gap: 14px;
+    align-items: start;
+  }
+  .steps li::before {
+    content: counter(s);
+    font: 400 16px/46px var(--led);
+    text-align: center;
+    color: var(--abyss);
+    background: var(--glass);
+    border-radius: 6px;
+    height: 46px;
+  }
+  .steps b { color: var(--text); }
+
+  /* The numbers are the point of this part, so they get the LED face. */
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    gap: 1px;
+    background: var(--rule);
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    overflow: hidden;
+    margin-top: 22px;
+  }
+  .stat { background: var(--deep); padding: 20px 18px 18px; }
+  .stat .n {
+    font: 400 clamp(20px, 3vw, 26px)/1.25 var(--led);
+    color: var(--sand);
+    font-variant-numeric: tabular-nums;
+    display: block;
+    margin-bottom: 10px;
+    word-break: break-word;
+  }
+  .stat .n small { font-size: 0.55em; color: var(--glass); }
+  .stat .l { font-size: 15px; color: var(--muted); line-height: 1.45; }
+  .stat .l b { color: var(--text); font-weight: 500; }
+
+  .who { columns: 2 260px; column-gap: 32px; margin-top: 18px; }
+  .who div { break-inside: avoid; margin-bottom: 16px; }
+  .who h3 { font-size: 15px; margin-bottom: 4px; }
+  .who p { font-size: 15.5px; color: var(--muted); margin: 0; }
+
+  .presses { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-top: 20px; }
+  .press { background: var(--deep); border: 1px solid var(--rule); border-radius: 10px; padding: 16px; }
+  .dots { display: flex; gap: 7px; margin-bottom: 12px; }
+  .dots i { width: 14px; height: 14px; border-radius: 50%; background: var(--coral); display: block; box-shadow: 0 0 10px rgba(255, 138, 112, 0.6); }
+  .press p { margin: 0; font-size: 15.5px; }
+  @media (max-width: 640px) { .presses { grid-template-columns: 1fr; } }
+
+  .sheet { margin-top: 22px; }
+  .sheet img { image-rendering: pixelated; width: 100%; max-width: 100%; border-radius: 6px; display: block; }
+
+  footer { margin-top: 56px; padding-top: 22px; border-top: 1px solid var(--rule); color: var(--muted); font-size: 14px; }
+  footer .led { font: 400 9px/1.8 var(--led); color: var(--glass); }
+
+</style>
+<style>
+  .lang { display: flex; justify-content: flex-end; gap: 14px; padding-top: 18px; font: 400 9px/1.8 var(--led); }
+  .lang a, .lang span { color: var(--muted); text-decoration: none; }
+  .lang a:hover, .lang a:focus-visible { color: var(--glass); }
+  .lang span { color: var(--glass); }
+  a { color: var(--glass); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav class="lang" aria-label="Language"><a href="./" hreflang="ru">РУССКИЙ</a><span>ENGLISH</span></nav>
+  <header>
+    <div class="eyebrow">128 × 64 LEDS · ESP32-S3 · LUA</div>
+    <h1>Ocean<span>arium</span></h1>
+    <p class="lede">A window into a big public aquarium, the size of a bookshelf. Over a hundred kinds of sea life live their own lives in it: they come and go, hide, hunt and sleep. The light in the water changes with the real time of day.</p>
+  </header>
+
+  <div class="panel hero">
+    <img src="day.gif" alt="The oceanarium at noon: shoals of yellow fish, a shark in open water, a coral reef and sun shafts" width="128" height="64">
+  </div>
+  <p class="caption"><b>12:00</b>Noon on the panel, at its real pace of 15 frames a second. No fish here follows a script.</p>
+
+  <section>
+    <div class="col">
+      <h2>Every animal on its own</h2>
+      <p>This is not a cartoon on a loop. Every animal has a little program of its own that decides where to swim next, which part of the tank to keep to, and when it is time to leave. Reef fish circle the corals, rays and tuna cross the open water, crabs and lobsters walk the sand.</p>
+      <p>When a shark goes through, the small fish dash into the reef and the ball of sardines opens round it. The big visitors come out of the blue depth as shadows first and take their colour as they come nearer, because water at a distance is haze.</p>
+      <p>A presence radar sees when somebody is in the room. The curious ones (a grouper, a Napoleon wrasse, batfish, a turtle, the pufferfish, the octopus) swim to the glass where you stand and turn to look at you. Wave your hand quickly and the small fish hide, the pufferfish blows up into a ball, and the garden eels pull back into the sand.</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="col">
+      <h2>A day in the tank</h2>
+      <p>The light follows the panel's clock. At noon the water is blue, with sun shafts and dancing light on the sand. In the evening it turns violet. At night it is dark blue, lit only by the moon and the jellies, and plankton sparks where a fish darts. The night creatures come out: a whitetip shark, soldierfish, lobsters, the octopus.</p>
+    </div>
+    <div class="trio">
+      <figure style="margin:0">
+        <div class="panel"><img src="day.gif" alt="Day" width="128" height="64"></div>
+        <figcaption class="caption"><b>DAY</b>Sun shafts and light on the sand</figcaption>
+      </figure>
+      <figure style="margin:0">
+        <div class="panel"><img src="lamp.gif" alt="Evening with the tank lights on" width="128" height="64"></div>
+        <figcaption class="caption"><b>EVENING</b>The tank lights are on</figcaption>
+      </figure>
+      <figure style="margin:0">
+        <div class="panel"><img src="night.gif" alt="Night: glowing jellies and sparks of plankton" width="128" height="64"></div>
+        <figcaption class="caption"><b>NIGHT</b>Glowing jellies, sparking plankton</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section>
+    <div class="col">
+      <h2>How a fish is born</h2>
+      <p>There is not a single ready-made picture on the screen. Everything, from a striped butterflyfish to a whale shark, is drawn by the program from a description. Each kind has a body shape (12 of them: spindle, disc, ball, box, shark…), colours for the back, the flank and the belly, a pattern (20 kinds: bars, spots, a mask, a net, rimmed scales), fins, a tail and an eye.</p>
+    </div>
+    <ol class="steps col">
+      <li><div><b>Draw a pose once.</b> The first time a fish is in a new position (another size, a turn, a beat of the tail), the program draws it dot by dot and gives it volume: lighter on top, darker at the edges, a sheen on the flank.</div></li>
+      <li><div><b>Cut it out like a stamp.</b> The finished pose is cut out of the screen and kept. For this we gave the panel's firmware two new abilities, px.grab and px.blit.</div></li>
+      <li><div><b>Stamp it 15 times a second.</b> From then on the fish is put on the screen in one move, like a stamp: mirrored when it swims the other way, smaller, darker and bluer when it is far. A thousand poses instead of a thousand drawings.</div></li>
+    </ol>
+  </section>
+
+  <section>
+    <div class="col">
+      <h2>The button</h2>
+      <p>All it takes is one button: the knob on the panel, or OK on the remote.</p>
+    </div>
+    <div class="presses">
+      <div class="press"><div class="dots"><i></i></div><p><b>One press.</b> The tank lights on or off.</p></div>
+      <div class="press"><div class="dots"><i></i><i></i></div><p><b>Two quick presses.</b> A whole day in five minutes, to watch the light change.</p></div>
+      <div class="press"><div class="dots"><i></i><i></i><i></i></div><p><b>Three quick presses.</b> Back to the real time.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="col">
+      <h2>In numbers</h2>
+      <p class="muted">All measured on the panel itself, or in its exact copy on a computer.</p>
+    </div>
+    <div class="stats">
+      <div class="stat"><span class="n">119</span><span class="l"><b>kinds</b> of sea life</span></div>
+      <div class="stat"><span class="n">134<small> KB</small></span><span class="l"><b>of Lua</b>, 2,878 lines and 118 functions</span></div>
+      <div class="stat"><span class="n">8,192</span><span class="l"><b>LEDs</b> (128 × 64), each of any colour</span></div>
+      <div class="stat"><span class="n">15<small> fps</small></span><span class="l"><b>frames a second</b>, each drawn in 37–47 ms</span></div>
+      <div class="stat"><span class="n">≈680,000</span><span class="l"><b>Lua instructions a second</b> by day: about 45,000 a frame</span></div>
+      <div class="stat"><span class="n">410<small> ns</small></span><span class="l"><b>an instruction</b> on the tiny ESP32-S3 processor, as measured</span></div>
+      <div class="stat"><span class="n">1,000,000</span><span class="l"><b>instructions at start</b>: the whole reef is cut out in 1–2 seconds</span></div>
+      <div class="stat"><span class="n">22</span><span class="l"><b>reef pieces</b>, 7 of them swaying</span></div>
+      <div class="stat"><span class="n">239</span><span class="l"><b>arrivals in 10 minutes</b> by day, 69 different kinds, up to 53 at once</span></div>
+      <div class="stat"><span class="n">1,354</span><span class="l"><b>poses in memory</b> after 10 minutes, 370 KB of pictures in all</span></div>
+      <div class="stat"><span class="n">≈0.5<small> MB</small></span><span class="l"><b>of memory in use</b> of the 4 MB an effect may have</span></div>
+      <div class="stat"><span class="n">≈30<small> min</small></span><span class="l"><b>from "Go!"</b> to the first fish on the real panel</span></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="col"><h2>Who lives there</h2></div>
+    <div class="who">
+      <div><h3>Reef fish · 65</h3><p>A clownfish in its anemone, blue and yellow tangs, a Moorish idol, butterflyfish, angelfish, a lionfish, a pufferfish, a boxfish, triggerfish, a parrotfish, a Napoleon wrasse, a grouper, batfish, shoals of fusiliers and snappers.</p></div>
+      <div><h3>Sharks · 11</h3><p>A whale shark, a great hammerhead, blacktip and whitetip reef sharks, a grey reef shark, a sand tiger, a zebra shark, a nurse shark, an epaulette shark, a sawfish and a guitarfish.</p></div>
+      <div><h3>Rays and a flounder · 5</h3><p>A manta, a spotted eagle ray, stingrays on the sand and a peacock flounder.</p></div>
+      <div><h3>Jellies · 6</h3><p>A moon jelly, a sea nettle, a lion's mane, a purple-striped jelly, a fried egg jelly and a rainbow comb jelly.</p></div>
+      <div><h3>Cephalopods · 6</h3><p>An octopus and a blue-ringed octopus, cuttlefish, squid and a nautilus.</p></div>
+      <div><h3>Crustaceans · 6</h3><p>A spiny lobster, a lobster, crabs, a cleaner shrimp and a rainbow mantis shrimp.</p></div>
+      <div><h3>Turtles and seahorses · 6</h3><p>A green turtle, a hawksbill, a loggerhead, two seahorses and a leafy seadragon.</p></div>
+      <div><h3>On the bottom and in shoals · 14</h3><p>Sea stars, urchins, a sea cucumber, feather stars, a moray in its hole, garden eels, a ball of sardines and a river of anchovies.</p></div>
+    </div>
+    <div class="sheet"><img src="preview.png" alt="Six moments of a day on the panel: morning, noon, dusk, evening with the lights on, night, dawn" width="1548" height="518"></div>
+    <p class="caption">Six moments of one day: 10:30, 13:00, 19:40, 21:30, 02:00, 06:40.</p>
+  </section>
+
+  <footer>
+    <div class="led">24.09.2026</div>
+    <p style="margin:6px 0 0">Nikolay and Claude. Made in one evening, together with the new firmware abilities released in <a href="https://github.com/NickoScope/AnimatedPixelClock/releases/tag/v2.7.3">version 2.7.3</a>. The effect itself is in the <a href="https://github.com/NickoScope/AnimatedPixelClock/tree/main/gallery#oceanarium">gallery</a>, and a panel can be flashed with the <a href="../">web flasher</a>.</p>
+  </footer>
+</div>
+</body>
+</html>
