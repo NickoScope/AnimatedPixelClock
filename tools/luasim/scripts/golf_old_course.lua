@@ -395,8 +395,12 @@ local function avatar(x, y, pl)
   if PHOTOS and PHOTOS[pl] then
     local p = PHOTOS[pl]
     if not p.rgb then                      -- decoded once, not every frame
-      p.rgb = {}
-      for i = 1, #p.data, 2 do p.rgb[#p.rgb + 1] = tonumber(p.data:sub(i, i + 1), 16) end
+      -- into a local first: a frame cut short by the time budget in the
+      -- middle of this loop must not leave half a portrait behind for the
+      -- next frame to draw from (it did: "bad argument #4 to 'pixel'")
+      local rgb = {}
+      for i = 1, #p.data, 2 do rgb[#rgb + 1] = tonumber(p.data:sub(i, i + 1), 16) end
+      p.rgb = rgb
     end
     local rgb, w, k = p.rgb, p.w, 1
     for yy = 0, p.h - 1 do
