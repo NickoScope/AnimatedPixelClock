@@ -22,7 +22,7 @@ DEMO_DAY = 300
 -- darts. At night the tank lights (the backlight) come on when somebody comes
 -- into the room and go out when it has been empty for a minute; a click of the
 -- knob or the remote's OK on this page switches them by hand (px.button,
--- firmware 2.7.2), until the next sunrise or sunset.
+-- firmware 2.7.3), until the next sunrise or sunset.
 --
 -- **The room.** The Apollo MTR-1 radar that ROOM RADAR draws, bound into Lua
 -- as `presence`. The curious ones - a grouper, a Napoleon wrasse, a batfish,
@@ -246,7 +246,7 @@ local function no_room(dt)
 end
 
 -- The knob's click or the remote's OK on this page (px.button, firmware
--- 2.7.2+), counted over three quarters of a second:
+-- 2.7.3+), counted over three quarters of a second:
 --   one    the tank lights on or off, by hand, until the next sunrise or
 --          sunset; then the tank's own rule again (at night on while somebody
 --          is in the room)
