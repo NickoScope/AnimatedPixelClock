@@ -558,8 +558,8 @@ end
 local function grid_new(h, st)
   local w = world_of(h)
   local L = w.len
-  local cell = clamp(h.mpp * 0.9, 2.0, 4.0)
-  local half = 0.28 * L + 50
+  local cell = clamp(h.mpp * 1.0, 2.2, 4.0)
+  local half = 0.26 * L + 46
   local gr = {h = h, st = st, x0 = -50, y0 = -half, cell = cell,
               nx = floor((L + 110) / cell) + 1, ny = floor(2 * half / cell) + 1,
               rows = {{}, {}, {}}, j = 0}
@@ -578,7 +578,7 @@ local function grid_new(h, st)
 end
 
 -- a few rows of the grid, straight into the byte strings; true when finished
-local CELLS_A_SLICE = 320
+local CELLS_A_SLICE = 380
 local function grid_step(gr)
   local h = gr.h
   local w = world_of(h)
@@ -715,14 +715,15 @@ local function draw_sky(cam, st)
     if abs(rel2) < 0.9 then
       local cx = 63.5 + math.tan(rel2) * cam.f
       local cy = cam.hor - 10 - (c * 7) % 17
-      for k = 0, 5 do
-        local ox, oy, rr = (k - 2.5) * 3.2, ((k * 3) % 4) - 2, 3 + (k * 5) % 3
-        for yy = -rr, rr do
+      for k = 0, 3 do
+        local ox, oy, rr = (k - 1.5) * 4, ((k * 3) % 4) - 2, 3 + (k * 5) % 3
+        local r, g, b = skyc(cy)
+        r, g, b = floor(mix(r, 255, 0.28)), floor(mix(g, 255, 0.28)), floor(mix(b, 255, 0.28))
+        for yy = -rr, rr, 2 do
           local y = floor(cy + oy + yy)
-          if y >= 0 and y < hor then
+          if y >= 0 and y < hor - 1 then
             local half = floor(sqrt(max(0, (rr * rr - yy * yy * 1.6) / 0.7)))
-            local r, g, b = skyc(y)
-            R(cx + ox - half, y, 2 * half + 1, 1, mix(r, 255, 0.28), mix(g, 255, 0.28), mix(b, 255, 0.28))
+            px.rect(floor(cx + ox - half), y, 2 * half + 1, 2, r, g, b, true)
           end
         end
       end
@@ -731,7 +732,7 @@ local function draw_sky(cam, st)
   -- what stands on the horizon: the course's own skyline, in runs of one height
   local function skyline(heightf, c)
     local run0, runh = 0, nil
-    for col = 0, W do
+    for col = 0, W, 2 do
       local hh = nil
       if col < W then hh = floor(heightf(cam.yaw + atan((col - 63.5) / cam.f))) end
       if hh ~= runh then
@@ -764,6 +765,13 @@ local function draw_tree(cam, st, t, seedk)
   local sx, sy, k, depth = project(cam, t[1], t[2], gz)
   if not sx or sx < -40 or sx > W + 40 or depth > ZFAR then return end
   local fogt = clamp((depth - 140) / 900, 0, 1) ^ 2
+  if k < 0.35 then                          -- far off: a dab of dark green, 2-5 px tall
+    local c = (st.trees == "pine") and {44, 84, 40} or {26, 70, 40}
+    local th = max(2, floor(((st.trees == "pine") and 11 or 15) * k))
+    px.rect(floor(sx), floor(sy - th), (k > 0.2) and 2 or 1, th, floor(mix(c[1], st.haze[1], fogt)),
+            floor(mix(c[2], st.haze[2], fogt)), floor(mix(c[3], st.haze[3], fogt)), true)
+    return
+  end
   local function col(c, l)
     l = l or 1
     return floor(mix(c[1] * l, st.haze[1], fogt)), floor(mix(c[2] * l, st.haze[2], fogt)), floor(mix(c[3] * l, st.haze[3], fogt))
@@ -1468,9 +1476,14 @@ function draw()
   if hn >= 1 and planned == hn and hn < HOLES then   -- while hole n plays, make n + 1
     jobs[#jobs + 1] = {n = hn + 1, h = g.holes[hn + 1], st = st}
     planned = hn + 1
-    grids[hn - 1] = nil
   end
-  work()
+  -- a hole that has gone by needs neither its job nor its grid; the one on
+  -- screen and the next keep theirs, finished or not
+  while jobs[1] and jobs[1].n < hn do table.remove(jobs, 1) end
+  for k in pairs(grids) do if k < hn then grids[k] = nil end end
+  -- the tee shot is the dearest scene to draw; the grid waits for the rest
+  local ht0 = (hn >= 1) and ((t - INTRO) - (hn - 1) * HOLE_S) or 0
+  if not (hn >= 1 and ht0 >= FLY_END and ht0 < TEE_END) then work() end
 
   if t < INTRO then
     grid = grids[1]
