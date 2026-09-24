@@ -42,6 +42,15 @@ SAME_AS_LATIN = {
     0x0445: "x", 0x0455: "s", 0x0456: "i", 0x0458: "j",
 }
 
+# Drawn by hand, over 6x10. Й: 6x10's breve sits on its top row with a blank
+# row under it, and moving every row up one (to_cell) closes that gap - the
+# breve lands flat on the И and the pair reads as А (the owner, 2026-09-24:
+# ЭЙС showed as ЭАС). Here the breve is a cup on rows 0-1 and the И stands on
+# rows 2-6, as 5x7 LCD fonts draw it; the lowercase й has the same shape.
+HAND = {
+    0x0419: [0x7C, 0x21, 0x12, 0x09, 0x7C],   # Й
+}
+
 # What the panel draws for a code point it has no glyph for: solid, as in the
 # small font, because no letter or digit is.
 MISSING = [0x7F] * 5
@@ -111,6 +120,9 @@ def build():
         if cp in SAME_AS_LATIN:
             cyr[cp] = lat[ord(SAME_AS_LATIN[cp])]
             origin[cp] = "latin"
+        elif cp in HAND:
+            cyr[cp] = HAND[cp]
+            origin[cp] = "hand"
         elif cp in src:
             cyr[cp], lost[cp] = to_cell(src[cp])
             origin[cp] = "x11"
