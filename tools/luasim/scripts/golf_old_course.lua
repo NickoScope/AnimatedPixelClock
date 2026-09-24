@@ -485,21 +485,20 @@ local STYLE = {
   },
 }
 
+local frame_no = 0
+
 -- ---------------------------------------------------------------- the ground
--- A grid of ground cells for the hole on screen, built once when the hole
--- starts: the colour of each cell already lit by the sun, and its height.
+-- A grid of ground cells for one hole, as three strings of a byte a cell -
+-- height, kind of ground, light - which px.terrain draws natively in a few
+-- milliseconds. Lua builds it in slices, a few rows a frame, while the hole
+-- before it plays: the whole grid is about a million instructions, and the
+-- panel runs one in 410 ns.
 local SUN = {-0.45, -0.35, 0.82}           -- from the front left, high
-local grid, grid_key = nil, nil
+local HBASE, HSCALE = -2.0, 0.05           -- a height byte: -2 m .. +10.75 m
+local K_ROUGH, K_CUT, K_FAIR, K_FRINGE, K_GREEN, K_SAND, K_WATER, K_TEE = 0, 1, 2, 3, 4, 5, 6, 7
+local grid = nil                           -- the grid being drawn and read
 
 local function to_world(h, x, y) return (x - h.tx) * h.mpp, (y - h.ty) * h.mpp end
-
-local function seg_d(px_, py_, ax, ay, bx, by)
-  local dx, dy = bx - ax, by - ay
-  local l2 = dx * dx + dy * dy
-  local t = (l2 > 0) and clamp(((px_ - ax) * dx + (py_ - ay) * dy) / l2, 0, 1) or 0
-  local ex, ey = px_ - ax - t * dx, py_ - ay - t * dy
-  return sqrt(ex * ex + ey * ey), t
-end
 
 local function world_of(h)
   if h.world then return h.world end
@@ -520,6 +519,13 @@ local function world_of(h)
     bunkers = circ(h.bunkers, 0.9), water = circ(h.water, 1.05), trees = circ(h.trees),
     fw = h.fw * h.mpp,
   }
+  local seg = {}                           -- the segments, ready for every cell's distance test
+  for i = 1, #wp - 1 do
+    local ax, ay = wp[i][1], wp[i][2]
+    local dx, dy = wp[i + 1][1] - ax, wp[i + 1][2] - ay
+    seg[i] = {ax, ay, dx, dy, max(1e-6, dx * dx + dy * dy), cum[i], cum[i + 1] - cum[i]}
+  end
+  w.seg = seg
   h.world = w
   return w
 end
@@ -527,109 +533,127 @@ end
 -- the distance from the centre line and how far along it (0..1)
 local function line_pos(w, x, y)
   local best, bf = 1e9, 0
-  for i = 1, #w.line - 1 do
-    local a, b = w.line[i], w.line[i + 1]
-    local d, t = seg_d(x, y, a[1], a[2], b[1], b[2])
-    if d < best then best, bf = d, (w.cum[i] + t * (w.cum[i + 1] - w.cum[i])) / w.len end
+  local seg = w.seg
+  for i = 1, #seg do
+    local s = seg[i]
+    local t = ((x - s[1]) * s[3] + (y - s[2]) * s[4]) / s[5]
+    if t < 0 then t = 0 elseif t > 1 then t = 1 end
+    local ex, ey = x - s[1] - t * s[3], y - s[2] - t * s[4]
+    local d = ex * ex + ey * ey
+    if d < best then best, bf = d, s[6] + t * s[7] end
   end
-  return best, bf
+  return sqrt(best), bf / w.len
 end
 
-local K_ROUGH, K_CUT, K_FAIR, K_FRINGE, K_GREEN, K_SAND, K_WATER, K_TEE = 1, 2, 3, 4, 5, 6, 7, 8
+-- the course's grounds for px.terrain: colour, pattern, period, amount
+local function kinds_of(st)
+  if not st.kinds then
+    local function k(c, pat, per, amt) return string.char(c[1], c[2], c[3], pat, per, amt) end
+    st.kinds = k(st.rough, 3, 1, 8) .. k(st.cut, 0, 1, 0) .. k(st.fair, 1, 9, 7) .. k(st.fringe, 0, 1, 0)
+            .. k(st.green, 2, 3, 5) .. k(st.sand, 3, 1, 4) .. k(st.water, 4, 1, 0) .. k(st.tee, 2, 3, 5)
+  end
+  return st.kinds
+end
 
-local function build_grid(h, st, key)
+local function grid_new(h, st)
   local w = world_of(h)
   local L = w.len
-  local cell = clamp(h.mpp * 0.7, 1.0, 3.0)
-  local x0, x1 = -60, L + 70
-  local y0, y1 = -(34 + 60) * h.mpp * 0.5 - 40, (34 + 60) * h.mpp * 0.5 + 40
-  local nx, ny = floor((x1 - x0) / cell) + 1, floor((y1 - y0) / cell) + 1
-  local HT, KIND = {}, {}
-  -- the land: gentle swells everywhere, the rough rising towards the woods
-  -- so the hole sits in its own valley, as the clubs' plans draw it
+  local cell = clamp(h.mpp * 0.9, 2.0, 4.0)
+  local half = 0.28 * L + 50
+  local gr = {h = h, st = st, x0 = -50, y0 = -half, cell = cell,
+              nx = floor((L + 110) / cell) + 1, ny = floor(2 * half / cell) + 1,
+              rows = {{}, {}, {}}, j = 0}
+  -- every round thing the ground has, in the order a cell takes them: water,
+  -- then the green and its collar over it, the tee, sand (never on the
+  -- green), and the shade the trees throw away from the sun
+  local g = w.green
+  local c = {}
+  for _, wa in ipairs(w.water) do c[#c + 1] = {wa[1], wa[2], wa[3], "water"} end
+  c[#c + 1] = {g[1], g[2], g[3] + 2.5, "green", g[3]}
+  c[#c + 1] = {0, 0, 6, "tee"}
+  for _, bk in ipairs(w.bunkers) do c[#c + 1] = {bk[1], bk[2], bk[3], "sand"} end
+  for _, t in ipairs(w.trees) do c[#c + 1] = {t[1] + 3, t[2] + 2.5, t[3] * 2.2 + 2, "shade"} end
+  gr.circles = c
+  return gr
+end
+
+-- a few rows of the grid, straight into the byte strings; true when finished
+local CELLS_A_SLICE = 320
+local function grid_step(gr)
+  local h = gr.h
+  local w = world_of(h)
+  local x0, y0, cell, nx, ny = gr.x0, gr.y0, gr.cell, gr.nx, gr.ny
+  local rows = max(1, CELLS_A_SLICE // nx)
   local ph = (h.n or 1) * 1.7
-  for j = 0, ny - 1 do
+  local fw, fw0, fw1 = w.fw, h.fw0, h.fw1
+  local hr, kr, lr = gr.rows[1], gr.rows[2], gr.rows[3]
+  local hb, kb, lb = {}, {}, {}
+  for j = gr.j, min(ny - 1, gr.j + rows - 1) do
     local y = y0 + j * cell
+    local here = {}                          -- the round things this row crosses
+    for _, ci in ipairs(gr.circles) do
+      if abs(ci[2] - y) <= ci[3] then here[#here + 1] = ci end
+    end
     for i = 0, nx - 1 do
       local x = x0 + i * cell
       local d, f = line_pos(w, x, y)
       local k = K_ROUGH
       local hh = 0.9 * sin(x * 0.041 + ph) * cos(y * 0.057 + ph * 0.7) + 0.6 * sin(x * 0.013 + y * 0.021 + ph)
-      hh = hh + min(5, 0.03 * max(0, d - w.fw - 14) ^ 1.1)
-      if w.fw > 0 and d < w.fw and f >= h.fw0 and f <= h.fw1 then k = K_FAIR
-      elseif w.fw > 0 and d < w.fw + 3 and f >= h.fw0 - 0.02 and f <= h.fw1 + 0.02 then k = K_CUT end
-      local idx = j * nx + i + 1
-      HT[idx], KIND[idx] = hh, k
-    end
-  end
-  local function stamp(cx, cy, r, fn)
-    local i0, i1 = floor((cx - r - x0) / cell), floor((cx + r - x0) / cell) + 1
-    local j0, j1 = floor((cy - r - y0) / cell), floor((cy + r - y0) / cell) + 1
-    for j = max(0, j0), min(ny - 1, j1) do
-      for i = max(0, i0), min(nx - 1, i1) do
-        local x, y = x0 + i * cell, y0 + j * cell
-        local d = sqrt((x - cx) ^ 2 + (y - cy) ^ 2)
-        if d <= r then fn(j * nx + i + 1, d / r) end
+      if d > fw + 14 then hh = hh + min(5, 0.03 * (d - fw - 14) ^ 1.1) end
+      if fw > 0 and f >= fw0 - 0.02 and f <= fw1 + 0.02 then
+        if d < fw and f >= fw0 and f <= fw1 then k = K_FAIR elseif d < fw + 3 then k = K_CUT end
       end
-    end
-  end
-  for _, wa in ipairs(w.water) do
-    stamp(wa[1], wa[2], wa[3], function(i, q) KIND[i] = K_WATER; HT[i] = -0.9 end)
-  end
-  -- the green and the tee over any water the map lays too close
-  -- the green raised a little, its collar around it
-  local g = w.green
-  stamp(g[1], g[2], g[3] + 2.5, function(i, q)
-    local r = (g[3] + 2.5)
-    if q * r > g[3] then KIND[i] = K_FRINGE else KIND[i] = K_GREEN end
-    HT[i] = HT[i] * 0.3 + 0.7 * (1 - q * q)
-  end)
-  -- the tee: a flat raised box
-  stamp(0, 0, 6, function(i, q) KIND[i] = K_TEE; HT[i] = 0.6 end)
-  for _, b in ipairs(w.bunkers) do
-    stamp(b[1], b[2], b[3], function(i, q)
-      if KIND[i] ~= K_GREEN then KIND[i] = K_SAND; HT[i] = HT[i] - 0.7 * (1 - q * q) end
-    end)
-  end
-  -- colour and light
-  local R_, G_, B_ = {}, {}, {}
-  local base = {st.rough, st.cut, st.fair, st.fringe, st.green, st.sand, st.water, st.tee}
-  for j = 0, ny - 1 do
-    for i = 0, nx - 1 do
-      local idx = j * nx + i + 1
-      local k = KIND[idx]
-      local c = base[k]
-      local x, y = x0 + i * cell, y0 + j * cell
-      local l = 1
-      if k ~= K_WATER then
-        local hl = HT[(i > 0) and idx - 1 or idx] - HT[(i < nx - 1) and idx + 1 or idx]
-        local hu = HT[(j > 0) and idx - nx or idx] - HT[(j < ny - 1) and idx + nx or idx]
-        local nx_, ny_, nz_ = hl / (2 * cell), hu / (2 * cell), 1
-        local nl = sqrt(nx_ * nx_ + ny_ * ny_ + 1)
-        l = 0.62 + 0.55 * max(0, (nx_ * SUN[1] + ny_ * SUN[2] + nz_ * SUN[3]) / nl)
+      local lit = 128
+      for n = 1, #here do
+        local ci = here[n]
+        local dx = x - ci[1]
+        if dx <= ci[3] and dx >= -ci[3] then
+          local dd = sqrt(dx * dx + (y - ci[2]) ^ 2)
+          if dd <= ci[3] then
+            local q = dd / ci[3]
+            local what = ci[4]
+            if what == "water" then k, hh = K_WATER, -0.9
+            elseif what == "green" then
+              k = (dd > ci[5]) and K_FRINGE or K_GREEN
+              hh = hh * 0.3 + 0.7 * (1 - q * q)
+            elseif what == "tee" then k, hh = K_TEE, 0.6
+            elseif what == "sand" then
+              if k ~= K_GREEN then k, hh = K_SAND, hh - 0.7 * (1 - q * q) end
+            elseif k ~= K_WATER then lit = 92 end
+          end
+        end
       end
-      -- mowing: stripes across the fairway, a check on the green and the tee
-      if k == K_FAIR then l = l * (((floor(x / 9)) % 2 == 0) and 1.07 or 0.94)
-      elseif k == K_GREEN or k == K_TEE then l = l * (((floor(x / 3) + floor(y / 3)) % 2 == 0) and 1.05 or 0.96)
-      elseif k == K_ROUGH then l = l * (0.92 + 0.16 * (((i * 7 + j * 13) % 11) / 10))
-      elseif k == K_SAND then l = l * (0.95 + 0.08 * (((i * 5 + j * 3) % 7) / 6)) end
-      R_[idx], G_[idx], B_[idx] = c[1] * l, c[2] * l, c[3] * l
+      local hv = floor((hh - HBASE) / HSCALE + 0.5)
+      hb[i + 1] = (hv < 0) and 0 or (hv > 255) and 255 or hv
+      kb[i + 1], lb[i + 1] = k, lit
     end
+    hr[j + 1] = string.char(table.unpack(hb, 1, nx))
+    kr[j + 1] = string.char(table.unpack(kb, 1, nx))
+    lr[j + 1] = string.char(table.unpack(lb, 1, nx))
   end
-  -- the shade under the trees, thrown away from the sun
-  for _, t in ipairs(w.trees) do
-    stamp(t[1] + 3, t[2] + 2.5, t[3] * 2.2 + 2, function(i, q)
-      if KIND[i] ~= K_WATER then R_[i], G_[i], B_[i] = R_[i] * 0.72, G_[i] * 0.72, B_[i] * 0.72 end
-    end)
-  end
-  grid = {x0 = x0, y0 = y0, cell = cell, nx = nx, ny = ny, H = HT, K = KIND, R = R_, G = G_, B = B_, h = h}
-  grid_key = key
+  gr.j = gr.j + rows
+  if gr.j < ny then return false end
+  gr.pt = {w = nx, h = ny, cell = cell, x0 = x0, y0 = y0, hbase = HBASE, hscale = HSCALE,
+           height = table.concat(hr), kind = table.concat(kr), light = table.concat(lr)}
+  gr.rows, gr.circles = nil, nil
+  gr.done = true
+  return true
 end
 
 local function ground_at(x, y)
-  local i, j = floor((x - grid.x0) / grid.cell), floor((y - grid.y0) / grid.cell)
-  if i < 0 or j < 0 or i >= grid.nx or j >= grid.ny then return 0 end
-  return grid.H[j * grid.nx + i + 1]
+  local g = grid
+  if not (g and g.pt) then return 0 end
+  local i, j = floor((x - g.x0) / g.cell), floor((y - g.y0) / g.cell)
+  if i < 0 or j < 0 or i >= g.nx or j >= g.ny then return 0 end
+  return HBASE + HSCALE * g.pt.height:byte(j * g.nx + i + 1)
+end
+
+local function wet_at(x, y)
+  local g = grid
+  if not (g and g.pt) then return false end
+  local i, j = floor((x - g.x0) / g.cell), floor((y - g.y0) / g.cell)
+  if i < 0 or j < 0 or i >= g.nx or j >= g.ny then return false end
+  return g.pt.kind:byte(j * g.nx + i + 1) == K_WATER
 end
 
 -- ---------------------------------------------------------------- the camera
@@ -655,123 +679,83 @@ local function project(cam, x, y, z)
 end
 
 -- ---------------------------------------------------------------- the sky
-local frame_no = 0
 
 local function draw_sky(cam, st)
   local hor = floor(cam.hor)
   if hor <= 0 then return end
   local top, hz = st.top, st.hor
-  for y = 0, min(H - 1, hor) do
-    local t = clamp((y + (cam.hor - hor)) / max(1, cam.hor), 0, 1) ^ 1.6
-    px.rect(0, y, W, 1, floor(mix(top[1], hz[1], t)), floor(mix(top[2], hz[2], t)), floor(mix(top[3], hz[3], t)), true)
+  local function skyc(y)
+    local t = clamp(y / max(1, cam.hor), 0, 1) ^ 1.6
+    return mix(top[1], hz[1], t), mix(top[2], hz[2], t), mix(top[3], hz[3], t)
+  end
+  local y0, pr, pg, pb = 0, -1, -1, -1
+  for y = 0, min(H, hor + 1) do                  -- the gradient, in bands of one colour
+    local r, g, b = -2, -2, -2
+    if y <= min(H - 1, hor) then
+      r, g, b = skyc(y)
+      r, g, b = floor(r / 3) * 3, floor(g / 3) * 3, floor(b / 3) * 3
+    end
+    if r ~= pr or g ~= pg or b ~= pb then
+      if pr >= 0 and y > y0 then px.rect(0, y0, W, y - y0, pr, pg, pb, true) end
+      y0, pr, pg, pb = y, r, g, b
+    end
   end
   -- the sun, fixed in the world behind the player's left shoulder
-  local sa = -2.2
-  local sx = 63.5 + math.tan(((sa - cam.yaw + math.pi) % (2 * math.pi)) - math.pi) * cam.f
-  if abs(((sa - cam.yaw + math.pi) % (2 * math.pi)) - math.pi) < 1.2 then
-    px.glow(sx, cam.hor - 26, 7, 255, 240, 200, 0.9)
+  local rel = ((-2.2 - cam.yaw + math.pi) % (2 * math.pi)) - math.pi
+  if abs(rel) < 1.2 then
+    local sx, sy = 63.5 + math.tan(rel) * cam.f, cam.hor - 26
+    C(sx, sy, 6, mix(hz[1], 255, 0.35), mix(hz[2], 245, 0.35), mix(hz[3], 210, 0.35))
+    C(sx, sy, 4, mix(hz[1], 255, 0.7), mix(hz[2], 245, 0.7), mix(hz[3], 215, 0.7))
+    C(sx, sy, 2, 255, 250, 225)
   end
-  -- clouds drifting
+  -- clouds drifting: pale rows over the blue
   local drift = frame_no * 0.0006
   for c = 0, 5 do
-    local a = c * 1.05 + drift
-    local rel = ((a - cam.yaw + math.pi) % (2 * math.pi)) - math.pi
-    if abs(rel) < 0.9 then
-      local cx = 63.5 + math.tan(rel) * cam.f
+    local rel2 = ((c * 1.05 + drift - cam.yaw + math.pi) % (2 * math.pi)) - math.pi
+    if abs(rel2) < 0.9 then
+      local cx = 63.5 + math.tan(rel2) * cam.f
       local cy = cam.hor - 10 - (c * 7) % 17
       for k = 0, 5 do
         local ox, oy, rr = (k - 2.5) * 3.2, ((k * 3) % 4) - 2, 3 + (k * 5) % 3
         for yy = -rr, rr do
-          for xx = -rr - 1, rr + 1 do
-            if xx * xx * 0.7 + yy * yy * 1.6 <= rr * rr then
-              local x, y = floor(cx + ox + xx), floor(cy + oy + yy)
-              if x >= 0 and x < W and y >= 0 and y < hor then px.blend(x, y, 255, 255, 255, 0.10) end
-            end
+          local y = floor(cy + oy + yy)
+          if y >= 0 and y < hor then
+            local half = floor(sqrt(max(0, (rr * rr - yy * yy * 1.6) / 0.7)))
+            local r, g, b = skyc(y)
+            R(cx + ox - half, y, 2 * half + 1, 1, mix(r, 255, 0.28), mix(g, 255, 0.28), mix(b, 255, 0.28))
           end
         end
       end
     end
   end
-  -- what stands on the horizon: the course's own skyline
-  for col = 0, W - 1 do
-    local a = cam.yaw + atan((col - 63.5) / cam.f)
-    local hgt
-    if st.trees == "pine" then           -- the Estérel's red rock behind the pines
-      hgt = 5 + 4 * sin(a * 3 + 1) + 2.5 * sin(a * 7.3) + 1.5 * sin(a * 17)
-      if hgt > 0 then px.rect(col, floor(cam.hor - hgt), 1, floor(hgt) + 1, st.ridge[1], st.ridge[2], st.ridge[3], true) end
-      local p = 2 + 1.5 * sin(a * 23) + ((floor(a * 40) % 3 == 0) and 2 or 0)
-      px.rect(col, floor(cam.hor - p), 1, floor(p) + 1, st.ridge2[1] // 2, st.ridge2[2] // 2 + 10, st.ridge2[3] // 2, true)
-    else                                 -- a spruce wall, tip after tip
-      local tip = (a * 60) % 1
-      hgt = 5 + 2 * sin(a * 5) + 3 * (1 - abs(tip - 0.5) * 2)
-      px.rect(col, floor(cam.hor - hgt), 1, floor(hgt) + 1, st.ridge[1], st.ridge[2], st.ridge[3], true)
+  -- what stands on the horizon: the course's own skyline, in runs of one height
+  local function skyline(heightf, c)
+    local run0, runh = 0, nil
+    for col = 0, W do
+      local hh = nil
+      if col < W then hh = floor(heightf(cam.yaw + atan((col - 63.5) / cam.f))) end
+      if hh ~= runh then
+        if runh and runh > 0 then px.rect(run0, floor(cam.hor) - runh, col - run0, runh + 1, c[1], c[2], c[3], true) end
+        run0, runh = col, hh
+      end
     end
+  end
+  if st.trees == "pine" then                   -- the Estérel's red rock behind the pines
+    skyline(function(a) return 5 + 4 * sin(a * 3 + 1) + 2.5 * sin(a * 7.3) + 1.5 * sin(a * 17) end, st.ridge)
+    skyline(function(a) return 2 + 1.5 * sin(a * 23) + ((floor(a * 40) % 3 == 0) and 2 or 0) end,
+            {st.ridge2[1] // 2, st.ridge2[2] // 2 + 10, st.ridge2[3] // 2})
+  else                                         -- a spruce wall, tip after tip
+    skyline(function(a) local tip = (a * 60) % 1; return 5 + 2 * sin(a * 5) + 3 * (1 - abs(tip - 0.5) * 2) end, st.ridge)
   end
 end
 
 -- ---------------------------------------------------------------- the land
--- Voxel space: for every column of the screen walk out from the camera and
--- draw each piece of ground that rises above what is already drawn.
+-- Drawn natively (src/lua/px_terrain.h): every column walks out from the
+-- camera and fills the ground that rises above what it already has.
 local function draw_land(cam, st)
-  local g = grid
-  local c0, s0 = cos(cam.yaw), sin(cam.yaw)
-  local haze, far, water, deep, hz = st.haze, st.far, st.water, st.deep, st.hor
-  local x0, y0, cell, nx, ny = g.x0, g.y0, g.cell, g.nx, g.ny
-  local GH, GK, GR, GG, GB = g.H, g.K, g.R, g.G, g.B
-  local fog0, fogk = 140, 1 / 900
-  for col = 0, W - 1 do
-    local ra = atan((col - 63.5) / cam.f)
-    local a = cam.yaw + ra
-    local dx, dy, cr = cos(a), sin(a), cos(ra)
-    local yb = H
-    local z = 0.6
-    while z < ZFAR do
-      local x, y = cam.x + dx * z, cam.y + dy * z
-      local i, j = floor((x - x0) / cell), floor((y - y0) / cell)
-      local r, gg, b, hgt
-      local kind = 0
-      if i >= 0 and j >= 0 and i < nx - 1 and j < ny - 1 then
-        local idx = j * nx + i + 1
-        kind = GK[idx]
-        r, gg, b = GR[idx], GG[idx], GB[idx]
-        -- the height between the four corners, so a slope is a slope, not steps
-        local fx, fy = (x - x0) / cell - i, (y - y0) / cell - j
-        local h00, h10, h01, h11 = GH[idx], GH[idx + 1], GH[idx + nx], GH[idx + nx + 1]
-        hgt = (h00 * (1 - fx) + h10 * fx) * (1 - fy) + (h01 * (1 - fx) + h11 * fx) * fy
-        if z < 60 and kind ~= K_WATER then          -- blades of grass, up close
-          local n = ((floor(x * 3) * 73 + floor(y * 3) * 151) % 17) / 16
-          local l = 0.93 + 0.14 * n
-          r, gg, b = r * l, gg * l, b * l
-        end
-      else                               -- beyond the hole: woods rising to the skyline
-        local ox = max(x0 - x, x - (x0 + nx * cell), 0)
-        local oy = max(y0 - y, y - (y0 + ny * cell), 0)
-        local u = min(1, max(ox, oy) / 60)
-        hgt = 4 + 10 * u + 2 * sin(x * 0.05) * cos(y * 0.07)
-        local l = 0.85 + 0.25 * (((floor(x / 7) * 7 + floor(y / 7) * 13) % 5) / 4)
-        r, gg, b = far[1] * l, far[2] * l, far[3] * l
-      end
-      local depth = z * cr
-      local sy = cam.hor + (cam.z - hgt) * cam.f / depth
-      if sy < yb then
-        if kind == K_WATER then           -- the sky in the water, more of it far away
-          local t = clamp(depth / 300, 0.1, 0.5)
-          local sk = st.top
-          r, gg, b = mix(deep[1], sk[1], t), mix(deep[2], sk[2], t), mix(deep[3], sk[3], t)
-          if ((i * 7 + j * 13 + frame_no) % 37) == 0 then r, gg, b = 200, 225, 250 end
-        end
-        local t = clamp((depth - fog0) * fogk, 0, 1)
-        t = t * t
-        r, gg, b = mix(r, haze[1], t), mix(gg, haze[2], t), mix(b, haze[3], t)
-        local top = floor(sy)
-        if top < 0 then top = 0 end
-        if yb > top then px.rect(col, top, 1, yb - top, floor(clamp(r, 0, 255)), floor(clamp(gg, 0, 255)), floor(clamp(b, 0, 255)), true) end
-        yb = top
-        if yb <= 0 then break end
-      end
-      z = z * 1.028 + 0.04
-    end
-  end
+  px.terrain{grid = grid.pt, cam = cam, kinds = kinds_of(st), haze = st.haze, fog0 = 140, fogr = 900,
+             far = st.far, farh = 4, sky = st.top, deep = st.deep, sun = SUN,
+             colw = 1, step = 1.03, zfar = ZFAR, grass = 60, frame = frame_no}
 end
 
 -- ---------------------------------------------------------------- things standing
@@ -791,12 +775,13 @@ local function draw_tree(cam, st, t, seedk)
     px.rect(floor(sx - tw / 2), floor(sy - th), tw, floor(th) + 1, r, g, b, true)
     local cw, ch = (5 + seedk % 3) * k, 2.4 * k
     local cy = sy - th
-    for yy = floor(-ch), floor(ch * 0.6) do
-      local q = yy / ch
+    local band = max(1, floor(ch / 5))      -- a close crown in bands, not a rect a row
+    for yy = floor(-ch), floor(ch * 0.6), band do
+      local q = (yy + band * 0.5) / ch
       local half = cw * sqrt(max(0, 1 - q * q))
       local l = (yy < 0) and 1.25 or 0.8
       local r2, g2, b2 = col({44, 84, 40}, l)
-      px.rect(floor(sx - half), floor(cy + yy), floor(2 * half) + 1, 1, r2, g2, b2, true)
+      px.rect(floor(sx - half), floor(cy + yy), floor(2 * half) + 1, band, r2, g2, b2, true)
     end
     if k > 1.2 then                      -- a lit edge on the sun's side
       local r3, g3, b3 = col({92, 138, 62})
@@ -816,14 +801,15 @@ local function draw_tree(cam, st, t, seedk)
       local th = (14 + (seedk % 5)) * k
       local bw = 3.4 * k
       local rows = max(1, floor(th))
-      for yy = 0, rows do
+      local band = max(1, rows // 16)          -- a close spruce in bands, not a rect a row
+      for yy = 0, rows, band do
         local q = yy / rows
         local half = bw * q * (0.85 + 0.15 * (((yy // max(1, floor(k))) % 3) / 2))
         local r, g, b = col({26, 70, 40}, 0.8 + 0.3 * (1 - q))
-        px.rect(floor(sx - half), floor(sy - th + yy), floor(2 * half) + 1, 1, r, g, b, true)
+        px.rect(floor(sx - half), floor(sy - th + yy), floor(2 * half) + 1, band, r, g, b, true)
         if half > 1.5 then
           local r2, g2, b2 = col({50, 104, 60})
-          px.rect(floor(sx - half), floor(sy - th + yy), max(1, floor(half * 0.4)), 1, r2, g2, b2, true)
+          px.rect(floor(sx - half), floor(sy - th + yy), max(1, floor(half * 0.4)), band, r2, g2, b2, true)
         end
       end
     end
@@ -900,8 +886,7 @@ local function draw_crowd(cam, cx, cy, dirx, diry, clap)
     return da > db
   end)
   for _, p in ipairs(people) do
-    local gi, gj = floor((p[1] - grid.x0) / grid.cell), floor((p[2] - grid.y0) / grid.cell)
-    local dry = not (gi >= 0 and gj >= 0 and gi < grid.nx and gj < grid.ny and grid.K[gj * grid.nx + gi + 1] == K_WATER)
+    local dry = not wet_at(p[1], p[2])
     local gz = ground_at(p[1], p[2])
     if dry then
     local sx, sy, k = project(cam, p[1], p[2], gz)
@@ -996,11 +981,6 @@ local function hole_card(g, h, a)
   R(x, 12, 2, 20, 255, 200, 60)
   T(x + 4, 14, s1, {255, 215, 90}, "5x7")
   T(x + 4, 24, s2, {230, 230, 230})
-end
-
-local function scene_base(h, st)
-  local key = h.course_id .. ":" .. h.n
-  if grid_key ~= key then build_grid(h, st, key) end
 end
 
 local function world_trees(h)
@@ -1376,7 +1356,6 @@ end
 
 -- ---------------------------------------------------------------- screens
 local function panorama(g, h, st, t, radius)
-  scene_base(h, st)
   local w = world_of(h)
   local cx, cy = w.cup[1], w.cup[2]
   local a = t * 0.08 + 2.4
@@ -1385,10 +1364,16 @@ local function panorama(g, h, st, t, radius)
   render(cam, st, h)
 end
 
-local function draw_intro(g, t)
+local function draw_intro(g, t, have_ground)
   local st = STYLE[g.course.id]
   local h = g.holes[1]
-  panorama(g, h, st, t, 70)
+  if have_ground then panorama(g, h, st, t, 70)
+  else                                     -- until the first hole is made: the evening sky
+    for y = 0, H - 1, 4 do
+      local k = y / H
+      px.rect(0, y, W, 4, floor(mix(st.top[1], 10, k)), floor(mix(st.top[2], 30, k)), floor(mix(st.top[3], 20, k)), true)
+    end
+  end
   R(0, 0, W, 9, 0, 0, 0)
   local title = g.course.name .. " - ПАР " .. g.course.par
   T((W - TW(title)) // 2, 1, title, {255, 215, 90})
@@ -1414,7 +1399,6 @@ local function draw_result(g, t)
   local st = STYLE[g.course.id]
   local h = g.holes[HOLES]
   -- the last green and the clubhouse behind it, from the fairway, moving in
-  scene_base(h, st)
   local w = world_of(h)
   local fx, fy = to_world(h, along(h, 0.72 + t * 0.006, 0))
   local cam = {x = fx, y = fy, z = ground_at(fx, fy) + 14 - t, f = 100}
@@ -1449,28 +1433,59 @@ local function draw_result(g, t)
 end
 
 -- ---------------------------------------------------------------- draw
+-- The grid of the next hole is made while this one plays, a slice a frame.
+local jobs, grids, planned = {}, {}, 0
+
+local function work()
+  local j = jobs[1]
+  if not j then return end
+  if not grids[j.n] then grids[j.n] = grid_new(j.h, j.st) end
+  if grid_step(grids[j.n]) then table.remove(jobs, 1) end
+end
+
+local function ready(n) return grids[n] and grids[n].done end
+
+-- a plain field for a frame whose ground is not made yet (it should not be)
+local function fallback(st)
+  px.rect(0, 0, W, 26, st.hor[1], st.hor[2], st.hor[3], true)
+  px.rect(0, 26, W, H - 26, st.rough[1], st.rough[2], st.rough[3], true)
+end
+
 function draw()
   frame_no = frame_no + 1
   local n = px.now()
   -- the round of this two-minute period: periods start on even minutes
   local id = ((n.year % 100) * 400 + n.yday) * 720 + (n.hour * 60 + n.min) // 2
-  if id ~= round_id then round, round_id = make_round(id), id end
+  if id ~= round_id then
+    round, round_id = make_round(id), id
+    jobs, grids, planned = {}, {}, 1
+    jobs[1] = {n = 1, h = round.holes[1], st = STYLE[round.course.id]}
+  end
   local g = round
+  local st = STYLE[g.course.id]
   local t = px.t() * PERIOD
+  local hn = (t < INTRO) and 0 or min(HOLES, floor((t - INTRO) / HOLE_S) + 1)
+  if hn >= 1 and planned == hn and hn < HOLES then   -- while hole n plays, make n + 1
+    jobs[#jobs + 1] = {n = hn + 1, h = g.holes[hn + 1], st = st}
+    planned = hn + 1
+    grids[hn - 1] = nil
+  end
+  work()
 
   if t < INTRO then
-    draw_intro(g, t)
+    grid = grids[1]
+    draw_intro(g, t, ready(1))
     return
   elseif t >= RESULT_AT then
-    draw_result(g, t - RESULT_AT)
+    grid = grids[HOLES]
+    if ready(HOLES) then draw_result(g, t - RESULT_AT) else fallback(st) end
     return
   end
-  local hn = floor((t - INTRO) / HOLE_S) + 1
   local ht = (t - INTRO) - (hn - 1) * HOLE_S
   local h = g.holes[hn]
-  local st = STYLE[g.course.id]
-  scene_base(h, st)
-  if ht < FLY_END and st.ferry and st.ferry[h.n] then scene_ferry(g, h, st, ht / FLY_END)
+  grid = grids[hn]
+  if not ready(hn) then fallback(st)
+  elseif ht < FLY_END and st.ferry and st.ferry[h.n] then scene_ferry(g, h, st, ht / FLY_END)
   elseif ht < FLY_END then scene_fly(g, h, st, ht / FLY_END)
   elseif ht < TEE_END then scene_tee(g, h, st, ht - 0, ht)
   elseif h.scene.kind == "ace" then scene_ace(g, h, st, ht)

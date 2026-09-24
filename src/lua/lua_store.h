@@ -78,21 +78,27 @@
 // 23 MB free with nine scripts on it; 36 at the 50 KB ceiling is 1.8 MB).
 #define LUA_USER_MAX 36
 
-// The largest script accepted. Raised from 24 KB on 2026-09-22: aquarium.lua
-// reached 24,059 B of the old 24,576 and the next change to it would have had
-// to buy its space by deleting prose.
+// How big a script may be: as big as it needs, the way a filesystem works
+// (the owner, 2026-09-24: "сколько нужно эффекту, столько пусть и использует,
+// хоть 6 КБ, хоть 120 КБ"). A script already takes only its own size - the
+// file on LittleFS, and the two PSRAM buffers that hold it whole (the read-back
+// luaStoreFinish validates, the one luaStoreRead hands the parser) are
+// heap_caps_malloc(n + 1, MALLOC_CAP_SPIRAM) at the file's real size - so no
+// space was ever reserved per slot. What remained was a fixed 50 KB ceiling;
+// now the limit is the room the filesystem has (luaStoreRoomBytes), under a
+// technical ceiling:
 //
-// This one is free in internal RAM. Both buffers that hold a whole script -
-// the read-back that luaStoreFinish validates and the one luaStoreRead hands
-// the parser - are heap_caps_malloc(n + 1, MALLOC_CAP_SPIRAM) at the file's
-// REAL size, not at this cap, and PSRAM has 15.6 MB free. Twelve full 50 KB
-// scripts are 600 KB of a 20.3 MB filesystem.
+//   * LUA_USER_SRC_MAX, 512 KB, is where the parse would stop fitting. A 20 KB
+//     photograph script opens in about 40 ms, so about 2 ms a KB: 512 KB is
+//     about a second of the 3 s the load may take (kLuaFxPanelLimits.loadMs).
+//     PSRAM has 15.6 MB free; the Lua heap is capped at 4 MB separately.
+//   * LUA_STORE_FS_RESERVE, 512 KB of LittleFS, stays free for everything else
+//     that lives there: settings, animations, the upload's temporary file.
 //
-// What it does cost is parse time on the effect task: a 20 KB photograph
-// script opens in about 40 ms, so 50 KB is of the order of 100 ms, inside the
-// 500 ms a draw is allowed. Nesting depth, not length, is what bounds the
-// parser's C stack, and that is LUA_USER_DEPTH_MAX and LUAI_MAXCCALLS below.
-#define LUA_USER_SRC_MAX (50U * 1024U)
+// Nesting depth, not length, is what bounds the parser's C stack, and that is
+// LUA_USER_DEPTH_MAX and LUAI_MAXCCALLS below.
+#define LUA_USER_SRC_MAX (512U * 1024U)
+#define LUA_STORE_FS_RESERVE (512U * 1024U)
 
 // Combined bracket and block nesting refused beyond this. Chosen well below the
 // LUAI_MAXCCALLS the interpreter enforces, so the clear error arrives first;
@@ -106,6 +112,9 @@
 void        luaStoreInit();
 bool        luaStoreUsable();
 size_t      luaStoreFreeBytes();
+// How big an upload may be now: the filesystem's free room less the reserve,
+// never over LUA_USER_SRC_MAX. 0 when the filesystem is full.
+size_t      luaStoreRoomBytes();
 
 uint8_t     luaStoreCount();
 

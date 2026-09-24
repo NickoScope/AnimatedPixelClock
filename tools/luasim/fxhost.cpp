@@ -15,6 +15,7 @@
 //
 // One line of measurements goes to stderr, starting "fxhost:".
 // ============================================================
+#include <stdlib.h>
 #include <pthread.h>
 #include <sys/mman.h>
 #include <time.h>
@@ -108,6 +109,8 @@ void *run(void *arg) {
     if (ms > drawMax) drawMax = ms;
     instrSum += fx.lastInstructions();
     if (fx.lastInstructions() > instrMax) instrMax = fx.lastInstructions();
+    // FXHOST_FRAMES=1: every frame's cost, for finding the heavy scenes
+    if (getenv("FXHOST_FRAMES")) fprintf(stderr, "fxframe %d %u %.3f\n", fr, fx.lastInstructions(), ms);
     luaPxBlit(canvasBytes, display);           // through the firmware's blit
     fwrite(display.px, 1, sizeof(display.px), out);
   }

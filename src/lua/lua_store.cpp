@@ -29,6 +29,7 @@ portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 File     s_up;
 char     s_upStem[25];
 uint32_t s_upBytes = 0;
+uint32_t s_upRoom = 0;         // how big this upload may grow, fixed when it begins
 bool     s_upOpen = false;
 
 bool validStem(const char *s) {
@@ -122,6 +123,11 @@ void luaStoreInit() {
 
 bool   luaStoreUsable()     { return s_usable; }
 size_t luaStoreFreeBytes()  { return s_usable ? (LittleFS.totalBytes() - LittleFS.usedBytes()) : 0; }
+size_t luaStoreRoomBytes() {
+  const size_t free = luaStoreFreeBytes();
+  const size_t room = free > LUA_STORE_FS_RESERVE ? free - LUA_STORE_FS_RESERVE : 0;
+  return room < LUA_USER_SRC_MAX ? room : LUA_USER_SRC_MAX;
+}
 uint8_t luaStoreCount() {
   portENTER_CRITICAL(&s_mux);
   const uint8_t n = s_count;
@@ -403,13 +409,21 @@ bool luaStoreBegin(const char *stem, char *err, size_t errlen) {
   strncpy(s_upStem, stem, sizeof(s_upStem) - 1);
   s_upStem[sizeof(s_upStem) - 1] = '\0';
   s_upBytes = 0;
+  s_upRoom = (uint32_t)luaStoreRoomBytes();
+  if (s_upRoom == 0) {
+    s_up.close();
+    LittleFS.remove(LUA_STORE_TMP);
+    snprintf(err, errlen, "the filesystem is full: %u B free, %u B kept for settings",
+             (unsigned)luaStoreFreeBytes(), (unsigned)LUA_STORE_FS_RESERVE);
+    return false;
+  }
   s_upOpen = true;
   return true;
 }
 
 bool luaStoreWrite(const uint8_t *data, size_t len) {
   if (!s_upOpen) return false;
-  if (s_upBytes + len > LUA_USER_SRC_MAX) { luaStoreAbort(); return false; }
+  if (s_upBytes + len > s_upRoom) { luaStoreAbort(); return false; }   // the room it began with
   if (s_up.write(data, len) != len) { luaStoreAbort(); return false; }
   s_upBytes += len;
   return true;

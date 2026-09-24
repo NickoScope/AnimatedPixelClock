@@ -1040,7 +1040,8 @@ static void handleLua() {
   up["count"] = luaStoreCount();
   up["slots"] = LUA_USER_MAX;
   up["builtIn"] = (uint8_t)(luaEffectCount() - luaStoreCount());
-  up["maxBytes"] = LUA_USER_SRC_MAX;
+  up["maxBytes"] = (uint32_t)luaStoreRoomBytes();   // what fits now: free room, not a fixed cap
+  up["ceiling"] = LUA_USER_SRC_MAX;
   up["maxDepth"] = LUA_USER_DEPTH_MAX;
   up["fsFree"] = (uint32_t)luaStoreFreeBytes();
   JsonArray mine = up["scripts"].to<JsonArray>();
@@ -1119,7 +1120,12 @@ static void handleLuaUploadChunk() {
     }
   } else if (upload.status == UPLOAD_FILE_WRITE) {
     if (s_luaUpErr) return;
-    if (!luaStoreWrite(upload.buf, upload.currentSize)) s_luaUpErr = "the script is too large";
+    if (!luaStoreWrite(upload.buf, upload.currentSize)) {
+      static char big[96];
+      snprintf(big, sizeof(big), "the script does not fit: over the %u B the filesystem has room for",
+               (unsigned)luaStoreRoomBytes());
+      s_luaUpErr = big;
+    }
   } else if (upload.status == UPLOAD_FILE_END) {
     if (s_luaUpErr) { luaStoreAbort(); return; }
     if (!luaStoreFinish(err, sizeof(err))) {

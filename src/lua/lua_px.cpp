@@ -33,6 +33,7 @@ extern "C" {
 
 #include "../fonts/pxfb_text.h"   // Picopixel, Latin and Cyrillic
 #include "../fonts/sys_text.h"    // the system font: the classic 5x7 too
+#include "px_terrain.h"            // px.terrain, shared with luasim
 
 #define W LUA_PX_W
 #define H LUA_PX_H
@@ -301,11 +302,13 @@ static int l_glow(lua_State *L) {
   return 0;
 }
 
+static int l_terrain(lua_State *L) { return px_terrain_lua(L, canvasOf(L)->rgb, W, H); }
+
 static const luaL_Reg kPxLib[] = {
   {"get", l_get}, {"blend", l_blend}, {"glow", l_glow},
   {"size", l_size}, {"t", l_t}, {"now", l_now}, {"clear", l_clear},
   {"pixel", l_pixel}, {"rect", l_rect}, {"line", l_line}, {"circle", l_circle},
-  {"text", l_text}, {"width", l_width}, {NULL, NULL}
+  {"text", l_text}, {"width", l_width}, {"terrain", l_terrain}, {NULL, NULL}
 };
 
 void luaPxOpen(lua_State *L, LuaPxCanvas *canvas) {
