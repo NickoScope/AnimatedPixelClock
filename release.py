@@ -219,15 +219,16 @@ def copy_ota_bin(env: str, out_path: Path):
 
 def write_version_file(version: str):
     DOCS_LATEST.mkdir(parents=True, exist_ok=True)
-    (DOCS_LATEST / "VERSION").write_text(version + "\n", encoding="utf-8", newline="\n")
+    # Bytes, not write_text(newline=): that argument needs Python 3.10, and the
+    # Mac's own python3 is 3.9. Bytes also keep LF on Windows.
+    (DOCS_LATEST / "VERSION").write_bytes((version + "\n").encode("utf-8"))
 
 
 def write_checksums(directory: Path, names):
     lines = [f"{hashlib.sha256((directory / name).read_bytes()).hexdigest()}  {name}"
              for name in sorted(names)]
     # LF only: sha256sum -c cannot open a filename that carries a trailing CR.
-    (directory / "SHA256SUMS.txt").write_text("\n".join(lines) + "\n", encoding="utf-8",
-                                              newline="\n")
+    (directory / "SHA256SUMS.txt").write_bytes(("\n".join(lines) + "\n").encode("utf-8"))
 
 
 def find_old_full_bins(version: str):

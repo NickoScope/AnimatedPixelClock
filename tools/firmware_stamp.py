@@ -89,7 +89,7 @@ def main():
 
     if a.write:
         STAMP.parent.mkdir(parents=True, exist_ok=True)
-        STAMP.write_text(f"{ver} {now}\n", encoding="utf-8", newline="\n")
+        STAMP.write_bytes(f"{ver} {now}\n".encode("utf-8"))   # not write_text(newline=): 3.10+ only
         print(f"  stamped {STAMP.relative_to(ROOT)}: {ver} {now[:16]}...")
         return 0
 
