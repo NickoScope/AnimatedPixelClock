@@ -73,6 +73,7 @@
 // A route whose module is not built is not registered, so it answers 404.
 
 #include "web_panel.h"
+#include "upload_route.h"
 
 #if defined(CONTROL_ENCODER_ENABLED)
 
@@ -1414,9 +1415,10 @@ void panelWebBegin() {
 #if defined(LUA_EFFECTS_ENABLED)
   route("/api/lua", handleLua);
 #if defined(LUA_STORE_ENABLED)
-  // Raw server.on, like the other two upload routes: webBusyRefuse() would
-  // reject a transfer that is already in flight.
-  server.on("/api/lua/upload", HTTP_POST, handleLuaUploadDone, handleLuaUploadChunk);
+  // Not route(), like the other upload routes: webBusyRefuse() would reject a
+  // transfer that is already in flight. serverOnUpload, not server.on: a body
+  // that is not a multipart file must not reach the chunk handler (upload_route.h).
+  serverOnUpload(server, "/api/lua/upload", handleLuaUploadDone, handleLuaUploadChunk);
 #endif
 #endif
 #if defined(MEDIAPLAYER_ENABLED)
@@ -1427,7 +1429,7 @@ void panelWebBegin() {
 #endif
 #if defined(CLIPS_SD_ENABLED)
   route("/api/clips", handleClips);
-  server.on("/api/clips/upload", HTTP_POST, handleClipUploadDone, handleClipUploadChunk);
+  serverOnUpload(server, "/api/clips/upload", handleClipUploadDone, handleClipUploadChunk);
   server.on("/api/clips/frame", HTTP_GET, handleClipFrame);
 #endif
 }

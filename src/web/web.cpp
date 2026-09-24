@@ -6,6 +6,7 @@
  */
 
 #include "web.h"
+#include "upload_route.h"
 #include "../util/psram_state.h"
 
 #include "../net/net_broker.h"
@@ -61,6 +62,9 @@ static void sendJsonGuarded(int code, const String& json);
 static void sendBytesGuarded(int code, const char* contentType, const char* data, size_t len);
 static bool webRefuseBig();   // the radio's back-off: web_heap_backoff.h
 bool webBusyRefuse();         // the same door, for src/web/web_panel.cpp
+
+// Set when an OTA file part starts; the done handler restarts only after one.
+static bool s_otaSeen = false;
 
 // JSON documents built for a response come from PSRAM when there is some.
 // Internal SRAM is the scarce heap on this board - the HUB75 buffers and lwip
@@ -313,7 +317,7 @@ void setupWebServer() {
  // Custom animation storage (uploaded .pca files, see tools/gif2pca.py)
  server.on("/api/anim/list", HTTP_GET, handleAnimList);
  server.on("/api/anim/delete", HTTP_GET, handleAnimDelete);
- server.on("/api/anim/upload", HTTP_POST, handleAnimUploadDone, handleAnimUploadChunk);
+ serverOnUpload(server, "/api/anim/upload", handleAnimUploadDone, handleAnimUploadChunk);
 
  // Runtime control API (display power, mode, brightness, clock style, reboot)
  server.on("/api/status", HTTP_GET, handleStatus);
@@ -330,8 +334,16 @@ void setupWebServer() {
  panelWebBegin();   // the Panel group: /api/panel, /api/knob and one per page module
 #endif
 
- // OTA Firmware Update handlers
- server.on("/update", HTTP_POST, []() {
+ // OTA Firmware Update handlers. serverOnUpload (upload_route.h): a POST body
+ // that is not a multipart file used to reach the chunk handler below with no
+ // upload behind server.upload(). Without a file there is nothing to answer
+ // "OK" to, and no reason to restart.
+ serverOnUpload(server, "/update", []() {
+ if (!s_otaSeen) {
+   server.send(400, "text/plain", "No firmware in the request: send the .bin as a multipart file part.");
+   return;
+ }
+ s_otaSeen = false;
  if (Update.hasError()) {
    // Surface the real reason (non-200 so the UI knows it failed). The common
    // case once the firmware outgrows an older default partition table is a
@@ -350,6 +362,7 @@ void setupWebServer() {
  HTTPUpload& upload = server.upload();
  esp_task_wdt_reset();  // a slow OTA otherwise trips the 15s watchdog mid-flash
  if (upload.status == UPLOAD_FILE_START) {
+ s_otaSeen = true;
  Serial.printf("Update: %s\n", upload.filename.c_str());
  if (!Update.begin(UPDATE_SIZE_UNKNOWN)) { // Start with max available size
  Update.printError(Serial);
@@ -841,6 +854,9 @@ static uint32_t animUpWritten = 0;
 static uint32_t animUpCap = 0;
 static String animUpName;
 static const char* animUpError = nullptr;
+// Set when a file part starts: a POST without one reaches only the done
+// handler, which must not answer success with the previous upload's name.
+static bool animUpSeen = false;
 
 static void animUploadAbort(const char* why) {
  if (animUpFile) animUpFile.close();
@@ -857,6 +873,7 @@ void handleAnimUploadChunk() {
  // the device mid-upload (same starvation class as the page streaming fix).
  esp_task_wdt_reset();
  if (upload.status == UPLOAD_FILE_START) {
+   animUpSeen = true;
    animUpError = nullptr;
    animUpWritten = 0;
    if (!animFsUsable()) { animUpError = "animation storage unavailable on this board"; return; }
@@ -907,6 +924,12 @@ void handleAnimUploadChunk() {
 
 void handleAnimUploadDone() {
  server.sendHeader("Access-Control-Allow-Origin", "*");
+ if (!animUpSeen) {
+   server.send(400, "application/json",
+               "{\"success\":false,\"error\":\"no file in the request: send the .pca as a multipart part\"}");
+   return;
+ }
+ animUpSeen = false;
  if (animUpError) {
    lastAnimationError = animUpError;
    String msg = String("{\"success\":false,\"error\":\"") + animUpError + "\"}";
