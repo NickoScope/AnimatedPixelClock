@@ -753,10 +753,13 @@ end
 -- ---------------------------------------------------------------- the land
 -- Drawn natively (src/lua/px_terrain.h): every column walks out from the
 -- camera and fills the ground that rises above what it already has.
+-- One argument table for every frame: garbage made each frame is what the
+-- collector has to walk, in PSRAM, and on the panel that shows as a stall.
+local TP = {fog0 = 140, fogr = 900, farh = 4, sun = SUN, colw = 1, step = 1.03, zfar = ZFAR, grass = 60}
 local function draw_land(cam, st)
-  px.terrain{grid = grid.pt, cam = cam, kinds = kinds_of(st), haze = st.haze, fog0 = 140, fogr = 900,
-             far = st.far, farh = 4, sky = st.top, deep = st.deep, sun = SUN,
-             colw = 1, step = 1.03, zfar = ZFAR, grass = 60, frame = frame_no}
+  TP.grid, TP.cam, TP.kinds, TP.frame = grid.pt, cam, kinds_of(st), frame_no
+  TP.haze, TP.far, TP.sky, TP.deep = st.haze, st.far, st.top, st.deep
+  px.terrain(TP)
 end
 
 -- ---------------------------------------------------------------- things standing
@@ -1051,13 +1054,21 @@ local function draw_house(cam, st, x, y)
   end
 end
 
+local function farther(a, b) return a.d > b.d end
+
 local function draw_things(cam, st, h, extra)
-  local list = {}
-  for _, t in ipairs(world_trees(h)) do
-    local rx, ry = t[1] - cam.x, t[2] - cam.y
-    list[#list + 1] = {d = rx * rx + ry * ry, t = t}
+  local w0 = world_of(h)
+  local list = w0.sortlist
+  if not list then                          -- made once a hole, then only re-ordered
+    list = {}
+    for _, t in ipairs(world_trees(h)) do list[#list + 1] = {d = 0, t = t} end
+    w0.sortlist = list
   end
-  table.sort(list, function(a, b) return a.d > b.d end)
+  for _, e in ipairs(list) do
+    local rx, ry = e.t[1] - cam.x, e.t[2] - cam.y
+    e.d = rx * rx + ry * ry
+  end
+  table.sort(list, farther)
   local w = world_of(h)
   local cupd = (w.cup[1] - cam.x) ^ 2 + (w.cup[2] - cam.y) ^ 2
   local flag_done = false

@@ -185,36 +185,16 @@ static int px_terrain_lua(lua_State *L, unsigned char *fb, int fbw, int fbh, uns
       const float x = cam.x + dx * z, y = cam.y + dy * z;
       const float fi = (x - gx0) * inv, fj = (y - gy0) * inv;
       const int i = pxt_floori(fi), j = pxt_floori(fj);
-      float r, g, b, h;
-      int water = 0;
-      if (i >= 0 && j >= 0 && i < nx - 1 && j < ny - 1) {
-        const int idx = j * nx + i;
-        int k = kind[idx];
-        if (k >= nkinds) k = 0;
-        const unsigned char *kd = &kinds[k * 6];
-        const int pat = kd[3];
-        const float fx = fi - i, fy = fj - j;
+      // The height first, and only what rises above the column is coloured:
+      // most samples are hidden behind nearer ground, and the light, the
+      // pattern and the haze are the dear part.
+      const int inside = i >= 0 && j >= 0 && i < nx - 1 && j < ny - 1;
+      const int idx = inside ? j * nx + i : 0;
+      float h, fx = 0, fy = 0;
+      if (inside) {
+        fx = fi - i; fy = fj - j;
         h = hbase + hscale * ((hgt[idx] * (1 - fx) + hgt[idx + 1] * fx) * (1 - fy) +
                               (hgt[idx + nx] * (1 - fx) + hgt[idx + nx + 1] * fx) * fy);
-        if (pat == 4) {
-          water = 1;
-          r = kd[0]; g = kd[1]; b = kd[2];
-        } else {
-          // the sun on the slope, from the four neighbours' heights
-          const int il = i > 0 ? idx - 1 : idx, ir = idx + 1;
-          const int ju = j > 0 ? idx - nx : idx, jd = idx + nx;
-          const float sx = (hgt[il] - hgt[ir]) * hscale / (2 * cell);
-          const float sy = (hgt[ju] - hgt[jd]) * hscale / (2 * cell);
-          const float d = (sx * sun[0] + sy * sun[1] + sun[2]) / sqrtf(sx * sx + sy * sy + 1);
-          float l = 0.62f + 0.55f * (d > 0 ? d : 0);
-          const float amt = kd[5] / 100.0f, per = kd[4] > 0 ? kd[4] : 1;
-          if (pat == 1) l *= (pxt_hmod((unsigned)pxt_floori(x / per), 2) == 0) ? 1 + amt : 1 - amt * 0.86f;
-          else if (pat == 2) l *= (pxt_hmod((unsigned)pxt_floori(x / per) + (unsigned)pxt_floori(y / per), 2) == 0) ? 1 + amt : 1 - amt * 0.8f;
-          else if (pat == 3) l *= (1 - amt) + 2 * amt * (pxt_hmod((unsigned)i * 7u + (unsigned)j * 13u, 11) / 10.0f);
-          if (light) l *= light[idx] / 128.0f;
-          if (z < grass) l *= 0.93f + 0.14f * (pxt_hmod((unsigned)pxt_floori(x * 3) * 73u + (unsigned)pxt_floori(y * 3) * 151u, 17) / 16.0f);
-          r = kd[0] * l; g = kd[1] * l; b = kd[2] * l;
-        }
       } else {
         // beyond the hole: woods rising towards the skyline
         float ox = gx0 - x; if (x - gx1 > ox) ox = x - gx1; if (ox < 0) ox = 0;
@@ -222,12 +202,41 @@ static int px_terrain_lua(lua_State *L, unsigned char *fb, int fbw, int fbh, uns
         const float u = pxt_clamp((ox > oy ? ox : oy) / 60.0f, 0, 1);
         const unsigned hx = (unsigned)pxt_floori(x / 7), hy = (unsigned)pxt_floori(y / 7);
         h = farh + 10 * u + 1.5f * (pxt_hmod(hx * 5u + hy * 3u, 7) / 6.0f);
-        const float l = 0.85f + 0.25f * (pxt_hmod(hx * 7u + hy * 13u, 5) / 4.0f);
-        r = far[0] * l; g = far[1] * l; b = far[2] * l;
       }
       const float depth = z * cr;
       const float syf = cam.hor + (cam.z - h) * cam.f / depth;
       if (syf < yb) {
+        float r, g, b;
+        int water = 0;
+        if (inside) {
+          int k = kind[idx];
+          if (k >= nkinds) k = 0;
+          const unsigned char *kd = &kinds[k * 6];
+          const int pat = kd[3];
+          if (pat == 4) {
+            water = 1;
+            r = kd[0]; g = kd[1]; b = kd[2];
+          } else {
+            // the sun on the slope, from the four neighbours' heights
+            const int il = i > 0 ? idx - 1 : idx, ir = idx + 1;
+            const int ju = j > 0 ? idx - nx : idx, jd = idx + nx;
+            const float sx = (hgt[il] - hgt[ir]) * hscale / (2 * cell);
+            const float sy = (hgt[ju] - hgt[jd]) * hscale / (2 * cell);
+            const float d = (sx * sun[0] + sy * sun[1] + sun[2]) / sqrtf(sx * sx + sy * sy + 1);
+            float l = 0.62f + 0.55f * (d > 0 ? d : 0);
+            const float amt = kd[5] / 100.0f, per = kd[4] > 0 ? kd[4] : 1;
+            if (pat == 1) l *= (pxt_hmod((unsigned)pxt_floori(x / per), 2) == 0) ? 1 + amt : 1 - amt * 0.86f;
+            else if (pat == 2) l *= (pxt_hmod((unsigned)pxt_floori(x / per) + (unsigned)pxt_floori(y / per), 2) == 0) ? 1 + amt : 1 - amt * 0.8f;
+            else if (pat == 3) l *= (1 - amt) + 2 * amt * (pxt_hmod((unsigned)i * 7u + (unsigned)j * 13u, 11) / 10.0f);
+            if (light) l *= light[idx] / 128.0f;
+            if (z < grass) l *= 0.93f + 0.14f * (pxt_hmod((unsigned)pxt_floori(x * 3) * 73u + (unsigned)pxt_floori(y * 3) * 151u, 17) / 16.0f);
+            r = kd[0] * l; g = kd[1] * l; b = kd[2] * l;
+          }
+        } else {
+          const unsigned hx = (unsigned)pxt_floori(x / 7), hy = (unsigned)pxt_floori(y / 7);
+          const float l = 0.85f + 0.25f * (pxt_hmod(hx * 7u + hy * 13u, 5) / 4.0f);
+          r = far[0] * l; g = far[1] * l; b = far[2] * l;
+        }
         if (water) {                       // the sky in the water, more of it far away
           const float t = pxt_clamp(depth / 300, 0.1f, 0.5f);
           r = deep[0] + (sky[0] - deep[0]) * t;
