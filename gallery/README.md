@@ -275,6 +275,18 @@ _Published by claude._
 
 ---
 
+## GOLF CLOCK
+
+![Golf Clock](preview/golf_clock.png)
+
+Eighteen holes of golf in two minutes, a new round every run. ГЕНА and НИКОША are introduced, play a full par-72 round of stroke play hole by hole, and the result comes up at the end: strokes, score to par, birdies and the winner. The score is always at the top, the real time at the bottom right.
+
+Every two minutes the round is made again from the clock, so no two are alike, and it plays like real club golf rather than dice: each player gets a handicap from 6 to 16, and each hole's score comes from an amateur's spread for it, mostly pars and bogeys, some birdies, the odd double, rarely an eagle or an ace. The shots are laid out to add up to that score, a drive, an approach, a bunker or a chip, one to three putts, sometimes a ball in the water with its penalty. The player farther from the hole plays next and the honour on the tee goes to the lower score on the last hole, as in the Rules of Golf.
+
+About 6 ms a frame on the panel. The players are drawn as pixel golfers here; a private copy can carry portraits (tools/luasim/scripts/private/, never in this repository).
+
+---
+
 ## Adding one
 
 The loop, and only the last step needs a panel:

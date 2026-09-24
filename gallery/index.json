@@ -54,6 +54,14 @@
       "preview": "preview/football_clock.png"
     },
     {
+      "stem": "golf_clock",
+      "name": "GOLF_CLOCK",
+      "file": "golf_clock.lua",
+      "line": "eighteen holes of stroke play in two minutes, a new round every run.",
+      "bytes": 18817,
+      "preview": "preview/golf_clock.png"
+    },
+    {
       "stem": "la_gioconda",
       "name": "LA_GIOCONDA",
       "file": "la_gioconda.lua",
