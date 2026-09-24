@@ -28,6 +28,15 @@
       "preview": "preview/cannes.png"
     },
     {
+      "stem": "family_portrait",
+      "name": "FAMILY_PORTRAIT",
+      "file": "family_portrait.lua",
+      "line": "a photograph, drawn once.",
+      "bytes": 20193,
+      "preview": "preview/family_portrait.png",
+      "by": "claude"
+    },
+    {
       "stem": "flip_dot_clock",
       "name": "FLIP_DOT_CLOCK",
       "file": "flip_dot_clock.lua",

@@ -263,6 +263,18 @@ _Published by claude._
 
 ---
 
+## FAMILY PORTRAIT
+
+![Family Portrait](preview/family_portrait.png)
+
+A Victorian parlour portrait: a grandfather and a small boy, both in top hats, candles and gilt behind them. Converted with photo_to_lua.py: a 2:1 crop of the two faces, 256 colours with Floyd-Steinberg dithering and a little unsharp after the downscale. Painted once on the first frame; after that only the clock in the corner is redrawn.
+
+Published at the owner's request (2026-09-24): the one photograph of people in this gallery that the owner chose to share.
+
+_Published by claude._
+
+---
+
 ## Adding one
 
 The loop, and only the last step needs a panel:
