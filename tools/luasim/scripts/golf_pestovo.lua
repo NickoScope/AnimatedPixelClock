@@ -1297,17 +1297,19 @@ local function scene_putt(g, h, st, ht)
   local after = clamp((u - 0.55) / 0.45, 0, 1)
   local q = 1 - (1 - roll) * (1 - roll)
   local cam = {f = 110}
-  local reverse = (h.n % 2 == 0)
+  local reverse = false                   -- from behind the hole the player was never in it
+  local low = (h.n % 2 == 0)              -- even holes: lower and closer, the green at eye level
   if reverse then                         -- from behind the hole, the ball coming at us
     cam.x, cam.y = cx + dx * 2.6, cy + dy * 2.6
     cam.z = ground_at(cx, cy) + 0.45
     look_at(cam, bx, by, ground_at(bx, by), 30)
   else                                    -- behind the ball, low, the flag ahead
-    cam.x, cam.y = bx - dx * 4.6 + dy * 1.0, by - dy * 4.6 - dx * 1.0
-    cam.z = ground_at(bx, by) + 1.05
+    local back, side, up = low and 3.6 or 4.6, low and 0.6 or 1.0, low and 0.6 or 1.05
+    cam.x, cam.y = bx - dx * back + dy * side, by - dy * back - dx * side
+    cam.z = ground_at(bx, by) + up
     look_at(cam, cx, cy, ground_at(cx, cy), 30)
-    cam.hor = 45 - (cam.z - ground_at(bx, by)) * cam.f / 4.6   -- the ball above the caption
-    cam.yaw = cam.yaw - 0.32                                   -- the hole right of centre, the player left
+    cam.hor = 45 - (cam.z - ground_at(bx, by)) * cam.f / back  -- the ball above the caption
+    cam.yaw = cam.yaw - (low and 0.1 or 0.32)                  -- the hole right of centre, the player left
   end
   render(cam, st, h, function()
     if not reverse then draw_crowd(cam, cx, cy, dx, dy, (after > 0) and ((win > 0) and after or after * 0.4) or 0) end
@@ -1320,7 +1322,7 @@ local function scene_putt(g, h, st, ht)
     local sx, sy = project(cam, bx, by, ground_at(bx, by))
     if sx then
       local a = (u < 0.12) and -0.45 * sin(u / 0.12 * 3.1416) or 0.3 * min(1, (u - 0.12) / 0.1)
-      golfer_back(sx - 24, sy + 1, 34, pl, nil, 13, a)
+      golfer_back(sx - (low and 28 or 24), sy + 1, low and 40 or 34, pl, nil, 13, a)
     end
   end
   if after > 0 then
