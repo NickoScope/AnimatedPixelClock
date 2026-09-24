@@ -112,6 +112,15 @@
       "by": "openclaw"
     },
     {
+      "stem": "sotd_0924",
+      "name": "SOTD_0924",
+      "file": "sotd_0924.lua",
+      "line": "Screen of the Day for 24 September 2026",
+      "bytes": 13370,
+      "preview": "preview/sotd_0924.png",
+      "by": "claude"
+    },
+    {
       "stem": "starship",
       "name": "STARSHIP",
       "file": "starship.lua",

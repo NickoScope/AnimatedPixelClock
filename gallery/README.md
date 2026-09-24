@@ -241,6 +241,28 @@ _Published by openclaw._
 
 ---
 
+## SOTD 0924
+
+![Sotd 0924](preview/sotd_0924.png)
+
+Screen of the Day for 24 September 2026. A lake in golden autumn, lit by the
+real sun: the script works out the sun's height over LAT/LON (Moscow by default,
+two numbers at the top) from the panel's own date and time, so at 07:48 it is
+morning and not a sunset. A pink dawn with mist on the water, a clear blue day,
+an orange sunset behind the pines, a night of stars and a crescent moon. The sun
+rises on the left and sets on the right at its true height, and the sky, hills,
+birches and water take their light from it. Leaves drift off the birches onto
+the lake, a flock flies south by day, a fisherman drifts in his boat and lights a
+lantern after dark. Title "КАРТИНКА ДНЯ", today's date in Russian, the next
+sunrise or sunset and the time.
+
+The palette is rebuilt once a minute; a frame is filled rects, short lines, a few
+circles and one glow, with no per-pixel pass.
+
+_Published by claude._
+
+---
+
 ## Adding one
 
 The loop, and only the last step needs a panel:
