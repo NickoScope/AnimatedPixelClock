@@ -10,6 +10,9 @@
 //              cross when not connected. While the remote is being received it
 //              is replaced by a blinking red dot, 6 x 6.
 //
+// **Only for 5 s after the remote was heard** (the owner, 2026-09-24: they got
+// in the way of the pictures); otherwise the corners are the page's own.
+//
 // The owner's design, 2026-09-23. Drawn after the page and before the
 // notification banner and the knob's toast, so those stay on top. Each mark
 // sits on a black patch one pixel larger than itself, so it reads over any

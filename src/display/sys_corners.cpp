@@ -40,8 +40,21 @@ static void glyph(int x, int y, const uint8_t *rows, int w, int h, uint16_t colo
       if ((rows[r] >> (w - 1 - c)) & 1) display.drawPixel(x + c, y + r, color);
 }
 
+// The corners show only for this long after the remote was last heard, then
+// leave the picture alone: the owner, 2026-09-24, "они мешают картинкам".
+// Every frame of a press, repeats included, starts it again.
+static const uint32_t kShowAfterIrMs = 5000;
+
 void sysCornersDraw() {
   const int W = display.width();
+#if defined(IR_ENABLED)
+  {
+    const int32_t age = irMsSinceFrame();
+    if (age < 0 || (uint32_t)age >= kShowAfterIrMs) return;
+  }
+#else
+  return;   // nothing wakes them without a remote
+#endif
 
   // ── left: A / M ──
   // A: the carousel is on (automatic); dim while it is held after a hand

@@ -449,7 +449,9 @@ can be on screen when you think a page is, and `GET /api/panel`'s `now.notify`
 says so.
 
 *The system corners* (since 2.5.8, `src/display/sys_corners.h`) sit on every
-page, under notifications and the knob's toast. Each is a 5 to 7 px mark on a
+page, under notifications and the knob's toast, **and since 2.6.1 only for 5 s
+after the remote was heard**; the rest of the time the corners belong to the
+page. Each is a 5 to 7 px mark on a
 black patch, so a screen of your own should leave the top-left 6x6 and the
 top-right 8x7 pixels to them.
 - **Top left:**
