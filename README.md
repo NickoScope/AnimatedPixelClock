@@ -16,6 +16,7 @@ Tetris clock.*
 
 - **Flash it from the browser:** [nickoscope.github.io/AnimatedPixelClock](https://nickoscope.github.io/AnimatedPixelClock/)
 - **Releases:** [github.com/NickoScope/AnimatedPixelClock/releases](https://github.com/NickoScope/AnimatedPixelClock/releases/latest)
+- **OCEANARIUM, the tank on the panel and how it works:** [in English](https://nickoscope.github.io/AnimatedPixelClock/oceanarium/en.html) · [по-русски](https://nickoscope.github.io/AnimatedPixelClock/oceanarium/)
 - **Report a bug:** [issues](https://github.com/NickoScope/AnimatedPixelClock/issues)
 
 ## Hardware
@@ -75,7 +76,9 @@ ones have Delete, and **Add from the gallery** lists this repository's
 panel; the browser fetches it from GitHub, the panel never goes out for it.
 
 The [gallery](gallery/README.md) has an aquarium that reacts to people in the
-room, a starship, the Bay of Cannes and La Gioconda. Scripts are written and
+room, OCEANARIUM (a public aquarium's tank of over a hundred kinds of sea life,
+[how it works](https://nickoscope.github.io/AnimatedPixelClock/oceanarium/en.html)),
+golf on real courses, a starship, the Bay of Cannes and La Gioconda. Scripts are written and
 checked on the host first with [`tools/luasim`](tools/luasim), which runs the
 same API the panel does.
 
