@@ -20,6 +20,8 @@ import argparse, json, os, re, shutil, subprocess, sys, threading, time, urllib.
 HOME = os.path.expanduser(os.environ.get("TWIN_HOME", "~/twin"))
 EXE = os.path.join(HOME, "esp32sim", "target", "release", "esp32sim")
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+from twin import wifi_spec   # noqa: E402  one check of what the engine's --wifi can carry
 SCRIPT = os.path.join(HOME, "research", "kinetic_4136eb8.lua")   # git show 4136eb8:tools/luasim/scripts/kinetic_digits_led.lua
 
 # The panel, kd_all.txt 2026-09-29 13:47 (scene, draw avg ms, fps, instr max). The first press
@@ -48,11 +50,11 @@ class Twin:
         self.flash = os.path.join(out, f"{name}.flash.bin")
         self.log = os.path.join(out, f"{name}.console.log")
         shutil.copyfile(os.path.join(HOME, "state", "flash.bin"), self.flash)
-        ssid, pw = open(os.path.join(HOME, "state", "wifi.txt")).read().splitlines()[:2]
+        ssid, pw = (open(os.path.join(HOME, "state", "wifi.txt")).read().splitlines() + ["", ""])[:2]
         args = [EXE, "--board", "hub75-panel", "--boot", "rom", "--rom", os.path.join(HOME, "rom", "esp32s3_rev0_rom.elf"),
                 "--flash-image", os.path.join(HOME, "fw", "v2.7.3", "merged.bin"), "--flash-mb", "32", "--flash-id", "c28039",
                 "--psram-mb", "16", "--efuse-regs", os.path.join(HOME, "efuse-opi.txt"), "--console", "usb", "--no-dump",
-                "--flash-persist", self.flash, "--wifi", f"ssid={ssid},psk={pw}", "--hostfwd", f"tcp:{port}-80",
+                "--flash-persist", self.flash, "--wifi", wifi_spec(ssid, pw), "--hostfwd", f"tcp:{port}-80",
                 "--max-seconds", "3000"] + flags(name)
         self.proc = subprocess.Popen(args, stdout=open(self.log, "wb"), stderr=subprocess.STDOUT)
 

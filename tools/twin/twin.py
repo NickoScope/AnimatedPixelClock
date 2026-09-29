@@ -18,7 +18,8 @@ as on the panel.
       Anything else (bootloader.bin, partitions.bin) needs --at, as esptool always does.
   twin.py wifi SSID PASSWORD
       provision Wi-Fi at the next boot the way a person does: an Improv-Serial packet on the USB
-      console, which the firmware's own Improv code takes. The virtual AP uses the same pair.
+      console, which the firmware's own Improv code takes. The virtual AP uses the same pair; an
+      empty PASSWORD ("") makes it an open network. Neither may hold a ',' (the engine's --wifi).
   twin.py erase
       forget everything (a new chip): the next run starts from the image again.
 
@@ -97,6 +98,19 @@ def boot_slot(otadata: bytes, apps: int) -> int:
     return 0 if best is None else (best - 1) % apps
 
 
+def wifi_spec(ssid: str, pw: str) -> str:
+    """The engine's --wifi value for the virtual AP. ApConfig::parse (esp32sim esp-soc/src/wifi.rs)
+    splits it at ',' with no escaping, so a ',' in either cannot get through; refused here rather
+    than the engine exiting on it. An empty password leaves psk out, an open AP: WiFi.begin(ssid, "")
+    joins an open network (Arduino-ESP32 2.0.17 WiFiSTA.cpp wifi_sta_config sets the password and
+    WPA2 only for a non-empty one), while psk= would advertise WPA2 with an empty key."""
+    for what, v in (("SSID", ssid), ("password", pw)):
+        if "," in v:
+            sys.exit(f"the {what} holds a ',', which the engine's --wifi cannot carry (esp-soc/src/wifi.rs "
+                     "splits the spec at ','); choose one without")
+    return f"ssid={ssid}" + (f",psk={pw}" if pw else "")
+
+
 def improv_hex(ssid: str, password: str) -> str:
     """The Improv-Serial "send Wi-Fi settings" packet (Improv WiFi Library, parseImprovSerial)."""
     s, p = ssid.encode(), password.encode()
@@ -116,8 +130,8 @@ def cmd_run(a, extra):
             "--flash-persist", FLASH, "--mac", a.mac]
     ssid = pw = None
     if os.path.exists(WIFI):
-        ssid, pw = open(WIFI).read().splitlines()[:2]
-        args += ["--wifi", f"ssid={ssid},psk={pw}"]
+        ssid, pw = (open(WIFI).read().splitlines() + ["", ""])[:2]
+        args += ["--wifi", wifi_spec(ssid, pw)]   # checked again: wifi.txt may have been edited by hand
         # The portal, the API and the UDP port, from the Mac only (127.0.0.1), as on the LAN.
         args += ["--hostfwd", f"tcp:{a.http}-80", "--hostfwd", f"udp:{a.udp}-4210"]
         if a.provision:
@@ -188,6 +202,7 @@ def cmd_flash(a, _):
 
 
 def cmd_wifi(a, _):
+    wifi_spec(a.ssid, a.password)   # refuse before writing what the engine cannot take
     os.makedirs(STATE, exist_ok=True)
     with open(WIFI, "w") as f:
         f.write(f"{a.ssid}\n{a.password}\n")
@@ -225,7 +240,7 @@ def main():
     f.add_argument("--at")
     w = sub.add_parser("wifi")
     w.add_argument("ssid")
-    w.add_argument("password")
+    w.add_argument("password", help='"" for an open network')
     sub.add_parser("erase")
     a = ap.parse_args(argv)
     {"run": cmd_run, "flash": cmd_flash, "wifi": cmd_wifi, "erase": cmd_erase}[a.cmd](a, extra)

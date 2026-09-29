@@ -148,5 +148,38 @@ class TwinFlash(unittest.TestCase):
         self.assertEqual(self.read(0, len(BOOTLOADER)), BOOTLOADER)
 
 
+class TwinWifi(unittest.TestCase):
+    # finding 12: the engine's --wifi is split at ',' and psk= means WPA2
+    def test_spec(self):
+        self.assertEqual(T.wifi_spec("NickoTwin", "twin-demo-2026"), "ssid=NickoTwin,psk=twin-demo-2026")
+        self.assertEqual(T.wifi_spec("Guest", ""), "ssid=Guest")                  # an open AP
+        self.assertEqual(T.wifi_spec("Home", "a=b"), "ssid=Home,psk=a=b")         # split_once: '=' is fine
+        for ssid, pw in (("Home", "pa,ss"), ("Ho,me", "password")):
+            with self.assertRaises(SystemExit):
+                T.wifi_spec(ssid, pw)
+
+    def test_wifi_refuses_before_writing_and_run_uses_the_spec(self):
+        with tempfile.TemporaryDirectory() as d:
+            wifi = os.path.join(d, "wifi.txt")
+            with mock.patch.object(T, "STATE", d), mock.patch.object(T, "WIFI", wifi), \
+                    mock.patch.object(T, "FLASH", os.path.join(d, "flash.bin")):
+                with self.assertRaises(SystemExit):
+                    T.cmd_wifi(mock.Mock(ssid="Home", password="pa,ss"), [])
+                self.assertFalse(os.path.exists(wifi))
+                with contextlib.redirect_stdout(io.StringIO()):
+                    T.cmd_wifi(mock.Mock(ssid="Guest", password=""), [])
+                a = mock.Mock(fresh=False, provision=True, web=None, seconds=None, png=None, cpi="2.45",
+                              open=False, http=8080, udp=4210, mac=T.MAC)
+                with mock.patch.object(T.os, "execv") as execv:
+                    T.cmd_run(a, [])
+                args = execv.call_args[0][1]
+                self.assertEqual(args[args.index("--wifi") + 1], "ssid=Guest")
+                self.assertEqual(args[args.index("--serial-hex") + 1], T.improv_hex("Guest", ""))
+                put(wifi, "Home\npa,ss\n")                                # edited by hand
+                with mock.patch.object(T.os, "execv") as execv, self.assertRaises(SystemExit):
+                    T.cmd_run(a, [])
+                execv.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -42,7 +42,7 @@ cargo build --release
 ## Use
 
 ```
-tools/twin/twin.py wifi NickoTwin twin-demo-2026     # the virtual AP, and what Improv hands over
+tools/twin/twin.py wifi NickoTwin twin-demo-2026     # the virtual AP, and what Improv hands over ("" = open; no ',')
 tools/twin/twin.py run --fresh --provision --web 8790 # a new chip; Improv at boot; http://127.0.0.1:8790/panel.html
 tools/twin/twin.py run --web 8790                     # later runs: the chip remembers
 tools/twin/twin.py run --seconds 30 --png shot.png    # headless, as fast as the Mac allows
