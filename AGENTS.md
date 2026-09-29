@@ -901,6 +901,10 @@ What follows from that:
   or lines at the centre - the picture streams outward in spirals, the
   MilkDrop trick. `vortex.lua` does it; draw over (not "add") or the colours
   pile up into white.
+- A field over the whole screen - plasma, clouds, a nebula, rings, rays -
+  is one `px.field(L, terms)` into a layer and one `px.show` (2.7.5); never
+  a Lua loop over 8,192 pixels. `px.noise(x, y, z)` is Perlin noise for
+  anything that should wander smoothly. `nebula.lua` does both.
 - What the panel knows about outside: `px.weather()` (2.7.4) is the weather
   clock's data - `{temp, min, max, humidity, wind, code, fahrenheit}` in C and
   km/h - or nil while there is none (weather off in the portal, no location,

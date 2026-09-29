@@ -40,6 +40,7 @@ extern "C" {
 #include "px_snapshot.h"           // px.save, px.restore, px.mix, px.forget (after px_raster.h)
 #include "px_layer.h"              // palette, pal, layer, capture, show, scroll, mirror, shared with luasim
 #include "px_feedback.h"           // px.feedback (after px_raster.h and px_layer.h)
+#include "px_field.h"              // px.noise, px.field (after px_raster.h and px_layer.h)
 #include "lua_fx.h"                // LuaFx::charge
 
 #define W LUA_PX_W
@@ -405,6 +406,17 @@ static int l_button(lua_State *L) {
   return 1;
 }
 
+// px.noise is charged like a few instructions (a call does about what 60 VM
+// instructions do); px.field a third of an instruction for each pixel and
+// each unit of its terms' weight: estimates until the panel measures them.
+static int l_noise(lua_State *L) { LuaFx::charge(L, 60); return px_noise_lua(L); }
+static int l_field(lua_State *L) {
+  unsigned long work = 0;
+  const int n = px_field_lua(L, W, H, &work);
+  LuaFx::charge(L, (uint32_t)(work / 3));
+  return n;
+}
+
 static const luaL_Reg kPxLib[] = {
   {"get", l_get}, {"blend", l_blend}, {"glow", l_glow},
   {"size", l_size}, {"t", l_t}, {"now", l_now}, {"clear", l_clear},
@@ -415,7 +427,7 @@ static const luaL_Reg kPxLib[] = {
   {"palette", l_palette}, {"pal", l_pal}, {"layer", l_layer}, {"capture", l_capture},
   {"show", l_show}, {"scroll", l_scroll}, {"mirror", l_mirror},
   {"weather", l_weather}, {"city", l_city}, {"mix", l_mix}, {"forget", l_forget},
-  {"feedback", l_feedback},
+  {"feedback", l_feedback}, {"noise", l_noise}, {"field", l_field},
   {NULL, NULL}
 };
 

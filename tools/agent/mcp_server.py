@@ -1210,6 +1210,13 @@ async def effect_api() -> str:
                             "0..1, edge 'black'|'clamp'|'wrap'. Call it first each "
                             "frame, then draw: what you draw streams away into "
                             "spirals and tunnels (vortex.lua). All fields optional.",
+            "px.noise(x,y[,z])": "firmware 2.7.5+. -> about -1..1, Perlin noise (z is "
+                                 "time), integers inside: smooth random drift, flow, twinkle",
+            "px.field(L,terms[,base])": "firmware 2.7.5+. L = base (128) + 127*sum of up to 8 "
+                                 "terms per pixel: {'sin',fx,fy,phase,amp}, {'ring',cx,cy,f,"
+                                 "phase,amp}, {'ray',cx,cy,n,phase,amp}, {'noise',scale,z,amp"
+                                 "[,octaves]}; then px.show(L, pal). A whole-screen plasma or "
+                                 "nebula in one call (nebula.lua).",
             "px.weather()": "firmware 2.7.4+. -> {temp,min,max,humidity,wind,code,"
                             "fahrenheit} in C and km/h (the weather clock's data), or "
                             "nil while there is none; asking keeps the fetch going",
