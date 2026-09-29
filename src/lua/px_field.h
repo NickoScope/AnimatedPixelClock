@@ -125,11 +125,12 @@ typedef struct {
   int oct;
 } PxfTerm;
 
+static int pxf_term_no;   // the term being read, for the error message
 static lua_Number pxf_tnum(lua_State *L, int t, int i, lua_Number def) {
   lua_rawgeti(L, t, i);
   lua_Number v = def;
   if (lua_type(L, -1) == LUA_TNUMBER) { v = lua_tonumber(L, -1); if (!(v == v)) v = def; }
-  else if (!lua_isnil(L, -1)) { lua_pop(L, 1); return luaL_error(L, "px.field: term %d wants numbers after its kind", i); }
+  else if (!lua_isnil(L, -1)) { lua_pop(L, 1); return luaL_error(L, "px.field: term %d wants numbers after its kind", pxf_term_no); }
   lua_pop(L, 1);
   return v;
 }
@@ -140,10 +141,39 @@ static int32_t pxf_amp(lua_Number a) {
   return (int32_t)(a * 256);
 }
 
-// px.field(L, terms [, base]). *work: pixels times the terms' weight (a noise
-// octave counts as 4, the others as 1).
+// Scratch for the noise: its sum at every pixel (int32) and one octave's grid.
+static char pxn_key;
+static int32_t *pxn_scratch(lua_State *L, size_t bytes) {
+  lua_rawgetp(L, LUA_REGISTRYINDEX, &pxn_key);
+  int32_t *b = (int32_t *)lua_touserdata(L, -1);
+  const size_t have = b ? lua_rawlen(L, -1) : 0;
+  lua_pop(L, 1);
+  if (b && have >= bytes) return b;
+  b = (int32_t *)lua_newuserdatauv(L, bytes, 0);   // raises on no memory, as any allocation
+  lua_rawsetp(L, LUA_REGISTRYINDEX, &pxn_key);
+  return b;
+}
+
+// The grid step of a noise octave: about three samples a noise unit, 1 to 8
+// pixels. Noise is smooth, so between the samples it is interpolated
+// (bilinear, Q8): a whole-screen octave at scale 0.035 is 153 samples, not
+// 8,192. Measured on the panel before this (2026-09-29): 27 ms an octave
+// sampled at every pixel.
+static int pxn_step(int32_t sc) {
+  const int32_t g = sc > 0 ? 21845 / sc : 8;
+  return g < 1 ? 1 : g > 8 ? 8 : g;
+}
+
+// What a call costs, in Lua instructions, by the panel's measurements
+// (2026-09-29, 410 ns an instruction): a noise sample 8, a pixel of a sin
+// term 1.1, of the interpolated noise sum 1; ring and ray are estimates (3).
+// charge (may be NULL) is told before the work, so a call that would run past
+// the frame's budget or deadline is refused before it starts.
+typedef void (*PxfCharge)(lua_State *L, unsigned long instructions);
+
+// px.field(L, terms [, base]). *work: the instructions charged.
 static const char *const pxf_kinds[] = {"sin", "ring", "ray", "noise", NULL};
-static int px_field_lua(lua_State *L, int w, int h, unsigned long *work) {
+static int px_field_lua(lua_State *L, int w, int h, unsigned long *work, PxfCharge charge) {
   PxLayer *l = pxl_check(L, 1);
   luaL_checktype(L, 2, LUA_TTABLE);
   const lua_Number basen = luaL_optnumber(L, 3, 128);
@@ -155,6 +185,7 @@ static int px_field_lua(lua_State *L, int w, int h, unsigned long *work) {
   PxfTerm T[8];
   unsigned long weight = 0;
   for (int i = 0; i < n; i++) {
+    pxf_term_no = i + 1;
     lua_rawgeti(L, 2, i + 1);
     const int t = lua_gettop(L);
     if (!lua_istable(L, t)) return luaL_error(L, "px.field: term %d is not a table", i + 1);
@@ -195,10 +226,70 @@ static int px_field_lua(lua_State *L, int w, int h, unsigned long *work) {
     }
     lua_pop(L, 1);
   }
+  // The cost, then the charge, before any of the work.
+  unsigned long cost = (unsigned long)w * h / 2;           // the loop and the store
+  int noiseTerms = 0;
+  for (int i = 0; i < n; i++) {
+    if (T[i].kind == 0) cost += (unsigned long)w * h * 11 / 10;
+    else if (T[i].kind <= 2) cost += (unsigned long)w * h * 3;
+    else {
+      noiseTerms++;
+      int32_t sc = T[i].a;
+      for (int o = 0; o < T[i].oct; o++, sc <<= 1) {
+        const int g = pxn_step(sc);
+        cost += (unsigned long)((w - 1) / g + 2) * (unsigned long)((h - 1) / g + 2) * 8;
+      }
+    }
+  }
+  if (noiseTerms) cost += (unsigned long)w * h;
+  if (charge) charge(L, cost);
+  *work = cost;
+
+  // Every noise term, all its octaves, summed at every pixel first (Q15 * Q8,
+  // the terms' amplitudes applied), each octave on its own grid.
+  int32_t *nsum = 0;
+  if (noiseTerms) {
+    const int gwMax = (w - 1) + 2, ghMax = (h - 1) + 2;
+    nsum = pxn_scratch(L, ((size_t)w * h + (size_t)gwMax * ghMax) * sizeof(int32_t));
+    int32_t *grid = nsum + w * h;
+    memset(nsum, 0, (size_t)w * h * sizeof(int32_t));
+    for (int i = 0; i < n; i++) {
+      const PxfTerm *q = &T[i];
+      if (q->kind != 3) continue;
+      int32_t amp = 32768, sc = q->a;
+      uint32_t z = (uint32_t)q->b;
+      for (int o = 0; o < q->oct; o++) {
+        const int g = pxn_step(sc);
+        const int gw = (w - 1) / g + 2, gh = (h - 1) / g + 2;
+        const int32_t zz = (int32_t)(z & 0x7FFFFFFF);
+        for (int gy = 0; gy < gh; gy++)
+          for (int gx = 0; gx < gw; gx++) {
+            // noise repeats every 256 units, so a coordinate is kept to 31 bits
+            const int32_t nx = (int32_t)(((int64_t)gx * g * sc) & 0x7FFFFFFF);
+            const int32_t ny = (int32_t)(((int64_t)gy * g * sc) & 0x7FFFFFFF);
+            grid[gy * gw + gx] = (int32_t)(((int64_t)pxn_noise3(nx, ny, zz) * amp) >> 16);   // Q15
+          }
+        for (int y = 0; y < h; y++) {
+          const int gy = y / g, fy = ((y - gy * g) << 8) / g;
+          const int32_t *r0 = &grid[gy * gw], *r1 = r0 + gw;
+          int32_t *acc = &nsum[y * w];
+          for (int x = 0; x < w; x++) {
+            const int gx = x / g, fx = ((x - gx * g) << 8) / g;
+            const int32_t top = r0[gx] + (((r0[gx + 1] - r0[gx]) * fx) >> 8);
+            const int32_t bot = r1[gx] + (((r1[gx + 1] - r1[gx]) * fx) >> 8);
+            const int32_t v = top + (((bot - top) * fy) >> 8);
+            acc[x] += v * q->amp >> 8;
+          }
+        }
+        amp >>= 1; sc <<= 1; z += 0x9E3779u;                                   // each octave its own slice
+      }
+    }
+  }
+
   for (int y = 0; y < h; y++) {
     unsigned char *out = &l->v[y * w];
     for (int x = 0; x < w; x++) {
-      int32_t sum = 0;                                     // Q15 * Q8
+      int32_t sum = nsum ? nsum[y * w + x] : 0;            // Q15 * Q8
       for (int i = 0; i < n; i++) {
         const PxfTerm *q = &T[i];
         int32_t s;                                         // Q15
@@ -216,15 +307,7 @@ static int px_field_lua(lua_State *L, int w, int h, unsigned long *work) {
           const uint32_t ph = (uint32_t)(((int64_t)q->c * ang) >> 8) + (uint32_t)q->d - 16384u;
           s = pxl_cosq(ph & 0xFFFF);
         } else {
-          int32_t acc = 0, amp = 32768, sc = q->a;
-          uint32_t z = (uint32_t)q->b;
-          for (int o = 0; o < q->oct; o++) {
-            // noise repeats every 256 units, so a coordinate is kept to 31 bits
-            const int32_t nx = (int32_t)(((int64_t)x * sc) & 0x7FFFFFFF), ny = (int32_t)(((int64_t)y * sc) & 0x7FFFFFFF);
-            acc += (int32_t)(((int64_t)pxn_noise3(nx, ny, (int32_t)(z & 0x7FFFFFFF)) * amp) >> 16);   // Q15
-            amp >>= 1; sc <<= 1; z += 0x9E3779u;                               // each octave its own slice
-          }
-          s = acc;
+          continue;                                         // noise: summed above
         }
         sum += s * q->amp >> 8;
       }
@@ -232,7 +315,7 @@ static int px_field_lua(lua_State *L, int w, int h, unsigned long *work) {
       out[x] = (unsigned char)(v < 0 ? 0 : v > 255 ? 255 : v);
     }
   }
-  *work = (unsigned long)w * h * weight;
+  (void)weight;
   return 0;
 }
 

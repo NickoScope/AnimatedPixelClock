@@ -406,15 +406,13 @@ static int l_button(lua_State *L) {
   return 1;
 }
 
-// px.noise is charged like a few instructions (a call does about what 60 VM
-// instructions do); px.field a third of an instruction for each pixel and
-// each unit of its terms' weight: estimates until the panel measures them.
-static int l_noise(lua_State *L) { LuaFx::charge(L, 60); return px_noise_lua(L); }
+// px.noise: 12.6 us a call on the panel (2026-09-29), charged 30. px.field
+// charges itself, by measured weights, before it does the work (px_field.h).
+static int l_noise(lua_State *L) { LuaFx::charge(L, 30); return px_noise_lua(L); }
+static void fieldCharge(lua_State *L, unsigned long n) { LuaFx::charge(L, (uint32_t)n); }
 static int l_field(lua_State *L) {
   unsigned long work = 0;
-  const int n = px_field_lua(L, W, H, &work);
-  LuaFx::charge(L, (uint32_t)(work / 3));
-  return n;
+  return px_field_lua(L, W, H, &work, fieldCharge);
 }
 
 static const luaL_Reg kPxLib[] = {
