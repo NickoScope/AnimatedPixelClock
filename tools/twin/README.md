@@ -79,7 +79,7 @@ Verified with the real v2.7.3 image, unmodified (2026-09-29):
   - «Двойник»;
   - «Плата по USB…» — родной выбор порта в Chrome, так что настоящую плату с этой страницы тоже можно прошить;
   - «Отмена».
-- **Движок нужен с `/usj`** (ветка `nickoscope/usj`, в `engine/esp32sim-twin.patch` её ещё нет).
+- **Движок** — форк NickoScope/esp32sim, ветка `nickoscope/twin`: канал `/usj` в нём есть.
   До слияния запускайте с `TWIN_ENGINE=~/twin/wt-usj`. Со старым движком страница откроется,
   но порт — нет: `/usj` там отвечает 404, и ESP Web Tools покажет «Failed to open serial port».
 
