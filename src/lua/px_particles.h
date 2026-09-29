@@ -127,7 +127,8 @@ static int pxp_step(lua_State *L) {
   luaL_checktype(L, 2, LUA_TTABLE);
   const int32_t dt = pxp_q16(pxp_num(L, "dt", 1.0 / 15, 0, 0.5));
   const int32_t gx = pxp_q16(pxp_num(L, "gx", 0, -2000, 2000)), gy = pxp_q16(pxp_num(L, "gy", 0, -2000, 2000));
-  const int32_t drag = (int32_t)(((int64_t)pxp_q16(pxp_num(L, "drag", 0, 0, 30)) * dt) >> 16);   // Q16 a step
+  int32_t drag = (int32_t)(((int64_t)pxp_q16(pxp_num(L, "drag", 0, 0, 30)) * dt) >> 16);   // Q16 a step
+  if (drag > 65536) drag = 65536;          // at most all of the speed in a step: a stop, never a swing back
   const int32_t flow = pxp_q16(pxp_num(L, "flow", 0, -2000, 2000));
   const int32_t fsc = pxp_q16(pxp_num(L, "flowscale", 0.03, 0, 4));
   const int32_t fz = pxn_q16(pxp_num(L, "flowz", 0, -32767, 32767));
@@ -140,7 +141,7 @@ static int pxp_step(lua_State *L) {
     if (!e || !pxp_edges[edge]) return luaL_error(L, "particles: edge is \"kill\", \"wrap\" or \"bounce\"");
   }
   lua_pop(L, 1);
-  pxp_charge(L, s, (unsigned long)s->n * (flow ? 22 : 3));
+  pxp_charge(L, s, (unsigned long)s->n * (flow ? 34 : 3));
   const int32_t W16 = s->w << 16, H16 = s->h << 16;
   for (int i = 0; i < s->n;) {
     PxPart *p = &s->p[i];
@@ -149,8 +150,10 @@ static int pxp_step(lua_State *L) {
     int64_t ax = gx, ay = gy;
     if (flow) {
       // the curl of the noise: along its contour lines, so the flow never sinks
-      const int32_t nx = (int32_t)(((int64_t)p->x * fsc >> 16) & 0x7FFFFFFF);
-      const int32_t ny = (int32_t)(((int64_t)p->y * fsc >> 16) & 0x7FFFFFFF);
+      // the noise uses bits 0..23 only (a period of 256 units): masked to 24
+      // bits, the +-e below cannot run past int32
+      const int32_t nx = (int32_t)(((int64_t)p->x * fsc >> 16) & 0x00FFFFFF);
+      const int32_t ny = (int32_t)(((int64_t)p->y * fsc >> 16) & 0x00FFFFFF);
       const int32_t e = 4096;                                          // 1/16 of a noise unit
       const int32_t dy = pxn_noise3(nx, ny + e, fz) - pxn_noise3(nx, ny - e, fz);
       const int32_t dx = pxn_noise3(nx + e, ny, fz) - pxn_noise3(nx - e, ny, fz);
@@ -201,7 +204,7 @@ static int pxp_draw(lua_State *L) {
   const int add = !m || strcmp(m, "set") != 0;
   if (m && strcmp(m, "set") != 0 && strcmp(m, "add") != 0) return luaL_error(L, "particles: mode is \"add\" or \"set\"");
   lua_pop(L, 1);
-  pxp_charge(L, s, (unsigned long)s->n * (unsigned long)(size * size));
+  pxp_charge(L, s, (unsigned long)s->n * (unsigned long)(size * size) * (fade ? 2 : 1));
   for (int i = 0; i < s->n; i++) {
     const PxPart *p = &s->p[i];
     int k = bri;
