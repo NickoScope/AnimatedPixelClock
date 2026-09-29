@@ -323,6 +323,40 @@ class TwinFlasherPage(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d, self.assertRaises(SystemExit):
             self.run_args(d, flasher_image="x.bin", flasher_version="v1")
 
+    def test_verify_judges_only_what_is_not_data(self):
+        with tempfile.TemporaryDirectory() as d:
+            img = bytearray(b"\xff" * 0x20000)
+            img[0] = 0xE9
+            img[0x8000:0x8000 + len(TABLE)] = TABLE
+            img[0x10000:0x10000 + len(APP)] = APP
+            image, flash = os.path.join(d, "merged.bin"), os.path.join(d, "flash.bin")
+            put(image, bytes(img))
+            chip = bytearray(img) + b"\xff" * 0x10000
+            chip[0x9000:0x9010] = b"\0" * 16                        # nvs written by the firmware
+            put(flash, bytes(chip))
+            with mock.patch.object(T, "FLASH", flash):
+                with contextlib.redirect_stdout(io.StringIO()) as out, self.assertRaises(SystemExit) as e:
+                    T.cmd_verify(mock.Mock(image=image), [])
+                self.assertEqual(e.exception.code, 0)
+                self.assertIn("nvs: 16 bytes differ", out.getvalue())
+                chip[0x10100] ^= 1                                    # one bit of the app
+                chip[0x1000] = 0                                      # and the bootloader
+                put(flash, bytes(chip))
+                with contextlib.redirect_stdout(io.StringIO()) as out, self.assertRaises(SystemExit) as e:
+                    T.cmd_verify(mock.Mock(image=image), [])
+                self.assertEqual(e.exception.code, 1)
+                self.assertIn("DIFFERENT 0x10100..0x10101 (1 bytes) in app0", out.getvalue())
+                self.assertIn("DIFFERENT 0x1000..0x1001 (1 bytes) in no partition (bootloader, table)", out.getvalue())
+
+    def test_differing_ranges(self):
+        a = bytes(10000)
+        b = bytearray(a)
+        b[5] = b[6] = 1
+        b[4096] = 1
+        b[9999] = 1
+        self.assertEqual(T.differing(a, bytes(b)), [(5, 7), (4096, 4097), (9999, 10000)])
+        self.assertEqual(T.differing(a, a), [])
+
 
 class Calibrate(unittest.TestCase):
     # finding 13: a fractional CPI, and errors that land in the results

@@ -26,6 +26,11 @@ as on the panel.
       empty PASSWORD ("") makes it an open network. Neither may hold a ',' (the engine's --wifi).
   twin.py erase
       forget everything (a new chip): the next run starts from the image again.
+  twin.py verify [IMAGE]
+      compare the twin's flash with a merged image (default: the one the flasher offers,
+      docs/firmware/latest) outside the image's data partitions, e.g. after flashing it from the
+      web flasher. Differences in data partitions (nvs, otadata, spiffs) are listed, not judged:
+      the firmware writes them. Exit status 1 if anything else differs.
 
 Paths (override with the environment): TWIN_HOME (~/twin) holds the engine, the ROM, the flash
 file and the default image; TWIN_ENGINE (TWIN_HOME/esp32sim) is the engine's checkout.
@@ -319,6 +324,54 @@ def cmd_erase(a, _):
     print("the twin's flash is erased; the next run writes the image into a new chip")
 
 
+def differing(a: bytes, b: bytes, block=4096):
+    """[start, end) ranges where A and B differ, over the shorter of the two."""
+    n, out, i = min(len(a), len(b)), [], 0
+    while i < n:
+        j = min(n, i + block)
+        if a[i:j] == b[i:j]:
+            i = j
+            continue
+        for k in range(i, j):
+            if a[k] != b[k]:
+                if out and out[-1][1] == k:
+                    out[-1][1] = k + 1
+                else:
+                    out.append([k, k + 1])
+        i = j
+    return [tuple(r) for r in out]
+
+
+def cmd_verify(a, _):
+    image = a.image or flasher_firmware()[0]
+    with open(image, "rb") as f:
+        img = f.read()
+    if not os.path.exists(FLASH):
+        sys.exit("no twin flash yet: run the twin once")
+    with open(FLASH, "rb") as f:
+        flash = f.read(len(img))
+    table = partitions(img)
+    if not table:
+        sys.exit(f"{image}: no partition table at 0x8000, so not a merged image")
+
+    def home(off):
+        return next((p for p in table if p[2] <= off < p[2] + p[3]), None)
+    bad, data = [], {}
+    for lo, hi in differing(img, flash):
+        p = home(lo)
+        if p is not None and p[0] == 1 and hi <= p[2] + p[3]:   # a data partition (type 1)
+            data[p[4]] = data.get(p[4], 0) + hi - lo
+        else:
+            bad.append((lo, hi, p[4] if p else "no partition (bootloader, table)"))
+    print(f"{FLASH} against {image} ({len(img)} bytes)")
+    for label, n in data.items():
+        print(f"  {label}: {n} bytes differ (a data partition: the firmware's own)")
+    for lo, hi, where in bad:
+        print(f"  DIFFERENT {lo:#x}..{hi:#x} ({hi - lo} bytes) in {where}")
+    print("the same outside the data partitions" if not bad else f"{len(bad)} range(s) differ outside the data partitions")
+    sys.exit(1 if bad else 0)
+
+
 def main():
     argv = sys.argv[1:]
     extra = []
@@ -350,8 +403,10 @@ def main():
     w.add_argument("ssid")
     w.add_argument("password", help='"" for an open network')
     sub.add_parser("erase")
+    v = sub.add_parser("verify")
+    v.add_argument("image", nargs="?", help="a merged image (default: the flasher's, docs/firmware/latest)")
     a = ap.parse_args(argv)
-    {"run": cmd_run, "flash": cmd_flash, "wifi": cmd_wifi, "erase": cmd_erase}[a.cmd](a, extra)
+    {"run": cmd_run, "flash": cmd_flash, "wifi": cmd_wifi, "erase": cmd_erase, "verify": cmd_verify}[a.cmd](a, extra)
 
 
 if __name__ == "__main__":
