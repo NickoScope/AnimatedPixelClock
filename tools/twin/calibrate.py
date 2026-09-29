@@ -11,7 +11,8 @@ and reads the same report from its console, once per timing configuration, all i
 
 A configuration is a name and the engine flags it adds:
   cpi1        the default: one cycle an instruction
-  cpiN        --cpi N: N cycles an instruction, uniform (the engine's JIT timing)
+  cpiN        --cpi N: N cycles an instruction, uniform (the engine's JIT timing); N may be
+              fractional (cpi2.45, the default of twin.py run), 1..256 as the engine takes it
   approxM     --approximate-timing --approximate-cache --approximate-memory M
 Results: DIR/<config>.json and a table on stdout (twin draw avg / panel draw avg per scene).
 """
@@ -37,8 +38,12 @@ REPORT = re.compile(r"\[luafx\] (.+?): (\d+) frames in (\d+) s \(([\d.]+) fps\),
 
 def flags(name):
     if name.startswith("cpi"):
-        n = int(name[3:])
-        return [] if n == 1 else ["--cpi", str(n)]
+        # The engine parses --cpi as f64 in 1.0..=256 (esp32sim cli/src/lib.rs, --cpi), so the text
+        # goes through as written; only plain decimals, so the name and the flag read the same.
+        v = name[3:]
+        if not re.fullmatch(r"\d+(\.\d+)?", v) or not 1 <= float(v) <= 256:
+            raise SystemExit(f"unknown configuration {name}: cpiN takes N from 1 to 256, e.g. cpi2.45")
+        return [] if float(v) == 1 else ["--cpi", v]
     if name.startswith("approx"):
         return ["--approximate-timing", "--approximate-cache", "--approximate-memory", name[6:]]
     raise SystemExit(f"unknown configuration {name}")
@@ -108,9 +113,12 @@ class Twin:
 
 
 def run(name, port, out, results):
-    t = Twin(name, port, out)
-    res = {"config": name, "flags": flags(name), "scenes": [], "oceanarium": None}
+    # Everything that can fail, the Twin itself included, is inside the try: an error lands in
+    # res["error"] and <name>.json instead of killing the thread with the column left blank.
+    res, t = {"config": name, "flags": None, "scenes": [], "oceanarium": None}, None
     try:
+        res["flags"] = flags(name)
+        t = Twin(name, port, out)
         t.wait_up()
         # A fresh chip's defaults run the carousel (15 s a page), which would take the effect off
         # the screen before its 30-second report; the owner's panel has it off.
@@ -135,12 +143,13 @@ def run(name, port, out, results):
             res["scenes"].append([scene, r])
             print(f"[{name}] {scene}: {r}", flush=True)
             json.dump(res, open(os.path.join(out, f"{name}.json"), "w"), indent=1)
-    except Exception as e:
+    except (Exception, SystemExit) as e:
         res["error"] = repr(e)
         print(f"[{name}] error {e!r}", flush=True)
     finally:
         json.dump(res, open(os.path.join(out, f"{name}.json"), "w"), indent=1)
-        t.stop()
+        if t is not None:
+            t.stop()
         results[name] = res
 
 
@@ -151,6 +160,8 @@ def main():
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
     names = a.configs.split(",")
+    for n in names:
+        flags(n)   # a misspelt configuration stops here, before any emulator starts
     results, threads = {}, []
     for i, n in enumerate(names):
         th = threading.Thread(target=run, args=(n, 18080 + i, a.out, results))

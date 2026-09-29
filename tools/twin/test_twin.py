@@ -10,6 +10,7 @@ import binascii
 import contextlib
 import hashlib
 import io
+import json
 import os
 import sys
 import tempfile
@@ -19,6 +20,7 @@ from unittest import mock
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import twin as T  # noqa: E402
+import calibrate as C  # noqa: E402
 
 def put(path, data):
     with open(path, "w" if isinstance(data, str) else "wb") as f:
@@ -179,6 +181,47 @@ class TwinWifi(unittest.TestCase):
                 with mock.patch.object(T.os, "execv") as execv, self.assertRaises(SystemExit):
                     T.cmd_run(a, [])
                 execv.assert_not_called()
+
+
+class Calibrate(unittest.TestCase):
+    # finding 13: a fractional CPI, and errors that land in the results
+    def test_flags(self):
+        self.assertEqual(C.flags("cpi2.45"), ["--cpi", "2.45"])
+        self.assertEqual(C.flags("cpi2"), ["--cpi", "2"])
+        self.assertEqual(C.flags("cpi1"), [])
+        self.assertEqual(C.flags("cpi1.0"), [])
+        for bad in ("cpi0.5", "cpi257", "cpi2_45", "cpix", "cpi", "cpi-2", "bogus"):
+            with self.assertRaises(SystemExit):
+                C.flags(bad)
+
+    def test_twin_gets_the_fractional_cpi_and_the_open_ap(self):
+        with tempfile.TemporaryDirectory() as d:
+            os.makedirs(os.path.join(d, "state"))
+            put(os.path.join(d, "state", "flash.bin"), b"\xff" * 16)
+            put(os.path.join(d, "state", "wifi.txt"), "Guest\n\n")
+            with mock.patch.object(C, "HOME", d), mock.patch.object(C.subprocess, "Popen") as popen:
+                C.Twin("cpi2.45", 18080, d)
+            args = popen.call_args[0][0]
+            self.assertEqual(args[args.index("--cpi") + 1], "2.45")
+            self.assertEqual(args[args.index("--wifi") + 1], "ssid=Guest")
+
+    def test_run_records_errors_instead_of_dying(self):
+        with tempfile.TemporaryDirectory() as d, contextlib.redirect_stdout(io.StringIO()):
+            results = {}
+            with mock.patch.object(C, "Twin", side_effect=FileNotFoundError("state/flash.bin")) as twin:
+                C.run("cpi2.45", 18080, d, results)
+                C.run("cpibad", 18081, d, results)
+            self.assertEqual(twin.call_count, 1)                   # a bad name never starts an emulator
+            for name in ("cpi2.45", "cpibad"):
+                self.assertIn("error", results[name])
+                self.assertEqual(json.loads(get(os.path.join(d, f"{name}.json")))["config"], name)
+            self.assertEqual(results["cpi2.45"]["flags"], ["--cpi", "2.45"])
+
+    def test_main_stops_on_a_bad_name_before_any_thread(self):
+        with mock.patch.object(sys, "argv", ["calibrate.py", "--configs", "cpi2.45,cpi2_45", "--out", tempfile.gettempdir()]), \
+                mock.patch.object(C.threading, "Thread") as thread, self.assertRaises(SystemExit):
+            C.main()
+        thread.assert_not_called()
 
 
 if __name__ == "__main__":
