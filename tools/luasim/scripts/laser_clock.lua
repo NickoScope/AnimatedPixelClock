@@ -12,7 +12,7 @@
 -- the beam in the air becomes a flickering fan.
 --
 -- Every 5 s the wall says the next thing: the time, the day of the week, the
--- date, the temperature outside and the city - each in its own colour of the
+-- date, the temperature outside, the city in Russian and Cannes - each in its own colour of the
 -- RGB laser, the temperature's going from ice blue to red with the reading.
 -- A screen with nothing to say (no weather set up in the portal, no home city
 -- on the world clock) is skipped. While the time is up, a digit that changes
@@ -202,6 +202,12 @@ local function capture_letter(ch)
   return strokes
 end
 for ch in LETTERS:gmatch(UTF8) do GLYPH[ch] = capture_letter(ch); ADV[ch] = LETTER_ADV end
+-- Ы: in 5x7 its bowl touches its bar, and the dots join into a knot. Drawn by
+-- hand on the same grid instead (column * 1.25, row * 1.5).
+do
+  local function g(t) local p = {} for i = 1, #t, 2 do p[#p + 1] = t[i] * 1.25; p[#p + 1] = t[i + 1] * 1.5 end return p end
+  GLYPH["Ы"] = { g{ 0, 0, 0, 6, 1.8, 6, 2.6, 5.2, 2.6, 3.8, 1.8, 3, 0, 3 }, g{ 4.2, 0, 4.2, 6 } }
+end
 for d = 0, 9 do ADV[tostring(d)] = DIGIT_ADV end
 
 -- A text laid out on the wall: its characters, where each starts (in units),
@@ -297,7 +303,7 @@ local LASERS = {
 }
 local RAINBOW = { { 255, 40, 60 }, { 255, 170, 30 }, { 255, 255, 120 }, { 40, 255, 90 }, { 60, 200, 255 }, { 170, 80, 255 } }
 local SCREEN_COL = { time = { 40, 255, 70 }, day = { 40, 210, 255 }, date = { 255, 185, 40 },
-                     city = { 255, 60, 200 }, temp = { 255, 255, 255 } }
+                     city = { 255, 60, 200 }, cannes = { 255, 120, 40 }, temp = { 255, 255, 255 } }
 local colour = 0                      -- 0: each screen its own
 local screenCol = SCREEN_COL.time
 local function temp_colour(t)
@@ -457,6 +463,23 @@ end
 -- set up, no home city) is skipped.
 local DAYS = { "\208\146\208\158\208\161\208\154\208\160\208\149\208\161\208\149\208\157\208\172\208\149", "\208\159\208\158\208\157\208\149\208\148\208\149\208\155\208\172\208\157\208\152\208\154", "\208\146\208\162\208\158\208\160\208\157\208\152\208\154",
                "\208\161\208\160\208\149\208\148\208\144", "\208\167\208\149\208\162\208\146\208\149\208\160\208\147", "\208\159\208\175\208\162\208\157\208\152\208\166\208\144", "\208\161\208\163\208\145\208\145\208\158\208\162\208\144" }
+-- The city in Russian: the world clock's built-in cities and the owner's,
+-- then a few more a home might be; any other name is shown as the world clock
+-- prints it.
+local RU_CITY = {
+  ["CANNES"] = "КАННЫ", ["MOSCOW"] = "МОСКВА", ["NEW YORK"] = "НЬЮ-ЙОРК", ["LONDON"] = "ЛОНДОН",
+  ["DUBAI"] = "ДУБАЙ", ["ALMATY"] = "АЛМАТЫ", ["GUILDFORD"] = "ГИЛФОРД",
+  ["NICE"] = "НИЦЦА", ["MONACO"] = "МОНАКО", ["ANTIBES"] = "АНТИБ", ["PARIS"] = "ПАРИЖ",
+  ["SAINT PETERSBURG"] = "ПЕТЕРБУРГ", ["ST PETERSBURG"] = "ПЕТЕРБУРГ", ["BERLIN"] = "БЕРЛИН",
+  ["ROME"] = "РИМ", ["MILAN"] = "МИЛАН", ["MADRID"] = "МАДРИД", ["BARCELONA"] = "БАРСЕЛОНА",
+  ["VIENNA"] = "ВЕНА", ["PRAGUE"] = "ПРАГА", ["GENEVA"] = "ЖЕНЕВА", ["ZURICH"] = "ЦЮРИХ",
+  ["AMSTERDAM"] = "АМСТЕРДАМ", ["ISTANBUL"] = "СТАМБУЛ", ["TOKYO"] = "ТОКИО",
+  ["SINGAPORE"] = "СИНГАПУР", ["HONG KONG"] = "ГОНКОНГ", ["LOS ANGELES"] = "ЛОС-АНДЖЕЛЕС",
+  ["MIAMI"] = "МАЙАМИ", ["TEL AVIV"] = "ТЕЛЬ-АВИВ", ["KYIV"] = "КИЕВ", ["MINSK"] = "МИНСК",
+  ["TBILISI"] = "ТБИЛИСИ", ["YEREVAN"] = "ЕРЕВАН", ["TASHKENT"] = "ТАШКЕНТ", ["ASTANA"] = "АСТАНА",
+  ["SOCHI"] = "СОЧИ", ["KAZAN"] = "КАЗАНЬ", ["WOKING"] = "УОКИНГ",
+}
+
 local function ymd(now)
   local y, d = now.year, now.yday + 1
   local leap = (y % 4 == 0 and y % 100 ~= 0) or y % 400 == 0
@@ -490,7 +513,13 @@ local SCREENS = {
   { key = "city", make = function()
       local c = rawget(px, "city") and px.city()
       if not c or c == "" then return nil end
-      return c, SCREEN_COL.city
+      return RU_CITY[c] or c, SCREEN_COL.city
+    end },
+  -- and Cannes, the owner's other city, unless it is home already
+  { key = "cannes", make = function()
+      local c = rawget(px, "city") and px.city()
+      if c == "CANNES" then return nil end
+      return "КАННЫ", SCREEN_COL.cannes
     end },
 }
 
