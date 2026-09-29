@@ -11,7 +11,8 @@
 -- again, fast, so the lines stay lit and shimmer as the scan comes round, and
 -- the beam in the air becomes a flickering fan.
 --
--- Every 5 s the wall says the next thing: the time, the day of the week, the
+-- Every 5 s the wall says the next thing (the last text dissolving into the
+-- bricks as the laser writes the next, with px.mix on firmware 2.7.5): the time, the day of the week, the
 -- date, the temperature outside and КАННЫ - each in its own colour of the
 -- RGB laser, the temperature's going from ice blue to red with the reading.
 -- The temperature is skipped while the panel has no weather (off in the
@@ -38,6 +39,10 @@ FPS = 15
 local W, H = px.size()
 local floor, sqrt, exp, sin, min, max, abs = math.floor, math.sqrt, math.exp, math.sin, math.min, math.max, math.abs
 local HAS_MODE, HAS_BLUR = rawget(px, "mode") ~= nil, rawget(px, "blur") ~= nil
+-- px.mix (firmware 2.7.5): the text going out dissolves on the wall while the
+-- laser writes the next; without it, it goes out in a quarter of a second
+local HAS_MIX = rawget(px, "mix") ~= nil
+local XF_S = 1.5
 
 -- xorshift32: the simulator and the panel must draw the same picture
 local seed = 0x2545F491
@@ -237,7 +242,7 @@ local BLINK = {}                      -- the places that are the clock's colon
 
 -- A new text on the wall. With the same screen and the same length only the
 -- characters that differ go dark and are rewritten; otherwise all of it.
-local function build(text, screenKey)
+local function build(text, screenKey, noGhosts)
   local chars, xs, sc, ox, oy = layout(text)
   local same = screenKey == shownKey and #chars == #shown
   local changed = {}
@@ -246,7 +251,7 @@ local function build(text, screenKey)
   for i = 1, NSEG do
     local s = SLOTOF[i]
     if not same or changed[s] then
-      GHOST[#GHOST + 1] = { SX0[i], SY0[i], SX1[i], SY1[i], LIT[i], s }
+      if not noGhosts then GHOST[#GHOST + 1] = { SX0[i], SY0[i], SX1[i], SY1[i], LIT[i], s } end
     else
       oldLit[#oldLit + 1] = LIT[i]
     end
@@ -337,6 +342,11 @@ local TAU_SCAN, TAU_WRITE = 0.9, 12   -- how long a line glows once passed (writ
 local lastClicks = rawget(px, "button") and px.button() or 0
 local lastMin = -1
 local SCREEN_S = 5
+local xfAt = nil                      -- when the last screen's text began to dissolve
+-- Each frame's wall and text go into one snapshot slot (a 24 KB copy); at a
+-- change of screen that slot becomes the one that fades, and the other
+-- takes the new frames. No text is drawn twice for it.
+local LINES_SLOT, FADE_SLOT = 3, 2
 local screen, screenAt = 0, -1e9
 
 local function first_seg()
@@ -516,10 +526,16 @@ function draw()
       screen = screen % #SCREENS + 1
       local text, col = SCREENS[screen].make(now)
       if text then
+        local flow = HAS_MIX and NSEG > 0
+        if flow then
+          -- last frame's text, kept as it glowed, dissolves under the new one
+          LINES_SLOT, FADE_SLOT = FADE_SLOT, LINES_SLOT
+          xfAt = T
+        end
         screenCol = col
         screenAt = T
         lastMin = now.min
-        start_writing(build(text, SCREENS[screen].key))
+        start_writing(build(text, SCREENS[screen].key, flow))
         break
       end
     end
@@ -541,12 +557,19 @@ function draw()
   end
 
   px.restore()
+  if xfAt then
+    -- the last screen's text, fading into the bricks as the new one is written
+    local u = (T - xfAt) / XF_S
+    if u >= 1 then xfAt = nil
+    else px.mix(FADE_SLOT, 1 - u * u * (3 - 2 * u)) end
+  end
 
   -- the lines on the wall, their halo, and the hot core over it. Drawn over,
   -- not added: the segments share their ends, and added they would bead.
   draw_lines(false)
   if HAS_BLUR then px.blur(0.55, 0, 0, W, GROUND) end
   draw_lines(true)
+  if HAS_MIX then px.save(LINES_SLOT) end
   if HAS_MODE then px.mode("add") end
 
   -- the beam in the haze, from the aperture to the dot (a fan while scanning)

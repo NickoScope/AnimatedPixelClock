@@ -106,7 +106,7 @@
       "name": "LASER_CLOCK",
       "file": "laser_clock.lua",
       "line": "a laser on the pavement writes the time on the wall",
-      "bytes": 24386,
+      "bytes": 25562,
       "preview": "preview/laser_clock.png"
     },
     {
