@@ -40,6 +40,10 @@ FLASH_MB = 32
 # (spi_flash_oct_flash_init.c, s_probe_mxic_chip); c28039 is Macronix's MX25UM25645G (256 Mbit).
 # Not read from our module: esptool flash_id on the panel would settle it.
 FLASH_ID = "c28039"
+# The twin's own MAC (the owner, 2026-09-29: its own address, never the panel's 90:E5:B1:D2:0E:2C).
+# Locally administered (bit 1 of the first byte set, IEEE 802 §8.4), so it can belong to no
+# vendor's device; 54 57 49 4E is "TWIN" in ASCII.
+MAC = "02:54:57:49:4E:01"
 
 
 def improv_hex(ssid: str, password: str) -> str:
@@ -58,7 +62,7 @@ def cmd_run(a, extra):
     args = [EXE, "--board", "panel", "--boot", "rom", "--rom", ROM, "--flash-image", IMAGE,
             "--flash-mb", str(FLASH_MB), "--flash-id", FLASH_ID, "--psram-mb", "16",
             "--efuse-regs", EFUSE, "--elf", ELF, "--console", "usb", "--no-dump",
-            "--flash-persist", FLASH]
+            "--flash-persist", FLASH, "--mac", a.mac]
     ssid = pw = None
     if os.path.exists(WIFI):
         ssid, pw = open(WIFI).read().splitlines()[:2]
@@ -131,6 +135,7 @@ def main():
     r.add_argument("--seconds", type=float)
     r.add_argument("--png")
     r.add_argument("--open", action="store_true", help="with --web, open the panel page in the browser")
+    r.add_argument("--mac", default=MAC, help=f"the twin's station MAC (default {MAC})")
     r.add_argument("--cpi", default="2.45", help="cycles per instruction; 2.45 matches the panel's Lua draw times "
                    "(calibrate.py: 10 scenes, validate.py: 3 held out, within about 16%%); 1 = the engine's full speed")
     r.add_argument("--fresh", action="store_true")
