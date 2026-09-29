@@ -913,6 +913,10 @@ What follows from that:
   frame, not a Lua table of hundreds of particles. With `px.fade` first for
   trails and `step{flow = ...}` for a flow field, `flow.lua` draws 700 of
   them.
+- Fire, Life, ripples on water and Gray-Scott reaction-diffusion are one
+  call a frame each (2.7.6): `px.step(L, "fire" | "life" | "wave", {...})`
+  and `px.reaction{f, k}` with `R:step(n)`, `R:show(L)`, then `px.show`
+  through a palette. `reaction.lua` grows spots into coral and mazes.
 - What the panel knows about outside: `px.weather()` (2.7.4) is the weather
   clock's data - `{temp, min, max, humidity, wind, code, fahrenheit}` in C and
   km/h - or nil while there is none (weather off in the portal, no location,

@@ -1224,6 +1224,14 @@ async def effect_api() -> str:
                                  "curl of Perlin noise); P:draw{mode='add'|'set',bri,fade,"
                                  "size}; P:count(); P:clear(). Pair with px.fade for "
                                  "trails (flow.lua).",
+            "px.step(L,kind[,params])": "firmware 2.7.6+. A simulation step on a layer: "
+                                 "'fire' {cool,heat,seed}; 'life' {decay,born='3',survive='23'} "
+                                 "(alive > 127, the dead fade); 'wave' {prev=L2,damp} (writes the "
+                                 "next into prev: swap after). Show with px.show(L, pal).",
+            "px.reaction{f,k,da,db}": "firmware 2.7.6+. -> R, Gray-Scott reaction-diffusion over "
+                                 "the canvas: R:seed(x,y,r), R:step(n<=32), R:params{f,k,da,db}, "
+                                 "R:show(L), R:clear(). f/k pick spots, coral, maze, worms "
+                                 "(reaction.lua).",
             "px.weather()": "firmware 2.7.4+. -> {temp,min,max,humidity,wind,code,"
                             "fahrenheit} in C and km/h (the weather clock's data), or "
                             "nil while there is none; asking keeps the fetch going",

@@ -379,7 +379,8 @@ effect_api      → the whole drawing API and every budget (px.save/restore,
                   2.7.4 px.fade, px.blur, px.mode("add"), palettes, layers,
                   px.show, px.scroll, px.mirror, px.weather and px.city
                   included; since 2.7.5 four snapshots, px.mix, px.feedback, px.noise,
-                  px.field and px.particles; the
+                  px.field and px.particles; since 2.7.6 px.step and
+                  px.reaction; the
                   sandbox's rules too)
 effect_write    → tools/luasim/scripts/<name>.lua
 effect_preview  → luasim + render.py → a GIF you can look at
