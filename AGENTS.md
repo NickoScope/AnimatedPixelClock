@@ -925,6 +925,13 @@ What follows from that:
   A turning 3D body is `px.model{v, e, f, orient = true}` once and
   `px.mesh(M, {ax, ay, az, mode = "solid"|"wire"|"both"})` a frame - not a Lua
   loop over its vertices. `solids.lua` shows all of it.
+- Tunnels, globes and floors are a picture seen through a map (2.7.7): a
+  `px.uvmap("tunnel" | "polar" | "sphere" | "plane" | "swirl")` built once
+  (24 KB), then one `px.remap(M, src, du, dv, pal)` a frame from a layer or a
+  snapshot slot, sliding `du, dv` - the demoscene's tunnel, rotozoomed globe
+  and mode-7 floor without a Lua loop over the pixels. The tunnel, polar map
+  and floor want a texture that tiles (`px.field` sines a whole number of
+  times across 128 and down 64). `warp.lua` shows all four.
 - What the panel knows about outside: `px.weather()` (2.7.4) is the weather
   clock's data - `{temp, min, max, humidity, wind, code, fahrenheit}` in C and
   km/h - or nil while there is none (weather off in the portal, no location,

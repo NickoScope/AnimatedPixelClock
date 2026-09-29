@@ -1241,6 +1241,14 @@ async def effect_api() -> str:
                                  "convex body), drawn a frame with px.mesh(M,{ax,ay,az,scale,x,y,"
                                  "dist,r,g,b,mode='wire'|'solid'|'both'}) - turned, projected, "
                                  "depth-sorted, lit (solids.lua).",
+            "px.uvmap(kind[,params]) / px.remap(M,src,du,dv[,pal])": "firmware 2.7.7+. A map "
+                                 "(24 KB) built once: 'tunnel' {cx,cy,depth}, 'polar' {cx,cy,scale}, "
+                                 "'sphere' {cx,cy,r}, 'plane' {horizon,height,fov}, 'swirl' "
+                                 "{cx,cy,turn}, 'blank' + M:set(x,y,u,v[,shade]). A frame: "
+                                 "px.remap(M, slot 1..4 or layer, du, dv, pal) - the canvas from the "
+                                 "texture at (u+du, v+dv) & 255, times the shade. Slide du/dv to fly "
+                                 "down a tunnel, turn a globe, rush over a floor; tunnel/polar/plane "
+                                 "want a tiling texture (warp.lua).",
             "px.weather()": "firmware 2.7.4+. -> {temp,min,max,humidity,wind,code,"
                             "fahrenheit} in C and km/h (the weather clock's data), or "
                             "nil while there is none; asking keeps the fetch going",

@@ -269,6 +269,9 @@ static int l_dot(lua_State *L)   { return px_dot_lua(L, fb, W, H, g_add); }
 static int l_tri(lua_State *L)   { return px_tri_lua(L, fb, W, H, g_add, NULL); }
 static int l_model(lua_State *L) { return px_model_lua(L); }
 static int l_mesh(lua_State *L)  { return px_mesh_lua(L, fb, W, H, g_add, NULL); }
+#include "../../src/lua/px_remap.h"    /* px.uvmap, px.remap */
+static int l_uvmap(lua_State *L) { return px_uvmap_lua(L, W, H, NULL); }
+static int l_remap(lua_State *L) { return px_remap_lua(L, fb, W, H, NULL); }
 static int l_terrain(lua_State *L) { unsigned long work; return px_terrain_lua(L, fb, W, H, &work); }
 #include "../../src/lua/px_sprite.h"    /* px.grab, px.blit, shared with the firmware */
 static int l_grab(lua_State *L)    { unsigned long work; return px_grab_lua(L, fb, W, H, &work); }
@@ -306,6 +309,7 @@ static const luaL_Reg px_lib[] = {
   {"feedback", l_feedback}, {"noise", l_noise}, {"field", l_field},
   {"particles", l_particles}, {"step", l_step}, {"reaction", l_reaction},
   {"aline", l_aline}, {"dot", l_dot}, {"tri", l_tri}, {"model", l_model}, {"mesh", l_mesh},
+  {"uvmap", l_uvmap}, {"remap", l_remap},
   {NULL, NULL}
 };
 

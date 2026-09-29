@@ -44,6 +44,7 @@ extern "C" {
 #include "px_particles.h"          // px.particles (after px_raster.h, px_layer.h, px_field.h)
 #include "px_sim.h"                // px.step, px.reaction (after px_raster.h, px_layer.h)
 #include "px_draw.h"               // px.aline, px.dot, px.tri, px.model, px.mesh
+#include "px_remap.h"              // px.uvmap, px.remap (after px_snapshot.h, px_field.h)
 #include "lua_fx.h"                // LuaFx::charge
 
 #define W LUA_PX_W
@@ -444,6 +445,11 @@ static int l_model(lua_State *L) {
 }
 static int l_mesh(lua_State *L) { return px_mesh_lua(L, canvasOf(L)->rgb, W, H, s_add, drawCharge); }
 
+// px.uvmap and px.remap charge before the work: estimates until measured.
+static void remapCharge(lua_State *L, unsigned long n) { LuaFx::charge(L, (uint32_t)n); }
+static int l_uvmap(lua_State *L) { return px_uvmap_lua(L, W, H, remapCharge); }
+static int l_remap(lua_State *L) { return px_remap_lua(L, canvasOf(L)->rgb, W, H, remapCharge); }
+
 static const luaL_Reg kPxLib[] = {
   {"get", l_get}, {"blend", l_blend}, {"glow", l_glow},
   {"size", l_size}, {"t", l_t}, {"now", l_now}, {"clear", l_clear},
@@ -457,6 +463,7 @@ static const luaL_Reg kPxLib[] = {
   {"feedback", l_feedback}, {"noise", l_noise}, {"field", l_field},
   {"particles", l_particles}, {"step", l_step}, {"reaction", l_reaction},
   {"aline", l_aline}, {"dot", l_dot}, {"tri", l_tri}, {"model", l_model}, {"mesh", l_mesh},
+  {"uvmap", l_uvmap}, {"remap", l_remap},
   {NULL, NULL}
 };
 
