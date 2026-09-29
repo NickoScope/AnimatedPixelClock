@@ -1,0 +1,34 @@
+# Teach the twin the owner's remote the way the owner taught the panel: `ir learn N`, then the key.
+# Codes: live GET /api/ir of the panel, 2026-09-29 (ADR-TWIN-01 research). Then bind each button to its function.
+8.0 serial ir learn 1
+9.0 ir 0xFF708F hold 100
+10.5 serial ir learn 2
+11.5 ir 0xFF58A7 hold 100
+13.0 serial ir learn 3
+14.0 ir 0xFFE01F hold 100
+15.5 serial ir learn 4
+16.5 ir 0xFF41BE hold 100
+18.0 serial ir learn 5
+19.0 ir 0xFF28D7 hold 100
+20.5 serial ir learn 6
+21.5 ir 0xFFC03F hold 100
+23.0 serial ir learn 7
+24.0 ir 0xFF19E6 hold 100
+25.5 serial ir learn 8
+26.5 ir 0xFF12ED hold 100
+28.0 serial ir learn 9
+29.0 ir 0xFF40BF hold 100
+30.5 serial ir learn 10
+31.5 ir 0xFFC936 hold 100
+33.0 serial ir fn 1 ccw
+33.5 serial ir fn 2 cw
+34.0 serial ir fn 3 ok
+34.5 serial ir fn 4 long
+35.0 serial ir fn 5 power
+35.5 serial ir fn 6 bright_up
+36.0 serial ir fn 7 carousel
+36.5 serial ir fn 8 home
+37.0 serial ir fn 9 bright_down
+37.5 serial ir fn 10 media_toggle
+38.0 serial ir
+40.0 stop
