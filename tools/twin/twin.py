@@ -7,10 +7,14 @@ i8080 + GDMA, an empty SD slot, the HUB75 panel, the IR receiver and the knob
 firmware stores - Wi-Fi, settings, the remote's learned codes, Lua effects - stays between runs,
 as on the panel.
 
-  twin.py run [--web PORT] [--seconds S] [--png FILE] [--fresh] [-- extra esp32sim flags]
-      boot the twin. --web serves the panel page at http://127.0.0.1:PORT/panel.html (real time);
-      without it the run is headless and as fast as the Mac allows. --fresh starts from an erased
-      chip written with the image, like a new board.
+  twin.py run [--web PORT] [--seconds S] [--png FILE] [--fresh | --blank] [-- extra esp32sim flags]
+      boot the twin. --web serves the panel page at http://127.0.0.1:PORT/panel.html (real time)
+      and the project's web flasher at http://127.0.0.1:PORT/flasher/index.html, a copy of docs/
+      that flashes the twin over its USB-Serial/JTAG (tools/twin/flasher/); without --web the run
+      is headless and as fast as the Mac allows. --fresh starts from an erased chip written with
+      the image, like a new board; --blank from an erased chip with nothing on it, as it comes
+      from the factory, for the flasher to write. The flasher offers docs/firmware/latest, or
+      --flasher-image FILE (a merged image) under --flasher-version VER.
   twin.py flash IMAGE [--at OFFSET]
       write an image into the twin's flash, as `pio run -t upload` would: a full image
       (firmware-vX-waveshare.bin) at 0x0; an app image (firmware.bin, OTA_ONLY_...) at 0x10000 with
@@ -24,12 +28,12 @@ as on the panel.
       forget everything (a new chip): the next run starts from the image again.
 
 Paths (override with the environment): TWIN_HOME (~/twin) holds the engine, the ROM, the flash
-file and the default image.
+file and the default image; TWIN_ENGINE (TWIN_HOME/esp32sim) is the engine's checkout.
 """
-import argparse, binascii, os, subprocess, sys
+import argparse, binascii, os, re, shutil, subprocess, sys
 
 HOME = os.path.expanduser(os.environ.get("TWIN_HOME", "~/twin"))
-ENGINE = os.path.join(HOME, "esp32sim")
+ENGINE = os.path.expanduser(os.environ.get("TWIN_ENGINE", os.path.join(HOME, "esp32sim")))
 EXE = os.path.join(ENGINE, "target", "release", "esp32sim")
 ROM = os.path.join(HOME, "rom", "esp32s3_rev0_rom.elf")
 STATE = os.path.join(HOME, "state")
@@ -38,6 +42,11 @@ WIFI = os.path.join(STATE, "wifi.txt")
 IMAGE = os.environ.get("TWIN_IMAGE", os.path.join(HOME, "fw", "v2.7.3", "merged.bin"))
 ELF = os.environ.get("TWIN_ELF", os.path.join(HOME, "fw", "v2.7.3", "firmware.elf"))
 EFUSE = os.path.join(HOME, "efuse-opi.txt")
+# The engine's pages and the flasher's copy, made again by every run with --web (build_web).
+WEB = os.path.join(STATE, "web")
+HERE = os.path.dirname(os.path.abspath(__file__))
+DOCS = os.path.join(os.path.dirname(os.path.dirname(HERE)), "docs")   # the public flasher page
+FLASHER_SRC = os.path.join(HERE, "flasher")                           # twin-serial.js, selftest.html
 FLASH_MB = 32
 # The module's flash answers as a Macronix octal part. IDF 4.4.7 accepts any 0xC2 0x8x ID
 # (spi_flash_oct_flash_init.c, s_probe_mxic_chip); c28039 is Macronix's MX25UM25645G (256 Mbit).
@@ -120,11 +129,104 @@ def improv_hex(ssid: str, password: str) -> str:
     return (pkt + bytes([sum(pkt) & 0xFF])).hex()
 
 
+# ---- the web flasher's copy for the twin ----------------------------------------------------------
+# ESP Web Tools pinned to the version the shim was written against (twin-serial.js); docs/index.html
+# asks unpkg for @10, whatever 10.x is current.
+EWT_VERSION = "10.4.0"
+# docs/flasher.js:15 and :38: the image is firmware/latest/AnimatedPixelClock-<firmware>-<VERSION>-Full.bin
+FIRMWARE_ID = "waveshare"
+GENERATED = ".twin-generated"
+BANNER = ('<div role="note" style="background:#1d1b16;color:#f4f0e7;font:14px/1.45 system-ui,-apple-system,sans-serif;'
+          'padding:8px 16px;text-align:center">Копия прошивальщика для виртуального двойника: Install → '
+          '«Двойник» прошивает эмулятор на этом Mac, «Плата по USB» — настоящую плату. '
+          '<a href="../panel.html" style="color:#f0b429">Панель двойника</a></div>')
+# (anchor, replacement): each anchor must occur exactly once in docs/index.html, so a change to the
+# public page that moves one stops the build instead of leaving a half-made copy.
+FLASHER_EDITS = (
+    # first in <head>, a classic script: it must run before ESP Web Tools' module (twin-serial.js)
+    ('<meta charset="utf-8">', '<meta charset="utf-8">\n  <script src="twin-serial.js"></script>'),
+    ("https://unpkg.com/esp-web-tools@10/", f"https://unpkg.com/esp-web-tools@{EWT_VERSION}/"),
+    ("<title>", "<title>Двойник · "),
+    ("<body>", "<body>\n" + BANNER),
+)
+
+
+def flasher_index(html: str) -> str:
+    """docs/index.html as the twin serves it: the navigator.serial shim, ESP Web Tools pinned, a
+    title and a note that say whose page it is. Nothing else changes; flasher.js is copied as is."""
+    for old, new in FLASHER_EDITS:
+        n = html.count(old)
+        if n != 1:
+            raise ValueError(f"docs/index.html: {old!r} occurs {n} times, not once; the twin's copy of the page "
+                             "would be wrong, so update FLASHER_EDITS in tools/twin/twin.py")
+        html = html.replace(old, new)
+    return html
+
+
+def flasher_firmware(image=None, version=None):
+    """(image, version) the twin's flasher offers: the release in docs/firmware/latest, or IMAGE under
+    VERSION. The page writes it at 0x0 (docs/flasher.js:51), so it has to be a merged image."""
+    if image is None:
+        if version is not None:
+            sys.exit("--flasher-version goes with --flasher-image")
+        latest = os.path.join(DOCS, "firmware", "latest")
+        with open(os.path.join(latest, "VERSION")) as f:
+            version = f.read().strip()
+        image = os.path.join(latest, f"AnimatedPixelClock-{FIRMWARE_ID}-{version}-Full.bin")
+        if not os.path.exists(image):
+            sys.exit(f"{image} is missing: docs/firmware/latest has VERSION {version} but not its image")
+        return image, version
+    if not version:
+        sys.exit("--flasher-image needs --flasher-version (the name the page shows and builds the file name from)")
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", version):
+        sys.exit(f"--flasher-version {version!r}: letters, digits, '.', '_' and '-' only (it becomes a file name)")
+    with open(image, "rb") as f:
+        head = f.read(0x8002)
+    if head[:1] != b"\xe9" or head[0x8000:0x8002] != b"\xaa\x50":
+        sys.exit(f"{image}: not a merged image (bootloader at 0x0, partition table at 0x8000); the page writes it at 0x0")
+    return image, version
+
+
+def build_web(dest, image=None, version=None):
+    """Make DEST: the engine's web/ (panel.html and the rest), and flasher/ with the page from docs/
+    (flasher_index), flasher.js, styles.css, img/, the shim, the self-test page and the firmware
+    in firmware/latest/. Made again on every run; DEST must be absent or made by this function.
+    Returns the firmware version offered."""
+    image, version = flasher_firmware(image, version)
+    if os.path.lexists(dest):
+        if not os.path.exists(os.path.join(dest, GENERATED)):
+            sys.exit(f"{dest} exists and was not made by twin.py; move it away (it is rebuilt on every run)")
+        shutil.rmtree(dest)
+    shutil.copytree(os.path.join(ENGINE, "web"), dest)
+    with open(os.path.join(dest, GENERATED), "w") as f:
+        f.write("made by tools/twin/twin.py on every run with --web; edits here are lost\n")
+    fl = os.path.join(dest, "flasher")
+    fw = os.path.join(fl, "firmware", "latest")
+    os.makedirs(fw)
+    with open(os.path.join(DOCS, "index.html"), encoding="utf-8") as f:
+        page = flasher_index(f.read())
+    with open(os.path.join(fl, "index.html"), "w", encoding="utf-8") as f:
+        f.write(page)
+    for name in ("flasher.js", "styles.css"):
+        shutil.copy2(os.path.join(DOCS, name), fl)
+    shutil.copytree(os.path.join(DOCS, "img"), os.path.join(fl, "img"))
+    for name in ("twin-serial.js", "selftest.html"):
+        shutil.copy2(os.path.join(FLASHER_SRC, name), fl)
+    shutil.copy2(image, os.path.join(fw, f"AnimatedPixelClock-{FIRMWARE_ID}-{version}-Full.bin"))
+    with open(os.path.join(fw, "VERSION"), "w") as f:
+        f.write(version + "\n")
+    return version
+
+
 def cmd_run(a, extra):
     os.makedirs(STATE, exist_ok=True)
-    if a.fresh and os.path.exists(FLASH):
+    if (a.flasher_image or a.flasher_version) and not a.web:
+        sys.exit("--flasher-image and --flasher-version go with --web (the flasher page is served there)")
+    if (a.fresh or a.blank) and os.path.exists(FLASH):
         os.remove(FLASH)
-    args = [EXE, "--board", "panel", "--boot", "rom", "--rom", ROM, "--flash-image", IMAGE,
+    # --blank: no image, so the flash file starts erased (0xFF) and the ROM finds nothing to boot
+    image = [] if a.blank else ["--flash-image", IMAGE]
+    args = [EXE, "--board", "panel", "--boot", "rom", "--rom", ROM, *image,
             "--flash-mb", str(FLASH_MB), "--flash-id", FLASH_ID, "--psram-mb", "16",
             "--efuse-regs", EFUSE, "--elf", ELF, "--console", "usb", "--no-dump",
             "--flash-persist", FLASH, "--mac", a.mac]
@@ -137,8 +239,10 @@ def cmd_run(a, extra):
         if a.provision:
             args += ["--serial-hex", improv_hex(ssid, pw)]
     if a.web:
-        args += ["--web", str(a.web), "--web-dir", os.path.join(ENGINE, "web")]
-        print(f"the panel: http://127.0.0.1:{a.web}/panel.html   its portal: http://127.0.0.1:{a.http}/", file=sys.stderr)
+        version = build_web(WEB, a.flasher_image, a.flasher_version)
+        args += ["--web", str(a.web), "--web-dir", WEB]
+        print(f"the panel: http://127.0.0.1:{a.web}/panel.html   its portal: http://127.0.0.1:{a.http}/\n"
+              f"the flasher ({version}): http://127.0.0.1:{a.web}/flasher/index.html", file=sys.stderr)
     if a.seconds:
         args += ["--max-seconds", str(a.seconds)]
     if a.png:
@@ -232,7 +336,10 @@ def main():
     r.add_argument("--cpi", default="2.45", help="cycles per instruction; 2.45 fits the panel's Lua draw times "
                    "(calibrate.py: the 10 fitted scenes then run -12%% to +30%% against the panel's times, "
                    "slowest on text; validate.py: 3 held-out effects within about 16%%); 1 = the engine's full speed")
-    r.add_argument("--fresh", action="store_true")
+    r.add_argument("--fresh", action="store_true", help="a new chip written with the image")
+    r.add_argument("--blank", action="store_true", help="a new chip with nothing on it, for the web flasher")
+    r.add_argument("--flasher-image", help="with --web: the merged image the flasher offers (default docs/firmware/latest)")
+    r.add_argument("--flasher-version", help="with --flasher-image: its version, as the page shows it")
     r.add_argument("--provision", action="store_true", help="send the Wi-Fi pair over Improv at boot")
     r.add_argument("--http", type=int, default=8080, help="the twin's port 80 on 127.0.0.1 (default 8080)")
     r.add_argument("--udp", type=int, default=4210, help="the twin's UDP 4210 on 127.0.0.1")

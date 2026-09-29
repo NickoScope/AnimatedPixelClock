@@ -170,8 +170,8 @@ class TwinWifi(unittest.TestCase):
                 self.assertFalse(os.path.exists(wifi))
                 with contextlib.redirect_stdout(io.StringIO()):
                     T.cmd_wifi(mock.Mock(ssid="Guest", password=""), [])
-                a = mock.Mock(fresh=False, provision=True, web=None, seconds=None, png=None, cpi="2.45",
-                              open=False, http=8080, udp=4210, mac=T.MAC)
+                a = mock.Mock(fresh=False, blank=False, provision=True, web=None, seconds=None, png=None, cpi="2.45",
+                              open=False, http=8080, udp=4210, mac=T.MAC, flasher_image=None, flasher_version=None)
                 with mock.patch.object(T.os, "execv") as execv:
                     T.cmd_run(a, [])
                 args = execv.call_args[0][1]
@@ -181,6 +181,147 @@ class TwinWifi(unittest.TestCase):
                 with mock.patch.object(T.os, "execv") as execv, self.assertRaises(SystemExit):
                     T.cmd_run(a, [])
                 execv.assert_not_called()
+
+
+DOCS_INDEX = os.path.join(T.DOCS, "index.html")
+
+
+def tree_digest(root):
+    """sha256 of every file under ROOT, by relative path."""
+    out = {}
+    for d, _, files in os.walk(root):
+        for n in files:
+            p = os.path.join(d, n)
+            out[os.path.relpath(p, root)] = hashlib.sha256(get(p)).hexdigest()
+    return out
+
+
+class TwinFlasherPage(unittest.TestCase):
+    """The twin's copy of the web flasher (twin.py build_web): docs/ is only read."""
+
+    PAGE = ('<!doctype html>\n<html>\n<head>\n  <meta charset="utf-8">\n  <title>Flasher</title>\n'
+            '  <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>\n'
+            '</head>\n<body>\n<p>x</p>\n</body>\n</html>\n')
+
+    def test_the_four_edits(self):
+        out = T.flasher_index(self.PAGE)
+        self.assertIn('<meta charset="utf-8">\n  <script src="twin-serial.js"></script>', out)
+        self.assertIn("esp-web-tools@10.4.0/dist/web/install-button.js", out)
+        self.assertNotIn("esp-web-tools@10/", out)
+        self.assertIn("<title>Двойник · Flasher</title>", out)
+        self.assertIn("<body>\n" + T.BANNER, out)
+        # the shim is a classic script ahead of the ESP Web Tools module
+        self.assertLess(out.index('src="twin-serial.js"'), out.index('type="module"'))
+
+    def test_an_anchor_missing_or_twice_stops_the_build(self):
+        for page in (self.PAGE.replace("<title>", "<title lang=en>"),
+                     self.PAGE.replace("@10/", "@11/"),
+                     self.PAGE.replace("<body>", "<body><body>"),
+                     self.PAGE + '<meta charset="utf-8">'):
+            with self.assertRaises(ValueError):
+                T.flasher_index(page)
+
+    @unittest.skipUnless(os.path.exists(DOCS_INDEX), "no docs/index.html")
+    def test_the_public_page_takes_the_edits(self):
+        out = T.flasher_index(get(DOCS_INDEX).decode("utf-8"))
+        self.assertEqual(out.count("twin-serial.js"), 1)
+        self.assertEqual(out.count("esp-web-tools@10.4.0/"), 1)
+        self.assertLess(out.index("twin-serial.js"), out.index("esp-web-tools@"))
+
+    def make_engine(self, d):
+        engine = os.path.join(d, "engine")
+        os.makedirs(os.path.join(engine, "web", "assets"))
+        put(os.path.join(engine, "web", "panel.html"), "<html>panel</html>")
+        put(os.path.join(engine, "web", "assets", "a.png"), b"\x89PNG")
+        return engine
+
+    @unittest.skipUnless(os.path.exists(os.path.join(T.DOCS, "firmware", "latest", "VERSION")), "no docs/firmware/latest")
+    def test_build_web_from_the_release(self):
+        with tempfile.TemporaryDirectory() as d:
+            before = tree_digest(T.DOCS)
+            dest = os.path.join(d, "web")
+            with mock.patch.object(T, "ENGINE", self.make_engine(d)):
+                version = T.build_web(dest)
+                T.build_web(dest)                                   # made again over its own output
+            self.assertEqual(tree_digest(T.DOCS), before)           # docs/ untouched
+            self.assertEqual(version, get(os.path.join(T.DOCS, "firmware", "latest", "VERSION")).decode().strip())
+            fl = os.path.join(dest, "flasher")
+            self.assertEqual(get(os.path.join(dest, "panel.html")), b"<html>panel</html>")
+            self.assertTrue(os.path.exists(os.path.join(dest, T.GENERATED)))
+            for name in ("flasher.js", "styles.css"):
+                self.assertEqual(get(os.path.join(fl, name)), get(os.path.join(T.DOCS, name)))
+            for name in ("twin-serial.js", "selftest.html"):
+                self.assertEqual(get(os.path.join(fl, name)), get(os.path.join(T.FLASHER_SRC, name)))
+            self.assertEqual(tree_digest(os.path.join(fl, "img")), tree_digest(os.path.join(T.DOCS, "img")))
+            bin_name = f"AnimatedPixelClock-{T.FIRMWARE_ID}-{version}-Full.bin"
+            self.assertEqual(get(os.path.join(fl, "firmware", "latest", bin_name)),
+                             get(os.path.join(T.DOCS, "firmware", "latest", bin_name)))
+            self.assertEqual(get(os.path.join(fl, "firmware", "latest", "VERSION")).decode().strip(), version)
+            self.assertEqual(get(os.path.join(fl, "index.html")).decode("utf-8"), T.flasher_index(get(DOCS_INDEX).decode("utf-8")))
+
+    def test_build_web_never_removes_a_directory_it_did_not_make(self):
+        with tempfile.TemporaryDirectory() as d:
+            dest = os.path.join(d, "web")
+            os.makedirs(dest)
+            put(os.path.join(dest, "mine.txt"), "keep")
+            with mock.patch.object(T, "ENGINE", self.make_engine(d)), self.assertRaises(SystemExit):
+                T.build_web(dest)
+            self.assertEqual(get(os.path.join(dest, "mine.txt")), b"keep")
+
+    def test_another_image(self):
+        with tempfile.TemporaryDirectory() as d:
+            img = bytearray(b"\xff" * 0x9000)
+            img[0] = 0xE9
+            img[0x8000:0x8000 + len(TABLE)] = TABLE
+            good = os.path.join(d, "merged.bin")
+            put(good, bytes(img))
+            self.assertEqual(T.flasher_firmware(good, "v9.9.9-test"), (good, "v9.9.9-test"))
+            dest = os.path.join(d, "web")
+            with mock.patch.object(T, "ENGINE", self.make_engine(d)):
+                T.build_web(dest, good, "v9.9.9-test")
+            latest = os.path.join(dest, "flasher", "firmware", "latest")
+            self.assertEqual(get(os.path.join(latest, "AnimatedPixelClock-waveshare-v9.9.9-test-Full.bin")), bytes(img))
+            self.assertEqual(get(os.path.join(latest, "VERSION")), b"v9.9.9-test\n")
+            app = os.path.join(d, "firmware.bin")
+            put(app, APP)
+            for image, version in ((good, None), (good, "v1/../x"), (good, "v 1"), (app, "v1"), (None, "v1")):
+                with self.assertRaises(SystemExit):
+                    T.flasher_firmware(image, version)
+
+    def run_args(self, d, **kw):
+        flash = os.path.join(d, "flash.bin")
+        a = dict(fresh=False, blank=False, provision=False, web=None, seconds=None, png=None, cpi="2.45", open=False,
+                 http=8080, udp=4210, mac=T.MAC, flasher_image=None, flasher_version=None)
+        a.update(kw)
+        with mock.patch.object(T, "STATE", d), mock.patch.object(T, "FLASH", flash), \
+                mock.patch.object(T, "WIFI", os.path.join(d, "wifi.txt")), mock.patch.object(T, "WEB", os.path.join(d, "web")), \
+                mock.patch.object(T, "build_web", return_value="v2.7.3") as build, \
+                mock.patch.object(T.os, "execv") as execv, contextlib.redirect_stderr(io.StringIO()) as err:
+            T.cmd_run(mock.Mock(**a), [])
+        return execv.call_args[0][1], build, err.getvalue()
+
+    def test_run_with_web_serves_the_generated_pages(self):
+        with tempfile.TemporaryDirectory() as d:
+            args, build, err = self.run_args(d, web=18790)
+            build.assert_called_once_with(os.path.join(d, "web"), None, None)
+            self.assertEqual(args[args.index("--web-dir") + 1], os.path.join(d, "web"))
+            self.assertIn("http://127.0.0.1:18790/flasher/index.html", err)
+            self.assertIn("--flash-image", args)
+            args, build, _ = self.run_args(d)
+            build.assert_not_called()
+            self.assertNotIn("--web-dir", args)
+
+    def test_blank_is_an_empty_new_chip(self):
+        with tempfile.TemporaryDirectory() as d:
+            put(os.path.join(d, "flash.bin"), b"\0" * 16)
+            args, _, _ = self.run_args(d, blank=True, web=18790)
+            self.assertFalse(os.path.exists(os.path.join(d, "flash.bin")))
+            self.assertNotIn("--flash-image", args)
+            self.assertEqual(args[args.index("--flash-persist") + 1], os.path.join(d, "flash.bin"))
+
+    def test_flasher_image_needs_web(self):
+        with tempfile.TemporaryDirectory() as d, self.assertRaises(SystemExit):
+            self.run_args(d, flasher_image="x.bin", flasher_version="v1")
 
 
 class Calibrate(unittest.TestCase):

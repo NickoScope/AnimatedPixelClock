@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<script src="twin-serial.js"></script>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" href="data:,">
+<title>Двойник · самотест порта</title>
+<style>
+  :root { color-scheme: light dark; --bg: #f4f0e7; --ink: #1d1b16; --muted: #5c574c; --ok: #1f7a3a; --bad: #b3261e; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #16150f; --ink: #ece6d8; --muted: #a39d8f; --ok: #6fcf8a; --bad: #ff8a80; } }
+  body { margin: 0; padding: 16px; background: var(--bg); color: var(--ink); font: 15px/1.45 system-ui, -apple-system, sans-serif; }
+  main { max-width: 900px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0 0 6px; }
+  p { color: var(--muted); margin: 0 0 12px; }
+  button { font: inherit; padding: 8px 16px; border-radius: 8px; border: 1px solid currentColor; background: transparent; color: inherit; cursor: pointer; }
+  ol { padding-left: 22px; }
+  li.ok::marker { color: var(--ok); } li.bad::marker { color: var(--bad); }
+  li.bad { color: var(--bad); }
+  pre { white-space: pre-wrap; word-break: break-word; font: 12px/1.4 ui-monospace, Menlo, monospace; background: rgba(0,0,0,.06); padding: 10px; border-radius: 8px; max-height: 50vh; overflow: auto; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Самотест: порт двойника и esptool-js 0.6.0</h1>
+  <p>Сначала проверяется поведение <code>navigator.serial</code> по спецификации Web Serial, затем esptool-js 0.6.0 (тот же, что внутри ESP Web Tools 10.4.0) подключается к двойнику: сброс в режим загрузки, stub, flash ID, сброс в прошивку. Flash не пишется.</p>
+  <button id="run" type="button">Запустить</button>
+  <ol id="checks"></ol>
+  <pre id="out" aria-live="polite"></pre>
+</main>
+<script type="module">
+// Checks of twin-serial.js against the WICG Web Serial draft (2 June 2026, SerialPort §4.3-§4.10),
+// then esptool-js 0.6.0 through it: ESPLoader.main() and flashId() as ESP Web Tools 10.4.0 calls them
+// (src/flash.ts:44-67), and its hard reset (flash.ts:15-19). Results: window.__selftest.
+const ST = window.__selftest = { started: false, done: false, ok: null, checks: [], terminal: [], banner: null, error: null, ms: {} };
+const $ = (id) => document.getElementById(id);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const out = (s) => { $('out').textContent += s + '\n'; };
+function record(name, ok, detail) {
+  ST.checks.push({ name, ok, detail: detail || '' });
+  const li = document.createElement('li');
+  li.className = ok ? 'ok' : 'bad';
+  li.textContent = `${ok ? 'ok' : 'FAIL'}: ${name}${detail ? ' — ' + detail : ''}`;
+  $('checks').appendChild(li);
+}
+async function rejects(p, name) {
+  try { await p; return 'resolved'; } catch (e) { return e && e.name === name ? null : `${e && e.name}: ${e && e.message}`; }
+}
+const journal = () => window.__usjLog;
+const linesSent = () => journal().filter((e) => e.kind === 'lines').length;
+
+async function apiChecks(port) {
+  const info = port.getInfo();
+  record('getInfo() = 303A:1001', info.usbVendorId === 0x303a && info.usbProductId === 0x1001, JSON.stringify(info));
+  record('closed: readable and writable are null', port.readable === null && port.writable === null);
+  const closedErrs = [await rejects(port.setSignals({ dataTerminalReady: true }), 'InvalidStateError'),
+    await rejects(port.getSignals(), 'InvalidStateError'), await rejects(port.close(), 'InvalidStateError')];
+  record('closed: setSignals, getSignals, close -> InvalidStateError', closedErrs.every((e) => e === null), closedErrs.filter(Boolean).join('; '));
+  const bad = [{}, { baudRate: 0 }, { baudRate: -1 }, { baudRate: 115200, dataBits: 9 }, { baudRate: 115200, stopBits: 3 },
+    { baudRate: 115200, bufferSize: 0 }, { baudRate: 115200, parity: 'mark' }, { baudRate: 115200, flowControl: 'xon' }];
+  const badErrs = [];
+  for (const o of bad) { const e = await rejects(port.open(o), 'TypeError'); if (e) badErrs.push(`${JSON.stringify(o)}: ${e}`); }
+  record('open() with bad options -> TypeError, port stays closed', badErrs.length === 0 && port.twinState === 'closed', badErrs.join('; '));
+
+  const before = linesSent();
+  let t = performance.now();
+  await port.open({ baudRate: 115200, bufferSize: 8192 });
+  ST.ms.open = Math.round(performance.now() - t);
+  const hello = journal().filter((e) => e.kind === 'event' && e.t === 'hello').pop();
+  record('open() resolves on the engine hello (proto 1), no line change sent', linesSent() === before && hello && hello.proto === 1,
+    `${ST.ms.open} ms, hello ${JSON.stringify(hello)}`);
+  record('open() again -> InvalidStateError', (await rejects(port.open({ baudRate: 115200 }), 'InvalidStateError')) === null);
+  const r1 = port.readable, w1 = port.writable;
+  record('readable/writable: one object each while open', r1 !== null && w1 !== null && port.readable === r1 && port.writable === w1);
+  record('setSignals({}) -> TypeError', (await rejects(port.setSignals({}), 'TypeError')) === null);
+  const sig = await port.getSignals();
+  record('getSignals(): all false (TRM 33.3.1: no modem inputs)', Object.values(sig).length === 4 && Object.values(sig).every((v) => v === false), JSON.stringify(sig));
+
+  // The engine keeps one client: a second claim is refused (the page's own port holds it).
+  const busy = await new Promise((resolve) => {
+    const ws = new WebSocket(`ws://${location.host}/usj`); ws.binaryType = 'arraybuffer';
+    const done = (v) => { try { ws.close(); } catch (_) {} resolve(v); };
+    setTimeout(() => done('timeout'), 3000);
+    ws.onopen = () => ws.send(Uint8Array.of(0x02));
+    ws.onerror = () => done('socket error');
+    ws.onmessage = (ev) => { const u = new Uint8Array(ev.data); if (u[0] === 0x10) done(new TextDecoder().decode(u.subarray(1))); };
+  });
+  record('a second client is refused: {"t":"error","error":"busy"}', /"busy"/.test(busy), busy);
+
+  const reader = r1.getReader();
+  const lockedErr = await rejects(port.close(), 'TypeError');
+  record('close() with a locked reader -> TypeError, port stays open', lockedErr === null && port.twinState === 'opened', lockedErr || '');
+  await reader.cancel();
+  reader.releaseLock();
+  const r2 = port.readable;
+  record('after cancel: a new readable', r2 !== null && r2 !== r1);
+  t = performance.now();
+  await port.close();
+  ST.ms.close = Math.round(performance.now() - t);
+  const closedEv = journal().some((e) => e.kind === 'event' && e.t === 'closed');
+  record('close(): engine answers "closed", streams gone', closedEv && port.readable === null && port.writable === null && port.twinState === 'closed', `${ST.ms.close} ms`);
+  const before2 = linesSent();
+  t = performance.now();
+  await port.open({ baudRate: 115200, bufferSize: 8192 });
+  const reopen = Math.round(performance.now() - t);
+  await port.close();
+  record('reopen right after close works (ESP Web Tools reopens after 100 ms), no line change', linesSent() === before2, `${reopen} ms`);
+}
+
+async function esptool(port) {
+  const { ESPLoader, Transport } = await import('https://unpkg.com/esptool-js@0.6.0/bundle.js');
+  const terminal = {
+    clean() {},
+    writeLine(s) { ST.terminal.push(s); out(s); },
+    write(s) { ST.terminal.push(s); out(s); },
+  };
+  const transport = new Transport(port, false);
+  const loader = new ESPLoader({ transport, baudrate: 115200, terminal, enableTracing: false });
+  const mark = journal().length;
+  let t = performance.now();
+  const chip = await loader.main();
+  ST.ms.main = Math.round(performance.now() - t);
+  t = performance.now();
+  await loader.flashId();
+  ST.ms.flashId = Math.round(performance.now() - t);
+  const text = ST.terminal.join('\n');
+  record('esptool-js: Chip is ESP32-S3', /Chip is ESP32-S3/.test(text), `main() ${ST.ms.main} ms`);
+  record('esptool-js: stub 0.6.0 running', /Stub running/.test(text));
+  record('esptool-js: flash c2 8039, 32MB', /Manufacturer: c2/.test(text) && /Device: 8039/.test(text) && /Detected flash size: 32MB/.test(text));
+  // ESP Web Tools' reset after flashing (flash.ts:15-19): RTS on, 100 ms, then HardReset (RTS off).
+  await transport.setRTS(true);
+  await sleep(100);
+  await loader.after();
+  await sleep(1500);
+  const seen = new TextDecoder().decode(transport.peek());
+  const m = /rst:0x[0-9a-f]+ \([^)]*\),boot:0x[0-9a-f]+ \([^)]*\)/.exec(seen);
+  ST.banner = m ? m[0] : null;
+  await transport.disconnect();
+  const ev = journal().slice(mark).filter((e) => e.kind === 'event' && (e.t === 'reset' || e.t === 'release'));
+  ST.events = ev.map((e) => (e.t === 'reset' ? `reset(cause ${e.cause}, download ${e.download})` : `release(strap ${e.strap})`));
+  const s = ST.events.join(' ');
+  // GPIO_STRAP: bit 3 GPIO0, bit 2 GPIO46; (v & 0xC) == 0 is download mode, GPIO0 high boots from
+  // SPI flash (ESP32-S3 TRM v1.8 register 6.15, Table 8.1-1 / 8.2).
+  const first = ev.findIndex((e) => e.t === 'reset'), last = ev.map((e) => e.t).lastIndexOf('reset');
+  const dl = first >= 0 && ev[first].cause === 21 && ev[first].download === true && ev[first + 1] && ev[first + 1].t === 'release' && (ev[first + 1].strap & 0x0c) === 0;
+  const spi = last > first && ev[last].cause === 21 && ev[last].download === false && ev[last + 1] && ev[last + 1].t === 'release' && (ev[last + 1].strap & 0x08) !== 0;
+  record('lines: reset 0x15 into download mode, and at the end out of it into SPI boot', dl && spi, s);
+  record('after the reset the ROM boots from flash', !!ST.banner && /USB_UART_CHIP_RESET/.test(ST.banner) && /SPI_FAST_FLASH_BOOT/.test(ST.banner), ST.banner || 'no banner seen');
+  return chip;
+}
+
+async function run() {
+  if (ST.started) return;
+  ST.started = true;
+  $('run').disabled = true;
+  try {
+    const port = await navigator.serial.requestPort();
+    await apiChecks(port);
+    await esptool(port);
+  } catch (e) {
+    ST.error = `${e && e.name}: ${e && e.message}`;
+    record('unexpected error', false, ST.error);
+    console.error(e);
+  }
+  ST.journal = window.__usjLog.slice();
+  ST.counters = Object.assign({}, window.__twinSerial.counters);
+  ST.ok = ST.checks.length > 0 && ST.checks.every((c) => c.ok);
+  ST.done = true;
+  out(ST.ok ? 'ВСЁ ПРОШЛО' : 'ЕСТЬ ОШИБКИ');
+}
+$('run').addEventListener('click', run);
+if (new URLSearchParams(location.search).get('run') === '1') run();
+</script>
+</body>
+</html>
