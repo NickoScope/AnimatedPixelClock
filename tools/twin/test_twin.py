@@ -170,7 +170,7 @@ class TwinWifi(unittest.TestCase):
                 self.assertFalse(os.path.exists(wifi))
                 with contextlib.redirect_stdout(io.StringIO()):
                     T.cmd_wifi(mock.Mock(ssid="Guest", password=""), [])
-                a = mock.Mock(fresh=False, blank=False, provision=True, web=None, seconds=None, png=None, cpi="2.45",
+                a = mock.Mock(fresh=False, blank=False, lan=False, provision=True, web=None, seconds=None, png=None, cpi="2.45",
                               open=False, http=8080, udp=4210, mac=T.MAC, flasher_image=None, flasher_version=None)
                 with mock.patch.object(T.os, "execv") as execv:
                     T.cmd_run(a, [])
@@ -290,7 +290,7 @@ class TwinFlasherPage(unittest.TestCase):
 
     def run_args(self, d, **kw):
         flash = os.path.join(d, "flash.bin")
-        a = dict(fresh=False, blank=False, provision=False, web=None, seconds=None, png=None, cpi="2.45", open=False,
+        a = dict(fresh=False, blank=False, lan=False, provision=False, web=None, seconds=None, png=None, cpi="2.45", open=False,
                  http=8080, udp=4210, mac=T.MAC, flasher_image=None, flasher_version=None)
         a.update(kw)
         with mock.patch.object(T, "STATE", d), mock.patch.object(T, "FLASH", flash), \
