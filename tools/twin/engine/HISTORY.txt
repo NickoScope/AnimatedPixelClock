@@ -35,3 +35,5 @@ e8b5e70 panel.html: the portal link follows the twin's address, forwarded or fro
 a9350e9 USB-Serial/JTAG host end: lossless /usj channel, DTR/RTS resets, RFC 2217
 659dbbe /usj and --serial-tcp: docs, a stdlib probe, the service out of line
 6bf1a9c panel.html: a link to the twin's web flasher, and a chip while it holds the USB port
+7a88776 panel.html: the GOB glow is off by default and the look is remembered
+37f85bb web: a page opened during flashing sees the USB port taken

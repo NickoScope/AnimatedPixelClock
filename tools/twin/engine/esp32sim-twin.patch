@@ -1301,7 +1301,7 @@ index 0000000..ab0b955
 +    }
 +}
 diff --git a/esp-soc/src/machine/web.rs b/esp-soc/src/machine/web.rs
-index f0cd30a..a8248ae 100644
+index f0cd30a..e961623 100644
 --- a/esp-soc/src/machine/web.rs
 +++ b/esp-soc/src/machine/web.rs
 @@ -14,6 +14,14 @@ fn display_message(width: u32, height: u32, pixels: &[u16]) -> Vec<u8> {
@@ -1331,7 +1331,7 @@ index f0cd30a..a8248ae 100644
                  self.ws.px_sent = ver;
                  w.send_binary(&display_message(w_, h_, &px));
              }
-@@ -90,7 +101,8 @@ impl<S: Soc> Machine<S> {
+@@ -90,10 +101,14 @@ impl<S: Soc> Machine<S> {
              hello.push(frame(1, format!("{{\"t\":\"serial\",\"src\":\"uart0\",\"data\":\"{}\"}}", json_escape(&String::from_utf8_lossy(&self.console.uart0))).as_bytes()));
              hello.push(frame(1, format!("{{\"t\":\"serial\",\"src\":\"usb\",\"data\":\"{}\"}}", json_escape(&String::from_utf8_lossy(&self.console.usb))).as_bytes()));
              hello.push(frame(1, format!("{{\"t\":\"board\",\"name\":\"{}\"}}", board.name()).as_bytes()));
@@ -1341,7 +1341,13 @@ index f0cd30a..a8248ae 100644
              if let Some(rgb) = board.camera_preview(320, 240) { hello.push(frame(2, &camera_message(&rgb))); }
              if let Some((leds, _)) = board.leds() { hello.push(frame(1, format!("{{\"t\":\"ring\",\"leds\":[{}]}}", leds_json(leds)).as_bytes())); }
              for (id, leds, _) in board.led_grids() { hello.push(frame(1, format!("{{\"t\":\"grid\",\"id\":\"{}\",\"leds\":[{}]}}", id, leds_json(leds)).as_bytes())); }
-@@ -102,6 +114,7 @@ impl<S: Soc> Machine<S> {
++            // A page opened while the web flasher holds the USB port learns it now, not at the next
++            // change of hands (review of the flasher, 2026-09-29).
++            if self.usj_state.session.is_some() { hello.push(frame(1, b"{\"t\":\"usj\",\"claimed\":true}")); }
+             w.set_hello(hello);
+         }
+         w.send_text(&format!("{{\"t\":\"stat\",\"time\":{:.2},\"insns\":{},\"frames\":{},\"behind\":{:.2},\"resyncs\":{},\"speed\":{},\"cam\":{},\"gpio_in\":\"{:x}\"}}", self.seconds(), self.insns(), board.display_frames(), self.rt.behind, self.rt.resyncs, self.rt.speed.map_or_else(|| "null".to_string(), |s| format!("{:.3}", s)), self.bus.camera_frames(), self.bus.gpio_input()));
+@@ -102,6 +117,7 @@ impl<S: Soc> Machine<S> {
      // Host input is accepted at run boundaries without advancing device time. The periodic
      // poll remains necessary for native callers that run continuously rather than in slices.
      pub(super) fn web_poll_input(&mut self) {
@@ -1349,7 +1355,7 @@ index f0cd30a..a8248ae 100644
          let Some(w) = self.web.clone() else { return };
          use crate::json::{parse_json, Json};
          for b in w.poll_incoming_bin() {
-@@ -123,6 +136,21 @@ impl<S: Soc> Machine<S> {
+@@ -123,6 +139,21 @@ impl<S: Soc> Machine<S> {
              match t.as_str() {
                  "btn" => { let pin: u8 = field("pin").and_then(|x| x.parse().ok()).unwrap_or(0); let v = field("v").unwrap_or_default() == "1";
                             self.bus.gpio_set_input(pin, !v); *self.bus.irq_dirty() = true; }
@@ -1371,7 +1377,7 @@ index f0cd30a..a8248ae 100644
                  "knobpress" => { let v = field("v").unwrap_or_default() == "1"; if let Some(sw) = self.bus.board_ref().named_pin("sw") { self.bus.gpio_set_input(sw, !v); *self.bus.irq_dirty() = true; } }
                  "knob" => {
                      // Bound each browser message to about one second of encoder motion.
-@@ -142,6 +170,8 @@ impl<S: Soc> Machine<S> {
+@@ -142,6 +173,8 @@ impl<S: Soc> Machine<S> {
                      match field("src").as_deref() {
                          Some("uart0") => self.bus.uart_input(0, data.as_bytes()),
                          Some("uart1") => self.bus.uart_input(1, data.as_bytes()),
@@ -10286,10 +10292,10 @@ index 0000000..3fc9a52
 +14.0 stop
 diff --git a/web/panel.html b/web/panel.html
 new file mode 100644
-index 0000000..8229f60
+index 0000000..d04dc82
 --- /dev/null
 +++ b/web/panel.html
-@@ -0,0 +1,394 @@
+@@ -0,0 +1,404 @@
 +<!doctype html>
 +<html lang="ru">
 +<head>
@@ -10380,7 +10386,7 @@ index 0000000..8229f60
 +    <div class="frame"><canvas id="panel" width="1024" height="512" aria-label="Светодиодная панель так, как её ведёт настоящая прошивка"></canvas></div>
 +    <div class="look">
 +      <label>Экспозиция <input id="exposure" type="range" min="0.25" max="4" step="0.05" value="1"></label>
-+      <label>Свечение GOB <input id="glow" type="range" min="0" max="1" step="0.05" value="0.55"></label>
++      <label>Свечение GOB <input id="glow" type="range" min="0" max="1" step="0.05" value="0"></label>
 +      <label><input id="dots" type="checkbox" checked> Точки светодиодов</label>
 +      <label>Смотрит <select id="shutter">
 +        <option value="eye">глаз (1/60 с)</option>
@@ -10391,7 +10397,7 @@ index 0000000..8229f60
 +      </select></label>
 +      <button id="snap" type="button">Сохранить PNG</button>
 +    </div>
-+    <p class="note">Свет каждого светодиода считается по потоку HUB75, который прошивка выводит через LCD_CAM, за целые кадры развёртки: 1,0 — светодиод горел всё время своей строки при развёртке 1/32. Свечение, размер точек и экспозиция — пока на глаз, по фото панели ещё не выверены.</p>
++    <p class="note">Свет каждого светодиода считается по потоку HUB75, который прошивка выводит через LCD_CAM, за целые кадры развёртки: 1,0 — светодиод горел всё время своей строки при развёртке 1/32. Свечение эпоксидного слоя (GOB) по умолчанию выключено: его сила и радиус взяты на глаз, по фото панели ещё не выверены. Ползунок «Свечение GOB» включает его.</p>
 +  </div>
 +  <aside>
 +    <section class="card">
@@ -10566,7 +10572,17 @@ index 0000000..8229f60
 +    requestAnimationFrame(draw);
 +  }
 +  requestAnimationFrame(draw);
-+  for (const id of ['exposure', 'glow', 'dots']) $(id).addEventListener('input', () => dirty = true);
++  // The look is the viewer's choice and stays across reloads (this browser only). Glow is off by
++  // default: its share and spread are not calibrated against photos of the panel, and at 0.55 it
++  // read as a blur on every effect (owner, 2026-09-29 19:07).
++  const LOOK = 'twin-look-v2';
++  try {
++    const saved = JSON.parse(localStorage.getItem(LOOK) || '{}');
++    for (const id of ['exposure', 'glow']) if (typeof saved[id] === 'string') $(id).value = saved[id];
++    if (typeof saved.dots === 'boolean') $('dots').checked = saved.dots;
++  } catch (e) { /* no storage: defaults */ }
++  const keepLook = () => { try { localStorage.setItem(LOOK, JSON.stringify({ exposure: $('exposure').value, glow: $('glow').value, dots: $('dots').checked })); } catch (e) {} };
++  for (const id of ['exposure', 'glow', 'dots']) $(id).addEventListener('input', () => { dirty = true; keepLook(); });
 +  // A short exposure catches only the rows the 1/32 scan lights meanwhile: the bands a phone films.
 +  $('shutter').addEventListener('change', (e) => send({ t: 'input', line: 'shutter ' + e.target.value }));
 +  $('snap').addEventListener('click', () => { const a = document.createElement('a'); a.download = 'twin-panel.png'; a.href = canvas.toDataURL('image/png'); a.click(); });
