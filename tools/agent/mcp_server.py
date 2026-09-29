@@ -1319,6 +1319,16 @@ async def effect_api() -> str:
                        "are nil (src/lua/nslua_sandbox.cpp kRemoved): an error in "
                        "draw() cannot be caught, so check arguments before a call "
                        "rather than after",
+            "nesting": "firmware 2.7.4+: string.gsub, string.format, table.sort, "
+                       "table.concat/unpack/move/insert/remove, tostring, print, log, "
+                       "math.max/min nest at most 2 deep (one of them called from "
+                       "a callback of another is 2; a third fails with 'nest at "
+                       "most 2 deep'). Their C frames are large and the task's "
+                       "stack is 12 KB, measured on the panel.",
+            "no __gc": "firmware 2.7.4+: setmetatable refuses a metatable with "
+                       "__gc - Lua runs finalizers outside the instruction budget, "
+                       "so a looping one could hang the panel until the watchdog "
+                       "restarted it.",
             "absent": "io, os, debug, package are not compiled in. coroutine is "
                       "compiled but deliberately not opened - a new thread would "
                       "escape the instruction budget.",
@@ -1893,6 +1903,9 @@ async def effect_upload(args: UploadIn) -> str:
     because a nested pcall costs 560 bytes a level and three lines of source
     can reach the limit. A script that needs to catch its own errors cannot;
     an effect is a draw loop and its failures are caught around draw() anyway.
+    Since 2.7.4 the library calls that call back into Lua (gsub, format, sort,
+    table.concat/unpack/move/insert/remove, tostring, print, log, math.max/min)
+    nest at most 2 deep, and setmetatable refuses a __gc.
 
     36 uploaded scripts fit. Names are per-slot: uploading over an existing
     name replaces it and does not need a free slot.

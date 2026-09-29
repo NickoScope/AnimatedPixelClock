@@ -890,6 +890,13 @@ What follows from that:
   cycling. `px.scroll` and `px.mirror` move or fold the whole canvas in one
   call. `kaleidoscope.lua` does a full-screen plasma this way at under 20
   thousand instructions a frame (7 ms on the panel).
+- What the panel knows about outside: `px.weather()` (2.7.4) is the weather
+  clock's data - `{temp, min, max, humidity, wind, code, fahrenheit}` in C and
+  km/h - or nil while there is none (weather off in the portal, no location,
+  not fetched yet); asking keeps the fetch going. `px.city()` is the world
+  clock's home as it prints it ("CANNES"), or nil. In luasim and fxhost
+  `--weather T` and `--city NAME` stand in for them. `laser_clock.lua` uses
+  the weather.
 - Paint what does not move once, at load or on the first frame. The canvas
   keeps it.
 - Redraw only what changes.

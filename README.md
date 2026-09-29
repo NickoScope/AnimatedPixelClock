@@ -78,9 +78,25 @@ panel; the browser fetches it from GitHub, the panel never goes out for it.
 The [gallery](gallery/README.md) has an aquarium that reacts to people in the
 room, OCEANARIUM (a public aquarium's tank of over a hundred kinds of sea life,
 [how it works](https://nickoscope.github.io/AnimatedPixelClock/oceanarium/en.html)),
-golf on real courses, a starship, the Bay of Cannes and La Gioconda. Scripts are written and
-checked on the host first with [`tools/luasim`](tools/luasim), which runs the
-same API the panel does.
+golf on real courses, a starship, the Bay of Cannes, La Gioconda, a laser that
+writes the time, the day, the date and the weather on a brick wall (LASER
+CLOCK), a flip board of seven-segment digits (KINETIC DIGITS LED) and a
+kaleidoscope. Scripts are written and checked on the host first with
+[`tools/luasim`](tools/luasim), which runs the same API the panel does.
+
+The API does whole-screen work in C, where a Lua loop over 8,192 pixels would
+take a frame and more. Since 2.7.4:
+- `px.fade` and `px.blur` fade or soften the whole screen in 2-5 ms;
+- `px.mode("add")` makes light add up;
+- `px.palette`, `px.layer` and `px.show` give palettes and 8-bit layers, with
+  palette cycling;
+- `px.scroll` and `px.mirror` move or fold the screen;
+- `px.weather()` and `px.city()` give an effect the weather and the home city.
+
+Earlier releases added sprites (`px.grab`, `px.blit`), the effect's button
+(`px.button`), snapshots and 3D ground. The full list, with what each call
+costs on the panel, is in [`tools/luasim/README.md`](tools/luasim/README.md)
+and [AGENTS.md](AGENTS.md).
 
 ### Text: Latin and Cyrillic, on every screen
 
