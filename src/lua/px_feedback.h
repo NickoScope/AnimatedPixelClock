@@ -65,8 +65,8 @@ static const char *const pxf_edges[] = {"black", "clamp", "wrap", NULL};
 static int px_feedback_lua(lua_State *L, unsigned char *fb, int w, int h, unsigned long *work) {
   luaL_checktype(L, 1, LUA_TTABLE);
   *work = 0;
-  // zoom no smaller than 1/4: then a source coordinate stays within +-9000 px,
-  // which keeps the per-pixel arithmetic in 32 bits (see below)
+  // zoom no smaller than 1/4: then a source coordinate stays within about
+  // +-13,150 px (the gate audit's search), so the per-pixel arithmetic fits 32 bits
   const lua_Number zoom = pxf_num(L, "zoom", 1, (lua_Number)0.25, 20);
   const lua_Number rot = pxf_num(L, "rot", 0, -1000, 1000);
   const lua_Number dx = pxf_num(L, "dx", 0, -1024, 1024), dy = pxf_num(L, "dy", 0, -1024, 1024);
@@ -100,8 +100,8 @@ static int px_feedback_lua(lua_State *L, unsigned char *fb, int w, int h, unsign
   memcpy(src, fb, (size_t)w * h * 3);
   const int ia = 256 - decay;
   // Per pixel in 32 bits: the panel's core is 32-bit, and 64-bit arithmetic a
-  // pixel cost 18.8 ms a call (2026-09-29). |A|, |B| <= 4 * 65536 (zoom >= 1/4),
-  // and a source coordinate stays within +-(1024 + 1024 + 128 * 4) px, Q16 in 31 bits.
+  // pixel cost 18.8 ms a call (2026-09-29; 6.5 ms after). |A|, |B| <= 4 * 65536
+  // (zoom >= 1/4), and a source coordinate stays within ~+-13,150 px: Q16 in 31 bits.
   const int32_t a32 = (int32_t)A, b32 = (int32_t)B;
   const int wmask = w - 1, hmask = h - 1, row = w * 3;
   for (int y = 0; y < h; y++) {

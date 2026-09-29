@@ -374,12 +374,12 @@ static int l_mix(lua_State *L) {
   return n;
 }
 static int l_forget(lua_State *L) { return px_forget_lua(L); }
-// px.feedback is charged 3/4 of an instruction a pixel: our estimate until the
-// panel measures it.
+// px.feedback is charged 2 instructions a pixel: 6.5 ms the whole canvas on
+// the panel (2026-09-29, 2.7.5, Wi-Fi on, 30 s bench) against 410 ns.
 static int l_feedback(lua_State *L) {
   unsigned long work = 0;
   const int n = px_feedback_lua(L, canvasOf(L)->rgb, W, H, &work);
-  LuaFx::charge(L, (uint32_t)(work * 3 / 4));
+  LuaFx::charge(L, (uint32_t)(work * 2));
   return n;
 }
 

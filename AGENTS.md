@@ -873,6 +873,7 @@ includes the Lua loop around the call):
 | `px.capture` / `px.mirror("hv")` / `px.scroll` with wrap (2.7.4) | | 0.5 / 0.33 / ~1.3 ms |
 | `px.palette` (2.7.4) | 0.5 ms, cosine | rebuild it every frame if you like |
 | `px.mix` (2.7.5) | | 3.0 ms, a snapshot over the canvas |
+| `px.feedback` (2.7.5) | | 6.5 ms, the canvas zoomed, turned and faded |
 | `px.mode("add")` (2.7.4) | a flag | pixel, rect, line, circle and text add light, each pixel of a shape once |
 | CANNES, the whole effect | | 2.7.3: 8.2 fps, 119 ms; 2.7.4 integer blend: 13.5 fps, 72 ms; with `px.fade`: 15.2 fps, 24 ms |
 | `px.terrain` (2.6.3, native) | not measured on the panel yet | a whole 3D view in one call; each ground sample is charged to the frame's budget as one instruction |
