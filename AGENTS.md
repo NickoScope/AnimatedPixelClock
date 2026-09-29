@@ -852,6 +852,7 @@ includes the Lua loop around the call):
 | `px.save` / `px.restore` (2.6.6) | a 24 KB copy, a fraction of a ms | a still scene drawn once and restored each frame: the golf's frames went from ~75 k to ~30 k instructions |
 | `px.button()` (2.7.3) | a counter, no cost | the knob's click and the remote's OK on an effect page, and `POST /api/lua {"click":true}`; a script compares it with the last value it saw (OCEANARIUM: 1 click lights, 2 demo, 3 now) |
 | `px.grab` / `px.blit` (2.7.1) | a sprite stamped in one call, mirrored and dimmed in C | a pose drawn once, cut out and stamped: the aquarium's fish went from about forty calls each to one |
+| `px.fade` / `px.blur` / `px.mode` (2.7.4) | fade and blur not measured on the panel yet; charged at a quarter of an instruction a pixel touched (blur touches each twice), our estimate | a whole-canvas fade or blur in one call instead of 8192 `px.blend`s; `mode("add")` makes the drawing calls add light. `px.blend` and `px.glow` went to integers in the same release, off the panel's software double: the costs above are theirs before 2.7.4 |
 | `px.terrain` (2.6.3, native) | not measured on the panel yet | a whole 3D view in one call; each ground sample is charged to the frame's budget as one instruction |
 
 What follows from that:

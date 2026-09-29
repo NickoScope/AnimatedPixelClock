@@ -1167,8 +1167,23 @@ async def effect_api() -> str:
                                            "y is the top of the 8-row cell)",
             "px.width(s[,font])": "-> pixel advance of that string in that font",
             "px.get(x,y)": "-> r,g,b (0,0,0 off-canvas)",
-            "px.blend(x,y,r,g,b,a)": "a is alpha, a number",
-            "px.glow(cx,cy,rad,r,g,b[,amp])": "amp defaults to 1.0",
+            "px.blend(x,y,r,g,b,a)": "a is alpha, a number. Integer (Q8) since "
+                                     "firmware 2.7.4, about the cost of px.pixel",
+            "px.glow(cx,cy,rad,r,g,b[,amp])": "amp defaults to 1.0. Integer since "
+                                              "firmware 2.7.4; rad over 4096 draws nothing",
+            "px.fade(a[,r,g,b[,x,y,w,h]])": "firmware 2.7.4+. Every pixel of the box "
+                                "(the canvas by default) the fraction a (0..1) of the "
+                                "way to (r,g,b), black by default; rounded so it arrives. "
+                                "Trails, a fading sky, smoke: one call instead of a "
+                                "px.blend per pixel. src/lua/px_raster.h",
+            "px.blur(a[,x,y,w,h])": "firmware 2.7.4+. FastLED's blur2d over the box, a "
+                                "in 0..1: each pixel keeps 1-a and gives a/2 to each "
+                                "neighbour, rows then columns. Repeated blurs also fade.",
+            "px.mode(m)": "firmware 2.7.4+. m 'add' or 'set' -> the mode before. In "
+                          "'add', pixel/rect/line/circle/text add their colour to the "
+                          "canvas (saturating at 255) instead of overwriting it; "
+                          "blend, glow and blit are not affected. Each script starts "
+                          "in 'set'. nil on older firmware: rawget(px, \"mode\").",
             "px.save() / px.restore()": "firmware 2.6.6+. The canvas put aside (one "
                                         "copy, 24 KB of the effect's heap) and back; "
                                         "restore -> true, or false if nothing was saved. "

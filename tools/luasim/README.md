@@ -92,8 +92,11 @@ zoneinfo for every zone in `src/worldclock/tzdb.h`.
 | `px.text(x,y,s,r,g,b)` | Picopixel, upper-cased |
 | `px.width(s)` | pixel width of `s`, for right-alignment |
 | `px.get(x,y)` | → `r,g,b` already on the canvas |
-| `px.blend(x,y,r,g,b,a)` | alpha-blend one pixel |
-| `px.glow(x,y,rad,r,g,b,amp)` | a radial light, falling off as `(1-d/rad)²` |
+| `px.blend(x,y,r,g,b,a)` | alpha-blend one pixel. In integers since 2.7.4 (Q8 alpha): pixels may differ by a level or two from before |
+| `px.glow(x,y,rad,r,g,b,amp)` | a radial light, falling off as `(1-d/rad)²`. In integers since 2.7.4; a radius over 4096 draws nothing |
+| `px.fade(a[,r,g,b[,x,y,w,h]])` | since 2.7.4: every pixel of the box (the canvas by default) the fraction `a` of the way to the colour (black by default), rounded so it arrives. One call for a trail, a fading sky, a smoke. [`src/lua/px_raster.h`](../../src/lua/px_raster.h) |
+| `px.blur(a[,x,y,w,h])` | since 2.7.4: FastLED's `blur2d` over the box, `a` in 0..1 (FastLED's `blur_amount`/255): each pixel keeps `1-a` and gives `a/2` to each neighbour, rows then columns. Light is not quite conserved, so repeated blurs also fade |
+| `px.mode("add"\|"set")` | since 2.7.4: `-> the mode before`. In `"add"`, `pixel`, `rect`, `line`, `circle` and `text` add their colour to the canvas, saturating at 255: light that overlaps gets brighter, as lasers and sparks do. Every script starts in `"set"` |
 | `px.save()`, `px.restore()` | since 2.6.6: the canvas put aside, and back (`restore` -> true, or false if nothing was saved). For a still camera: draw the unchanging picture once, save it, and each later frame restore it and draw only what moves. [`src/lua/px_snapshot.h`](../../src/lua/px_snapshot.h) |
 | `px.grab(x,y,w,h)`, `px.blit(s,x,y[,flip[,mul[,r,g,b,a]]])` | since 2.7.1: a piece of the canvas cut out as a sprite (black is transparent; trimmed, `-> s, dx, dy`, or nil if all black), and stamped back in one call - mirrored with `flip`, each colour scaled by `mul` (0..4) and mixed toward `r,g,b` by `a` (0..1). A sprite is a string: width, height, then RGB bytes, so `string.char` builds one too. For things that repeat a few poses: draw each pose once, grab it, blit it after. [`src/lua/px_sprite.h`](../../src/lua/px_sprite.h); used by `aquarium.lua`, exercised by `sprite_test.lua` |
 | `px.button()` | since 2.7.3: how many times the effect's button has been pressed - the knob's click or the remote's OK on its page, or `POST /api/lua {"click":true}`. A count, not a state: react when it changes. In luasim and fxhost, `--clicks f1,f2,...` presses it at those frames |

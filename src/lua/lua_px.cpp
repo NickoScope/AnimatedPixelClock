@@ -1,10 +1,11 @@
 // ============================================================
 // lua_px.cpp - px.*, ported call for call from tools/luasim/luasim.c
 // ============================================================
-// Every drawing rule here is luasim's: the colour clamp in put(), the wrap
-// in clear(), the Bresenham variant, the midpoint circle, the text baseline
-// at y + (yAdvance - 1) + yOffset, blend's truncation, glow's (1 - d/rad)^2.
-// fx_parity.py holds this file to luasim pixel for pixel.
+// Every drawing rule here is luasim's: the wrap in clear(), the Bresenham
+// variant, the midpoint circle, the text baseline at y + (yAdvance - 1) +
+// yOffset. The colour clamp, the add mode, blend, glow, fade and blur are one
+// code for both, px_raster.h. fx_parity.py holds this file to luasim pixel
+// for pixel.
 //
 // The only departures are bounds on work the reference would do off-canvas,
 // because a C loop never reaches the instruction hook and a stuck one would
@@ -36,6 +37,7 @@ extern "C" {
 #include "px_sprite.h"             // px.grab, px.blit, shared with luasim
 #include "px_terrain.h"            // px.terrain, shared with luasim
 #include "px_snapshot.h"           // px.save, px.restore, shared with luasim
+#include "px_raster.h"             // put, blend, glow, fade, blur, mode, shared with luasim
 #include "lua_fx.h"                // LuaFx::charge
 
 #define W LUA_PX_W
@@ -49,12 +51,13 @@ static inline int clampInt(int64_t v, int lo, int hi) {
   return v < lo ? lo : v > hi ? hi : (int)v;
 }
 
+// px.mode: 1 while "add". One Lua state draws at a time (the effect task
+// closes the effect before it tries an upload), and luaPxOpen resets it, so a
+// script never inherits another's mode.
+static int s_add = 0;
+
 static void put(uint8_t *fb, int x, int y, int r, int g, int b) {
-  if (x < 0 || x >= W || y < 0 || y >= H) return;
-  uint8_t *p = &fb[(y * W + x) * 3];
-  p[0] = (uint8_t)(r < 0 ? 0 : r > 255 ? 255 : r);
-  p[1] = (uint8_t)(g < 0 ? 0 : g > 255 ? 255 : g);
-  p[2] = (uint8_t)(b < 0 ? 0 : b > 255 ? 255 : b);
+  pxr_put(fb, W, H, x, y, r, g, b, s_add);
 }
 
 static int l_size(lua_State *L) { lua_pushinteger(L, W); lua_pushinteger(L, H); return 2; }
@@ -256,54 +259,35 @@ static int l_get(lua_State *L) {
   return 3;
 }
 
-static void blend_px(uint8_t *fb, int x, int y, double r, double g, double b, double a) {
-  if (!(a > 0.0) || x < 0 || x >= W || y < 0 || y >= H) return;   // also NaN
-  if (a > 1.0) a = 1.0;
-  // Out-of-range or NaN channels would make the (int) casts below undefined.
-  r = r >= 0.0 ? (r <= 255.0 ? r : 255.0) : 0.0;
-  g = g >= 0.0 ? (g <= 255.0 ? g : 255.0) : 0.0;
-  b = b >= 0.0 ? (b <= 255.0 ? b : 255.0) : 0.0;
-  uint8_t *p = &fb[(y * W + x) * 3];
-  const double ir = 1.0 - a;
-  const int nr = (int)(p[0] * ir + r * a), ng = (int)(p[1] * ir + g * a), nb = (int)(p[2] * ir + b * a);
-  p[0] = (uint8_t)(nr > 255 ? 255 : nr);
-  p[1] = (uint8_t)(ng > 255 ? 255 : ng);
-  p[2] = (uint8_t)(nb > 255 ? 255 : nb);
-}
-
 static int l_blend(lua_State *L) {
-  blend_px(canvasOf(L)->rgb,
-           (int)luaL_checkinteger(L, 1), (int)luaL_checkinteger(L, 2),
-           luaL_checknumber(L, 3), luaL_checknumber(L, 4), luaL_checknumber(L, 5),
-           luaL_checknumber(L, 6));
+  pxr_blend(canvasOf(L)->rgb, W, H, luaL_checkinteger(L, 1), luaL_checkinteger(L, 2),
+            luaL_checknumber(L, 3), luaL_checknumber(L, 4), luaL_checknumber(L, 5),
+            luaL_checknumber(L, 6));
   return 0;
 }
 
 static int l_glow(lua_State *L) {
-  const double cx = luaL_checknumber(L, 1), cy = luaL_checknumber(L, 2), rad = luaL_checknumber(L, 3);
-  const double r = luaL_checknumber(L, 4), g = luaL_checknumber(L, 5), b = luaL_checknumber(L, 6);
-  const double amp = luaL_optnumber(L, 7, 1.0);
-  if (!(rad >= 0.5) || cx != cx || cy != cy) return 0;   // also refuses NaN
-  // luasim's box is (int)(c -+ rad), truncated toward zero. Limiting the
-  // doubles to just outside the canvas first keeps the conversion defined and
-  // drops only columns and rows blend_px would have ignored.
-  auto box = [](double v, int hi) { return (int)(v < -2 ? -2 : v > hi + 1 ? hi + 1 : v); };
-  int x0 = box(cx - rad, W), x1 = box(cx + rad, W), y0 = box(cy - rad, H), y1 = box(cy + rad, H);
-  if (x0 < 0) x0 = 0;
-  if (y0 < 0) y0 = 0;
-  if (x1 > W - 1) x1 = W - 1;
-  if (y1 > H - 1) y1 = H - 1;
-  uint8_t *fb = canvasOf(L)->rgb;
-  for (int y = y0; y <= y1; y++)
-    for (int x = x0; x <= x1; x++) {
-      const double dx = x + 0.5 - cx, dy = y + 0.5 - cy;
-      const double d = sqrt(dx*dx + dy*dy);
-      if (d > rad) continue;
-      const double f = 1.0 - d / rad;
-      blend_px(fb, x, y, r, g, b, amp * f * f);
-    }
+  pxr_glow(canvasOf(L)->rgb, W, H, luaL_checknumber(L, 1), luaL_checknumber(L, 2),
+           luaL_checknumber(L, 3), luaL_checknumber(L, 4), luaL_checknumber(L, 5),
+           luaL_checknumber(L, 6), luaL_optnumber(L, 7, 1));
   return 0;
 }
+
+// fade and blur are charged a quarter and a half of an instruction a pixel,
+// the way px.blit is: our estimate until the panel measures them.
+static int l_fade(lua_State *L) {
+  unsigned long work = 0;
+  px_fade_lua(L, canvasOf(L)->rgb, W, H, &work);
+  LuaFx::charge(L, (uint32_t)(work / 4));
+  return 0;
+}
+static int l_blur(lua_State *L) {
+  unsigned long work = 0;
+  px_blur_lua(L, canvasOf(L)->rgb, W, H, &work);
+  LuaFx::charge(L, (uint32_t)(work / 4));
+  return 0;
+}
+static int l_mode(lua_State *L) { return px_mode_lua(L, &s_add); }
 
 // A sample of the ground costs about what a Lua instruction does on the panel
 // (100-odd cycles), so each one is charged as one: the frame's instruction
@@ -356,10 +340,12 @@ static const luaL_Reg kPxLib[] = {
   {"pixel", l_pixel}, {"rect", l_rect}, {"line", l_line}, {"circle", l_circle},
   {"text", l_text}, {"width", l_width}, {"terrain", l_terrain},
   {"save", l_save}, {"restore", l_restore}, {"grab", l_grab}, {"blit", l_blit},
-  {"button", l_button}, {NULL, NULL}
+  {"button", l_button}, {"fade", l_fade}, {"blur", l_blur}, {"mode", l_mode},
+  {NULL, NULL}
 };
 
 void luaPxOpen(lua_State *L, LuaPxCanvas *canvas) {
+  s_add = 0;
   lua_createtable(L, 0, (int)(sizeof(kPxLib) / sizeof(kPxLib[0]) - 1));
   lua_pushlightuserdata(L, canvas);
   luaL_setfuncs(L, kPxLib, 1);           // every function gets the canvas as upvalue 1

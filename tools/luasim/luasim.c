@@ -33,13 +33,11 @@ static int    g_yday = 255;      /* 0-based day of year; 255 = 13 September */
 static int    g_utc  = 2;        /* local time minus UTC, hours; CEST */
 static int    g_year = 2026;     /* the year yday counts in */
 
-static void put(int x, int y, int r, int g, int b) {
-  if (x < 0 || x >= W || y < 0 || y >= H) return;
-  unsigned char *p = &fb[(y * W + x) * 3];
-  p[0] = (unsigned char)(r < 0 ? 0 : r > 255 ? 255 : r);
-  p[1] = (unsigned char)(g < 0 ? 0 : g > 255 ? 255 : g);
-  p[2] = (unsigned char)(b < 0 ? 0 : b > 255 ? 255 : b);
-}
+/* put, blend, glow, fade, blur and px.mode: one code with the firmware */
+#include "../../src/lua/px_raster.h"
+static int g_add = 0;   /* px.mode: 1 while "add" */
+
+static void put(int x, int y, int r, int g, int b) { pxr_put(fb, W, H, x, y, r, g, b, g_add); }
 
 /* ---- px.* : the raster API the firmware will expose ---- */
 
@@ -227,40 +225,25 @@ static int l_get(lua_State *L) {
   return 3;
 }
 
-static void blend_px(int x, int y, double r, double g, double b, double a) {
-  if (a <= 0.0 || x < 0 || x >= W || y < 0 || y >= H) return;
-  if (a > 1.0) a = 1.0;
-  unsigned char *p = &fb[(y * W + x) * 3];
-  double ir = 1.0 - a;
-  int nr = (int)(p[0] * ir + r * a), ng = (int)(p[1] * ir + g * a), nb = (int)(p[2] * ir + b * a);
-  p[0] = nr > 255 ? 255 : nr; p[1] = ng > 255 ? 255 : ng; p[2] = nb > 255 ? 255 : nb;
-}
-
 static int l_blend(lua_State *L) {
-  blend_px((int)luaL_checkinteger(L,1), (int)luaL_checkinteger(L,2),
-           luaL_checknumber(L,3), luaL_checknumber(L,4), luaL_checknumber(L,5),
-           luaL_checknumber(L,6));
+  pxr_blend(fb, W, H, luaL_checkinteger(L,1), luaL_checkinteger(L,2),
+            luaL_checknumber(L,3), luaL_checknumber(L,4), luaL_checknumber(L,5),
+            luaL_checknumber(L,6));
   return 0;
 }
 
 /* A radial light: one call instead of a Lua loop over a few hundred pixels.
    Falls off as (1 - d/rad)^2, which reads as a lamp rather than a disc. */
 static int l_glow(lua_State *L) {
-  double cx = luaL_checknumber(L,1), cy = luaL_checknumber(L,2), rad = luaL_checknumber(L,3);
-  double r = luaL_checknumber(L,4), g = luaL_checknumber(L,5), b = luaL_checknumber(L,6);
-  double amp = luaL_optnumber(L,7, 1.0);
-  if (rad < 0.5) return 0;
-  int x0 = (int)(cx - rad), x1 = (int)(cx + rad), y0 = (int)(cy - rad), y1 = (int)(cy + rad);
-  for (int y = y0; y <= y1; y++)
-    for (int x = x0; x <= x1; x++) {
-      double dx = x + 0.5 - cx, dy = y + 0.5 - cy;
-      double d = sqrt(dx*dx + dy*dy);
-      if (d > rad) continue;
-      double f = 1.0 - d / rad;
-      blend_px(x, y, r, g, b, amp * f * f);
-    }
+  pxr_glow(fb, W, H, luaL_checknumber(L,1), luaL_checknumber(L,2), luaL_checknumber(L,3),
+           luaL_checknumber(L,4), luaL_checknumber(L,5), luaL_checknumber(L,6),
+           luaL_optnumber(L,7, 1));
   return 0;
 }
+
+static int l_fade(lua_State *L) { unsigned long work; return px_fade_lua(L, fb, W, H, &work); }
+static int l_blur(lua_State *L) { unsigned long work; return px_blur_lua(L, fb, W, H, &work); }
+static int l_mode(lua_State *L) { return px_mode_lua(L, &g_add); }
 
 #include "../../src/lua/px_terrain.h"   /* px.terrain, shared with the firmware */
 #include "../../src/lua/px_snapshot.h"  /* px.save, px.restore, shared with the firmware */
@@ -280,7 +263,8 @@ static const luaL_Reg px_lib[] = {
   {"pixel", l_pixel}, {"rect", l_rect}, {"line", l_line}, {"circle", l_circle},
   {"text", l_text}, {"width", l_width}, {"terrain", l_terrain},
   {"save", l_save}, {"restore", l_restore}, {"grab", l_grab}, {"blit", l_blit},
-  {"button", l_button}, {NULL, NULL}
+  {"button", l_button}, {"fade", l_fade}, {"blur", l_blur}, {"mode", l_mode},
+  {NULL, NULL}
 };
 
 int main(int argc, char **argv) {

@@ -313,7 +313,7 @@ def main():
     tmp = pathlib.Path(tempfile.mkdtemp(prefix="fxparity"))
     bad = 0
     try:
-        scripts = sorted((SIM / "scripts").glob("*.lua"))
+        scripts = sorted((SIM / "scripts").glob("*.lua")) + sorted((SIM / "tests").glob("*.lua"))
         # Negative control: the same script one minute apart must differ. If it
         # does not, the comparison is blind and "identical" below means nothing.
         tetris = SIM / "scripts/tetris_clock.lua"
