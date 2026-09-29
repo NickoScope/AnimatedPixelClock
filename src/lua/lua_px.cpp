@@ -364,12 +364,12 @@ static int l_restore(lua_State *L) {
   LuaFx::charge(L, 1000);
   return n;
 }
-// px.mix is charged like px.fade, two thirds of an instruction a pixel: our
-// estimate until the panel measures it.
+// px.mix is charged 9/10 of an instruction a pixel: 3.0 ms the whole canvas
+// on the panel (2026-09-29, 2.7.5, Wi-Fi on, 30 s bench) against 410 ns.
 static int l_mix(lua_State *L) {
   unsigned long work = 0;
   const int n = px_mix_lua(L, canvasOf(L)->rgb, W, H, &work);
-  LuaFx::charge(L, (uint32_t)(work * 2 / 3));
+  LuaFx::charge(L, (uint32_t)(work * 9 / 10));
   return n;
 }
 static int l_forget(lua_State *L) { return px_forget_lua(L); }

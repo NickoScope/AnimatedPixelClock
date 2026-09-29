@@ -78,11 +78,12 @@ static int px_forget_lua(lua_State *L) {
 static int px_mix_lua(lua_State *L, unsigned char *fb, int w, int h, unsigned long *work) {
   const int slot = pxs_slot(L, 1, 0);
   const int a = pxr_q8(luaL_checknumber(L, 2));
-  const unsigned char *b = pxs_buffer(L, slot, (size_t)w * h * 3, 0);
   int x0, y0, x1, y1;
+  const int inBox = pxr_box(L, 3, w, h, &x0, &y0, &x1, &y1);   // checked first: a bad box is an error either way
+  const unsigned char *b = pxs_buffer(L, slot, (size_t)w * h * 3, 0);
   *work = 0;
   if (!b) { lua_pushboolean(L, 0); return 1; }
-  if (a > 0 && pxr_box(L, 3, w, h, &x0, &y0, &x1, &y1)) {
+  if (a > 0 && inBox) {
     const int ia = 256 - a;
     for (int y = y0; y <= y1; y++) {
       unsigned char *p = &fb[(y * w + x0) * 3];

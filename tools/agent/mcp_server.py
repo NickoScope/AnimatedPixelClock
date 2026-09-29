@@ -1213,10 +1213,11 @@ async def effect_api() -> str:
                                         "true, or false if nothing was saved. Draw what "
                                         "stands still once, save it, and start each frame "
                                         "with restore. Since 2.7.5 four slots, n 1..4 "
-                                        "(default 1). src/lua/px_snapshot.h",
+                                        "(default 1); earlier firmware ignores n and "
+                                        "keeps one. src/lua/px_snapshot.h",
             "px.mix(n,a[,x,y,w,h]) / px.forget(n)": "firmware 2.7.5+. Slot n mixed over the "
                                         "canvas by a (0..1) in the box -> true, or false if "
-                                        "empty; forget frees a slot. A scene flowing into "
+                                        "empty (3.0 ms the whole canvas); forget frees a slot. A scene flowing into "
                                         "the next: paint the old one, px.save(2), paint the "
                                         "new, px.mix(2, 1-u) as u goes 0->1 "
                                         "(kaleidoscope.lua). nil before 2.7.5: rawget(px, \"mix\").",
