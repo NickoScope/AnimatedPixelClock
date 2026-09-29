@@ -115,6 +115,10 @@ function draw()
   end
   tprev = t
   T = T + dt
+  -- T is a 32-bit float: past 2^20 s its step outgrows a frame. Held under an
+  -- hour, with the scene clock moved by the same amount (the drifts' periods
+  -- restart: a seam no one sees, once an hour).
+  if T > 3600 then T = T - 3600; sceneAt = sceneAt - 3600 end
 
   local c = rawget(px, "button") and px.button() or 0
   if c ~= lastClicks then lastClicks = c; if not switching then start_switch() end end

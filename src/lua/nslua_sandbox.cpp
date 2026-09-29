@@ -76,6 +76,41 @@ extern "C" int nslua_message_handler(lua_State *L) {
     return 1;
 }
 
+// A library function that calls back into Lua, run with a nesting count
+// shared by all such functions (upvalue 2, a full userdata int).
+static const int kCallbackDepth = 4;
+static int guardedCall(lua_State *L) {
+    int *depth = static_cast<int *>(lua_touserdata(L, lua_upvalueindex(2)));
+    if (*depth >= kCallbackDepth)
+        return luaL_error(L, "string.gsub, string.format and table.sort nest at most %d deep",
+                          kCallbackDepth);
+    const int n = lua_gettop(L);
+    lua_pushvalue(L, lua_upvalueindex(1));
+    lua_insert(L, 1);
+    (*depth)++;
+    const int st = lua_pcall(L, n, LUA_MULTRET, 0);
+    (*depth)--;
+    if (st != LUA_OK) return lua_error(L);
+    return lua_gettop(L);
+}
+
+static void guardCallbacks(lua_State *L) {
+    int *depth = static_cast<int *>(lua_newuserdatauv(L, sizeof(int), 0));
+    *depth = 0;
+    const int d = lua_gettop(L);
+    static const char *const kWrap[][2] = {{LUA_STRLIBNAME, "gsub"}, {LUA_STRLIBNAME, "format"},
+                                           {LUA_TABLIBNAME, "sort"}};
+    for (size_t i = 0; i < sizeof(kWrap) / sizeof(kWrap[0]); i++) {
+        lua_getglobal(L, kWrap[i][0]);
+        lua_getfield(L, -1, kWrap[i][1]);          // the original
+        lua_pushvalue(L, d);                       // the shared count
+        lua_pushcclosure(L, guardedCall, 2);
+        lua_setfield(L, -2, kWrap[i][1]);
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1);                                 // the count: the closures hold it
+}
+
 extern "C" void nslua_sandbox_open(lua_State *L) {
     // Whitelist: base, table, string, math only. io, os, debug and package
     // are not merely left closed - their sources are not in the build.
@@ -117,6 +152,17 @@ extern "C" void nslua_sandbox_open(lua_State *L) {
         lua_pushnil(L);
         lua_setglobal(L, kRemoved[i]);
     }
+
+    // string.gsub, string.format and table.sort call back into Lua (a
+    // replacement function, a __tostring, a comparator) from C frames that
+    // are large: str_gsub is 656 bytes on this build, a luaL_Buffer on the
+    // stack, and a gsub whose replacement calls gsub again is ~944 bytes a
+    // level. LUAI_MAXCCALLS (20) lets 18 of those through, 17 KB against the
+    // task's 12 KB (the gate audit of 2026-09-29, from -fstack-usage). So the
+    // three are wrapped with one shared count and may nest 4 deep; the
+    // wrapper's own lua_pcall is there only to bring the count back down when
+    // an error passes through, and the error goes on as it came.
+    guardCallbacks(L);
 
     lua_pushcfunction(L, sandboxPrint);
     lua_setglobal(L, "print");

@@ -857,6 +857,9 @@ includes the Lua loop around the call):
 | `px.glow`, r 10 (integer since 2.7.4) | 0.25 ms (was 6.1) | |
 | `px.fade` (2.7.4) | | **2.2 ms**, against ~120 ms of `px.blend`s |
 | `px.blur` (2.7.4) | | 5.0 ms |
+| `px.show` (2.7.4) | | 1.4 ms, the layer through a palette |
+| `px.capture` / `px.mirror("hv")` / `px.scroll` with wrap (2.7.4) | | 0.5 / 0.33 / ~1.3 ms |
+| `px.palette` (2.7.4) | 0.5 ms, cosine | rebuild it every frame if you like |
 | `px.mode("add")` (2.7.4) | a flag | pixel, rect, line, circle and text add light, each pixel of a shape once |
 | CANNES, the whole effect | | 2.7.3: 8.2 fps, 119 ms; 2.7.4 integer blend: 13.5 fps, 72 ms; with `px.fade`: 15.2 fps, 24 ms |
 | `px.terrain` (2.6.3, native) | not measured on the panel yet | a whole 3D view in one call; each ground sample is charged to the frame's budget as one instruction |
@@ -873,8 +876,8 @@ What follows from that:
   field once into a `px.layer`, then each frame one `px.show(L, pal, offset)`
   paints the canvas through a `px.palette`; stepping `offset` is palette
   cycling. `px.scroll` and `px.mirror` move or fold the whole canvas in one
-  call. `kaleidoscope.lua` does a full-screen plasma this way at a few
-  thousand instructions a frame.
+  call. `kaleidoscope.lua` does a full-screen plasma this way at under 20
+  thousand instructions a frame (7 ms on the panel).
 - Paint what does not move once, at load or on the first frame. The canvas
   keeps it.
 - Redraw only what changes.

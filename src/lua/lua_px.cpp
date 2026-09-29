@@ -288,22 +288,31 @@ static int l_blur(lua_State *L) {
 }
 static int l_mode(lua_State *L) { return px_mode_lua(L, &s_add); }
 
-// Palettes and layers (px_layer.h). The whole-canvas passes are charged a
-// third of an instruction a pixel: our estimate until the panel measures them.
-static int l_palette(lua_State *L) { LuaFx::charge(L, 256); return px_palette_lua(L); }
+// Palettes and layers (px_layer.h), charged what they cost on the panel
+// against a 410 ns instruction, measured 2026-09-29 (2.7.4, Wi-Fi on, 30 s a
+// bench, four calls a frame): show 1.4 ms the canvas, 0.43 an instruction a
+// pixel; capture 0.5 ms, 0.15; mirror "hv" 0.33 ms over its 4096 copies,
+// 0.2; scroll with wrap about 1.3 ms, 0.4 (without, a memmove, less: charged
+// the same); a cosine palette 0.5 ms, 1200 instructions, and a gradient its
+// stops on top (five table reads each).
+static int l_palette(lua_State *L) {
+  const size_t stops = lua_istable(L, 1) ? lua_rawlen(L, 1) : 0;
+  LuaFx::charge(L, (uint32_t)(1200 + 5 * (stops > 256 ? 256 : stops)));
+  return px_palette_lua(L);
+}
 static int l_pal(lua_State *L) { return px_pal_lua(L); }
 static int l_layer(lua_State *L) { LuaFx::charge(L, W * H / 8); return px_layer_lua(L, W, H); }
-#define PXL_PASS(name, fn)                                     \
+#define PXL_PASS(name, fn, num, den)                           \
   static int name(lua_State *L) {                              \
     unsigned long work = 0;                                    \
     const int n = fn(L, canvasOf(L)->rgb, W, H, &work);        \
-    LuaFx::charge(L, (uint32_t)(work / 3));                    \
+    LuaFx::charge(L, (uint32_t)(work * (num) / (den)));        \
     return n;                                                  \
   }
-PXL_PASS(l_capture, px_capture_lua)
-PXL_PASS(l_show, px_show_lua)
-PXL_PASS(l_scroll, px_scroll_lua)
-PXL_PASS(l_mirror, px_mirror_lua)
+PXL_PASS(l_capture, px_capture_lua, 3, 20)
+PXL_PASS(l_show, px_show_lua, 3, 7)
+PXL_PASS(l_scroll, px_scroll_lua, 2, 5)
+PXL_PASS(l_mirror, px_mirror_lua, 1, 5)
 #undef PXL_PASS
 
 // A sample of the ground costs about what a Lua instruction does on the panel

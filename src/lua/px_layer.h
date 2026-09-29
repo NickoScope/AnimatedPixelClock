@@ -39,6 +39,7 @@
 #define PX_LAYER_H
 
 #include <string.h>
+#include <stddef.h>
 
 #define PXL_META "px.layer"
 
@@ -199,7 +200,7 @@ static int pxl_fill(lua_State *L) {
 // px.layer([v]) -> L
 static int px_layer_lua(lua_State *L, int w, int h) {
   const lua_Integer v = luaL_optinteger(L, 1, 0);
-  PxLayer *l = (PxLayer *)lua_newuserdatauv(L, sizeof(PxLayer) - 1 + (size_t)w * h, 0);
+  PxLayer *l = (PxLayer *)lua_newuserdatauv(L, offsetof(PxLayer, v) + (size_t)w * h, 0);
   l->w = (unsigned short)w; l->h = (unsigned short)h;
   memset(l->v, v < 0 ? 0 : v > 255 ? 255 : (int)v, (size_t)w * h);
   if (luaL_newmetatable(L, PXL_META)) {
