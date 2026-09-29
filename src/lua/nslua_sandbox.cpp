@@ -78,11 +78,11 @@ extern "C" int nslua_message_handler(lua_State *L) {
 
 // A library function that calls back into Lua, run with a nesting count
 // shared by all such functions (upvalue 2, a full userdata int).
-static const int kCallbackDepth = 4;
+static const int kCallbackDepth = 3;
 static int guardedCall(lua_State *L) {
     int *depth = static_cast<int *>(lua_touserdata(L, lua_upvalueindex(2)));
     if (*depth >= kCallbackDepth)
-        return luaL_error(L, "gsub, format, sort, concat, unpack, move and print nest at most %d deep",
+        return luaL_error(L, "gsub, format, sort, table.concat/unpack/move/insert/remove, tostring, print and log nest at most %d deep",
                           kCallbackDepth);
     const int n = lua_gettop(L);
     lua_pushvalue(L, lua_upvalueindex(1));
@@ -101,12 +101,19 @@ static void guardCallbacks(lua_State *L) {
     // The second gate audit's list (2026-09-29, from -fstack-usage): gsub,
     // format and sort, and table.concat through __index (720 B a level, 13 KB
     // at 17), print through __tostring (12.7 KB with the error path), and
-    // table.unpack and table.move through __index (at the edge). table.insert
-    // is left alone: it sits in hot loops and its chain is inside the budget.
+    // table.unpack and table.move through __index (at the edge). The third
+    // (same day) added table.insert and table.remove through __newindex/__index
+    // (416 B a level), tostring (384) and log (400): with them left out, 4
+    // wrapped levels plus 9 of those plus the deepest leaf came to 12.3-12.5 KB.
+    // Wrapped, and 3 deep, what is left unwrapped is plain metamethods at
+    // ~256 B a level. A pcall around a table.insert is a few microseconds; no
+    // shipped script calls one more than a handful of times a frame.
     static const char *const kWrap[][2] = {{LUA_STRLIBNAME, "gsub"}, {LUA_STRLIBNAME, "format"},
                                            {LUA_TABLIBNAME, "sort"}, {LUA_TABLIBNAME, "concat"},
                                            {LUA_TABLIBNAME, "unpack"}, {LUA_TABLIBNAME, "move"},
-                                           {LUA_GNAME, "print"}};
+                                           {LUA_TABLIBNAME, "insert"}, {LUA_TABLIBNAME, "remove"},
+                                           {LUA_GNAME, "tostring"}, {LUA_GNAME, "print"},
+                                           {LUA_GNAME, "log"}};
     for (size_t i = 0; i < sizeof(kWrap) / sizeof(kWrap[0]); i++) {
         if (strcmp(kWrap[i][0], LUA_GNAME) == 0) lua_pushglobaltable(L);
         else lua_getglobal(L, kWrap[i][0]);

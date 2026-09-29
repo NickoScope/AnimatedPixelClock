@@ -664,7 +664,12 @@ static decltype(LuaPxCanvas::weather) s_worldWeather = {};
 static char     s_worldCity[33] = "";
 static uint32_t s_worldAtMs = 0;
 
+// Set by the effect task when a script asked for the weather; the loop task
+// passes it on, since the weather module's clock is the loop's own.
+static std::atomic<bool> s_weatherWanted{false};
+
 static void worldSnapshot() {
+  if (s_weatherWanted.exchange(false)) weatherNoteShown();
   if (s_worldAtMs && millis() - s_worldAtMs < 2000) return;
   s_worldAtMs = millis() | 1;
   decltype(LuaPxCanvas::weather) w = {};
@@ -689,7 +694,7 @@ static void worldSnapshot() {
 }
 
 static void fillWorld(LuaPxCanvas &c) {
-  if (c.weatherAsked) { weatherNoteShown(); c.weatherAsked = false; }
+  if (c.weatherAsked) { s_weatherWanted.store(true); c.weatherAsked = false; }
   portENTER_CRITICAL(&s_mux);
   c.weather = s_worldWeather;
   memcpy(c.city, s_worldCity, sizeof(c.city));

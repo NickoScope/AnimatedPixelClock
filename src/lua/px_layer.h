@@ -43,6 +43,21 @@
 
 #define PXL_META "px.layer"
 
+// Scratch bytes for palette and show, off the effect task's small C stack: a
+// userdata kept in the registry, grown when asked for more, reused after.
+// Include this header in one file of a program only (its address is the key).
+static char pxl_scratch_key;
+static unsigned char *pxl_scratch(lua_State *L, size_t bytes) {
+  lua_rawgetp(L, LUA_REGISTRYINDEX, &pxl_scratch_key);
+  unsigned char *b = (unsigned char *)lua_touserdata(L, -1);
+  const size_t have = b ? lua_rawlen(L, -1) : 0;
+  lua_pop(L, 1);
+  if (b && have >= bytes) return b;
+  b = (unsigned char *)lua_newuserdatauv(L, bytes, 0);   // raises on no memory, as any allocation
+  lua_rawsetp(L, LUA_REGISTRYINDEX, &pxl_scratch_key);
+  return b;
+}
+
 // round(32767 * cos(2 pi k / 256)), k = 0..256: one table, the same everywhere.
 static const short pxl_cos[257] = {
  32767,  32757,  32728,  32678,  32609,  32521,  32412,  32285,  32137,  31971,  31785,  31580,
@@ -100,7 +115,9 @@ static int pxl_rawnum(lua_State *L, int t, int i, lua_Number *out) {
 // px.palette(spec) -> a 768-byte string
 static int px_palette_lua(lua_State *L) {
   luaL_checktype(L, 1, LUA_TTABLE);
-  unsigned char pal[768];
+  // pal, then the stops' positions and colours, in the scratch buffer: 1.8 KB
+  // that used to sit on the stack.
+  unsigned char *pal = pxl_scratch(L, 768 + 256 + 768);
   lua_rawgeti(L, 1, 1);
   const int cosine = lua_type(L, -1) == LUA_TSTRING && strcmp(lua_tostring(L, -1), "cos") == 0;
   lua_pop(L, 1);
@@ -126,7 +143,7 @@ static int px_palette_lua(lua_State *L) {
   } else {
     const int n = (int)lua_rawlen(L, 1);
     if (n < 1 || n > 256) return luaL_error(L, "px.palette: 1 to 256 stops {pos, r, g, b}");
-    unsigned char pos[256], col[256][3];   // bytes: the effect task's stack is small
+    unsigned char *pos = pal + 768, (*col)[3] = (unsigned char (*)[3])(pal + 768 + 256);
     for (int k = 0; k < n; k++) {
       lua_rawgeti(L, 1, k + 1);
       if (!lua_istable(L, -1)) return luaL_error(L, "px.palette: stop %d is not {pos, r, g, b}", k + 1);
@@ -153,7 +170,7 @@ static int px_palette_lua(lua_State *L) {
       }
     }
   }
-  lua_pushlstring(L, (const char *)pal, sizeof(pal));
+  lua_pushlstring(L, (const char *)pal, 768);
   return 1;
 }
 
@@ -238,7 +255,7 @@ static int px_show_lua(lua_State *L, unsigned char *fb, int w, int h, unsigned l
   const int mode = luaL_checkoption(L, 5, "set", pxl_modes);
   *work = 0;
   if (l->w != w || l->h != h) return luaL_error(L, "px.show: the layer is not the canvas's size");
-  unsigned char lut[768];                                   // the palette at this brightness, once
+  unsigned char *lut = pxl_scratch(L, 768 + 256 + 768);    // the palette at this brightness, once
   for (int k = 0; k < 768; k++) lut[k] = (unsigned char)((pal[k] * b) >> 8);
   for (int i = 0; i < w * h; i++) {
     const int v = l->v[i];
