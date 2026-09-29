@@ -261,7 +261,7 @@ static int l_blend(lua_State *L) {
 }
 
 // glow, fade and blur are charged what they cost against a Lua instruction
-// (410 ns, AGENTS.md), measured on the panel on 2026-09-29 (2.7.4, Wi-Fi on,
+// (410 ns, src/lua/README.md), measured on the panel on 2026-09-29 (2.7.4, Wi-Fi on,
 // 30 s each): a full-canvas fade 2.2 ms, about 2/3 of an instruction a pixel;
 // a full-canvas blur 5.0 ms, 3/4 of one a pixel per pass (work counts both
 // passes); a glow of radius 10 0.25 ms over its 441-pixel box, 3/2 a pixel.
