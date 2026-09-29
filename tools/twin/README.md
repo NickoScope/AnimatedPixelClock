@@ -7,11 +7,9 @@ base `docs/40-virtual-twin.md` (ADR-TWIN-01).
 
 ## What runs
 
-- **Engine:** [esp32sim](https://github.com/joakimeriksson/esp32sim) (Rust, MIT) at upstream
-  `4ab7e90`, plus this project's changes in `engine/esp32sim-twin.patch`. The patch is one diff
-  against upstream, checked to reproduce our branch exactly; `engine/HISTORY.txt` lists the
-  commits behind it.
-- **The patches add:**
+- **Engine:** our fork of [esp32sim](https://github.com/joakimeriksson/esp32sim) (Rust, MIT):
+  https://github.com/NickoScope/esp32sim, branch `nickoscope/twin` (see `engine/README.md`).
+- **The fork adds:**
   - the octal flash our module has (a Macronix ID, `--flash-id`), and 4-byte and octal command bytes;
   - LCD_CAM in i8080 mode, streaming its GDMA ring word by word to the board at the programmed PCLK;
   - an SD/MMC host with an empty slot (SD_MMC fails as it does with no card);
@@ -30,9 +28,8 @@ base `docs/40-virtual-twin.md` (ADR-TWIN-01).
 
 ```
 brew install rustup && rustup default stable
-git clone https://github.com/joakimeriksson/esp32sim ~/twin/esp32sim
-cd ~/twin/esp32sim && git checkout -b nickoscope/twin 4ab7e90 && git apply <this repo>/tools/twin/engine/esp32sim-twin.patch
-cargo build --release
+git clone -b nickoscope/twin https://github.com/NickoScope/esp32sim ~/twin/esp32sim
+cd ~/twin/esp32sim && cargo build --release
 ```
 
 - **The ESP32-S3 mask ROM** comes from Espressif's esp-rom-elfs releases: `esp32s3_rev0_rom.elf` into `~/twin/rom/`.
