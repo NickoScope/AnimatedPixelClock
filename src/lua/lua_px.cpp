@@ -43,6 +43,7 @@ extern "C" {
 #include "px_field.h"              // px.noise, px.field (after px_raster.h and px_layer.h)
 #include "px_particles.h"          // px.particles (after px_raster.h, px_layer.h, px_field.h)
 #include "px_sim.h"                // px.step, px.reaction (after px_raster.h, px_layer.h)
+#include "px_draw.h"               // px.aline, px.dot, px.tri, px.model, px.mesh
 #include "lua_fx.h"                // LuaFx::charge
 
 #define W LUA_PX_W
@@ -428,6 +429,21 @@ static void simCharge(lua_State *L, unsigned long n) { LuaFx::charge(L, (uint32_
 static int l_step(lua_State *L) { return px_step_lua(L, simCharge); }
 static int l_reaction(lua_State *L) { return px_reaction_lua(L, W, H, simCharge); }
 
+// Anti-aliased lines and dots, triangles and meshes (px_draw.h), in px.mode's
+// mode; they charge before the work: estimates until the panel measures them.
+static void drawCharge(lua_State *L, unsigned long n) { LuaFx::charge(L, (uint32_t)n); }
+static int l_aline(lua_State *L) { return px_aline_lua(L, canvasOf(L)->rgb, W, H, s_add, drawCharge); }
+static int l_dot(lua_State *L) { return px_dot_lua(L, canvasOf(L)->rgb, W, H, s_add); }
+static int l_tri(lua_State *L) { return px_tri_lua(L, canvasOf(L)->rgb, W, H, s_add, drawCharge); }
+static int l_model(lua_State *L) {
+  // a load's work: its tables read, and each edge's faces found (edges x faces)
+  const int n = px_model_lua(L);
+  const PxModel *m = (const PxModel *)lua_touserdata(L, -1);
+  LuaFx::charge(L, (uint32_t)(m->nv * 3 + m->ne * 2 + m->nf * 3 + (m->ne * m->nf) / 8));
+  return n;
+}
+static int l_mesh(lua_State *L) { return px_mesh_lua(L, canvasOf(L)->rgb, W, H, s_add, drawCharge); }
+
 static const luaL_Reg kPxLib[] = {
   {"get", l_get}, {"blend", l_blend}, {"glow", l_glow},
   {"size", l_size}, {"t", l_t}, {"now", l_now}, {"clear", l_clear},
@@ -440,6 +456,7 @@ static const luaL_Reg kPxLib[] = {
   {"weather", l_weather}, {"city", l_city}, {"mix", l_mix}, {"forget", l_forget},
   {"feedback", l_feedback}, {"noise", l_noise}, {"field", l_field},
   {"particles", l_particles}, {"step", l_step}, {"reaction", l_reaction},
+  {"aline", l_aline}, {"dot", l_dot}, {"tri", l_tri}, {"model", l_model}, {"mesh", l_mesh},
   {NULL, NULL}
 };
 

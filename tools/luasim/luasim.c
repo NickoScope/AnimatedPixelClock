@@ -263,6 +263,12 @@ static int l_particles(lua_State *L) { return px_particles_lua(L, fb, W, H, NULL
 #include "../../src/lua/px_sim.h"      /* px.step, px.reaction, shared with the firmware */
 static int l_step(lua_State *L)     { return px_step_lua(L, NULL); }
 static int l_reaction(lua_State *L) { return px_reaction_lua(L, W, H, NULL); }
+#include "../../src/lua/px_draw.h"     /* px.aline, px.dot, px.tri, px.model, px.mesh */
+static int l_aline(lua_State *L) { return px_aline_lua(L, fb, W, H, g_add, NULL); }
+static int l_dot(lua_State *L)   { return px_dot_lua(L, fb, W, H, g_add); }
+static int l_tri(lua_State *L)   { return px_tri_lua(L, fb, W, H, g_add, NULL); }
+static int l_model(lua_State *L) { return px_model_lua(L); }
+static int l_mesh(lua_State *L)  { return px_mesh_lua(L, fb, W, H, g_add, NULL); }
 static int l_terrain(lua_State *L) { unsigned long work; return px_terrain_lua(L, fb, W, H, &work); }
 #include "../../src/lua/px_sprite.h"    /* px.grab, px.blit, shared with the firmware */
 static int l_grab(lua_State *L)    { unsigned long work; return px_grab_lua(L, fb, W, H, &work); }
@@ -299,6 +305,7 @@ static const luaL_Reg px_lib[] = {
   {"weather", l_weather}, {"city", l_city}, {"mix", l_mix}, {"forget", l_forget},
   {"feedback", l_feedback}, {"noise", l_noise}, {"field", l_field},
   {"particles", l_particles}, {"step", l_step}, {"reaction", l_reaction},
+  {"aline", l_aline}, {"dot", l_dot}, {"tri", l_tri}, {"model", l_model}, {"mesh", l_mesh},
   {NULL, NULL}
 };
 

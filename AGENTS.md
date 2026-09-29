@@ -919,6 +919,11 @@ What follows from that:
   call a frame each (2.7.6): `px.step(L, "fire" | "life" | "wave", {...})`
   and `px.reaction{f, k}` with `R:step(n)`, `R:show(L)`, then `px.show`
   through a palette. `reaction.lua` grows spots into coral and mazes.
+- Slow motion glides with sub-pixel drawing (2.7.6): `px.aline` and `px.dot`
+  take fractional coordinates and split the light; `px.tri` fills a triangle.
+  A turning 3D body is `px.model{v, e, f, orient = true}` once and
+  `px.mesh(M, {ax, ay, az, mode = "solid"|"wire"|"both"})` a frame - not a Lua
+  loop over its vertices. `solids.lua` shows all of it.
 - What the panel knows about outside: `px.weather()` (2.7.4) is the weather
   clock's data - `{temp, min, max, humidity, wind, code, fahrenheit}` in C and
   km/h - or nil while there is none (weather off in the portal, no location,

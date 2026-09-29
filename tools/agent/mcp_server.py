@@ -1232,6 +1232,15 @@ async def effect_api() -> str:
                                  "the canvas: R:seed(x,y,r), R:step(n<=32), R:params{f,k,da,db}, "
                                  "R:show(L), R:clear(). f/k pick spots, coral, maze, worms "
                                  "(reaction.lua).",
+            "px.aline/px.dot/px.tri": "firmware 2.7.6+. px.aline(x0,y0,x1,y1,r,g,b[,a]) an "
+                                 "anti-aliased line with fractional ends; px.dot(x,y,r,g,b[,a]) "
+                                 "a sub-pixel dot; px.tri(x0,y0,x1,y1,x2,y2,r,g,b) a filled "
+                                 "triangle. Follow px.mode.",
+            "px.model{v,e,f,orient} / px.mesh(M,opts)": "firmware 2.7.6+. A 3D body built once "
+                                 "(v = x,y,z,...; e, f = 1-based indices; orient=true for a "
+                                 "convex body), drawn a frame with px.mesh(M,{ax,ay,az,scale,x,y,"
+                                 "dist,r,g,b,mode='wire'|'solid'|'both'}) - turned, projected, "
+                                 "depth-sorted, lit (solids.lua).",
             "px.weather()": "firmware 2.7.4+. -> {temp,min,max,humidity,wind,code,"
                             "fahrenheit} in C and km/h (the weather clock's data), or "
                             "nil while there is none; asking keeps the fetch going",
