@@ -240,6 +240,18 @@ of C stack a level, and `local function f() pcall(f) end` is three lines that no
 reading of the source can recognise as deep. An effect is a draw loop and its
 failures are caught around `draw()` anyway.
 
+**Since 2.7.4, library calls that call back into Lua nest at most 2 deep**:
+`string.gsub`, `string.format`, `table.sort`, `table.concat`, `table.unpack`,
+`table.move`, `table.insert`, `table.remove`, `tostring`, `print`, `log`,
+`math.max`, `math.min`. A third level fails with "... nest at most 2 deep". Their
+C frames are big (a wrapped gsub level is 1,460 bytes on the panel), and before
+this a gsub whose replacement called gsub could run past the task's stack.
+**`setmetatable` refuses a metatable with `__gc`**: Lua runs a finalizer with the
+instruction hook off, so a looping one held the effect task until the watchdog
+restarted the panel. No gallery script does either. The worst case the audit
+could still build at depth 2 is ~11.0-11.2 KB of the 12 KB stack
+(`src/lua/nslua_sandbox.cpp`).
+
 Measured on the panel, 2026-09-21: the deepest script it will accept leaves
 **6,684 bytes of the 12,288 free** - read it yourself from `stackFreeMin`. A
 760,000-instruction effect that loads for 874 ms sets no new low, because stack
