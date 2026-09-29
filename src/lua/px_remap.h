@@ -97,7 +97,9 @@ static int px_uvmap_lua(lua_State *L, int w, int h, PxuCharge charge) {
   const int32_t height = (int32_t)(pxu_opt(L, t, "height", 16, 1, 1000) * 256);              // Q8
   const int32_t fov = (int32_t)(pxu_opt(L, t, "fov", 1, 0.05, 20) * 256);                     // Q8
   const int32_t turn = pxn_turns(pxu_opt(L, t, "turn", 3, -100, 100));                          // Q16 turns
-  if (charge) charge(L, (unsigned long)w * h * 3);
+  // measured on the panel: 12-21 ms a map by kind (sphere 17, swirl 18-21),
+  // 29 ms at worst with the allocation; 8 a pixel is ~27 ms at 410 ns an instruction
+  if (charge) charge(L, (unsigned long)w * h * 8);
   PxUV *u = (PxUV *)lua_newuserdatauv(L, offsetof(PxUV, m) + (size_t)w * h * 3, 0);
   u->w = w; u->h = h;
   memset(u->m, 0, (size_t)w * h * 3);
@@ -180,7 +182,9 @@ static int px_remap_lua(lua_State *L, unsigned char *fb, int w, int h, PxuCharge
     lay = l->v; tw = l->w; th = l->h;
     pal = pxl_checkpal(L, 5);
   }
-  if (charge) charge(L, (unsigned long)w * h * 3 / 4);   // an estimate until measured
+  // measured on the panel: 3.2 ms the canvas from a layer, 2.2 ms from a
+  // snapshot; one a pixel is ~3.4 ms at 410 ns an instruction
+  if (charge) charge(L, (unsigned long)w * h);
   for (int i = 0; i < w * h; i++) {
     const unsigned char *m = &u->m[i * 3];
     unsigned char *p = &fb[i * 3];

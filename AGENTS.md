@@ -880,6 +880,7 @@ includes the Lua loop around the call):
 | `px.step` (2.7.6) | | fire 1.4 ms, life 2.8 ms, wave 2 ms a step |
 | `px.reaction` (2.7.6) | | 9.9 ms a step over the canvas: 2-3 steps a frame |
 | `px.aline` / `px.tri` / `px.mesh` (2.7.6) | a full-height line 88 us; a triangle 1.25 us a pixel of its box | an icosahedron solid with edges 5.4 ms |
+| `px.uvmap` / `px.remap` (2.7.7) | | a map built 12-21 ms by kind (once, at load); a remap 3.2 ms the canvas from a layer, 2.2 ms from a snapshot |
 | `px.mode("add")` (2.7.4) | a flag | pixel, rect, line, circle and text add light, each pixel of a shape once |
 | CANNES, the whole effect | | 2.7.3: 8.2 fps, 119 ms; 2.7.4 integer blend: 13.5 fps, 72 ms; with `px.fade`: 15.2 fps, 24 ms |
 | `px.terrain` (2.6.3, native) | not measured on the panel yet | a whole 3D view in one call; each ground sample is charged to the frame's budget as one instruction |
