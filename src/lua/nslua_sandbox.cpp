@@ -78,7 +78,7 @@ extern "C" int nslua_message_handler(lua_State *L) {
 
 // A library function that calls back into Lua, run with a nesting count
 // shared by all such functions (upvalue 2, a full userdata int).
-static const int kCallbackDepth = 3;
+static const int kCallbackDepth = 2;
 static int guardedCall(lua_State *L) {
     int *depth = static_cast<int *>(lua_touserdata(L, lua_upvalueindex(2)));
     if (*depth >= kCallbackDepth)
@@ -116,6 +116,13 @@ static void guardCallbacks(lua_State *L) {
     int *depth = static_cast<int *>(lua_newuserdatauv(L, sizeof(int), 0));
     *depth = 0;
     const int d = lua_gettop(L);
+    // Two deep, from the panel (2026-09-29, stackFreeMin after upload trials
+    // of the gate audit's probes, one boot a series): a wrapped gsub level is
+    // 1460 B (the .su said 1392), a __concat level 368 B (as the .su said),
+    // an error raised in the deepest leaf with the handler there ~400 B more
+    // than the .su said. Three deep, the worst reachable case came to ~11.9 KB
+    // of 12 KB, into the 1 KB kept for interrupts; two deep, ~10.5 KB.
+    //
     // The second gate audit's list (2026-09-29, from -fstack-usage): gsub,
     // format and sort, and table.concat through __index (720 B a level, 13 KB
     // at 17), print through __tostring (12.7 KB with the error path), and
