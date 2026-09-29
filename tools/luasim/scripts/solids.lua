@@ -4,8 +4,9 @@
 -- ============================================================
 -- A tetrahedron, a cube, an octahedron and an icosahedron, one at a time,
 -- turning on a spin that wanders; shown as a lit solid, as a wireframe with
--- anti-aliased edges, or as both; every 20 s the one on screen flows into the
--- next (px.mix). Behind them a field of stars drifts at fractions of a pixel a
+-- anti-aliased edges, or as both. Every 20 s the one on screen reshapes itself
+-- into the next: its surface swells and settles, point by point, until it is
+-- the new solid, which then takes on its own edges (see "the morph"). Behind them a field of stars drifts at fractions of a pixel a
 -- frame, each star an anti-aliased dot, so it glides instead of stepping. The
 -- button brings the next solid now.
 --
@@ -39,25 +40,108 @@ local PHI = (1 + sqrt(5)) / 2
 local SOLIDS = {}
 if HAS then
   local tf = { 1, 2, 3, 1, 2, 4, 1, 3, 4, 2, 3, 4 }
-  SOLIDS[1] = { name = "TETRA", mode = "solid", r = 255, g = 120, b = 60,
-    m = px.model{ v = scaled({ 1, 1, 1, 1, -1, -1, -1, 1, -1, -1, -1, 1 }, 0.66), f = tf, e = edges_of(tf), orient = true } }
-  SOLIDS[2] = { name = "CUBE", mode = "both", r = 60, g = 180, b = 255,
-    m = px.model{
-      v = scaled({ -1, -1, -1, 1, -1, -1, 1, 1, -1, -1, 1, -1, -1, -1, 1, 1, -1, 1, 1, 1, 1, -1, 1, 1 }, 0.72),
-      e = { 1, 2, 2, 3, 3, 4, 4, 1, 5, 6, 6, 7, 7, 8, 8, 5, 1, 5, 2, 6, 3, 7, 4, 8 },
-      f = { 1, 3, 2, 1, 4, 3, 5, 6, 7, 5, 7, 8, 1, 2, 6, 1, 6, 5, 4, 8, 7, 4, 7, 3, 1, 5, 8, 1, 8, 4, 2, 3, 7, 2, 7, 6 },
-      orient = true } }
+  local tv = scaled({ 1, 1, 1, 1, -1, -1, -1, 1, -1, -1, -1, 1 }, 0.66)
+  SOLIDS[1] = { name = "TETRA", mode = "solid", r = 255, g = 120, b = 60, v = tv, f = tf,
+    m = px.model{ v = tv, f = tf, e = edges_of(tf), orient = true } }
+  local cv = scaled({ -1, -1, -1, 1, -1, -1, 1, 1, -1, -1, 1, -1, -1, -1, 1, 1, -1, 1, 1, 1, 1, -1, 1, 1 }, 0.72)
+  local cf = { 1, 3, 2, 1, 4, 3, 5, 6, 7, 5, 7, 8, 1, 2, 6, 1, 6, 5, 4, 8, 7, 4, 7, 3, 1, 5, 8, 1, 8, 4, 2, 3, 7, 2, 7, 6 }
+  SOLIDS[2] = { name = "CUBE", mode = "both", r = 60, g = 180, b = 255, v = cv, f = cf,
+    m = px.model{ v = cv, e = { 1, 2, 2, 3, 3, 4, 4, 1, 5, 6, 6, 7, 7, 8, 8, 5, 1, 5, 2, 6, 3, 7, 4, 8 }, f = cf, orient = true } }
   local of = { 5, 1, 3, 5, 3, 2, 5, 2, 4, 5, 4, 1, 6, 3, 1, 6, 2, 3, 6, 4, 2, 6, 1, 4 }
-  SOLIDS[3] = { name = "OCTA", mode = "wire", r = 120, g = 255, b = 140,
-    m = px.model{ v = { 1.2, 0, 0, -1.2, 0, 0, 0, 1.2, 0, 0, -1.2, 0, 0, 0, 1.2, 0, 0, -1.2 }, f = of, e = edges_of(of), orient = true } }
+  local ov = { 1.2, 0, 0, -1.2, 0, 0, 0, 1.2, 0, 0, -1.2, 0, 0, 0, 1.2, 0, 0, -1.2 }
+  SOLIDS[3] = { name = "OCTA", mode = "wire", r = 120, g = 255, b = 140, v = ov, f = of,
+    m = px.model{ v = ov, f = of, e = edges_of(of), orient = true } }
   local iv = { -1, PHI, 0, 1, PHI, 0, -1, -PHI, 0, 1, -PHI, 0, 0, -1, PHI, 0, 1, PHI, 0, -1, -PHI, 0, 1, -PHI,
                PHI, 0, -1, PHI, 0, 1, -PHI, 0, -1, -PHI, 0, 1 }
   local ifc = { 0, 11, 5, 0, 5, 1, 0, 1, 7, 0, 7, 10, 0, 10, 11, 1, 5, 9, 5, 11, 4, 11, 10, 2, 10, 7, 6, 7, 1, 8,
                 3, 9, 4, 3, 4, 2, 3, 2, 6, 3, 6, 8, 3, 8, 9, 4, 9, 5, 2, 4, 11, 6, 2, 10, 8, 6, 7, 9, 8, 1 }
   for i = 1, #ifc do ifc[i] = ifc[i] + 1 end
-  SOLIDS[4] = { name = "ICOSA", mode = "both", r = 230, g = 90, b = 255,
-    m = px.model{ v = scaled(iv, 0.62), f = ifc, e = edges_of(ifc), orient = true } }
+  local iv2 = scaled(iv, 0.62)
+  SOLIDS[4] = { name = "ICOSA", mode = "both", r = 230, g = 90, b = 255, v = iv2, f = ifc,
+    m = px.model{ v = iv2, f = ifc, e = edges_of(ifc), orient = true } }
 end
+
+-- ---------------------------------------------------------------- the morph
+-- One skin for all of them: a sphere of 162 points and 320 triangles (an
+-- icosahedron divided twice). For each solid, every point of the skin is
+-- carried out along its ray from the centre to the solid's surface. Changing
+-- solid, each point slides from where the old one put it to where the new one
+-- does, so a cube swells into an icosahedron and settles into a tetrahedron;
+-- when it has arrived, the skin flows into the real solid with its edges.
+local SKV, SKF = {}, {}
+if HAS then
+  local verts, faces, mid = {}, {}, {}
+  local iv = { -1, PHI, 0, 1, PHI, 0, -1, -PHI, 0, 1, -PHI, 0, 0, -1, PHI, 0, 1, PHI, 0, -1, -PHI, 0, 1, -PHI,
+               PHI, 0, -1, PHI, 0, 1, -PHI, 0, -1, -PHI, 0, 1 }
+  local ifc = { 1, 12, 6, 1, 6, 2, 1, 2, 8, 1, 8, 11, 1, 11, 12, 2, 6, 10, 6, 12, 5, 12, 11, 3, 11, 8, 7, 8, 2, 9,
+                4, 10, 5, 4, 5, 3, 4, 3, 7, 4, 7, 9, 4, 9, 10, 5, 10, 6, 3, 5, 12, 7, 3, 11, 9, 7, 8, 10, 9, 2 }
+  local function add(x, y, z)
+    local l = sqrt(x * x + y * y + z * z)
+    verts[#verts + 1] = { x / l, y / l, z / l }
+    return #verts
+  end
+  for i = 1, #iv, 3 do add(iv[i], iv[i + 1], iv[i + 2]) end
+  for i = 1, #ifc, 3 do faces[#faces + 1] = { ifc[i], ifc[i + 1], ifc[i + 2] } end
+  local function midpoint(a, b)
+    local key = a < b and a * 1000 + b or b * 1000 + a
+    if mid[key] then return mid[key] end
+    local p, q = verts[a], verts[b]
+    local m = add(p[1] + q[1], p[2] + q[2], p[3] + q[3])
+    mid[key] = m
+    return m
+  end
+  for _ = 1, 2 do
+    local nf = {}
+    for _, f in ipairs(faces) do
+      local a, b, c = f[1], f[2], f[3]
+      local ab, bc, ca = midpoint(a, b), midpoint(b, c), midpoint(c, a)
+      nf[#nf + 1] = { a, ab, ca }; nf[#nf + 1] = { b, bc, ab }; nf[#nf + 1] = { c, ca, bc }; nf[#nf + 1] = { ab, bc, ca }
+    end
+    faces = nf
+  end
+  for _, f in ipairs(faces) do SKF[#SKF + 1] = f[1]; SKF[#SKF + 1] = f[2]; SKF[#SKF + 1] = f[3] end
+  -- each solid's planes (outward normal n, offset d), then each ray's distance
+  for si, sd in ipairs(SOLIDS) do
+    local planes, v, f = {}, sd.v, sd.f
+    for i = 1, #f, 3 do
+      local a, b, c = (f[i] - 1) * 3, (f[i + 1] - 1) * 3, (f[i + 2] - 1) * 3
+      local ux, uy, uz = v[b + 1] - v[a + 1], v[b + 2] - v[a + 2], v[b + 3] - v[a + 3]
+      local wx, wy, wz = v[c + 1] - v[a + 1], v[c + 2] - v[a + 2], v[c + 3] - v[a + 3]
+      local nx, ny, nz = uy * wz - uz * wy, uz * wx - ux * wz, ux * wy - uy * wx
+      local l = sqrt(nx * nx + ny * ny + nz * nz)
+      nx, ny, nz = nx / l, ny / l, nz / l
+      local d = nx * v[a + 1] + ny * v[a + 2] + nz * v[a + 3]
+      if d < 0 then nx, ny, nz, d = -nx, -ny, -nz, -d end
+      planes[#planes + 1] = { nx, ny, nz, d }
+    end
+    local out = {}
+    for _, p in ipairs(verts) do
+      local r = 1e9
+      for _, pl in ipairs(planes) do
+        local k = pl[1] * p[1] + pl[2] * p[2] + pl[3] * p[3]
+        if k > 1e-6 and pl[4] / k < r then r = pl[4] / k end
+      end
+      out[#out + 1] = p[1] * r; out[#out + 1] = p[2] * r; out[#out + 1] = p[3] * r
+    end
+    -- the corners: 162 points would round them off, so the skin point nearest
+    -- each vertex's direction is put on the vertex itself
+    for i = 1, #v, 3 do
+      local x, y, z = v[i], v[i + 1], v[i + 2]
+      local l = sqrt(x * x + y * y + z * z)
+      local best, bi = -2, 1
+      for j, p in ipairs(verts) do
+        local d = (p[1] * x + p[2] * y + p[3] * z) / l
+        if d > best then best, bi = d, j end
+      end
+      out[bi * 3 - 2], out[bi * 3 - 1], out[bi * 3] = x, y, z
+    end
+    SKV[si] = out
+  end
+end
+local MORPH, SETTLE = 2.4, 0.6        -- seconds the skin slides, and flows into the solid
+local MV = {}                         -- the skin's points this frame
+local SKIN = { v = MV, f = SKF, orient = true }
+local SKINOPTS = { ax = 0, ay = 0, az = 0, scale = 21, x = 63.5, y = 31.5, dist = 4, r = 255, g = 255, b = 255, mode = "solid" }
 
 -- stars: fixed places and speeds, from a xorshift (the simulator and the panel agree)
 local seed = 0x51A7B00B
@@ -70,8 +154,9 @@ end
 local SX, SY, SV, SB = {}, {}, {}, {}
 for i = 1, 60 do SX[i], SY[i], SV[i], SB[i] = rnd() * W, rnd() * H, 0.6 + rnd() * 2.4, 60 + floor(rnd() * 150) end
 
-local cur, SCENE, XF = 1, 20, 1.5
+local cur, SCENE, XF = 1, 20, SETTLE
 local T, tprev, sceneAt, xfAt = 0, nil, 0, nil
+local from, morphAt = nil, nil
 local LINES_SLOT, FADE_SLOT = 3, 2
 local lastClicks = rawget(px, "button") and px.button() or 0
 local OPTS = { ax = 0, ay = 0, az = 0, scale = 21, x = 63.5, y = 31.5, dist = 4, r = 255, g = 255, b = 255, mode = "wire" }
@@ -97,11 +182,10 @@ function draw()
   local c = rawget(px, "button") and px.button() or 0
   local change = c ~= lastClicks or T - sceneAt > SCENE
   if c ~= lastClicks then lastClicks = c end
-  if change then
-    cur = cur % #SOLIDS + 1
+  if change and not morphAt then
+    from, cur = cur, cur % #SOLIDS + 1
     sceneAt = T
-    LINES_SLOT, FADE_SLOT = FADE_SLOT, LINES_SLOT      -- last frame flows out under the next solid
-    xfAt = T
+    morphAt = T
   end
 
   -- the stars, gliding left at fractions of a pixel a frame
@@ -127,7 +211,36 @@ function draw()
   OPTS.x = 63.5 + 18 * sin(T * 0.21)
   OPTS.y = 31.5 + 5 * sin(T * 0.17 + 2)
   local hue = 0.5 + 0.5 * sin(T * 0.09)
-  OPTS.r = floor(s.r * (0.7 + 0.3 * hue)); OPTS.g = floor(s.g * (1 - 0.3 * hue)); OPTS.b = s.b
+  local function colour(sd, o)
+    o.r = floor(sd.r * (0.7 + 0.3 * hue)); o.g = floor(sd.g * (1 - 0.3 * hue)); o.b = sd.b
+  end
+
+  if morphAt then
+    -- the skin, sliding from the old solid's shape to the new one's
+    local u = (T - morphAt) / MORPH
+    if u >= 1 then u = 1 end
+    local e = u * u * (3 - 2 * u)
+    local A, B = SKV[from], SKV[cur]
+    for i = 1, #A do MV[i] = A[i] + (B[i] - A[i]) * e end
+    local M = px.model(SKIN)
+    for k, v in pairs(OPTS) do SKINOPTS[k] = v end
+    local a, b = SOLIDS[from], SOLIDS[cur]
+    SKINOPTS.r = floor((a.r + (b.r - a.r) * e) * (0.7 + 0.3 * hue))
+    SKINOPTS.g = floor((a.g + (b.g - a.g) * e) * (1 - 0.3 * hue))
+    SKINOPTS.b = floor(a.b + (b.b - a.b) * e)
+    SKINOPTS.mode = "solid"
+    px.mesh(M, SKINOPTS)
+    if u >= 1 then
+      -- arrived: this frame flows out under the real solid
+      morphAt = nil
+      px.save(LINES_SLOT)
+      LINES_SLOT, FADE_SLOT = FADE_SLOT, LINES_SLOT
+      xfAt = T
+    end
+    return
+  end
+
+  colour(s, OPTS)
   OPTS.mode = s.mode
   if s.mode == "wire" then px.mode("add") end
   px.mesh(s.m, OPTS)
