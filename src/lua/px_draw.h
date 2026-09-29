@@ -17,6 +17,9 @@
 //       vertices, edges (index pairs), faces (index triples, 1-based,
 //       counter-clockwise seen from outside, or orient = true for a convex
 //       body round the origin); up to 1024 / 2048 / 1024
+// On the panel (2026-09-29): a full-height px.aline 88 us; a px.tri 1.25 us a
+// pixel of its box; an icosahedron in "both" 5.4 ms.
+//
 //   px.mesh(M, { ax, ay, az, scale = 20, x = 63.5, y = 31.5, dist = 4,
 //                r, g, b, mode = "wire" | "solid" | "both" })
 //       M turned (radians about x, then y, then z), placed, seen from dist
@@ -169,7 +172,7 @@ static int px_tri_lua(lua_State *L, unsigned char *fb, int w, int h, int add, Px
     }
     long bw = (mxx >> 8) - (mnx >> 8) + 2, bh = (mxy >> 8) - (mny >> 8) + 2;
     bw = bw > w ? w : bw; bh = bh > h ? h : bh;
-    charge(L, (unsigned long)(bw * bh) / 2);
+    charge(L, (unsigned long)(bw * bh) * 3);               // 1.25 us a box pixel on the panel
   }
   pxd_tri(fb, w, h, c[0], c[1], c[2], c[3], c[4], c[5], r, g, b, add);
   return 0;
@@ -327,7 +330,7 @@ static int px_mesh_lua(lua_State *L, unsigned char *fb, int w, int h, int add, P
     if (!s || !pxm_modes[mode]) return luaL_error(L, "px.mesh: mode is \"wire\", \"solid\" or \"both\"");
   }
   lua_pop(L, 1);
-  if (charge) charge(L, (unsigned long)m->nv * 20 + (unsigned long)(mode != 1 ? m->ne * 300 : 0) +
+  if (charge) charge(L, (unsigned long)m->nv * 20 + (unsigned long)(mode != 1 ? m->ne * 150 : 0) +
                         (unsigned long)(mode != 0 ? m->nf * 20 : 0));          // the faces' fill: below, by their boxes
 
   // the turn: x, then y, then z, Q15 cosines and sines
@@ -388,7 +391,7 @@ static int px_mesh_lua(lua_State *L, unsigned char *fb, int w, int h, int add, P
         bw = bw > w ? w : bw; bh = bh > h ? h : bh;
         area += (unsigned long)(bw * bh);
       }
-      charge(L, area / 2);
+      charge(L, area * 3);
     }
     for (int k = 0; k < n; k++) {
       const int i = order[k];
