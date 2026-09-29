@@ -52,9 +52,16 @@
 #include "lua_fx.h"
 #include "lua_px.h"
 #include "../debug/dbg_log.h"
+#include "../config/config.h"             // settings.weather*
+#include "../weather/weather.h"           // px.weather
+#if defined(WORLDCLOCK_ENABLED)
+#include "../worldclock/worldclock.h"     // px.city
+#endif
 #if defined(LUA_STORE_ENABLED)
 #include "lua_store.h"
 #endif
+
+static void fillWorld(LuaPxCanvas &c);   // px.weather, px.city: below, by luaEffectsRender
 
 namespace {
 
@@ -215,6 +222,7 @@ void runTrial() {
   memset(s_work, 0, LUA_PX_BYTES);
   fillClock(s_canvas.clock, 60.0);
   s_canvas.clicks = s_clicks.load(std::memory_order_relaxed);
+  fillWorld(s_canvas);
   int64_t t0 = esp_timer_get_time();
   bool ok = s_fx.open("upload", t.src, t.len, &s_canvas, kLuaFxPanelLimits);
   t.openMs = (uint32_t)((esp_timer_get_time() - t0) / 1000);
@@ -227,6 +235,7 @@ void runTrial() {
     for (uint8_t k = 0; k < kTrialFrames && ok; k++) {
       fillClock(s_canvas.clock, s_fx.periodSeconds());
       s_canvas.clicks = s_clicks.load(std::memory_order_relaxed);
+      fillWorld(s_canvas);
       t0 = esp_timer_get_time();
       const bool drew = s_fx.draw();
       const uint32_t ms = (uint32_t)((esp_timer_get_time() - t0) / 1000);
@@ -327,6 +336,7 @@ void effectTask(void *) {
         memset(s_work, 0, LUA_PX_BYTES);      // luasim starts every run on black
         fillClock(s_canvas.clock, 60.0);      // for a script that reads px.now() at load
         s_canvas.clicks = s_clicks.load(std::memory_order_relaxed);
+        fillWorld(s_canvas);
         const int64_t t0 = esp_timer_get_time();
         const bool ok = src && s_fx.open(id, src, srcLen, &s_canvas, kLuaFxPanelLimits);
         if (!src) {
@@ -375,6 +385,7 @@ void effectTask(void *) {
 
     fillClock(s_canvas.clock, s_fx.periodSeconds());
     s_canvas.clicks = s_clicks.load(std::memory_order_relaxed);
+    fillWorld(s_canvas);
     const int64_t t0 = esp_timer_get_time();
     if (!s_fx.draw()) {
       // One frame past its time budget is dropped, not fatal: WiFi shares this
@@ -646,8 +657,48 @@ void luaEffectsSelect(int16_t index) {
   }
 }
 
+// px.weather and px.city: taken on the loop task, where the world clock's
+// home and the settings change, every 2 s while an effect is shown, and copied
+// by the effect task under s_mux before each draw.
+static decltype(LuaPxCanvas::weather) s_worldWeather = {};
+static char     s_worldCity[33] = "";
+static uint32_t s_worldAtMs = 0;
+
+static void worldSnapshot() {
+  if (s_worldAtMs && millis() - s_worldAtMs < 2000) return;
+  s_worldAtMs = millis() | 1;
+  decltype(LuaPxCanvas::weather) w = {};
+  if (settings.weatherEnabled && weatherConfigured()) {
+    const WeatherData d = getWeather();
+    if (d.valid) {
+      w.valid = true;
+      w.tempC = d.tempC; w.minC = d.tempMinC; w.maxC = d.tempMaxC; w.windKmh = d.windKmh;
+      w.humidity = d.humidity; w.code = d.weatherCode;
+    }
+    w.fahrenheit = settings.weatherUseFahrenheit;
+  }
+  char city[33] = "";
+#if defined(WORLDCLOCK_ENABLED)
+  WcCity c;
+  if (worldClockCity(worldClockHome(), &c)) { strncpy(city, c.name, sizeof(city) - 1); city[sizeof(city) - 1] = 0; }
+#endif
+  portENTER_CRITICAL(&s_mux);
+  s_worldWeather = w;
+  memcpy(s_worldCity, city, sizeof(city));
+  portEXIT_CRITICAL(&s_mux);
+}
+
+static void fillWorld(LuaPxCanvas &c) {
+  if (c.weatherAsked) { weatherNoteShown(); c.weatherAsked = false; }
+  portENTER_CRITICAL(&s_mux);
+  c.weather = s_worldWeather;
+  memcpy(c.city, s_worldCity, sizeof(c.city));
+  portEXIT_CRITICAL(&s_mux);
+}
+
 void luaEffectsRender() {
   s_demandMs = millis();
+  worldSnapshot();
   const int16_t sel = s_selected;
   if (sel < 0) return;
   if (!s_task) {

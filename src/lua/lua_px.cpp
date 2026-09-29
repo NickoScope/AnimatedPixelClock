@@ -288,6 +288,33 @@ static int l_blur(lua_State *L) {
 }
 static int l_mode(lua_State *L) { return px_mode_lua(L, &s_add); }
 
+// px.weather() -> {temp, min, max, humidity, wind, code, fahrenheit} in
+// Celsius and km/h, or nil while the panel has none (weather off in the
+// portal, no location, or not fetched yet). Asking keeps the fetch going, as
+// the weather clock's page does.
+static int l_weather(lua_State *L) {
+  LuaPxCanvas *c = canvasOf(L);
+  c->weatherAsked = true;
+  if (!c->weather.valid) { lua_pushnil(L); return 1; }
+  lua_createtable(L, 0, 7);
+  lua_pushnumber(L, (lua_Number)c->weather.tempC);   lua_setfield(L, -2, "temp");
+  lua_pushnumber(L, (lua_Number)c->weather.minC);    lua_setfield(L, -2, "min");
+  lua_pushnumber(L, (lua_Number)c->weather.maxC);    lua_setfield(L, -2, "max");
+  lua_pushinteger(L, c->weather.humidity);           lua_setfield(L, -2, "humidity");
+  lua_pushnumber(L, (lua_Number)c->weather.windKmh); lua_setfield(L, -2, "wind");
+  lua_pushinteger(L, c->weather.code);               lua_setfield(L, -2, "code");
+  lua_pushboolean(L, c->weather.fahrenheit);         lua_setfield(L, -2, "fahrenheit");
+  return 1;
+}
+
+// px.city() -> the world clock's home as it prints it ("CANNES"), or nil.
+static int l_city(lua_State *L) {
+  const LuaPxCanvas *c = canvasOf(L);
+  if (!c->city[0]) { lua_pushnil(L); return 1; }
+  lua_pushstring(L, c->city);
+  return 1;
+}
+
 // Palettes and layers (px_layer.h), charged what they cost on the panel
 // against a 410 ns instruction, measured 2026-09-29 (2.7.4, Wi-Fi on, 30 s a
 // bench, four calls a frame): show 1.4 ms the canvas, 0.43 an instruction a
@@ -369,6 +396,7 @@ static const luaL_Reg kPxLib[] = {
   {"button", l_button}, {"fade", l_fade}, {"blur", l_blur}, {"mode", l_mode},
   {"palette", l_palette}, {"pal", l_pal}, {"layer", l_layer}, {"capture", l_capture},
   {"show", l_show}, {"scroll", l_scroll}, {"mirror", l_mirror},
+  {"weather", l_weather}, {"city", l_city},
   {NULL, NULL}
 };
 

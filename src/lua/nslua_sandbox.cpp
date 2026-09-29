@@ -82,7 +82,7 @@ static const int kCallbackDepth = 4;
 static int guardedCall(lua_State *L) {
     int *depth = static_cast<int *>(lua_touserdata(L, lua_upvalueindex(2)));
     if (*depth >= kCallbackDepth)
-        return luaL_error(L, "string.gsub, string.format and table.sort nest at most %d deep",
+        return luaL_error(L, "gsub, format, sort, concat, unpack, move and print nest at most %d deep",
                           kCallbackDepth);
     const int n = lua_gettop(L);
     lua_pushvalue(L, lua_upvalueindex(1));
@@ -98,10 +98,18 @@ static void guardCallbacks(lua_State *L) {
     int *depth = static_cast<int *>(lua_newuserdatauv(L, sizeof(int), 0));
     *depth = 0;
     const int d = lua_gettop(L);
+    // The second gate audit's list (2026-09-29, from -fstack-usage): gsub,
+    // format and sort, and table.concat through __index (720 B a level, 13 KB
+    // at 17), print through __tostring (12.7 KB with the error path), and
+    // table.unpack and table.move through __index (at the edge). table.insert
+    // is left alone: it sits in hot loops and its chain is inside the budget.
     static const char *const kWrap[][2] = {{LUA_STRLIBNAME, "gsub"}, {LUA_STRLIBNAME, "format"},
-                                           {LUA_TABLIBNAME, "sort"}};
+                                           {LUA_TABLIBNAME, "sort"}, {LUA_TABLIBNAME, "concat"},
+                                           {LUA_TABLIBNAME, "unpack"}, {LUA_TABLIBNAME, "move"},
+                                           {LUA_GNAME, "print"}};
     for (size_t i = 0; i < sizeof(kWrap) / sizeof(kWrap[0]); i++) {
-        lua_getglobal(L, kWrap[i][0]);
+        if (strcmp(kWrap[i][0], LUA_GNAME) == 0) lua_pushglobaltable(L);
+        else lua_getglobal(L, kWrap[i][0]);
         lua_getfield(L, -1, kWrap[i][1]);          // the original
         lua_pushvalue(L, d);                       // the shared count
         lua_pushcclosure(L, guardedCall, 2);
@@ -159,15 +167,15 @@ extern "C" void nslua_sandbox_open(lua_State *L) {
     // stack, and a gsub whose replacement calls gsub again is ~944 bytes a
     // level. LUAI_MAXCCALLS (20) lets 18 of those through, 17 KB against the
     // task's 12 KB (the gate audit of 2026-09-29, from -fstack-usage). So the
-    // three are wrapped with one shared count and may nest 4 deep; the
+    // these are wrapped with one shared count and may nest 4 deep; the
     // wrapper's own lua_pcall is there only to bring the count back down when
     // an error passes through, and the error goes on as it came.
-    guardCallbacks(L);
-
     lua_pushcfunction(L, sandboxPrint);
     lua_setglobal(L, "print");
     lua_pushcfunction(L, sandboxLog);
     lua_setglobal(L, "log");
     lua_pushcfunction(L, sandboxRequire);
     lua_setglobal(L, "require");
+
+    guardCallbacks(L);          // after print, which it wraps too
 }

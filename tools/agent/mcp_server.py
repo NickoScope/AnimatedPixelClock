@@ -1204,6 +1204,10 @@ async def effect_api() -> str:
                              "pixels; black comes in, or with wrap what went out",
             "px.mirror(m)": "firmware 2.7.4+. 'h' left half onto the right, 'v' top "
                             "onto the bottom, 'hv' top-left quarter onto all four",
+            "px.weather()": "firmware 2.7.4+. -> {temp,min,max,humidity,wind,code,"
+                            "fahrenheit} in C and km/h (the weather clock's data), or "
+                            "nil while there is none; asking keeps the fetch going",
+            "px.city()": "firmware 2.7.4+. -> the world clock's home ('CANNES'), or nil",
             "px.save() / px.restore()": "firmware 2.6.6+. The canvas put aside (one "
                                         "copy, 24 KB of the effect's heap) and back; "
                                         "restore -> true, or false if nothing was saved. "

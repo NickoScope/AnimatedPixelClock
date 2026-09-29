@@ -51,6 +51,8 @@ struct Job {
   int frames = 0, startMin = 12 * 60 + 34, yday = 255, utcH = 2, year = 2026;
   bool sweep = false, exact = false, gen = true, panel = false;
   std::string clicks;   // --clicks f1,f2,...: px.button counts these frames once reached
+  // --weather T and --city NAME: px.weather() and px.city() as luasim gives them
+  bool haveWeather = false; float weatherT = 0; std::string city;
   int rc = 0;
 };
 
@@ -68,7 +70,13 @@ void *run(void *arg) {
   if (name.size() > 4 && name.compare(name.size() - 4, 4, ".lua") == 0) name.resize(name.size() - 4);
 
   static uint8_t canvasBytes[LUA_PX_BYTES];   // zeroed, like luasim's static fb
-  LuaPxCanvas canvas = {canvasBytes, {0.0, j.startMin / 60 % 24, j.startMin % 60, 56, j.yday, j.utcH * 60, j.year}};
+  LuaPxCanvas canvas = {canvasBytes, {0.0, j.startMin / 60 % 24, j.startMin % 60, 56, j.yday, j.utcH * 60, j.year}, 0, {}, "", false};
+  if (j.haveWeather) {   // the same sample luasim gives: T, T-4 .. T+3, 60 %, 10 km/h, code 1
+    canvas.weather.valid = true;
+    canvas.weather.tempC = j.weatherT; canvas.weather.minC = j.weatherT - 4; canvas.weather.maxC = j.weatherT + 3;
+    canvas.weather.humidity = 60; canvas.weather.windKmh = 10; canvas.weather.code = 1;
+  }
+  snprintf(canvas.city, sizeof(canvas.city), "%s", j.city.c_str());
   const LuaFxLimits generous = {400000000u, 400000000u, 600000u, 600000u, 256u * 1024u * 1024u};
   LuaFx fx;
   if (j.exact) fx.setHookStep(1);
@@ -142,7 +150,7 @@ void *run(void *arg) {
 int main(int argc, char **argv) {
   if (argc < 4) {
     fprintf(stderr, "usage: fxhost script.lua frames out.raw [--start HH:MM] [--yday N] "
-                    "[--utc H] [--year Y] [--sweep] [--clicks f1,f2] [--exact] [--incremental] [--panel-limits]\n");
+                    "[--utc H] [--year Y] [--sweep] [--clicks f1,f2] [--weather T] [--city NAME] [--exact] [--incremental] [--panel-limits]\n");
     return 2;
   }
   Job j;
@@ -157,6 +165,8 @@ int main(int argc, char **argv) {
     else if (!strcmp(argv[a], "--year") && a + 1 < argc)   j.year = atoi(argv[++a]);
     else if (!strcmp(argv[a], "--sweep"))                  j.sweep = true;
     else if (!strcmp(argv[a], "--clicks") && a + 1 < argc) j.clicks = argv[++a];
+    else if (!strcmp(argv[a], "--weather") && a + 1 < argc) { j.haveWeather = true; j.weatherT = (float)atof(argv[++a]); }
+    else if (!strcmp(argv[a], "--city") && a + 1 < argc)   j.city = argv[++a];
     else if (!strcmp(argv[a], "--exact"))                  j.exact = true;
     else if (!strcmp(argv[a], "--incremental"))            j.gen = false;
     else if (!strcmp(argv[a], "--panel-limits"))           j.panel = true;

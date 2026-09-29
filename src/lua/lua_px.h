@@ -37,6 +37,17 @@ struct LuaPxCanvas {
   // the panel started. A script compares it with the last value it saw; the
   // count itself means nothing. Filled in by the host before each call.
   uint32_t   clicks;
+  // px.weather() and px.city(): what the panel knows about outside, filled in
+  // by the host before each call (lua_effects.cpp copies it from the loop
+  // task's snapshot). Zeroed on the host tools unless a flag sets them.
+  struct {
+    bool  valid;       // the weather clock's data: configured, and fetched at least once
+    float tempC, minC, maxC, windKmh;
+    int   humidity, code;
+    bool  fahrenheit;  // the owner's unit in the portal
+  } weather;
+  char       city[33]; // the world clock's home, capitals; "" when there is none
+  bool       weatherAsked;   // set by px.weather(): the host keeps the fetch alive
 };
 
 // Set the global table `px` in L, bound to canvas. The canvas must outlive L.

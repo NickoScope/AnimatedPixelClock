@@ -255,6 +255,22 @@ static int l_terrain(lua_State *L) { unsigned long work; return px_terrain_lua(L
 #include "../../src/lua/px_sprite.h"    /* px.grab, px.blit, shared with the firmware */
 static int l_grab(lua_State *L)    { unsigned long work; return px_grab_lua(L, fb, W, H, &work); }
 static int l_blit(lua_State *L)    { unsigned long work; return px_blit_lua(L, fb, W, H, &work); }
+/* px.weather and px.city: nil unless --weather T / --city NAME give the same
+   sample fxhost gives (T, T-4 .. T+3, 60 %, 10 km/h, code 1) */
+static int g_haveWeather = 0; static float g_weatherT = 0; static char g_city[33] = "";
+static int l_weather(lua_State *L) {
+  if (!g_haveWeather) { lua_pushnil(L); return 1; }
+  lua_createtable(L, 0, 7);
+  lua_pushnumber(L, g_weatherT);      lua_setfield(L, -2, "temp");
+  lua_pushnumber(L, g_weatherT - 4);  lua_setfield(L, -2, "min");
+  lua_pushnumber(L, g_weatherT + 3);  lua_setfield(L, -2, "max");
+  lua_pushinteger(L, 60);             lua_setfield(L, -2, "humidity");
+  lua_pushnumber(L, 10);              lua_setfield(L, -2, "wind");
+  lua_pushinteger(L, 1);              lua_setfield(L, -2, "code");
+  lua_pushboolean(L, 0);              lua_setfield(L, -2, "fahrenheit");
+  return 1;
+}
+static int l_city(lua_State *L) { if (!g_city[0]) lua_pushnil(L); else lua_pushstring(L, g_city); return 1; }
 /* px.button: --clicks f1,f2,... clicks the effect's button at those frames */
 static int g_clicks = 0;
 static int l_button(lua_State *L)  { lua_pushinteger(L, g_clicks); return 1; }
@@ -268,6 +284,7 @@ static const luaL_Reg px_lib[] = {
   {"button", l_button}, {"fade", l_fade}, {"blur", l_blur}, {"mode", l_mode},
   {"palette", l_palette}, {"pal", l_pal}, {"layer", l_layer}, {"capture", l_capture},
   {"show", l_show}, {"scroll", l_scroll}, {"mirror", l_mirror},
+  {"weather", l_weather}, {"city", l_city},
   {NULL, NULL}
 };
 
@@ -288,6 +305,8 @@ int main(int argc, char **argv) {
     else if (!strcmp(argv[a], "--year") && a + 1 < argc)  g_year = atoi(argv[++a]);
     else if (!strcmp(argv[a], "--sweep"))                 sweep  = 1;   /* a whole day over the frames */
     else if (!strcmp(argv[a], "--clicks") && a + 1 < argc) clicks = argv[++a];
+    else if (!strcmp(argv[a], "--weather") && a + 1 < argc) { g_haveWeather = 1; g_weatherT = (float)atof(argv[++a]); }
+    else if (!strcmp(argv[a], "--city") && a + 1 < argc) { snprintf(g_city, sizeof(g_city), "%s", argv[++a]); }
   }
   g_hour = start_min / 60 % 24; g_min = start_min % 60;
 
