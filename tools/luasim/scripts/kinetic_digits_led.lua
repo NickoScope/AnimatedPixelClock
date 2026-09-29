@@ -163,6 +163,7 @@ local SP, NXn, NYn = 12, 0, 0       -- grid spacing in work units, nodes across 
 local GA, GXf, GYf = {}, {}, {}     -- per digit sample: top-left node, and the weights
 local CXI, CXF = {}, {}             -- per LED column in the dot mode
 local CH, CHN = {}, 0               -- a pass's changes: i to turn on, -(i+1) to turn off
+local dots_order                    -- defined with the dot board (below)
 local function field_grid(Wc, Hc)
   NXn, NYn = floor(Wc / SP) + 2, floor(Hc / SP) + 2
 end
@@ -242,6 +243,7 @@ local function build(sc)
   DOTS = sc.mode == "dots"
   if DOTS then
     G = { cols = W, rows = H, n = W * H, phase = "idle", P = 0 }
+    dots_order()
     SP = 8                                    -- 4 LEDs
     field_grid(W * 2, H * 2)
     for x = 0, W - 1 do
@@ -516,6 +518,7 @@ end
 local function pack(r, g, b) return (r << 16) | (g << 8) | b end
 
 -- A change: the segment or dot i now wants `want`, starting after `delay`.
+local EDGES = true
 local function retarget(i, want, delay, base)
   base = base or T
   local from, to = FROM[i], ON[i]
@@ -527,8 +530,10 @@ local function retarget(i, want, delay, base)
   local start = base + delay
   FROM[i], ON[i], ST[i] = from, want, start
   if DOTS then
-    -- A dot is one LED: its flip is two moments, the edge and the new face.
-    schedule(start + FLIP * 0.5, -(i + 1))
+    -- A dot is one LED: its flip is two moments, the edge and the new face -
+    -- or, when a pass changes more dots than a frame can draw twice, the new
+    -- face alone (an edge one LED wide is not seen in a crowd of thousands).
+    if EDGES then schedule(start + FLIP * 0.5, -(i + 1)) end
     schedule(start + FLIP, i)
   elseif not INACT[i] then
     INACT[i] = true
@@ -552,7 +557,7 @@ local function lit(l) return (l > THR) ~= INV end
 -- bands and the hue - is done per sample. In the dot mode that is per LED, a
 -- row at a time, with the weights worked out once.
 local BUDGET = 30000                -- Lua instructions a frame for the update (digits)
-local BUDGET_DOTS = 55000           -- the dot board's frames draw little, so it gets more
+local BUDGET_DOTS = 45000           -- less what the frame spent drawing flips
 local COST = { text = 50, clock = 70, life = 170, cube = 300, node = 60, fieldsample = 45, dotrow = 4500 }
 local TEXTB, TEXTR, TEXTG, TEXTB2 = {}, {}, {}, {}
 local lastSlot = -1
@@ -616,7 +621,7 @@ end
 local COMMIT_PER_FRAME = 700
 local commitAt, commitK = 0, 1
 local function commit()
-  if commitK == 1 then commitAt = T end
+  if commitK == 1 then commitAt = T; EDGES = not DOTS or CHN <= 1200 end
   local last = min(CHN, commitK + COMMIT_PER_FRAME - 1)
   for k = commitK, last do
     local e = CH[k]
@@ -627,11 +632,111 @@ local function commit()
     retarget(i, e < 0 and 0 or 1, delay + rnd() * 0.010, commitAt)
     CH[k] = nil
   end
-  if last >= CHN then CHN, commitK = 0, 1; return true end
+  if last >= CHN then CHN, commitK = 0, 1; EDGES = true; return true end
   commitK = last + 1
   return false
 end
 
+-- ── the dot board, continuously ─────────────────────────────────────────────
+-- The owner (2026-09-29): the dot plasma changed in jerks - a whole board a
+-- few times a second - where the seven-segment board flows. 8,192 LEDs
+-- cannot all be worked out every frame in Lua, so every frame works out an
+-- eighth of them, every eighth LED of every row with the start shifted row
+-- at random row by row and moving on frame by frame - scattered over the
+-- whole board, so no pattern shows - and flips
+-- what changed at once: the board moves every frame, and each LED is looked
+-- at about twice a second. An LED costs a few table lookups: the plasma's
+-- three plane waves are tables by column, row and diagonal, its radial wave
+-- a table by distance (from a fixed centre in this mode, so the distance of
+-- each LED is a table too), and the threshold and the face a table by the
+-- field's value - all but the distances made once a frame.
+local SLICES = 8
+local CHN_LAST = 0                  -- how many dots the last frame changed
+local ORQ = {}                      -- each LED's distance from the plasma's centre, in 1/20 units
+local slice = 0
+local TA, TB, TC, TR = {}, {}, {}, {}
+local DX2, DY2 = {}, {}
+local LITQ, FACEQ = {}, {}
+local QN = 200                      -- steps of the field's value
+local ROWOFF = {}                   -- each row's own starting column, fixed
+function dots_order()
+  if ORQ[0] then return end
+  for y = 0, H - 1 do ROWOFF[y] = floor(rnd() * SLICES) % SLICES end
+  for i = 0, W * H - 1 do
+    local du, dv = ((i % W) * 2 + 1) / 12 - 6, (floor(i / W) * 2 + 1) / 12 - 3
+    ORQ[i] = floor(sqrt(du * du + dv * dv) * 20)
+  end
+end
+
+local function dots_continuous(sc, t)
+  -- An LED is looked at every eighth frame, so the picture moves at half
+  -- speed here: a contour then moves a pixel or two between looks, and the
+  -- edge flows instead of fraying into the sampling pattern.
+  t = t * 0.5
+  local src = sc.src
+  local pal = sc.pal
+  local constFace = FACE[pal] and pack(FACE[pal][1], FACE[pal][2], FACE[pal][3])
+  local lo, hi, qk
+  if src == "plasma" then
+    -- the field is -4..4
+    for x = 0, W - 1 do TA[x] = sin((x * 2 + 1) / 12 * 0.9 + t) end
+    for y = 0, H - 1 do TB[y] = sin((y * 2 + 1) / 12 * 1.1 - t * 0.7) end
+    for sxy = 0, W + H - 2 do TC[sxy] = sin((sxy * 2 + 2) / 12 * 0.6 + t * 0.5) end
+    for k = 0, 440 do TR[k] = sin(k / 20 * 1.2 - t * 1.3) end      -- distance in 1/20 units
+    for y = 0, H - 1 do DY2[y] = 0 end
+    lo, hi = -4, 4
+  else
+    -- rings: the distance, in work units, from the moving centre
+    local cx, cy = 128 + sin(t * 0.4) * 46, 64 + cos(t * 0.3) * 23
+    for x = 0, W - 1 do local dx = x * 2 + 1 - cx; DX2[x] = dx * dx end
+    for y = 0, H - 1 do local dy = y * 2 + 1 - cy; DY2[y] = dy * dy end
+    lo, hi = 0, 300
+  end
+  qk = QN / (hi - lo)
+  for q = 0, QN do
+    local v = lo + q / qk
+    local h, band = shade(src, v, t)
+    local lit1 = ((HUE_L[h] * band) > THR) ~= INV
+    LITQ[q] = lit1 and 1 or 0
+    FACEQ[q] = constFace or (pal == "src" and HFACE[h])
+  end
+  local sl = slice
+  slice = (slice + 1) % SLICES
+  local plasma = src == "plasma"
+  local rainbow = pal == "rainbow"
+  EDGES = CHN_LAST < 150
+  local changed = 0
+  for y = 0, H - 1 do
+    local base = y * W
+    local by = TB[y]
+    local dy2 = DY2[y]
+    for x = (ROWOFF[y] + sl) % SLICES, W - 1, SLICES do
+      local i = base + x
+      local v
+      if plasma then v = TA[x] + by + TC[x + y] + TR[ORQ[i]]
+      else v = sqrt(DX2[x] + dy2) end
+      local q = floor((v - lo) * qk)
+      if q < 0 then q = 0 elseif q > QN then q = QN end
+      local want = LITQ[q]
+      if want == 1 then
+        if rainbow then COL[i] = pack(face(pal, 0, 0, 0, x, W, t)) else COL[i] = FACEQ[q] or COL[i] end
+      end
+      if ON[i] ~= want then
+        changed = changed + 1
+        retarget(i, want, x / 8 * WAVE + y / 16 * WAVE + rnd() * 0.010, T)
+      end
+    end
+  end
+  CHN_LAST = changed
+  EDGES = true
+end
+
+-- What the frame already spent drawing flips comes off the update's budget:
+-- measured on the panel (2026-09-29), a dot board changing thousands of
+-- dots ran at 8.6 fps, the cost being the pixel calls more than the Lua. With
+-- this the board's refresh slows down while a big change is flipping, and
+-- the frame rate holds.
+local DRAWN = 0
 local function sample_chunk(sc, t)
   local src = sc.src
   local isField = FIELD[src] ~= nil
@@ -639,7 +744,8 @@ local function sample_chunk(sc, t)
   local constFace = FACE[pal] and pack(FACE[pal][1], FACE[pal][2], FACE[pal][3])
   if src == "life" and not DOTS then life_chunk(G.cols * 4, G.rows * 6) end
   local spent = 0
-  local BUDGET = DOTS and BUDGET_DOTS or BUDGET
+  local BUDGET = (DOTS and BUDGET_DOTS or BUDGET) - DRAWN * (DOTS and 70 or 90)
+  if BUDGET < 6000 then BUDGET = 6000 end
   while spent < BUDGET do
     local ph = G.phase
     if ph == "idle" then
@@ -763,12 +869,15 @@ local function draw_seg(i, r, g, b)
   if RX2[i] then rect(RX2[i], RY2[i], RW2[i], RH2[i], r, g, b, true) end
 end
 
+local EVN = 0                       -- events handled this frame
 local function run_timetable(style)
   local now = floor(T * RATE)
+  EVN = 0
   for k = BKlast + 1, now do
     local b = BK[k]
     if b then
       local bn = BKN[k]
+      EVN = EVN + bn
       BK[k], BKN[k] = nil, nil
       for j = 1, bn do
         local e = b[j]
@@ -804,7 +913,8 @@ end
 
 local function draw_active(style)
   run_timetable(style)
-  if DOTS then return end
+  if DOTS then DRAWN = EVN; return end
+  DRAWN = NACT
   local n, keep = NACT, 0
   for j = 1, n do
     local i = ACTIVE[j]
@@ -964,7 +1074,10 @@ function draw()
     titleUntil = -1
     clear(0, 0, 0)
   else
-    sample_chunk(sc, T)
+    draw_active(sc.style)
+    if DOTS and (sc.src == "plasma" or sc.src == "rings") then dots_continuous(sc, T)
+    else sample_chunk(sc, T) end
+    return
   end
   draw_active(sc.style)
 end
