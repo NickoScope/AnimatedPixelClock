@@ -59,7 +59,7 @@ local SHOW = {
   { mode = "digits", size = "6x11", src = "rings", pal = "rainbow", style = "plate", secs = 20 },
   { mode = "digits", size = "11x21", src = "clock", pal = "amber", style = "line", secs = 20 },
   { mode = "digits", size = "5x9", src = "life", pal = "flip", style = "plate", secs = 22 },
-  { mode = "digits", size = "16x32", src = "cube", pal = "white", style = "plate", secs = 18 },
+  { mode = "digits", size = "5x9", src = "cube", pal = "white", style = "plate", secs = 18 },
   { mode = "dots", src = "plasma", pal = "src", style = "plate", secs = 22 },
   { mode = "digits", size = "8x16", src = "text", pal = "flip", style = "line", ital = true, secs = 26 },
   { mode = "dots", src = "rings", pal = "rainbow", style = "plate", secs = 18 },
@@ -164,6 +164,11 @@ local GA, GXf, GYf = {}, {}, {}     -- per digit sample: top-left node, and the 
 local CXI, CXF = {}, {}             -- per LED column in the dot mode
 local CH, CHN = {}, 0               -- a pass's changes: i to turn on, -(i+1) to turn off
 local dots_order                    -- defined with the dot board (below)
+-- per segment: its sample column and row as integer keys (x/3 and 2y), its
+-- distance from the plasma's centre, its cell in the cube's raster, and its
+-- first life cell
+local KX, KY, RQ, RAS, LIFEA = {}, {}, {}, {}, {}
+local KXL, KYL, RQMAX = {}, {}, 0
 local function field_grid(Wc, Hc)
   NXn, NYn = floor(Wc / SP) + 2, floor(Hc / SP) + 2
 end
@@ -263,6 +268,13 @@ local function build(sc)
   CHN = 0
   SP = 12                                     -- a digit's width
   field_grid(cols * 12, rows * 18)
+  G.roll = 0
+  RQMAX = 0
+  -- the distinct sample columns (x/3) and rows (2y) of this grid
+  for k in pairs(KXL) do KXL[k] = nil end
+  for k in pairs(KYL) do KYL[k] = nil end
+  for dx = 0, cols - 1 do for _, o in ipairs({ 1, 2, 3 }) do KXL[#KXL + 1] = dx * 4 + o end end
+  for dy = 0, rows - 1 do for _, o in ipairs({ 6, 9, 18, 27, 30 }) do KYL[#KYL + 1] = dy * 36 + o end end
   for d = 0, cols * rows - 1 do
     local dx, dy = d % cols, floor(d / cols)
     local bx, by = G.ox + dx * cw, G.oy + dy * ch
@@ -284,10 +296,20 @@ local function build(sc)
         local sy = (s == "e" or s == "c") and 1 or 0
         SXs[i], SYs[i] = dx * 12 + sx * 6 + 3, dy * 18 + sy * 9 + 4.5
       end
-      -- and where that point falls in the field's grid
-      local gx, gy = SXs[i] / SP, SYs[i] / SP
-      local cx, cy = floor(gx), floor(gy)
-      GA[i], GXf[i], GYf[i] = cy * NXn + cx, gx - cx, gy - cy
+      KX[i], KY[i] = floor(SXs[i] / 3 + 0.5), floor(SYs[i] * 2 + 0.5)
+      local du, dv = SXs[i] / 12 - 6, SYs[i] / 12 - 3
+      RQ[i] = floor(sqrt(du * du + dv * dv) * 20)
+      if RQ[i] > RQMAX then RQMAX = RQ[i] end
+      if HORIZ[i] then
+        local row = (s == "a" and 0 or (s == "g" and 1 or 2))
+        RAS[i] = -((dy * 3 + row) * cols + dx + 1)
+        LIFEA[i] = (dy * 6 + row * 2) * (cols * 2) + dx * 2
+      else
+        local sx = (s == "b" or s == "c") and 1 or 0
+        local sy = (s == "e" or s == "c") and 1 or 0
+        RAS[i] = (dy * 2 + sy) * (cols * 2) + dx * 2 + sx
+        LIFEA[i] = (dy * 6 + sy * 3) * (cols * 2) + dx * 2 + sx
+      end
     end
   end
 end
@@ -373,7 +395,7 @@ end
 -- is the average over the cells under it, by area, as the canvas would be.
 local life, lifeW, lifeH, lifeHue, lifeStale, lifePop = nil, 0, 0, 0, 0, -1
 local lifeNext, lifeRow, lifeCount = {}, 0, 0
-local LIFE_ROWS = 3                 -- rows of the next generation a frame
+local LIFE_ROWS = 7                 -- rows of the next generation a frame: 2.5 generations a second
 local function life_begin(Wl, Hl)
   lifeW, lifeH, life, lifeNext = Wl, Hl, {}, {}
   lifeHue = rnd() * 360
@@ -519,6 +541,7 @@ local function pack(r, g, b) return (r << 16) | (g << 8) | b end
 
 -- A change: the segment or dot i now wants `want`, starting after `delay`.
 local EDGES = true
+local DRAWN = 0                     -- flips the frame drew (see sample_chunk)
 local function retarget(i, want, delay, base)
   base = base or T
   local from, to = FROM[i], ON[i]
@@ -731,12 +754,235 @@ local function dots_continuous(sc, t)
   EDGES = true
 end
 
+-- ── the digit board, continuously ───────────────────────────────────────────
+-- Every source flows (the owner, 2026-09-29: "все должны течь плавно"): each
+-- frame works out as much of the board as a budget allows - all of it on the
+-- bigger cells - and flips what changed at once, rather than a whole board
+-- a few times a second. The plasma is tables made once a frame (its plane
+-- waves by sample column and row, the diagonal one by the sum formula, the
+-- radial one by each segment's distance from a fixed centre), the cube is
+-- drawn straight into the V and H samples, and the clock and the text are
+-- the seven-segment font itself.
+local FTA, FSA, FCA, FTB, FSB, FCB = {}, {}, {}, {}, {}, {}
+local RASV, RASH = {}, {}
+local RAINB = {}
+local DIGIT_BUDGET = 26000
+-- per sample, with the loop, measured on the host (fxhost --exact)
+local DCOST = { plasma = 40, rings = 38, text = 22, clock = 22, life = 55, cube = 40 }
+local DAYS = { "SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY" }
+local MDAYS = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 }
+local clockRows = { "", "", "" }
+local function clock_lines(cols)
+  local now = px.now()
+  local y, yd = now.year or 2026, now.yday or 0
+  local leap = (y % 4 == 0 and y % 100 ~= 0) or y % 400 == 0
+  local m, d = 1, yd + 1
+  while true do
+    local md = MDAYS[m] + ((m == 2 and leap) and 1 or 0)
+    if d <= md or m == 12 then break end
+    d = d - md
+    m = m + 1
+  end
+  -- the day of the week (Sakamoto): 0 is Sunday
+  local tt = { 0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4 }
+  local yy = m < 3 and y - 1 or y
+  local dow = (yy + yy // 4 - yy // 100 + yy // 400 + tt[m] + d) % 7
+  clockRows[1] = string.format("%02d-%02d-%02d", d, m, y % 100)
+  clockRows[2] = cols >= 8 and string.format("%02d-%02d-%02d", now.hour, now.min, now.sec)
+                            or string.format("%02d%02d", now.hour, now.min)
+  local day = DAYS[dow + 1]
+  if #day > cols then day = day:sub(1, cols) end
+  clockRows[3] = day
+end
+local function clock_bits(x, y, cols, rows)
+  -- one row: the time; two: date and time; three: date, time, the day
+  local line
+  if rows == 1 then line = clockRows[2]
+  elseif rows == 2 then line = clockRows[y + 1]
+  else
+    local top = floor((rows - 3) / 2)
+    local k = y - top
+    if k < 0 or k > 2 then return 0, 0, 0, 0 end
+    line = clockRows[k + 1]
+    if k ~= 1 then
+      local s0 = floor((cols - #line) / 2)
+      local j = x - s0 + 1
+      if j < 1 or j > #line then return 0, 0, 0, 0 end
+      return FONT[line:sub(j, j)] or 0, 111, 211, 255
+    end
+  end
+  local s0 = floor((cols - #line) / 2)
+  local j = x - s0 + 1
+  if j < 1 or j > #line then return 0, 0, 0, 0 end
+  return FONT[line:sub(j, j)] or 0, 255, 200, 120
+end
+
+local function cube_raster(cols, rows)
+  local vW, hW = cols * 2, cols
+  for k = 0, vW * rows * 2 - 1 do RASV[k] = 0 end
+  for k = 0, hW * rows * 3 - 1 do RASH[k] = 0 end
+  local lw2 = (max(3, 12 * 1.1) * 0.55) ^ 2
+  for e = 1, 12 do
+    local E = cubeEdges[e]
+    local x0, y0, x1, y1 = E[1], E[2], E[3], E[4]
+    local c = pack(floor(E[5]), floor(E[6]), floor(E[7]))
+    local L = sqrt((x1 - x0) ^ 2 + (y1 - y0) ^ 2)
+    local steps = max(1, floor(L / 4.5))
+    for k = 0, steps do
+      local px_, py_ = x0 + (x1 - x0) * k / steps, y0 + (y1 - y0) * k / steps
+      local vx0, vy0 = floor((px_ - 3) / 6), floor((py_ - 4.5) / 9)
+      for vy = vy0, vy0 + 1 do
+        if vy >= 0 and vy < rows * 2 then
+          for vx = vx0, vx0 + 1 do
+            if vx >= 0 and vx < vW then
+              local dx, dy = vx * 6 + 3 - px_, vy * 9 + 4.5 - py_
+              if dx * dx + dy * dy < lw2 then RASV[vy * vW + vx] = c end
+            end
+          end
+        end
+      end
+      local hx0, hy0 = floor((px_ - 6) / 12), floor((py_ - 3) / 6)
+      for hy = hy0, hy0 + 1 do
+        if hy >= 0 and hy < rows * 3 then
+          for hx = hx0, hx0 + 1 do
+            if hx >= 0 and hx < hW then
+              local dx, dy = hx * 12 + 6 - px_, hy * 6 + 3 - py_
+              if dx * dx + dy * dy < lw2 then RASH[hy * hW + hx] = c end
+            end
+          end
+        end
+      end
+    end
+  end
+end
+
+local function digits_frame(sc, t)
+  local src, pal = sc.src, sc.pal
+  local cols, rows = G.cols, G.rows
+  local n = G.n * 7
+  local constFace = FACE[pal] and pack(FACE[pal][1], FACE[pal][2], FACE[pal][3])
+  local srcFace = pal == "src" and not INV
+  local lo, qk, cx, cy
+  unit = 12
+  -- what this frame's samples need, made once
+  if src == "plasma" then
+    for j = 1, #KXL do
+      local k = KXL[j]
+      local u = k * 3 / 12
+      FTA[k], FSA[k], FCA[k] = sin(u * 0.9 + t), sin(u * 0.6), cos(u * 0.6)
+    end
+    for j = 1, #KYL do
+      local k = KYL[j]
+      local v = k / 2 / 12
+      FTB[k], FSB[k], FCB[k] = sin(v * 1.1 - t * 0.7), sin(v * 0.6 + t * 0.5), cos(v * 0.6 + t * 0.5)
+    end
+    for q = 0, RQMAX do TR[q] = sin(q / 20 * 1.2 - t * 1.3) end
+    lo, qk = -4, QN / 8
+  elseif src == "rings" then
+    local Wc, Hc = cols * 12, rows * 18
+    cx, cy = Wc / 2 + sin(t * 0.4) * Wc * 0.18, Hc / 2 + cos(t * 0.3) * Hc * 0.18
+    lo, qk = 0, QN / sqrt(Wc * Wc + Hc * Hc)
+  end
+  if lo then
+    for q = 0, QN do
+      local h, band = shade(src, lo + q / qk, t)
+      LITQ[q] = (((HUE_L[h] * band) > THR) ~= INV) and 1 or 0
+      FACEQ[q] = constFace or HFACE[h]
+    end
+  end
+  if pal == "rainbow" then
+    for c = 0, cols - 1 do local r, g, b = hue(c / cols * 300 + t * 30); RAINB[c] = pack(floor(r), floor(g), floor(b)) end
+  end
+  if src == "text" or src == "clock" then
+    if src == "text" then text_clock(cols) else clock_lines(cols) end
+    for d = 0, G.n - 1 do
+      local dx, dy = d % cols, floor(d / cols)
+      if src == "text" then TEXTB[d], TEXTR[d], TEXTG[d], TEXTB2[d] = text_bits(dx, dy, cols, rows, t)
+      else TEXTB[d], TEXTR[d], TEXTG[d], TEXTB2[d] = clock_bits(dx, dy, cols, rows) end
+    end
+  elseif src == "life" then
+    life_chunk(cols * 2, rows * 6)
+  elseif src == "cube" then
+    -- drawn every other frame: it turns less than a radian a second
+    G.cubeTick = not G.cubeTick
+    if G.cubeTick or not RASV[0] then
+      cube_setup(cols * 12, rows * 18, t)
+      cube_raster(cols, rows)
+    end
+  end
+  -- as many segments as the budget buys, round and round the board
+  local budget = DIGIT_BUDGET - DRAWN * 90
+  if budget < 6000 then budget = 6000 end
+  local K = min(n, floor(budget / (DCOST[src] or 40)))
+  local i = G.roll
+  local mid = floor((rows - 1) / 2)
+  for _ = 1, K do
+    local want, c
+    if src == "plasma" then
+      local kx, ky = KX[i], KY[i]
+      local v = FTA[kx] + FTB[ky] + FSA[kx] * FCB[ky] + FCA[kx] * FSB[ky] + TR[RQ[i]]
+      local q = floor((v - lo) * qk)
+      if q < 0 then q = 0 elseif q > QN then q = QN end
+      want, c = LITQ[q], FACEQ[q]
+    elseif src == "rings" then
+      local dx, dy = SXs[i] - cx, SYs[i] - cy
+      local q = floor(sqrt(dx * dx + dy * dy) * qk)
+      if q > QN then q = QN end
+      want, c = LITQ[q], FACEQ[q]
+    elseif src == "text" or src == "clock" then
+      local d = floor(i / 7)
+      if (TEXTB[d] & SEGBIT[i % 7]) > 0 then
+        want = 1
+        c = constFace or (srcFace and pack(face("src", TEXTR[d], TEXTG[d], TEXTB2[d], 0, 1, t)))
+      else want = 0 end
+    elseif src == "life" then
+      local r, g, b, l
+      if life then
+        local a, Wl = LIFEA[i], lifeW
+        local n1, n2, n3, n4
+        if HORIZ[i] then n1, n2, n3, n4 = life[a], life[a + 1], life[a + Wl], life[a + Wl + 1]
+        else n1, n2, n3, n4 = life[a], life[a + Wl], life[a + 2 * Wl], 0 end
+        local alive = (n1 > 0 and 1 or 0) + (n2 > 0 and 1 or 0) + (n3 > 0 and 1 or 0) + (n4 > 0 and 1 or 0)
+        local of = HORIZ[i] and 4 or 3
+        -- a third of the cells under it alive lights a segment: by the board's
+        -- own threshold (43%) Life came out as sparse sparks
+        want = (alive / of > 0.3) and 1 or 0
+        if want == 1 then
+          local age = max(n1, n2, n3, n4)
+          c = constFace or HFACE[floor(lifeHue + age * 6) % 360]
+        end
+      else want = 0 end
+    else -- cube
+      local r = RAS[i]
+      local v = r >= 0 and RASV[r] or RASH[-r - 1]
+      if v > 0 then want, c = 1, constFace or v else want = 0 end
+    end
+    if want == 1 then
+      if pal == "rainbow" then c = RAINB[floor(i / 7) % cols] end
+      COL[i] = c or COL[i]
+    end
+    if ON[i] ~= want then
+      local d = floor(i / 7)
+      local dx, dy = d % cols, floor(d / cols)
+      local delay
+      if src == "text" and dy == mid then
+        delay = (cols - 1 - dx) * WAVE * 0.5          -- the marquee's wave runs its own way
+      else
+        delay = dx * WAVE + dy * WAVE * 0.5
+      end
+      retarget(i, want, delay + rnd() * 0.010, T)
+    end
+    i = i + 1
+    if i >= n then i = 0 end
+  end
+  G.roll = i
+end
+
 -- What the frame already spent drawing flips comes off the update's budget:
 -- measured on the panel (2026-09-29), a dot board changing thousands of
 -- dots ran at 8.6 fps, the cost being the pixel calls more than the Lua. With
 -- this the board's refresh slows down while a big change is flipping, and
 -- the frame rate holds.
-local DRAWN = 0
 local function sample_chunk(sc, t)
   local src = sc.src
   local isField = FIELD[src] ~= nil
@@ -1076,6 +1322,7 @@ function draw()
   else
     draw_active(sc.style)
     if DOTS and (sc.src == "plasma" or sc.src == "rings") then dots_continuous(sc, T)
+    elseif not DOTS then digits_frame(sc, T)
     else sample_chunk(sc, T) end
     return
   end
