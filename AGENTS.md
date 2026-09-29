@@ -890,6 +890,10 @@ What follows from that:
   cycling. `px.scroll` and `px.mirror` move or fold the whole canvas in one
   call. `kaleidoscope.lua` does a full-screen plasma this way at under 20
   thousand instructions a frame (7 ms on the panel).
+- Scenes flow into each other instead of cutting (2.7.5): paint the old
+  scene, `px.save(2)`, paint the new one, `px.mix(2, 1 - u)` as `u` runs from
+  0 to 1 - four snapshot slots, 24 KB of heap each, `px.forget(n)` to free
+  one. `kaleidoscope.lua` does it over 3 s.
 - What the panel knows about outside: `px.weather()` (2.7.4) is the weather
   clock's data - `{temp, min, max, humidity, wind, code, fahrenheit}` in C and
   km/h - or nil while there is none (weather off in the portal, no location,

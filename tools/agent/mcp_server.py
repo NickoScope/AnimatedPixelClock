@@ -1208,11 +1208,18 @@ async def effect_api() -> str:
                             "fahrenheit} in C and km/h (the weather clock's data), or "
                             "nil while there is none; asking keeps the fetch going",
             "px.city()": "firmware 2.7.4+. -> the world clock's home ('CANNES'), or nil",
-            "px.save() / px.restore()": "firmware 2.6.6+. The canvas put aside (one "
-                                        "copy, 24 KB of the effect's heap) and back; "
-                                        "restore -> true, or false if nothing was saved. "
-                                        "Draw what stands still once, save it, and start "
-                                        "each frame with restore. src/lua/px_snapshot.h",
+            "px.save([n]) / px.restore([n])": "firmware 2.6.6+. The canvas put aside "
+                                        "(24 KB of the effect's heap) and back; restore -> "
+                                        "true, or false if nothing was saved. Draw what "
+                                        "stands still once, save it, and start each frame "
+                                        "with restore. Since 2.7.5 four slots, n 1..4 "
+                                        "(default 1). src/lua/px_snapshot.h",
+            "px.mix(n,a[,x,y,w,h]) / px.forget(n)": "firmware 2.7.5+. Slot n mixed over the "
+                                        "canvas by a (0..1) in the box -> true, or false if "
+                                        "empty; forget frees a slot. A scene flowing into "
+                                        "the next: paint the old one, px.save(2), paint the "
+                                        "new, px.mix(2, 1-u) as u goes 0->1 "
+                                        "(kaleidoscope.lua). nil before 2.7.5: rawget(px, \"mix\").",
             "px.grab(x,y,w,h)": "firmware 2.7.1+. -> sprite, dx, dy, or nil if the "
                                 "rectangle is all black. Black (0,0,0) is transparent and "
                                 "the sprite is trimmed to what is not; dx, dy say where its "

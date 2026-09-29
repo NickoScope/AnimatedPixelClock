@@ -378,7 +378,8 @@ effect_api      → the whole drawing API and every budget (px.save/restore,
                   px.grab/blit sprites, px.button, px.terrain, and since
                   2.7.4 px.fade, px.blur, px.mode("add"), palettes, layers,
                   px.show, px.scroll, px.mirror, px.weather and px.city
-                  included; the sandbox's rules too)
+                  included; since 2.7.5 four snapshots and px.mix; the
+                  sandbox's rules too)
 effect_write    → tools/luasim/scripts/<name>.lua
 effect_preview  → luasim + render.py → a GIF you can look at
 effect_check    → fx_parity.py: the firmware's real runtime and real budgets

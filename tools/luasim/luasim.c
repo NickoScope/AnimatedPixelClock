@@ -251,6 +251,8 @@ static int l_mirror(lua_State *L)  { unsigned long work; return px_mirror_lua(L,
 #include "../../src/lua/px_snapshot.h"  /* px.save, px.restore, shared with the firmware */
 static int l_save(lua_State *L)    { return px_save_lua(L, fb, sizeof(fb)); }
 static int l_restore(lua_State *L) { return px_restore_lua(L, fb, sizeof(fb)); }
+static int l_mix(lua_State *L)     { unsigned long work; return px_mix_lua(L, fb, W, H, &work); }
+static int l_forget(lua_State *L)  { return px_forget_lua(L); }
 static int l_terrain(lua_State *L) { unsigned long work; return px_terrain_lua(L, fb, W, H, &work); }
 #include "../../src/lua/px_sprite.h"    /* px.grab, px.blit, shared with the firmware */
 static int l_grab(lua_State *L)    { unsigned long work; return px_grab_lua(L, fb, W, H, &work); }
@@ -284,7 +286,7 @@ static const luaL_Reg px_lib[] = {
   {"button", l_button}, {"fade", l_fade}, {"blur", l_blur}, {"mode", l_mode},
   {"palette", l_palette}, {"pal", l_pal}, {"layer", l_layer}, {"capture", l_capture},
   {"show", l_show}, {"scroll", l_scroll}, {"mirror", l_mirror},
-  {"weather", l_weather}, {"city", l_city},
+  {"weather", l_weather}, {"city", l_city}, {"mix", l_mix}, {"forget", l_forget},
   {NULL, NULL}
 };
 

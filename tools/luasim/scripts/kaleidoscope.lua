@@ -20,13 +20,16 @@
 --   * px.mirror("hv") folds the top-left quarter onto all four, which makes a
 --     field of sines a kaleidoscope.
 --
--- Every 40 s the light dips, a new mood (one of iq's palette families) and
--- two new fields come in, and it rises again. The next fields are computed a
+-- Every 40 s a new mood (one of iq's palette families) and two new fields
+-- come in, and the old scene flows into the new one over 3 s (px.save and
+-- px.mix, firmware 2.7.5; before it the light dips through black). The
+-- next fields are computed a
 -- few rows a frame during the scene before, so a change costs no frame.
 -- The fields are seeded from the date and the minute: tonight's kaleidoscope
 -- is not this morning's. The button changes the mood now.
 --
--- Needs firmware 2.7.4 or later (px.layer, px.palette, px.show, px.mirror).
+-- Needs firmware 2.7.4 or later (px.layer, px.palette, px.show, px.mirror),
+-- and 2.7.5 for the flow between scenes.
 -- ============================================================
 PERIOD = 600.0
 FPS = 15
@@ -91,18 +94,49 @@ build_rows(LA, fa, QH); build_rows(LB, fb, QH)
 local na, nb = new_field(), new_field()
 
 local mood = 1 + floor(rnd() * #MOODS)
-local SCENE, DIP = 40, 1.6
+local SCENE, XF = 40, 3.0             -- a scene, and the flow from one into the next
 local T, tprev, sceneAt = 0, nil, 0
-local switching, swapped = false, false
+local fading, fadeAt = false, 0
+local OA, OB, oldMood = nil, nil, mood -- the scene going out, while it flows away
 local lastClicks = rawget(px, "button") and px.button() or 0
+-- px.mix (firmware 2.7.5) lets the old scene flow into the new; without it the
+-- light dips through black instead.
+local HAS_MIX = rawget(px, "mix") ~= nil
 
 -- the palette spec, reused every frame
 local A_, B_, C_, D_ = { 0, 0, 0 }, { 0, 0, 0 }, { 0, 0, 0 }, { 0, 0, 0 }
 local SPEC = { "cos", A_, B_, C_, D_ }
 
-local function start_switch()
-  switching, swapped = true, false
-  sceneAt = T
+local function palette_for(md)
+  local m = MOODS[md]
+  local cs = 1 + 0.18 * sin(T * 6.2832 / 59)
+  local dd = 0.12 * sin(T * 6.2832 / 37)
+  for i = 1, 3 do
+    -- a little under a and over b: the troughs clip to black, which an LED
+    -- shows as depth and a screen shot as contrast
+    A_[i], B_[i] = m.a[i] - 0.08, m.b[i] + 0.12
+    C_[i] = m.c[i] * cs
+    D_[i] = m.d[i] + dd + 0.05 * sin(T * 6.2832 / 83 + i)
+  end
+  return px.palette(SPEC)
+end
+
+local function paint(L1, L2, md, bri)
+  local pal = palette_for(md)
+  px.show(L1, pal, floor(T * 23), bri * 0.9)
+  px.show(L2, pal, floor(-T * 17), bri * 0.75, "max")
+  px.mirror("hv")
+end
+
+-- A new scene, when the next fields are built: they come on screen, the old
+-- ones stay to flow out, and the spare pair is the old pair's once it has.
+local function start_scene()
+  if na.row < QH or nb.row < QH then return false end
+  OA, OB, oldMood = LA, LB, mood
+  LA, LB = NA, NB
+  mood = mood % #MOODS + 1
+  fading, fadeAt, sceneAt = true, T, T
+  return true
 end
 
 function draw()
@@ -116,55 +150,42 @@ function draw()
   tprev = t
   T = T + dt
   -- T is a 32-bit float: past 2^20 s its step outgrows a frame. Held under an
-  -- hour, with the scene clock moved by the same amount (the drifts' periods
+  -- hour, with the scene clocks moved by the same amount (the drifts' periods
   -- restart: a seam no one sees, once an hour).
-  if T > 3600 then T = T - 3600; sceneAt = sceneAt - 3600 end
+  if T > 3600 then T = T - 3600; sceneAt = sceneAt - 3600; fadeAt = fadeAt - 3600 end
 
   local c = rawget(px, "button") and px.button() or 0
-  if c ~= lastClicks then lastClicks = c; if not switching then start_switch() end end
-  if not switching and T - sceneAt > SCENE then start_switch() end
+  if c ~= lastClicks then lastClicks = c; if not fading then start_scene() end end
+  if not fading and T - sceneAt > SCENE then start_scene() end
 
-  -- the next fields, a few rows a frame
-  if not build_rows(NA, na, 3) then elseif not build_rows(NB, nb, 3) then end
-
-  -- the light: down over DIP s, the new scene swapped in at the bottom, up again
-  local bri = 1
-  if switching then
-    local k = (T - sceneAt) / DIP
-    if k < 1 then
-      bri = 1 - k
-    else
-      if not swapped and na.row >= QH and nb.row >= QH then
-        LA, NA, LB, NB = NA, LA, NB, LB
-        na, nb = new_field(), new_field()
-        mood = mood % #MOODS + 1
-        swapped = true
-        sceneAt = T - DIP
-      end
-      if swapped then
-        local u = (T - sceneAt - DIP) / DIP
-        if u >= 1 then switching = false; sceneAt = T; u = 1 end
-        bri = u
-      else
-        bri = 0
-      end
-    end
+  -- the next fields, a few rows a frame, once the flow has given the pair back
+  if not fading then
+    if not build_rows(NA, na, 3) then elseif not build_rows(NB, nb, 3) then end
   end
-  bri = bri * bri * (3 - 2 * bri)
 
-  local m = MOODS[mood]
-  local cs = 1 + 0.18 * sin(T * 6.2832 / 59)
-  local dd = 0.12 * sin(T * 6.2832 / 37)
-  for i = 1, 3 do
-    -- a little under a and over b: the troughs clip to black, which an LED
-    -- shows as depth and a screen shot as contrast
-    A_[i], B_[i] = m.a[i] - 0.08, m.b[i] + 0.12
-    C_[i] = m.c[i] * cs
-    D_[i] = m.d[i] + dd + 0.05 * sin(T * 6.2832 / 83 + i)
+  if not fading then
+    paint(LA, LB, mood, 1)
+    return
   end
-  local pal = px.palette(SPEC)
-
-  px.show(LA, pal, floor(T * 23), bri * 0.9)
-  px.show(LB, pal, floor(-T * 17), bri * 0.75, "max")
-  px.mirror("hv")
+  local u = (T - fadeAt) / XF
+  if u >= 1 then
+    -- the flow is over: the old pair becomes the spare, built afresh
+    fading = false
+    NA, NB, OA, OB = OA, OB, nil, nil
+    na, nb = new_field(), new_field()
+    paint(LA, LB, mood, 1)
+    return
+  end
+  u = u * u * (3 - 2 * u)
+  if HAS_MIX then
+    -- the old scene painted, kept, the new one painted, the old mixed over it
+    paint(OA, OB, oldMood, 1)
+    px.save(2)
+    paint(LA, LB, mood, 1)
+    px.mix(2, 1 - u)
+  elseif u < 0.5 then
+    paint(OA, OB, oldMood, 1 - 2 * u)            -- older firmware: down through black...
+  else
+    paint(LA, LB, mood, 2 * u - 1)               -- ...and up again
+  end
 end
