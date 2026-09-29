@@ -33,7 +33,8 @@ cd ~/twin/esp32sim && cargo build --release
 ```
 
 - **The ESP32-S3 mask ROM** comes from Espressif's esp-rom-elfs releases: `esp32s3_rev0_rom.elf` into `~/twin/rom/`.
-- **The firmware:** a full image goes to `~/twin/fw/<version>/merged.bin`, with its `firmware.elf` beside it.
+- **The firmware:** a new chip is written with the release in `docs/firmware/latest` (the one the flasher offers), or with `TWIN_IMAGE`. The chip's own flash file wins over any image after that, so an OTA or a flash stays.
+- **Symbols** (names in traces and crash reports): each build's `firmware.elf` goes to `~/twin/fw/<build>/`. `run` takes the one whose SHA-256 the booted app carries in its descriptor (`esp_app_desc_t.app_elf_sha256`), so a rebuild of the same version is never mistaken for it. Without a match the run goes on with addresses only and says so; `TWIN_ELF` names one by hand.
 - **eFuse:** `~/twin/efuse-opi.txt` holds one line, `0x6000703c: 00000200`. That is FLASH_TYPE = 1 (octal flash), as fused in the WROOM-2 module, from `EFUSE_RD_REPEAT_DATA3_REG` bit 9 in `soc/esp32s3/register/soc/efuse_reg.h`.
 
 ## Use

@@ -40,7 +40,8 @@ as on the panel.
       the firmware writes them. Exit status 1 if anything else differs.
 
 Paths (override with the environment): TWIN_HOME (~/twin) holds the engine, the ROM, the flash
-file and the default image; TWIN_ENGINE (TWIN_HOME/esp32sim) is the engine's checkout.
+file and the builds' ELFs (fw/<build>/firmware.elf); TWIN_IMAGE and TWIN_ELF override the image and
+the symbols; TWIN_ENGINE (TWIN_HOME/esp32sim) is the engine's checkout.
 """
 import argparse, binascii, os, re, shutil, struct, subprocess, sys
 
@@ -51,8 +52,14 @@ ROM = os.path.join(HOME, "rom", "esp32s3_rev0_rom.elf")
 STATE = os.path.join(HOME, "state")
 FLASH = os.path.join(STATE, "flash.bin")
 WIFI = os.path.join(STATE, "wifi.txt")
-IMAGE = os.environ.get("TWIN_IMAGE", os.path.join(HOME, "fw", "v2.7.3", "merged.bin"))
-ELF = os.environ.get("TWIN_ELF", os.path.join(HOME, "fw", "v2.7.3", "firmware.elf"))
+# What a new chip is written with: TWIN_IMAGE, or else the release the flasher offers
+# (docs/firmware/latest, flasher_firmware), the build the panel runs once it is updated.
+IMAGE = os.environ.get("TWIN_IMAGE")
+# The engine's symbols (names in traces and crash reports, nothing else: esp32sim --elf,
+# Machine::add_symbols): TWIN_ELF, or else the firmware.elf under FW whose SHA-256 the app the
+# chip boots carries in its descriptor (symbols_for).
+ELF = os.environ.get("TWIN_ELF")
+FW = os.path.join(HOME, "fw")   # one directory a build: merged.bin, firmware.bin, firmware.elf
 EFUSE = os.path.join(HOME, "efuse-opi.txt")
 # The engine's pages and the flasher's copy, made again by every run with --web (build_web).
 WEB = os.path.join(STATE, "web")
@@ -117,6 +124,58 @@ def boot_slot(otadata: bytes, apps: int) -> int:
         if seq != 0xFFFFFFFF and state not in (3, 4) and crc == binascii.crc32(e[:4], 0xFFFFFFFF):
             best = seq if best is None else max(best, seq)
     return 0 if best is None else (best - 1) % apps
+
+
+def app_partitions(table):
+    """The app partitions, ota_0 first (type 0, subtypes 0x10..0x1F)."""
+    return sorted((p for p in table if p[0] == 0 and 0x10 <= p[1] <= 0x1F), key=lambda p: p[1])
+
+
+def app_elf_sha(app: bytes):
+    """The SHA-256 of the ELF an app image was linked as, which the build writes into the app's
+    descriptor: esp_app_desc_t.app_elf_sha256 at +0x90 (after magic_word, secure_version,
+    reserv1[2], version[32], project_name[32], time[16], date[16], idf_ver[32]; IDF 4.4
+    esp_app_format.h, the framework-arduinoespressif32 2.0.17 copy). None without a descriptor."""
+    if app[:1] != b"\xe9" or app[0x20:0x24] != APP_DESC_MAGIC:
+        return None
+    return app[0xB0:0xD0]
+
+
+def booted_elf_sha(path):
+    """app_elf_sha of the app the bootloader starts from PATH, a merged image or the flash chip:
+    the partition table, then otadata (boot_slot). None if there is no table or no app."""
+    with open(path, "rb") as f:
+        table = partitions(f.read(0x8C00))
+        apps = app_partitions(table)
+        if not apps:
+            return None
+        ota = next((p for p in table if p[0] == 1 and p[1] == 0), None)
+        slot = 0
+        if ota is not None:
+            f.seek(ota[2])
+            slot = boot_slot(f.read(0x2000), len(apps))
+        f.seek(apps[slot][2])
+        return app_elf_sha(f.read(0x100))
+
+
+def symbols_for(path, root=None):
+    """The firmware.elf under ROOT (FW: ~/twin/fw/<build>/) that the app PATH boots was built
+    from, found by the SHA-256 in its descriptor; None if no ELF there matches."""
+    import hashlib
+    root = root or FW
+    sha = booted_elf_sha(path) if os.path.exists(path) else None
+    if sha is None or not os.path.isdir(root):
+        return None
+    for d in sorted(os.listdir(root)):
+        elf = os.path.join(root, d, "firmware.elf")
+        if os.path.isfile(elf):
+            h = hashlib.sha256()
+            with open(elf, "rb") as f:
+                for chunk in iter(lambda: f.read(1 << 20), b""):
+                    h.update(chunk)
+            if h.digest() == sha:
+                return elf
+    return None
 
 
 def wifi_spec(ssid: str, pw: str) -> str:
@@ -360,11 +419,19 @@ def cmd_run(a, extra):
         os.makedirs(os.path.dirname(keep), exist_ok=True)
         os.replace(FLASH, keep)
         print(f"the old flash chip is kept as {keep}", file=sys.stderr)
-    # --blank: no image, so the flash file starts erased (0xFF) and the ROM finds nothing to boot
-    image = [] if a.blank else ["--flash-image", IMAGE]
-    args = [EXE, "--board", "panel", "--boot", "rom", "--rom", ROM, *image,
+    # --blank: no image, so the flash file starts erased (0xFF) and the ROM finds nothing to boot.
+    # An existing flash file wins over the image (esp32sim --flash-persist), so the image only
+    # matters for a new chip.
+    image = None if a.blank else (IMAGE or flasher_firmware()[0])
+    boots = FLASH if os.path.exists(FLASH) else image   # what the chip starts from; None when --blank
+    elf = ELF or (symbols_for(boots) if boots else None)
+    if elf is None and boots:
+        print(f"no symbols: no {FW}/*/firmware.elf matches the firmware the chip boots (the SHA-256 in its app "
+              "descriptor); crash reports show addresses only. Put the build's firmware.elf there, or set TWIN_ELF",
+              file=sys.stderr)
+    args = [EXE, "--board", "panel", "--boot", "rom", "--rom", ROM, *(["--flash-image", image] if image else []),
             "--flash-mb", str(FLASH_MB), "--flash-id", FLASH_ID, "--psram-mb", "16",
-            "--efuse-regs", EFUSE, "--elf", ELF, "--console", "usb", "--no-dump",
+            "--efuse-regs", EFUSE, *(["--elf", elf] if elf else []), "--console", "usb", "--no-dump",
             "--flash-persist", FLASH, "--mac", a.mac]
     ssid = pw = None
     if os.path.exists(WIFI):
@@ -427,7 +494,7 @@ def cmd_flash(a, _):
         print(f"wrote {len(data)} bytes at {at:#x} into {FLASH}")
         f.seek(0)
         table = partitions(f.read(0x8C00))
-        apps = sorted((p for p in table if p[0] == 0 and 0x10 <= p[1] <= 0x1F), key=lambda p: p[1])   # ota_0..
+        apps = app_partitions(table)
         ota = next((p for p in table if p[0] == 1 and p[1] == 0), None)
         slot = next((i for i, p in enumerate(apps) if p[2] == at), None)
         if ota is None or slot is None:

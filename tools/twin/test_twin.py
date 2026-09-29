@@ -150,6 +150,55 @@ class TwinFlash(unittest.TestCase):
         self.assertEqual(self.read(0, len(BOOTLOADER)), BOOTLOADER)
 
 
+def with_elf(elf: bytes) -> bytes:
+    """APP built from ELF: its descriptor carries the ELF's SHA-256 (app_elf_sha256 at 0xB0)."""
+    a = bytearray(APP)
+    a[0xB0:0xD0] = hashlib.sha256(elf).digest()
+    return bytes(a)
+
+
+class TwinSymbols(unittest.TestCase):
+    # The engine's symbols are those of the firmware the chip boots, found by the SHA-256 the build
+    # wrote into the app's descriptor; a rebuilt ELF of the same version is not taken.
+    def test_the_elf_of_the_slot_that_boots(self):
+        with tempfile.TemporaryDirectory() as d:
+            fw, elfs = os.path.join(d, "fw"), {"v1": b"\x7fELF one", "v2": b"\x7fELF two"}
+            for name, elf in elfs.items():
+                os.makedirs(os.path.join(fw, name))
+                put(os.path.join(fw, name, "firmware.elf"), elf)
+            img = bytearray(b"\xff" * 0x920000)
+            img[0x8000:0x8000 + len(TABLE)] = TABLE
+            img[0x10000:0x10000 + len(APP)] = with_elf(elfs["v1"])
+            img[APP1:APP1 + len(APP)] = with_elf(elfs["v2"])
+            flash = os.path.join(d, "flash.bin")
+            img[0xE000:0x10000] = otadata(ota_entry(1))                    # app0 boots
+            put(flash, img)
+            self.assertEqual(T.symbols_for(flash, fw), os.path.join(fw, "v1", "firmware.elf"))
+            img[0xE000:0x10000] = AFTER_OTA                                # an OTA moved it to app1
+            put(flash, img)
+            self.assertEqual(T.symbols_for(flash, fw), os.path.join(fw, "v2", "firmware.elf"))
+            put(os.path.join(fw, "v2", "firmware.elf"), b"\x7fELF rebuilt")  # not the build that runs
+            self.assertIsNone(T.symbols_for(flash, fw))
+
+    def test_no_descriptor_no_symbols(self):
+        self.assertIsNone(T.app_elf_sha(BOOTLOADER))
+        self.assertEqual(T.app_elf_sha(with_elf(b"x")), hashlib.sha256(b"x").digest())
+        with tempfile.TemporaryDirectory() as d:
+            blank = os.path.join(d, "blank.bin")
+            put(blank, b"\xff" * 0x9000)
+            self.assertIsNone(T.booted_elf_sha(blank))                     # no partition table
+            self.assertIsNone(T.symbols_for(os.path.join(d, "missing.bin"), d))
+
+    def test_the_release_carries_its_elf_sha(self):
+        image = T.flasher_firmware()[0]
+        sha = T.booted_elf_sha(image)
+        self.assertIsNotNone(sha)
+        elf = T.symbols_for(image)
+        if elf is None:
+            self.skipTest(f"the release's firmware.elf is not under {T.FW}")
+        self.assertEqual(hashlib.sha256(get(elf)).digest(), sha)
+
+
 class TwinWifi(unittest.TestCase):
     # finding 12: the engine's --wifi is split at ',' and psk= means WPA2
     def test_spec(self):
@@ -164,7 +213,8 @@ class TwinWifi(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             wifi = os.path.join(d, "wifi.txt")
             with mock.patch.object(T, "STATE", d), mock.patch.object(T, "WIFI", wifi), \
-                    mock.patch.object(T, "FLASH", os.path.join(d, "flash.bin")):
+                    mock.patch.object(T, "FLASH", os.path.join(d, "flash.bin")), \
+                    mock.patch.object(T, "FW", os.path.join(d, "fw")), contextlib.redirect_stderr(io.StringIO()):
                 with self.assertRaises(SystemExit):
                     T.cmd_wifi(mock.Mock(ssid="Home", password="pa,ss"), [])
                 self.assertFalse(os.path.exists(wifi))
@@ -293,7 +343,7 @@ class TwinFlasherPage(unittest.TestCase):
         a = dict(fresh=False, blank=False, lan=False, provision=False, web=None, seconds=None, png=None, cpi="2.45", open=False,
                  http=8080, udp=4210, mac=T.MAC, flasher_image=None, flasher_version=None)
         a.update(kw)
-        with mock.patch.object(T, "STATE", d), mock.patch.object(T, "FLASH", flash), \
+        with mock.patch.object(T, "STATE", d), mock.patch.object(T, "FLASH", flash), mock.patch.object(T, "FW", os.path.join(d, "fw")), \
                 mock.patch.object(T, "WIFI", os.path.join(d, "wifi.txt")), mock.patch.object(T, "WEB", os.path.join(d, "web")), \
                 mock.patch.object(T, "build_web", return_value="v2.7.3") as build, \
                 mock.patch.object(T.os, "execv") as execv, contextlib.redirect_stderr(io.StringIO()) as err:
@@ -318,6 +368,28 @@ class TwinFlasherPage(unittest.TestCase):
             self.assertFalse(os.path.exists(os.path.join(d, "flash.bin")))
             self.assertNotIn("--flash-image", args)
             self.assertEqual(args[args.index("--flash-persist") + 1], os.path.join(d, "flash.bin"))
+
+    def test_a_new_chip_starts_from_the_release(self):
+        with tempfile.TemporaryDirectory() as d:
+            args, _, err = self.run_args(d)
+            self.assertEqual(args[args.index("--flash-image") + 1], T.flasher_firmware()[0])
+            self.assertNotIn("--elf", args)                                # no ELF under d/fw
+            self.assertIn("no symbols", err)
+
+    def test_run_takes_the_elf_of_the_chip(self):
+        with tempfile.TemporaryDirectory() as d:
+            os.makedirs(os.path.join(d, "fw", "v9"))
+            put(os.path.join(d, "fw", "v9", "firmware.elf"), b"\x7fELF nine")
+            img = bytearray(b"\xff" * 0x20000)
+            img[0x8000:0x8000 + len(TABLE)] = TABLE
+            img[0x10000:0x10000 + len(APP)] = with_elf(b"\x7fELF nine")
+            put(os.path.join(d, "flash.bin"), img)
+            args, _, err = self.run_args(d)
+            self.assertEqual(args[args.index("--elf") + 1], os.path.join(d, "fw", "v9", "firmware.elf"))
+            self.assertNotIn("no symbols", err)
+            with mock.patch.object(T, "ELF", "/given.elf"):                # TWIN_ELF wins
+                args, _, _ = self.run_args(d)
+            self.assertEqual(args[args.index("--elf") + 1], "/given.elf")
 
     def test_flasher_image_needs_web(self):
         with tempfile.TemporaryDirectory() as d, self.assertRaises(SystemExit):
