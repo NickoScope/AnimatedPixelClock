@@ -32,3 +32,6 @@ e04ec79 SDMMC: CDETECT from the GPIO matrix, and RTO before CMD_DONE
 53cf8e8 NAT: say which lwIP copy the SYN-SENT reset-and-resend was read in
 6130b29 --net bridge:PATH: the station on a real LAN through a socket_vmnet daemon
 e8b5e70 panel.html: the portal link follows the twin's address, forwarded or from the home router
+a9350e9 USB-Serial/JTAG host end: lossless /usj channel, DTR/RTS resets, RFC 2217
+659dbbe /usj and --serial-tcp: docs, a stdlib probe, the service out of line
+6bf1a9c panel.html: a link to the twin's web flasher, and a chip while it holds the USB port

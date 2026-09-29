@@ -34,7 +34,7 @@ index 4e5407f..a06a308 100644
  [workspace.package]
  version = "0.2.0"
 diff --git a/cli/src/lib.rs b/cli/src/lib.rs
-index 86cc6fd..cb32ccd 100644
+index 86cc6fd..8f41b89 100644
 --- a/cli/src/lib.rs
 +++ b/cli/src/lib.rs
 @@ -58,6 +58,31 @@ fn console_mask(name: &str) -> u32 {
@@ -69,7 +69,7 @@ index 86cc6fd..cb32ccd 100644
  /// Everything the command line can say, chip-agnostic; `None` means "the chip's default".
  #[derive(Default)]
  pub struct Opts {
-@@ -67,9 +92,9 @@ pub struct Opts {
+@@ -67,12 +92,14 @@ pub struct Opts {
      pub approximate_cache: bool,
      pub chip: String,
      pub rom: Option<PathBuf>, pub bootloader: Option<String>, pub ptable: Option<String>, pub app: Option<String>, pub elfs: Vec<String>,
@@ -81,7 +81,12 @@ index 86cc6fd..cb32ccd 100644
      pub spi2_timing: bool, pub measured_te: bool,
      pub max_insns: u64, pub max_seconds: Option<f64>, pub script: Option<String>, pub serial: Option<String>,
      pub console: Option<String>, pub console_prefix: bool, pub realtime: bool, pub web_port: Option<u16>, pub web_dir: Option<String>, pub no_reboot: bool,
-@@ -83,7 +108,7 @@ pub struct Opts {
++    /// `--serial-tcp PORT`: the USB-Serial/JTAG as an RFC 2217 port on 127.0.0.1:PORT
++    pub serial_tcp: Option<u16>,
+     pub wav: Option<String>, pub tft_png: Option<String>, pub gram_png: Option<String>, pub dump: bool,
+     pub trace: bool, pub trace_from: u64, pub breaks: Vec<u32>, pub watch: Option<u32>, pub peeks: Vec<(u32, usize)>, pub disasms: Vec<(u32, usize)>,
+     pub profile: bool, pub profile_blocks: bool, pub coverage: Option<Option<String>>, pub irq_latency: bool, pub vcd: Option<String>,
+@@ -83,7 +110,7 @@ pub struct Opts {
  }
  
  pub fn parse(args: &[String], default_chip: &str) -> Opts {
@@ -90,7 +95,7 @@ index 86cc6fd..cb32ccd 100644
      let mut i = 1;
      while i < args.len() {
          let a = args[i].as_str();
-@@ -103,6 +128,9 @@ pub fn parse(args: &[String], default_chip: &str) -> Opts {
+@@ -103,6 +130,9 @@ pub fn parse(args: &[String], default_chip: &str) -> Opts {
              "--flash-at" => o.flash_at.push(next()),
              "--boot" => o.boot = Some(next()),
              "--flash-mb" => o.flash_mb = Some(next().parse().expect("mb")),
@@ -100,7 +105,7 @@ index 86cc6fd..cb32ccd 100644
              "--psram-mb" => o.psram_mb = Some(next().parse().expect("mb")),
              "--mac" => { let v = next(); let b: Vec<u8> = v.split(':').filter_map(|x| u8::from_str_radix(x, 16).ok()).collect(); if b.len() != 6 { eprintln!("--mac wants xx:xx:xx:xx:xx:xx"); std::process::exit(2); } let mut m = [0u8; 6]; m.copy_from_slice(&b); o.mac = Some(m); }
              "--strap" => o.strap = Some(hex(&next(), "strap")),
-@@ -113,13 +141,26 @@ pub fn parse(args: &[String], default_chip: &str) -> Opts {
+@@ -113,18 +143,34 @@ pub fn parse(args: &[String], default_chip: &str) -> Opts {
              "--spi2-timing" => o.spi2_timing = true,
              "--measured-te" => o.measured_te = true,
              "--wifi" => o.wifi = Some(next()),
@@ -128,7 +133,15 @@ index 86cc6fd..cb32ccd 100644
              "--console" => o.console = Some(next()),
              "--console-prefix" => o.console_prefix = true,
              "--realtime" => o.realtime = true,
-@@ -172,6 +213,54 @@ fn find_rom(name: &str) -> Option<PathBuf> {
+             "--web" => o.web_port = Some(next().parse().expect("port")),
+             "--web-dir" => o.web_dir = Some(next()),
++            // The USB-Serial/JTAG as a serial port for pyserial's rfc2217:// (esptool --port
++            // rfc2217://127.0.0.1:PORT): data, and DTR/RTS resets as the controller does them.
++            "--serial-tcp" => o.serial_tcp = Some(next().parse().unwrap_or_else(|_| usage_error("--serial-tcp: a TCP port number"))),
+             "--no-reboot" => o.no_reboot = true,
+             "--wav" => o.wav = Some(next()),
+             "--tft-png" => o.tft_png = Some(next()),
+@@ -172,6 +218,54 @@ fn find_rom(name: &str) -> Option<PathBuf> {
      dirs.into_iter().rev().map(|d| d.join(name)).find(|p| p.exists())
  }
  
@@ -183,7 +196,7 @@ index 86cc6fd..cb32ccd 100644
  pub fn run_cli(default_chip: &str) {
      let args: Vec<String> = std::env::args().collect();
      let mut o = parse(&args, default_chip);
-@@ -218,9 +307,14 @@ fn run_cooja(o: &mut Opts) {
+@@ -218,9 +312,14 @@ fn run_cooja(o: &mut Opts) {
      report(&mut m, o, match summary.stopped { Some(_) => Stop::Halted, None => Stop::MaxInsns }, dt);
  }
  
@@ -200,7 +213,7 @@ index 86cc6fd..cb32ccd 100644
      if o.measured_te {
          assert_eq!(m.bus.board.name(), "waveshare-amoled18-v2", "--measured-te requires the AMOLED V2 board");
          m.bus.board = Box::new(esp32s3::board::WaveshareAmoled18V2::with_measured_te());
-@@ -233,18 +327,14 @@ fn setup_s3(o: &Opts) -> esp32s3::Machine {
+@@ -233,18 +332,14 @@ fn setup_s3(o: &Opts) -> esp32s3::Machine {
          eprintln!("[emu] virtual AP '{}' bssid {} channel {} ({})", cfg.ssid, esp32s3::wifi::mac_str(&cfg.bssid), cfg.channel, if cfg.psk.is_some() { "WPA2-PSK" } else { "open" });
          m.bus.periph.wifi.ap = Some(esp32s3::wifi::VirtualAp::new(cfg, m.bus.debug.has("wifi-frames")));
          let mut net = esp32s3::net::VirtualNet::new(m.bus.debug.has("net"));
@@ -221,7 +234,7 @@ index 86cc6fd..cb32ccd 100644
      if let Some(mb) = o.psram_mb { if mb != 2 { m.bus.set_psram_size(mb << 20).unwrap(); } }
      if let Some(p) = &o.efuse_regs {
          let txt = std::fs::read_to_string(p).expect("efuse file");
-@@ -275,14 +365,15 @@ fn setup_c3(o: &Opts) -> esp32c3::Machine {
+@@ -275,14 +370,15 @@ fn setup_c3(o: &Opts) -> esp32c3::Machine {
      let mut m = esp32c3::machine(o.mac.unwrap_or([0x60, 0x55, 0xf9, 0x00, 0x11, 0x22]), o.flash_mb.unwrap_or(4) << 20);
      m.bus.set_flash_size(o.flash_mb.unwrap_or(4) << 20);   // the JEDEC capacity follows the size
      if !o.debug.is_empty() { let mut f = esp_soc::DebugFlags::from_env(); for d in &o.debug { f.parse(d); } m.set_debug(&f); }
@@ -239,7 +252,7 @@ index 86cc6fd..cb32ccd 100644
      m.bus.set_flash_size(o.flash_mb.unwrap_or(4) << 20);   // the JEDEC capacity follows the size
      if !o.debug.is_empty() { let mut f = esp_soc::DebugFlags::from_env(); for d in &o.debug { f.parse(d); } m.set_debug(&f); }
      let name = if o.board == "atech14" { "none" } else { o.board.as_str() };   // the S3 default means "bare module" here
-@@ -292,8 +383,7 @@ fn setup_c6(o: &Opts) -> esp32c6::Machine {
+@@ -292,8 +388,7 @@ fn setup_c6(o: &Opts) -> esp32c6::Machine {
          eprintln!("[emu] virtual AP '{}' bssid {} channel {} ({})", cfg.ssid, esp_soc::wifi::mac_str(&cfg.bssid), cfg.channel, if cfg.psk.is_some() { "WPA2-PSK" } else { "open" });
          m.bus.periph.wifi_mac.ap = Some(esp_soc::wifi::VirtualAp::new(cfg, m.bus.debug.has("wifi-frames")));
          let mut net = esp_soc::net::VirtualNet::new(m.bus.debug.has("net"));
@@ -249,7 +262,7 @@ index 86cc6fd..cb32ccd 100644
          m.bus.periph.wifi_mac.net = Some(net);
      }
      for (flag, on) in [("--cam-image", o.cam_image.is_some()), ("--psram-mb", o.psram_mb.is_some()), ("--efuse-regs", o.efuse_regs.is_some()), ("--regs-init", o.regs_init.is_some()), ("--regstat", o.regstat.is_some())] {
-@@ -325,6 +415,11 @@ fn run<S: Soc>(mut m: Machine<S>, o: &Opts) {
+@@ -325,9 +420,17 @@ fn run<S: Soc>(mut m: Machine<S>, o: &Opts) {
          m.set_cost_model(cost).unwrap_or_else(|e| usage_error(&format!("--approximate-timing: {e}")));
          eprintln!("[emu] APPROXIMATE timing: {:?}; use --boot rom; accuracy unvalidated", model.config);
      }
@@ -261,7 +274,13 @@ index 86cc6fd..cb32ccd 100644
      let boot = prepare(&mut m, o);
      let t0 = std::time::Instant::now();
      m.web_restart = !o.no_reboot;
-@@ -389,8 +484,19 @@ fn prepare<S: Soc>(m: &mut Machine<S>, o: &Opts) -> String {
++    // The host's RTS=1/DTR=0 resets the chip only where the run comes back up through the ROM.
++    m.usj_reset = !o.no_reboot && boot == "rom";
++    if m.usj.is_some() && !m.usj_reset { eprintln!("[emu] USB-Serial/JTAG line resets are ignored in this run (--boot app or --no-reboot): data only"); }
+     let stop = run_with_reboots(&mut m, o.max_insns, !o.no_reboot && boot == "rom", boot == "app");
+     let dt = t0.elapsed().as_secs_f64();
+     report(&mut m, o, stop, dt);
+@@ -389,8 +492,19 @@ fn prepare<S: Soc>(m: &mut Machine<S>, o: &Opts) -> String {
          m.write_flash(off, &data).unwrap_or_else(|e| { eprintln!("--flash-at: {}", e); std::process::exit(2) });
          eprintln!("[emu] flash {:#x}: {} ({} bytes)", off, path, data.len());
      }
@@ -281,6 +300,25 @@ index 86cc6fd..cb32ccd 100644
      for pre in &o.trace_fns {
          let n = m.trace_fns(pre);
          eprintln!("[emu] --trace-fn {}: {} functions", pre, n);
+@@ -421,6 +535,18 @@ fn prepare<S: Soc>(m: &mut Machine<S>, o: &Opts) -> String {
+         eprintln!("[emu] board UI: http://127.0.0.1:{}/  (serving {})", port, dir);
+         m.web = Some(w); m.rt.enabled = true;
+     }
++    // One USB-Serial/JTAG host end for both front ends: one client at a time holds it.
++    if o.web_port.is_some() || o.serial_tcp.is_some() {
++        let port = esp_soc::usj_port::UsjPort::new();
++        if let Some(w) = &m.web { w.attach_usj(port.clone()); eprintln!("[emu] USB-Serial/JTAG port: ws://127.0.0.1:{}/usj", w.port); }
++        if let Some(tcp) = o.serial_tcp {
++            match esp_soc::rfc2217::start(tcp, port.clone()) {
++                Ok(p) => eprintln!("[emu] USB-Serial/JTAG port: rfc2217://127.0.0.1:{p}"),
++                Err(e) => usage_error(&format!("--serial-tcp {tcp}: cannot listen on 127.0.0.1:{tcp}: {e}")),
++            }
++        }
++        m.attach_usj(port);
++    }
+     if o.realtime { m.rt.enabled = true; }
+     if o.profile { m.add_observer(Box::new(PcHist::new(12))); }
+     if let Some(wa) = o.watch { let v = m.bus.read32_unpriced(wa).unwrap_or(0); m.add_observer(Box::new(Watch { addr: wa, value: v })); }
 diff --git a/cli/src/tests.rs b/cli/src/tests.rs
 index 685585b..f112b60 100644
 --- a/cli/src/tests.rs
@@ -322,8 +360,41 @@ index 685585b..f112b60 100644
 +    assert!(check_net(&opts(&["--wifi", "ssid=x", "--net", "none", "--hostfwd", "tcp:8080-80"])).unwrap_err().contains("--net nat"));
 +    assert!(check_net(&opts(&["--wifi", "ssid=x", "--hostfwd", "tcp:8080-80"])).is_ok());
 +}
+diff --git a/cli/tests/goldens.rs b/cli/tests/goldens.rs
+index ed9f6de..b8d57d3 100644
+--- a/cli/tests/goldens.rs
++++ b/cli/tests/goldens.rs
+@@ -111,6 +111,28 @@ fn hello_world_s3_reboot() {
+     expect_u64("hello-s3-reboot.insns", r.insns);
+ }
+ 
++/// The USB host at the USB-Serial/JTAG: ESP32-S3 TRM v1.8 Table 33.4-3 (script `usj` lines)
++/// resets the chip with cause 0x15 into joint download mode, where the ROM answers a SYNC on the
++/// USB eight times; Table 33.4-4 then resets it into the app again. The chip stays in reset for
++/// the 100 ms the lines hold RTS=1/DTR=0.
++#[test] #[ignore = "needs the ESP32-S3 mask ROM ELF"]
++fn usj_lines_reset_into_download_mode_and_back() {
++    let rom = rom("esp32s3_rev0");
++    let script = tmp("usj-reset.script");
++    let sync = format!("c0000824000000000007071220{}c0", "55".repeat(32));
++    std::fs::write(&script, format!("0.30 usj 0 0\n0.31 usj 1 0\n0.32 usj 1 1\n0.33 usj 0 1\n0.43 usj 0 0\n0.60 usjhex {sync}\n0.80 usj 0 0\n0.81 usj 0 1\n0.91 usj 0 0\n")).unwrap();
++    let r = run(BIN, &["--rom", rom.to_str().unwrap(), "--board", "none", "--boot", "rom", "--no-dump", "--console", "both",
++        "--bootloader", &format!("{FW}/hello-bootloader.bin"), "--ptable", &format!("{FW}/hello-ptable.bin"), "--app", &format!("{FW}/hello_world.bin"),
++        "--script", script.to_str().unwrap(), "--max-seconds", "2"]);
++    assert!(r.stderr.contains("[emu] usj: t=0.330s RTS=1 DTR=0 -> chip reset 0x15 (USB_UART_CHIP_RESET), download mode flag 1"), "{}", r.stderr);
++    assert!(r.stderr.contains("[emu] usj: t=0.430s RTS=0 DTR=0 -> out of reset, GPIO_STRAPPING 0x3 (download)"), "{}", r.stderr);
++    let dl = r.stdout.find("rst:0x15 (USB_UART_CHIP_RESET),boot:0x3 (DOWNLOAD(USB/UART0))").unwrap_or_else(|| panic!("no download boot:\n{}", r.stdout));
++    let wait = r.stdout[dl..].find("waiting for download").expect("the ROM waits for a host");
++    assert_eq!(r.stdout[dl + wait..].matches("\x01\x08\x04\x00\x07\x07\x12\x20").count(), 8, "eight SYNC answers");
++    let back = r.stdout[dl..].find("rst:0x15 (USB_UART_CHIP_RESET),boot:0xf (SPI_FAST_FLASH_BOOT)").expect("Table 33.4-4 boots from flash");
++    assert!(r.stdout[dl + back..].contains("Hello world!"), "the app runs again:\n{}", &r.stdout[dl + back..]);
++}
++
+ /// The block profile attributes time to symbols (the ROM's here), and the per-instruction
+ /// `--profile` (slow path, idle cores stepping) still agrees on the hottest function.
+ #[test] #[ignore = "needs the ESP32-S3 mask ROM ELF"]
 diff --git a/docs/boards.md b/docs/boards.md
-index 44828e5..2f04e4b 100644
+index 44828e5..31075be 100644
 --- a/docs/boards.md
 +++ b/docs/boards.md
 @@ -20,6 +20,8 @@ pub trait BoardModel {
@@ -335,7 +406,7 @@ index 44828e5..2f04e4b 100644
      fn named_pin(&self, name: &str) -> Option<u8>           // `btn1`, `sw`... for scripts and the UI
      fn encoder(&self) -> Option<(u8, u8)>                    // rotary encoder CLK/DT, for `knob`
      fn report(&self) -> String                               // end-of-run statistics
-@@ -86,6 +88,40 @@ combination is not selected by this board name. It needs `--flash-mb 16 --psram-
+@@ -86,6 +88,43 @@ combination is not selected by this board name. It needs `--flash-mb 16 --psram-
  Board input edges retain their intended timestamps. The current fast scheduler applies them to
  the SoC at its next existing bus tick.
  
@@ -369,7 +440,10 @@ index 44828e5..2f04e4b 100644
 +download mode as the board does; released, the next RESET boots from flash. Software and
 +watchdog resets keep the latch (only a Chip Reset samples the pins, ESP32-S3 TRM §8.1 and Table
 +7.1-1), the other strap bits stay `--strap`, and the run's first boot takes the whole strap from
-+`--strap`. `tools/panel-inputs-oracle/` replays a run's `--vcd` edges through the
++`--strap`. A USB-Serial/JTAG reset from the host's lines (RTS=1/DTR=0 at `/usj` or `--serial-tcp`,
++cause 0x15, TRM Table 33.3-2) is a Core Reset too: with the download flag set it clears
++`GPIO_STRAPPING[3:2]` for that one boot (joint download), without it the chip boots with the
++latched pins — after BOOT held through power-on that is still download mode. `tools/panel-inputs-oracle/` replays a run's `--vcd` edges through the
 +firmware's own decoder sources built on the host (IRremoteESP8266 `decode()`, `ir_map.h`,
 +`control.cpp`).
 +
@@ -377,7 +451,7 @@ index 44828e5..2f04e4b 100644
  
  | Device | Bus | Model |
 diff --git a/docs/cli.md b/docs/cli.md
-index fca0a87..44d3def 100644
+index fca0a87..fab96b1 100644
 --- a/docs/cli.md
 +++ b/docs/cli.md
 @@ -23,13 +23,14 @@ PSRAM and register presets.
@@ -397,7 +471,22 @@ index fca0a87..44d3def 100644
  | `--trace-fn PREFIX` (repeatable) | log every call to functions whose name starts with PREFIX, with args and caller; append `$` for an exact name |
  | `--regstat FILE` | write per-register access statistics (count, pc, symbol) at exit — for reverse-engineering |
  
-@@ -99,6 +100,15 @@ One action per line, `<seconds> <cmd> [args]`; buttons/encoder are active low.
+@@ -41,7 +42,8 @@ PSRAM and register presets.
+ | `--script F` | host actions at emulated times (below) |
+ | `--console usb\|uart0\|both\|all\|none`, `--console-prefix` | which consoles to print |
+ | `--realtime` | pace to wall time without the UI |
+-| `--web PORT [--web-dir DIR]` | browser UI (implies real time) |
++| `--web PORT [--web-dir DIR]` | browser UI (implies real time); also the USB-Serial/JTAG as a serial port at `ws://127.0.0.1:PORT/usj` (protocol in `esp-soc/src/web.rs`) |
++| `--serial-tcp PORT` | the USB-Serial/JTAG as an RFC 2217 port on 127.0.0.1:PORT for pyserial tools: `esptool --port rfc2217://127.0.0.1:PORT --before usb_reset …`. Data both ways without loss; DTR/RTS reset the chip as the controller does (ESP32-S3 TRM Table 33.3-2: RTS=1/DTR=0 resets and holds it, the download flag set by RTS=0/DTR=1 picks download mode, cause 0x15), with `--boot rom` and reboots allowed; a run without them carries data only. One client at a time holds the port, over this and `/usj` together; while one does, the USB console goes to it and not to stdout or the page |
+ | `--cam-image F`, `--cam-fps N` | camera source for boards with a camera |
+ | `--cooja` (C6) | run as a Cooja-NG external mote: the lock-step NDJSON protocol on stdin/stdout, the guest console as `log` events, the 802.15.4 frames as `tx`/`rx`. Honors `--no-reboot` and `--max-seconds` (see [esp32c6.md](esp32c6.md), "Cooja-NG lock-step") |
+ | `--cooja-slice-us N` | how long a busy guest runs before asking csim to step it again (default 100; `hello.args.slice_us` overrides). A transmission reaches csim's medium at the end of the slice it started in, so this bounds how late it is |
+@@ -96,9 +98,20 @@ One action per line, `<seconds> <cmd> [args]`; buttons/encoder are active low.
+ 4.0  serial {"action":"set_note","value":"5"}
+ 4.2  uart0 root              # a line into UART0's receive FIFO (also `uart1`): a login on a Linux console
+ 4.5  touch 450 30 1        # touch panel press at (450,30); `touch x y 0` releases
++5.0  usj 1 0               # the USB host's lines on the USB-Serial/JTAG: DTR=1 RTS=0 (sets the download flag)
++5.1  usjhex c0000800...c0  # raw bytes from the USB host into the USB-Serial/JTAG
  5.5  stop
  ```
  
@@ -533,6 +622,74 @@ index 5bd80c1..d733cc4 100644
  - **Multicast/mDNS**: not carried, so `esp-web.local` and Home Assistant discovery do not resolve;
    use IP addresses.
  - **Real LAN presence**: a `--net tap`/vmnet backend would give the guest an address on the real
+diff --git a/docs/web-ui.md b/docs/web-ui.md
+index d85ec47..feeacfb 100644
+--- a/docs/web-ui.md
++++ b/docs/web-ui.md
+@@ -73,4 +73,23 @@ upload and the webcam (4 fps). Frames up to 8 MB are accepted.
+ ## Sending is never blocking
+ 
+ Each client has a writer thread with a bounded queue; when a tab is frozen or slow, frames
+-are dropped for that client and the emulator keeps running at real time.
++are dropped for that client and the emulator keeps running at real time. `/usj` below is the
++exception: a serial port may not lose bytes, so its queues are unbounded both ways.
++
++## The USB-Serial/JTAG as a serial port: `/usj` and `--serial-tcp`
++
++`ws://127.0.0.1:PORT/usj` carries the chip's USB-Serial/JTAG as a serial port, for a page that
++stands in for `navigator.serial` (the browser flasher). Binary frames, first byte the type:
++`0x00` data, `0x01` DTR/RTS (bit 0 DTR, bit 1 RTS), `0x02` open, `0x03` close from the page;
++`0x00` data and `0x10` JSON events (`hello`, `error` busy/not open, `closed`, `reset`, `release`)
++from the emulator. The table and the event fields are in the header of `esp-soc/src/web.rs`.
++`--serial-tcp PORT` serves the same port as RFC 2217 for pyserial tools (`esp-soc/src/rfc2217.rs`),
++so `esptool --port rfc2217://127.0.0.1:PORT --before usb_reset` flashes the emulated chip.
++
++One client at a time holds the port, across both. Its bytes and line changes reach the chip in
++the order sent, every millisecond of device time. DTR/RTS act as on the chip (ESP32-S3 TRM
++Table 33.3-2): RTS=0/DTR=1 sets the download flag, RTS=0/DTR=0 clears it, RTS=1/DTR=0 resets the
++chip (cause 0x15) and holds it until the pair changes, and with the flag set it boots into joint
++download mode. Closing the port drops both lines. While the port is held the USB console goes to
++its client only; `/ws` gets `{"t":"usj","claimed":true|false}`. `hw/usjprobe.py PORT` drives the
++whole sequence without a browser.
+diff --git a/esp-periph/src/lib.rs b/esp-periph/src/lib.rs
+index bf1d86a..ec5ffa0 100644
+--- a/esp-periph/src/lib.rs
++++ b/esp-periph/src/lib.rs
+@@ -31,11 +31,11 @@ pub use device::{Device, WriteEffect};
+ pub use mmio::{DeviceSet, Dispatch, Misc, NO_SOURCE};
+ pub use regram::RegRam;
+ pub use uart::{Uart, UartLayout};
+-pub use usb_serial_jtag::UsbSerialJtag;
++pub use usb_serial_jtag::{LineEffect, UsbSerialJtag, UsjLines};
+ pub use systimer::Systimer;
+ pub use timg::{Timer, TimerGroup};
+ pub use gpio::Gpio;
+-pub use rtc_cntl::{reset_cause_name, RtcCntl, RST_POWERON, RST_RTCWDT_CPU, RST_RTCWDT_RTC, RST_RTCWDT_SYS, RST_SW_CPU, RST_SW_SYS};
++pub use rtc_cntl::{reset_cause_name, RtcCntl, RST_POWERON, RST_RTCWDT_CPU, RST_RTCWDT_RTC, RST_RTCWDT_SYS, RST_SW_CPU, RST_SW_SYS, RST_USB_JTAG_CHIP, RST_USB_UART_CHIP};
+ pub use efuse::Efuse;
+ pub use system::SystemRegs;
+ pub use spi_mem::{DirtyMem, SpiMem};
+diff --git a/esp-periph/src/rtc_cntl.rs b/esp-periph/src/rtc_cntl.rs
+index 6d8a51a..aa92241 100644
+--- a/esp-periph/src/rtc_cntl.rs
++++ b/esp-periph/src/rtc_cntl.rs
+@@ -6,9 +6,15 @@ use emu_core::ClockDomain;
+ /// Reset causes (RTC_CNTL_RESET_CAUSE_PROCPU), as the ROM prints them.
+ pub const RST_POWERON: u32 = 1; pub const RST_SW_SYS: u32 = 3; pub const RST_RTCWDT_SYS: u32 = 9; pub const RST_SW_CPU: u32 = 12;
+ pub const RST_RTCWDT_CPU: u32 = 13; pub const RST_RTCWDT_RTC: u32 = 16;
++/// The USB host reset the chip through the USB-Serial/JTAG's CDC-ACM lines (RTS=1, DTR=0) or its
++/// JTAG interface. Both are Core Resets (ESP32-S3 TRM v1.8 Table 7.1-1, p.528: 0x15 "USB (UART)
++/// reset", 0x16 "USB (JTAG) reset"); the names are the ROM's (IDF 5.5.4
++/// esp_rom/esp32s3/include/esp32s3/rom/rtc.h:90-91, soc/esp32s3/include/soc/reset_reasons.h:59-60).
++pub const RST_USB_UART_CHIP: u32 = 0x15; pub const RST_USB_JTAG_CHIP: u32 = 0x16;
+ pub fn reset_cause_name(c: u32) -> &'static str {
+     match c { 1 => "POWERON", 3 => "RTC_SW_SYS_RESET", 5 => "DEEPSLEEP", 7 => "TG0WDT_SYS_RESET", 8 => "TG1WDT_SYS_RESET", 9 => "RTCWDT_SYS_RESET", 11 => "TG0WDT_CPU_RESET",
+-            12 => "RTC_SW_CPU_RESET", 13 => "RTCWDT_CPU_RESET", 15 => "RTCWDT_BROWN_OUT_RESET", 16 => "RTCWDT_RTC_RESET", 17 => "TG1WDT_CPU_RESET", 18 => "SUPER_WDT_RESET", _ => "?" }
++            12 => "RTC_SW_CPU_RESET", 13 => "RTCWDT_CPU_RESET", 15 => "RTCWDT_BROWN_OUT_RESET", 16 => "RTCWDT_RTC_RESET", 17 => "TG1WDT_CPU_RESET", 18 => "SUPER_WDT_RESET",
++            0x15 => "USB_UART_CHIP_RESET", 0x16 => "USB_JTAG_CHIP_RESET", _ => "?" }
+ }
+ 
+ /// RTC_CNTL: reset control, slow-clock time and the RTC watchdog.
 diff --git a/esp-periph/src/spi_mem.rs b/esp-periph/src/spi_mem.rs
 index e6c6572..5130453 100644
 --- a/esp-periph/src/spi_mem.rs
@@ -563,6 +720,192 @@ index e6c6572..5130453 100644
                  0xc7 | 0x60 => { for b in flash.iter_mut() { *b = 0xff; } self.dirty.push((DirtyMem::Flash, 0, fsize)); self.status &= !0x02; }
                  _ => { if has_miso { self.set_w_bytes(&vec![0u8; miso_bytes]); } }
              }
+diff --git a/esp-periph/src/usb_serial_jtag.rs b/esp-periph/src/usb_serial_jtag.rs
+index b8b37bf..2c45eaa 100644
+--- a/esp-periph/src/usb_serial_jtag.rs
++++ b/esp-periph/src/usb_serial_jtag.rs
+@@ -66,6 +66,80 @@ impl UsbSerialJtag {
+     pub fn irq(&self) -> bool { self.raw() & self.int_ena != 0 }
+ }
+ 
++// ------------------------------------------------------------------ CDC-ACM line state
++/// What the USB host's DTR and RTS lines do to the chip. The host sets both with the CDC-ACM
++/// request SET_CONTROL_LINE_STATE (ESP32-S3 TRM v1.8 Table 33.3-1, p.1247), and the controller acts
++/// on the pair (Table 33.3-2, p.1248):
++///
++/// | RTS | DTR | action                    |
++/// |-----|-----|---------------------------|
++/// |  0  |  0  | clear download mode flag  |
++/// |  0  |  1  | set download mode flag    |
++/// |  1  |  0  | reset the chip            |
++/// |  1  |  1  | no action                 |
++///
++/// "If the download mode flag is set when the ESP32-S3 is reset, the ESP32-S3 will reboot into
++/// download mode", otherwise it boots from flash (same page). The S3 has no guest register that
++/// shows these lines or the flag, so this state lives on the host side of the model and survives
++/// the peripheral re-creation of a chip reset.
++///
++/// Two readings of the TRM are this model's, not the TRM's words [inferred, not verified on
++/// silicon]: the chip is held in reset for as long as the pair stays (1,0) — Table 33.4-4 (p.1254)
++/// names the step into (1,0) "Reset SoC" and the step out "Exit reset" — and the flag is taken
++/// at the moment the pair enters (1,0), because Table 33.4-3 (p.1254) leaves (1,0) through (0,0),
++/// "Clear download flag", and still reaches download mode. The logic is level-based: every
++/// message is one new pair, a repeated pair does nothing, and a host that sets DTR and RTS in two
++/// requests (esptool, esptool-js; Windows only propagates DTR on an RTS change, §33.4.2 p.1253)
++/// is handled the same as one that sets both at once.
++#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
++pub struct UsjLines {
++    pub dtr: bool,
++    pub rts: bool,
++    /// the download mode flag, as the last (0,0) / (0,1) left it
++    pub flag: bool,
++    /// the pair is (1,0): the chip is held in reset
++    pub held: bool,
++    /// the flag as it was when the pair entered (1,0): the reset boots into download mode
++    pub latched_download: bool,
++}
++
++/// What one line change does to the chip.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub enum LineEffect {
++    None,
++    /// The pair entered (1,0): reset the chip and hold it. `download` is the latched flag.
++    AssertReset { download: bool },
++    /// The pair left (1,0): let the chip run.
++    ReleaseReset,
++}
++
++impl UsjLines {
++    /// The host set the lines to (`dtr`, `rts`).
++    pub fn set(&mut self, dtr: bool, rts: bool) -> LineEffect {
++        let was_reset = self.held;
++        self.dtr = dtr;
++        self.rts = rts;
++        match (rts, dtr) {
++            (false, false) => self.flag = false,
++            (false, true) => self.flag = true,
++            _ => {}
++        }
++        let now_reset = rts && !dtr;
++        if now_reset && !was_reset {
++            self.held = true;
++            self.latched_download = self.flag;
++            return LineEffect::AssertReset { download: self.flag };
++        }
++        if was_reset && !now_reset {
++            self.held = false;
++            return LineEffect::ReleaseReset;
++        }
++        LineEffect::None
++    }
++    /// `bit0` DTR, `bit1` RTS: the form the host channels carry.
++    pub fn bits(&self) -> u8 { self.dtr as u8 | (self.rts as u8) << 1 }
++}
++
+ impl Device for UsbSerialJtag {
+     fn read(&mut self, off: u32) -> u32 { UsbSerialJtag::read(self, off) }
+     fn write(&mut self, off: u32, v: u32) -> WriteEffect { UsbSerialJtag::write(self, off, v); WriteEffect::NONE }
+@@ -74,3 +148,100 @@ impl Device for UsbSerialJtag {
+     fn tick(&mut self, cycles: u64) { UsbSerialJtag::tick(self, cycles) }
+     fn debug(&mut self, on: bool) { self.dbg = on; }
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    /// Apply (dtr, rts) pairs in order; collect every effect that is not `None`.
++    fn run(lines: &mut UsjLines, seq: &[(bool, bool)]) -> Vec<LineEffect> {
++        seq.iter().map(|&(dtr, rts)| lines.set(dtr, rts)).filter(|e| *e != LineEffect::None).collect()
++    }
++
++    /// A host that sets one line per request: `D`/`R` are (line, level) steps from `start`.
++    fn steps(start: (bool, bool), ops: &[(char, bool)]) -> Vec<(bool, bool)> {
++        let (mut dtr, mut rts) = start;
++        ops.iter().map(|&(line, v)| { if line == 'D' { dtr = v } else { rts = v } (dtr, rts) }).collect()
++    }
++
++    /// esptool's and esptool-js's `setRTS(x)`: RTS, then DTR again at its current level
++    /// (esptool 4.9.0 reset.py:70-75, esptool-js 0.6.0 webserial.ts:440-452).
++    fn set_rts(dtr: bool, v: bool) -> [(char, bool); 2] { [('R', v), ('D', dtr)] }
++
++    #[test]
++    fn table_33_4_3_resets_into_download_mode_once() {
++        // TRM v1.8 Table 33.4-3 (p.1254) from RTS=0, with DTR and the flag either way. (From RTS=1
++        // its first step, Clear DTR, is itself (1,0): one more reset, a flash boot, comes first.)
++        for dtr0 in [false, true] {
++            let mut l = UsjLines::default();
++            l.set(dtr0, false);
++            let seq = steps((dtr0, false), &[('D', false), ('R', false), ('D', true), ('R', false), ('R', true), ('D', false), ('R', true), ('R', false)]);
++            assert_eq!(run(&mut l, &seq), [LineEffect::AssertReset { download: true }, LineEffect::ReleaseReset]);
++            assert!(!l.flag && !l.held && l.latched_download, "left through (0,0): flag cleared, the reset kept it");
++        }
++    }
++
++    #[test]
++    fn table_33_4_4_resets_into_flash_boot_once() {
++        let mut l = UsjLines { dtr: true, flag: true, ..Default::default() };
++        let seq = steps((true, false), &[('D', false), ('R', false), ('R', true), ('R', false)]);
++        assert_eq!(run(&mut l, &seq), [LineEffect::AssertReset { download: false }, LineEffect::ReleaseReset]);
++    }
++
++    #[test]
++    fn the_pair_one_one_does_nothing_and_repeats_are_idempotent() {
++        let mut l = UsjLines::default();
++        assert_eq!(l.set(true, true), LineEffect::None);
++        assert_eq!(l.set(true, true), LineEffect::None);
++        assert_eq!(l.set(false, true), LineEffect::AssertReset { download: false });
++        assert_eq!(l.set(false, true), LineEffect::None, "still (1,0): held, no second reset");
++        assert!(l.held);
++        assert_eq!(l.set(true, true), LineEffect::ReleaseReset, "(1,1) also leaves reset");
++    }
++
++    #[test]
++    fn esptool_usb_jtag_serial_reset_enters_download_mode() {
++        // esptool 4.9.0 reset.py:130-142 after pyserial 3.5 opened the port with both lines up (serialutil.py:216-217
++        // _rts_state = _dtr_state = True; rfc2217.py:489-492 sends DTR, then RTS).
++        let mut ops = vec![('D', true), ('R', true)];
++        ops.extend(set_rts(true, false)); ops.push(('D', false));          // _setRTS(False) _setDTR(False)  idle
++        ops.push(('D', true)); ops.extend(set_rts(true, false));           // _setDTR(True) _setRTS(False)   set IO0
++        ops.extend(set_rts(true, true)); ops.push(('D', false));           // _setRTS(True) _setDTR(False)   reset
++        ops.extend(set_rts(false, true));                                  // _setRTS(True)
++        ops.push(('D', false)); ops.extend(set_rts(false, false));         // _setDTR(False) _setRTS(False)  out of reset
++        let mut l = UsjLines::default();
++        assert_eq!(run(&mut l, &steps((false, false), &ops)), [LineEffect::AssertReset { download: true }, LineEffect::ReleaseReset]);
++        // esptool-js 0.6.0 reset.ts:113-129, its setRTS repeating DTR from `_DTR_state` (false at first).
++        let mut ops = Vec::new();
++        ops.extend(set_rts(false, false)); ops.push(('D', false));
++        ops.push(('D', true)); ops.extend(set_rts(true, false));
++        ops.extend(set_rts(true, true)); ops.push(('D', false)); ops.extend(set_rts(false, true));
++        ops.extend(set_rts(false, false)); ops.push(('D', false));
++        let mut l = UsjLines::default();
++        assert_eq!(run(&mut l, &steps((false, false), &ops)), [LineEffect::AssertReset { download: true }, LineEffect::ReleaseReset]);
++    }
++
++    #[test]
++    fn hard_and_classic_resets_boot_from_flash() {
++        // esptool 4.9.0 HardReset (reset.py:154-164, not USB-OTG): setRTS(True), 100 ms, setRTS(False).
++        let mut l = UsjLines::default();
++        let ops: Vec<_> = set_rts(false, true).into_iter().chain(set_rts(false, false)).collect();
++        assert_eq!(run(&mut l, &steps((false, false), &ops)), [LineEffect::AssertReset { download: false }, LineEffect::ReleaseReset]);
++        // ClassicReset (reset.py:97-104, esptool-js reset.ts:81-89): a flash boot on the USJ.
++        let mut l = UsjLines::default();
++        let mut ops = vec![('D', false)];
++        ops.extend(set_rts(false, true)); ops.push(('D', true)); ops.extend(set_rts(true, false)); ops.push(('D', false));
++        assert_eq!(run(&mut l, &steps((false, false), &ops)), [LineEffect::AssertReset { download: false }, LineEffect::ReleaseReset]);
++        assert!(!l.flag);
++    }
++
++    #[test]
++    fn both_lines_in_one_request_work_the_same() {
++        // A host that sets both lines at once (Web Serial setSignals with both members): 0,1 -> 1,0 -> 0,0.
++        let mut l = UsjLines::default();
++        assert_eq!(run(&mut l, &[(true, false), (false, true), (false, false)]), [LineEffect::AssertReset { download: true }, LineEffect::ReleaseReset]);
++        assert_eq!(l.bits(), 0);
++        l.set(true, true);
++        assert_eq!(l.bits(), 3);
++    }
++}
 diff --git a/esp-soc/src/board.rs b/esp-soc/src/board.rs
 index 8bae55f..1387a4c 100644
 --- a/esp-soc/src/board.rs
@@ -598,20 +941,42 @@ index 8bae55f..1387a4c 100644
      /// A pin by the name scripts and the UI use (`btn1`, `sw`, ...).
      fn named_pin(&self, _name: &str) -> Option<u8> { None }
      /// The rotary encoder's (CLK, DT) pins, if there is one.
+diff --git a/esp-soc/src/lib.rs b/esp-soc/src/lib.rs
+index 2d8fe03..220edc3 100644
+--- a/esp-soc/src/lib.rs
++++ b/esp-soc/src/lib.rs
+@@ -19,7 +19,9 @@ pub mod observe;
+ pub mod observers;
+ pub mod picture;
+ pub mod png;
++pub mod rfc2217;
+ pub mod soc;
++pub mod usj_port;
+ pub mod web;
+ pub mod wifi;
+ 
 diff --git a/esp-soc/src/machine.rs b/esp-soc/src/machine.rs
-index 8606f11..b0fcacb 100644
+index 8606f11..7690b4d 100644
 --- a/esp-soc/src/machine.rs
 +++ b/esp-soc/src/machine.rs
-@@ -14,7 +14,7 @@ mod modeled;
+@@ -11,10 +11,15 @@ use emu_core::{Bus, Core, CostModel, LifecycleFacts, LifecycleKind, MemoryAccess
+ use std::collections::{BTreeMap, HashMap};
+ 
+ mod modeled;
++mod usj;
  mod web;
  
  #[derive(Clone, Debug)]
 -pub enum ScriptAction { Gpio(u8, bool), Serial(String), Uart(usize, String), Stop, Touch(u16, u16, bool), Poke(u32, u32) }
-+pub enum ScriptAction { Gpio(u8, bool), Serial(String), Uart(usize, String), Stop, Touch(u16, u16, bool), Poke(u32, u32), Board(String, String) }
++pub enum ScriptAction { Gpio(u8, bool), Serial(String), Uart(usize, String), Stop, Touch(u16, u16, bool), Poke(u32, u32), Board(String, String),
++    /// `usj <dtr> <rts>`: the USB host sets the USB-Serial/JTAG's lines (as `Machine::usj_lines`)
++    UsjLines(bool, bool),
++    /// `usjhex <hex>`: raw bytes from the USB host into the USB-Serial/JTAG
++    UsjData(Vec<u8>) }
  
  /// The stop conditions that are not observers.
  pub struct Debug { pub stop_on_unimplemented: bool, pub stop_after_exceptions: u64 }
-@@ -96,6 +96,10 @@ pub struct Machine<S: Soc> {
+@@ -96,6 +101,10 @@ pub struct Machine<S: Soc> {
      cost: Option<Box<dyn CostModel>>,
      model_accesses: Vec<MemoryAccess>,
      approximate_jit_timing: Option<(u32, u32)>,
@@ -622,16 +987,30 @@ index 8606f11..b0fcacb 100644
      approximate_jit_frontiers: bool,
      model_ready_at: Vec<u64>,
      model_stop: Option<Stop>,
-@@ -149,7 +153,7 @@ impl<S: Soc> Machine<S> {
+@@ -118,6 +127,12 @@ pub struct Machine<S: Soc> {
+     /// at waiti, batches that ran the whole grant, granted rounds, batches the bound refused, reserved.
+     pub bb_stats: [u64; 8],
+     run_steps: u64,
++    /// The USB-Serial/JTAG's host end (`--web` at `/usj`, `--serial-tcp`), when a front end serves one.
++    pub usj: Option<crate::usj_port::UsjPort>,
++    /// The host's RTS=1/DTR=0 resets the chip (a run that comes back up through the ROM); when
++    /// false the lines are tracked and the reset is only logged.
++    pub usj_reset: bool,
++    usj_state: usj::UsjState,
+ }
+ 
+ /// Default scheduling quantum; `Machine::quantum` can change it (not bit-exact with the default). q256: 256 on wasm32,
+@@ -149,7 +164,8 @@ impl<S: Soc> Machine<S> {
              console: Console { all: Vec::new(), usb: Vec::new(), uart0: Vec::new(), mask: 3, prefix: false, capture: false },
              web: None, ws: WebState { last_push_cycles: 0, push_interval: 0, audio_sent: 0, ring_updates: 0, grid_updates: Vec::new(), px_pending: 0, px_sent: 0, px_deferred: false, cam_pushed: u64::MAX, cam_sent: false },
              rt: Realtime { enabled: false, wall_start: None, last_check: 0, behind: 0.0, resyncs: 0, speed: None, speed_mark: None, log: false, log_last: None, log_insns: (0, 0) },
 -            debug_rom: false, cost: None, model_accesses: Vec::new(), approximate_jit_timing: None, approximate_jit_frontiers: false, model_ready_at: vec![0; S::CORES], model_stop: None, model_attach_error: None,
 +            debug_rom: false, cost: None, model_accesses: Vec::new(), approximate_jit_timing: None, approximate_cpi_frac: 0, approximate_cpi_acc: 0, approximate_jit_frontiers: false, model_ready_at: vec![0; S::CORES], model_stop: None, model_attach_error: None,
++            usj: None, usj_reset: false, usj_state: usj::UsjState::default(),
          }
      }
  
-@@ -204,6 +208,13 @@ impl<S: Soc> Machine<S> {
+@@ -204,6 +220,13 @@ impl<S: Soc> Machine<S> {
          for core in &mut self.cores { core.set_approximate_cpi(cpi); }
          Ok(())
      }
@@ -645,7 +1024,39 @@ index 8606f11..b0fcacb 100644
      pub fn has_observer(&self, name: &str) -> bool { self.observers.iter().any(|o| o.name() == name) }
      /// Every observer's end-of-run report, in the order they were added (files are written now).
      pub fn reports(&mut self) -> String {
-@@ -516,7 +527,14 @@ impl<S: Soc> Machine<S> {
+@@ -291,6 +314,7 @@ impl<S: Soc> Machine<S> {
+         let cause = self.bus.reboot(self.mac);
+         for (i, c) in self.cores.iter_mut().enumerate() { S::reset_core(c, i); if i > 0 { self.core_held[i] = true; } }
+         self.reboots += 1;
++        self.usj_after_reboot();
+         self.model_ready_at.fill(self.bus.cycles());
+         if let Some(model) = &mut self.cost {
+             let facts = LifecycleFacts { kind: LifecycleKind::ChipReset, chip: S::NAME, cores: S::CORES, cpu_hz: S::CPU_HZ };
+@@ -325,6 +349,15 @@ impl<S: Soc> Machine<S> {
+             let _ = o.flush();
+         };
+         for (i, d) in streams.into_iter().enumerate() {
++            // While a client holds the USB-Serial/JTAG port its output is that client's alone.
++            if i == 0 && !d.is_empty() {
++                if let (Some(id), Some(port)) = (self.usj_state.session, &self.usj) {
++                    self.usj_state.bytes_out += d.len() as u64;
++                    self.console.all.extend_from_slice(&d);
++                    port.deliver(id, crate::usj_port::PortOut::Data(d));
++                    continue;
++                }
++            }
+             let src = ["usb", "uart0", "uart1", "uart2"][i];
+             if i < 2 {
+                 let backlog = if i == 0 { &mut self.console.usb } else { &mut self.console.uart0 };
+@@ -474,6 +507,7 @@ impl<S: Soc> Machine<S> {
+     /// `quantum - 1` steps. The modeled path schedules one priced event at a time.
+     pub fn run(&mut self, max_insns: u64) -> Stop {
+         self.web_poll_input();
++        if self.usj_held() { if let Some(stop) = self.hold_in_reset() { return stop; } }
+         self.refresh_irq();
+         if self.cost.is_some() { self.run_modeled(max_insns) } else if self.approximate_jit_frontiers { self.run_approximate_jit_frontiers(max_insns) } else if self.approximate_jit_timing.is_some() { self.run_unmodeled::<true>(max_insns) } else { self.run_unmodeled::<false>(max_insns) }
+     }
+@@ -516,7 +550,14 @@ impl<S: Soc> Machine<S> {
  
      fn run_unmodeled<const APPROXIMATE: bool>(&mut self, max_insns: u64) -> Stop {
          assert!(self.quantum != 0, "scheduling quantum must be nonzero");
@@ -661,7 +1072,7 @@ index 8606f11..b0fcacb 100644
          self.stub_bloom = self.stubs.keys().fold(0, |m, &pc| m | pc_bit(pc));
          self.probe_bloom = self.fn_probes.keys().fold(0, |m, &pc| m | pc_bit(pc));
          for c in &mut self.cores {
-@@ -635,6 +653,11 @@ impl<S: Soc> Machine<S> {
+@@ -635,6 +676,11 @@ impl<S: Soc> Machine<S> {
                      } else { self.bb_stats[6] += 1; }
                  }
              }
@@ -673,23 +1084,44 @@ index 8606f11..b0fcacb 100644
              let quantum = if APPROXIMATE {
                  // An instruction can overrun the deadline by at most CPI-1 cycles.
                  self.idle_budget(u64::from(max_quantum) * u64::from(cpi), &on)
-@@ -986,6 +1009,7 @@ impl<S: Soc> Machine<S> {
+@@ -977,6 +1023,7 @@ impl<S: Soc> Machine<S> {
+     fn apply_due_script_events(&mut self) -> bool {
+         let mut stopped = false;
+         while self.script.pos < self.script.events.len() && self.script.events[self.script.pos].0 <= self.bus.cycles() {
++            if self.usj_state.reset_pending { break; }   // a USB line reset first takes effect
+             let (t, a) = self.script.events[self.script.pos].clone(); self.script.pos += 1;
+             if self.script.log { eprintln!("[script] t={:.3}s {:?}", t as f64 / S::CPU_HZ as f64, a); }
+             match a {
+@@ -986,6 +1033,10 @@ impl<S: Soc> Machine<S> {
                  ScriptAction::Stop => { self.max_cycles = 0; stopped = true; }
                  ScriptAction::Touch(x, y, d) => { self.bus.touch_input(x, y, d); }
                  ScriptAction::Poke(a, v) => { let _ = self.bus.write32_unpriced(a, v); }
 +                ScriptAction::Board(cmd, args) => { if let Err(e) = self.bus.board_input(&cmd, &args) { eprintln!("[script] {}", e); } }
++                ScriptAction::UsjData(bytes) => self.bus.serial_input(&bytes),
++                // A chip reset must happen before anything later: the rest waits for the reboot.
++                ScriptAction::UsjLines(dtr, rts) => if self.usj_lines(dtr, rts) { break; },
              }
          }
          stopped
-@@ -1050,6 +1074,7 @@ impl<S: Soc> Machine<S> {
+@@ -999,6 +1050,7 @@ impl<S: Soc> Machine<S> {
+         // EX168 s4: the per-round test is two loads and a compare; the re-derivation, the push and the
+         // pacing clock live out of line.
+         if self.web.is_some() && self.bus.cycles().wrapping_sub(self.ws.last_push_cycles) >= self.ws.push_interval { self.web_push_due(); }
++        if self.bus.cycles() >= self.usj_state.next { self.usj_service(); }
+         if self.rt.enabled && self.bus.cycles().wrapping_sub(self.rt.last_check) >= 1 << 16 { self.rt_pace(); }
+         stopped
+     }
+@@ -1049,7 +1101,9 @@ impl<S: Soc> Machine<S> {
+     // ------------------------------------------------------------------ scripts
      /// Parse a script: one action per line, `<seconds> <cmd> [args]`.
      ///   press <pin> [ms]   release <pin>   gpio <pin> <0|1>   serial <text...>   knob <cw|ccw> [detents]   touch <x> <y> <0|1>   poke <addr> <value>   stop
++    ///   usj <dtr 0|1> <rts 0|1> (the USB host's lines)   usjhex <hex> (raw bytes into the USB-Serial/JTAG)
      /// Pins are numbers or the board's names (`btn1`, `sw`, ...); buttons/encoder are active-low with pull-ups (release = 1).
 +    /// A board's own verbs (`BoardModel::check_input`) come first and may take over `press`/`knob`.
      pub fn load_script(&mut self, text: &str) -> Result<(), String> {
          let hz = S::CPU_HZ as f64;
          let mut ev: Vec<(u64, ScriptAction)> = Vec::new();
-@@ -1063,6 +1088,11 @@ impl<S: Soc> Machine<S> {
+@@ -1063,6 +1117,11 @@ impl<S: Soc> Machine<S> {
              let board = self.bus.board_ref();
              let pin = |s: &str| -> Result<u8, String> { board.named_pin(s).map(Ok).unwrap_or_else(|| s.parse().map_err(|_| format!("line {}: bad pin {}", ln + 1, s))) };
              let c = (t * hz) as u64;
@@ -701,8 +1133,175 @@ index 8606f11..b0fcacb 100644
              match cmd {
                  "press" => { let mut p = rest.split_whitespace(); let pn = pin(p.next().unwrap_or(""))?; let ms: f64 = p.next().map(|x| x.parse().unwrap_or(100.0)).unwrap_or(100.0);
                               ev.push((c, ScriptAction::Gpio(pn, false))); ev.push((c + (ms / 1000.0 * hz) as u64, ScriptAction::Gpio(pn, true))); }
+@@ -1083,6 +1142,16 @@ impl<S: Soc> Machine<S> {
+                     }
+                 }
+                 "stop" => ev.push((c, ScriptAction::Stop)),
++                "usj" => {
++                    let bit = |x: Option<&str>| match x { Some("0") => Ok(false), Some("1") => Ok(true), _ => Err(format!("line {}: usj <dtr 0|1> <rts 0|1>", ln + 1)) };
++                    let mut p = rest.split_whitespace();
++                    ev.push((c, ScriptAction::UsjLines(bit(p.next())?, bit(p.next())?)));
++                }
++                "usjhex" => {
++                    let h: String = rest.split_whitespace().collect();
++                    if h.is_empty() || !h.len().is_multiple_of(2) || !h.bytes().all(|b| b.is_ascii_hexdigit()) { return Err(format!("line {}: usjhex wants an even number of hex digits", ln + 1)); }
++                    ev.push((c, ScriptAction::UsjData((0..h.len()).step_by(2).map(|i| u8::from_str_radix(&h[i..i + 2], 16).unwrap()).collect())));
++                }
+                 _ => return Err(format!("line {}: unknown command {}", ln + 1, cmd)),
+             }
+         }
+diff --git a/esp-soc/src/machine/usj.rs b/esp-soc/src/machine/usj.rs
+new file mode 100644
+index 0000000..ab0b955
+--- /dev/null
++++ b/esp-soc/src/machine/usj.rs
+@@ -0,0 +1,144 @@
++//! The USB host at the USB-Serial/JTAG: the client holding `Machine::usj` (the `/usj` WebSocket,
++//! the RFC 2217 port) and script lines drive the controller's receive side and its DTR/RTS; the
++//! chip's reaction to the lines is the bus's (`SocBus::usj_lines`, TRM v1.8 Table 33.3-2).
++//!
++//! A line change that resets the chip stops the service: what the client sent after it waits
++//! until the reset has happened, so bytes sent after the reset reach the new controller and not
++//! the old one the reset throws away. While the lines hold the chip in reset (RTS=1, DTR=0)
++//! `hold_in_reset` lets time pass with the cores stopped.
++use super::*;
++use crate::usj_port::{PortIn, PortOut};
++use std::collections::VecDeque;
++
++/// How often the machine looks at the port: every millisecond of device time while a client
++/// holds it — the USB frame period the controller model already keeps (SOF, `usb_serial_jtag.rs`)
++/// and far inside the 100 ms esptool gives a SYNC answer (esptool 4.9.0 loader.py:86
++/// SYNC_TIMEOUT; esptool-js 0.6.0 esploader.ts:503) — and every 10 ms while nobody does. A design choice,
++/// not a figure from a source.
++const OPEN_POLL_HZ: u64 = 1000;
++const IDLE_POLL_HZ: u64 = 100;
++
++pub(super) struct UsjState {
++    /// the session the machine has seen open and not yet closed
++    pub(super) session: Option<u64>,
++    /// client actions not applied yet (after a reset request, until the reboot)
++    pending: VecDeque<PortIn>,
++    /// device cycle of the next service; `u64::MAX` without a port
++    pub(super) next: u64,
++    /// a line reset was requested and the reboot has not happened yet
++    pub(super) reset_pending: bool,
++    pub(super) bytes_in: u64,
++    pub(super) bytes_out: u64,
++}
++
++impl Default for UsjState {
++    fn default() -> Self { UsjState { session: None, pending: VecDeque::new(), next: u64::MAX, reset_pending: false, bytes_in: 0, bytes_out: 0 } }
++}
++
++impl<S: Soc> Machine<S> {
++    /// Serve `port` as the USB-Serial/JTAG's host end.
++    pub fn attach_usj(&mut self, port: crate::usj_port::UsjPort) {
++        self.usj = Some(port);
++        self.usj_state.next = 0;
++    }
++
++    /// Is a client holding the port, as far as the machine has seen?
++    pub fn usj_session(&self) -> Option<u64> { self.usj_state.session }
++
++    /// The host lines hold the chip in reset now.
++    pub fn usj_held(&self) -> bool { self.usj_reset && self.bus.usj_line_state().is_some_and(|l| l.held) }
++
++    fn usj_event(&self, json: &str) {
++        if let (Some(id), Some(port)) = (self.usj_state.session, &self.usj) { port.deliver(id, PortOut::Event(json.to_string())); }
++    }
++
++    /// The USB host set DTR and RTS. True if that requested a chip reset: the caller must let the
++    /// reset happen before it applies anything the host did later.
++    pub fn usj_lines(&mut self, dtr: bool, rts: bool) -> bool {
++        use esp_periph::LineEffect;
++        match self.bus.usj_lines(dtr, rts) {
++            LineEffect::None => false,
++            LineEffect::AssertReset { download } => {
++                if !self.usj_reset {
++                    eprintln!("[emu] usj: t={:.3}s RTS=1 DTR=0 ignored: this run does not come back up through the ROM (--boot app or --no-reboot)", self.seconds());
++                    return false;
++                }
++                eprintln!("[emu] usj: t={:.3}s RTS=1 DTR=0 -> chip reset {:#x} ({}), download mode flag {}, held until the lines change",
++                          self.seconds(), esp_periph::RST_USB_UART_CHIP, esp_periph::reset_cause_name(esp_periph::RST_USB_UART_CHIP), download as u8);
++                self.usj_event(&format!("{{\"t\":\"reset\",\"cause\":{},\"download\":{}}}", esp_periph::RST_USB_UART_CHIP, download));
++                self.bus.request_reset(esp_periph::RST_USB_UART_CHIP);
++                *self.bus.irq_dirty() = true;
++                self.usj_state.reset_pending = true;
++                true
++            }
++            LineEffect::ReleaseReset => {
++                if !self.usj_reset { return false; }
++                let strap = self.bus.strap();
++                eprintln!("[emu] usj: t={:.3}s RTS={} DTR={} -> out of reset{}", self.seconds(), rts as u8, dtr as u8,
++                          strap.map_or(String::new(), |v| format!(", GPIO_STRAPPING {v:#x} ({})", if v & 0x0c == 0 { "download" } else if v & 0x08 != 0 { "SPI boot" } else { "other boot" })));
++                self.usj_event(&format!("{{\"t\":\"release\",\"strap\":{}}}", strap.map_or("null".to_string(), |v| v.to_string())));
++                false
++            }
++        }
++    }
++
++    /// Take what clients did since the last call and apply it in order; send the device's
++    /// output to the client holding the port. Called at run entry, with the page's input, and
++    /// from the scheduling rounds (`after_round_rest`) at the poll rate. Out of line: the round's
++    /// own cost stays one compare.
++    #[inline(never)]
++    pub(super) fn usj_service(&mut self) {
++        let Some(port) = self.usj.clone() else { return };
++        self.usj_state.pending.extend(port.poll());
++        let hz = if self.usj_state.session.is_some() || !self.usj_state.pending.is_empty() { OPEN_POLL_HZ } else { IDLE_POLL_HZ };
++        self.usj_state.next = self.bus.cycles() + S::CPU_HZ / hz;
++        if self.usj_state.reset_pending { return; }
++        while let Some(ev) = self.usj_state.pending.pop_front() {
++            match ev {
++                PortIn::Open(id) => {
++                    self.drain_console();                       // what came before belongs to the console
++                    self.usj_state.session = Some(id);
++                    self.usj_state.bytes_in = 0; self.usj_state.bytes_out = 0;
++                    let l = self.bus.usj_line_state().unwrap_or_default();
++                    self.usj_event(&format!("{{\"t\":\"hello\",\"proto\":1,\"chip\":\"{}\",\"dtr\":{},\"rts\":{},\"held\":{},\"reset\":{}}}",
++                                            S::NAME, l.dtr as u8, l.rts as u8, self.usj_held(), self.usj_reset));
++                    if let Some(w) = &self.web { w.send_text("{\"t\":\"usj\",\"claimed\":true}"); }
++                }
++                PortIn::Data(d) => { self.usj_state.bytes_in += d.len() as u64; self.bus.serial_input(&d); }
++                PortIn::Lines { dtr, rts } => if self.usj_lines(dtr, rts) { break; },
++                PortIn::Close(id) => {
++                    self.drain_console();                       // the session's last output
++                    if self.usj_state.session == Some(id) {
++                        eprintln!("[emu] usj: t={:.3}s port closed ({} bytes to the chip, {} from it)", self.seconds(), self.usj_state.bytes_in, self.usj_state.bytes_out);
++                        self.usj_state.session = None;
++                        if let Some(w) = &self.web { w.send_text("{\"t\":\"usj\",\"claimed\":false}"); }
++                    }
++                    // A host that goes away drops its lines: a chip held in reset runs again.
++                    if self.usj_lines(false, false) { break; }
++                }
++            }
++        }
++        if self.usj_state.session.is_some() { self.drain_console(); }
++    }
++
++    /// The chip went through reset: what waited for it may be applied now.
++    pub(super) fn usj_after_reboot(&mut self) { self.usj_state.reset_pending = false; }
++
++    /// While the host holds the chip in reset (RTS=1, DTR=0) the cores do not run and device time
++    /// goes on in 1 ms steps: devices tick, scripts, the page and the host channels are served,
++    /// real-time pacing holds (without it, each step also sleeps 1 ms of wall time, so waiting for
++    /// a host does not spin). Returns when the lines let go, the session closes, another reset is
++    /// requested (the page's RESET), a script stops the run or the run's time is up.
++    pub(super) fn hold_in_reset(&mut self) -> Option<Stop> {
++        let step = S::CPU_HZ / 1000;
++        while self.usj_held() {
++            if self.bus.sw_reset() { self.drain_console(); return Some(Stop::SwReset); }
++            if self.bus.cycles() >= self.max_cycles { self.drain_console(); return Some(Stop::Halted); }
++            let chunk = step.min(self.max_cycles - self.bus.cycles()).max(1);
++            if self.after_round(chunk) { self.drain_console(); return Some(Stop::Halted); }
++            self.usj_service();
++            if !self.rt.enabled { std::thread::sleep(std::time::Duration::from_millis(1)); }
++        }
++        None
++    }
++}
 diff --git a/esp-soc/src/machine/web.rs b/esp-soc/src/machine/web.rs
-index f0cd30a..7006d5c 100644
+index f0cd30a..a8248ae 100644
 --- a/esp-soc/src/machine/web.rs
 +++ b/esp-soc/src/machine/web.rs
 @@ -14,6 +14,14 @@ fn display_message(width: u32, height: u32, pixels: &[u16]) -> Vec<u8> {
@@ -742,7 +1341,15 @@ index f0cd30a..7006d5c 100644
              if let Some(rgb) = board.camera_preview(320, 240) { hello.push(frame(2, &camera_message(&rgb))); }
              if let Some((leds, _)) = board.leds() { hello.push(frame(1, format!("{{\"t\":\"ring\",\"leds\":[{}]}}", leds_json(leds)).as_bytes())); }
              for (id, leds, _) in board.led_grids() { hello.push(frame(1, format!("{{\"t\":\"grid\",\"id\":\"{}\",\"leds\":[{}]}}", id, leds_json(leds)).as_bytes())); }
-@@ -123,6 +135,21 @@ impl<S: Soc> Machine<S> {
+@@ -102,6 +114,7 @@ impl<S: Soc> Machine<S> {
+     // Host input is accepted at run boundaries without advancing device time. The periodic
+     // poll remains necessary for native callers that run continuously rather than in slices.
+     pub(super) fn web_poll_input(&mut self) {
++        self.usj_service();
+         let Some(w) = self.web.clone() else { return };
+         use crate::json::{parse_json, Json};
+         for b in w.poll_incoming_bin() {
+@@ -123,6 +136,21 @@ impl<S: Soc> Machine<S> {
              match t.as_str() {
                  "btn" => { let pin: u8 = field("pin").and_then(|x| x.parse().ok()).unwrap_or(0); let v = field("v").unwrap_or_default() == "1";
                             self.bus.gpio_set_input(pin, !v); *self.bus.irq_dirty() = true; }
@@ -764,6 +1371,15 @@ index f0cd30a..7006d5c 100644
                  "knobpress" => { let v = field("v").unwrap_or_default() == "1"; if let Some(sw) = self.bus.board_ref().named_pin("sw") { self.bus.gpio_set_input(sw, !v); *self.bus.irq_dirty() = true; } }
                  "knob" => {
                      // Bound each browser message to about one second of encoder motion.
+@@ -142,6 +170,8 @@ impl<S: Soc> Machine<S> {
+                     match field("src").as_deref() {
+                         Some("uart0") => self.bus.uart_input(0, data.as_bytes()),
+                         Some("uart1") => self.bus.uart_input(1, data.as_bytes()),
++                        // the USB console belongs to the client holding the USB-Serial/JTAG port
++                        _ if self.usj_state.session.is_some() => {}
+                         _ => self.bus.serial_input(data.as_bytes()),
+                     }
+                 }
 diff --git a/esp-soc/src/nat.rs b/esp-soc/src/nat.rs
 index 2be4c78..ac96365 100644
 --- a/esp-soc/src/nat.rs
@@ -2084,8 +2700,433 @@ index 0000000..b32f702
 +    pub fn recv(&self, _max: usize) -> Vec<Vec<u8>> { match self.never {} }
 +    pub fn stats(&self) -> BridgeStats { match self.never {} }
 +}
+diff --git a/esp-soc/src/rfc2217.rs b/esp-soc/src/rfc2217.rs
+new file mode 100644
+index 0000000..efc6d86
+--- /dev/null
++++ b/esp-soc/src/rfc2217.rs
+@@ -0,0 +1,279 @@
++//! The USB-Serial/JTAG as an RFC 2217 serial port on a TCP port of 127.0.0.1 (`--serial-tcp`),
++//! for tools that speak pyserial's `rfc2217://host:port`: esptool, idf.py monitor, miniterm.
++//!
++//! Only as much of RFC 2217 ("Telnet Com Port Control Option", October 1997) as a serial port
++//! whose baud rate means nothing needs:
++//!
++//! - Telnet: the server offers and asks for BINARY both ways (RFC 856) and accepts SGA and
++//!   COM-PORT-OPTION (44) from either side (RFC 2217 §1, p.5: "Typically a client will use WILL
++//!   and WONT, while an access server will use DO and DONT"); every other option is refused. The
++//!   stream is 8-bit whatever was agreed: pyserial's client escapes only IAC (rfc2217.py:628-641,
++//!   pyserial 3.5), and data byte 255 is doubled both ways (RFC 856 §5, p.2).
++//! - Com port commands (RFC 2217 §2-3, pp.6-11): each is answered with its code + 100 and the
++//!   value in use, which is what pyserial waits for before it goes on (rfc2217.py:350-372
++//!   `wait`/`check_answer`: the answer must repeat the requested value). SET-BAUDRATE,
++//!   SET-DATASIZE, SET-PARITY and SET-STOPSIZE are stored and echoed: the USB-Serial/JTAG accepts
++//!   and ignores SET_LINE_CODING (ESP32-S3 TRM v1.8 Table 33.3-1, p.1247). SET-CONTROL 8/9 and
++//!   11/12 set DTR and RTS, which go to the chip in order with the data (`UsjLines`, TRM Table
++//!   33.3-2); 7 and 10 report them; flow control is always "none" (1 outbound, 14 inbound);
++//!   BREAK is recorded and ignored, as the controller ignores SEND_BREAK (Table 33.3-1).
++//!   SET-LINESTATE-MASK and SET-MODEMSTATE-MASK are stored and echoed. PURGE-DATA is echoed:
++//!   the server keeps no buffer of its own to clear (device output goes straight to the socket,
++//!   and pyserial empties its own queue after the answer, rfc2217.py:643-649).
++//! - A client poll of NOTIFY-LINESTATE / NOTIFY-MODEMSTATE is answered with 0, as pyserial's own
++//!   server does (rfc2217.py:1287-1296); the modem inputs of the USB-Serial/JTAG are always 0 (its
++//!   interrupt endpoint never reports, TRM §33.3.1 p.1247). SIGNATURE with no text gets the name.
++//! - Not done: FLOWCONTROL-SUSPEND/RESUME (§5, p.13) are ignored — pyserial's client never sends
++//!   them (its `rfc2217_flow_server_ready` is a stub, rfc2217.py:890-897).
++//!
++//! One TCP connection is one `usj_port::Session`; a second client while one holds the port gets a
++//! line of text and the connection closed.
++use crate::usj_port::{PortOut, Session, UsjPort};
++use std::io::{Read, Write};
++use std::net::{TcpListener, TcpStream};
++
++pub const IAC: u8 = 255;
++pub const DONT: u8 = 254;
++pub const DO: u8 = 253;
++pub const WONT: u8 = 252;
++pub const WILL: u8 = 251;
++pub const SB: u8 = 250;
++pub const SE: u8 = 240;
++pub const BINARY: u8 = 0;
++pub const SGA: u8 = 3;
++pub const COM_PORT_OPTION: u8 = 44;
++/// Client-to-server command codes (RFC 2217 p.5); the server answers with code + 100.
++pub const SIGNATURE: u8 = 0;
++pub const SET_BAUDRATE: u8 = 1;
++pub const SET_DATASIZE: u8 = 2;
++pub const SET_PARITY: u8 = 3;
++pub const SET_STOPSIZE: u8 = 4;
++pub const SET_CONTROL: u8 = 5;
++pub const NOTIFY_LINESTATE: u8 = 6;
++pub const NOTIFY_MODEMSTATE: u8 = 7;
++pub const SET_LINESTATE_MASK: u8 = 10;
++pub const SET_MODEMSTATE_MASK: u8 = 11;
++pub const PURGE_DATA: u8 = 12;
++
++/// What the connection has to do with a piece of client input, in order.
++#[derive(Clone, Debug, PartialEq, Eq)]
++pub enum Action {
++    /// bytes for the socket (negotiation, answers)
++    Reply(Vec<u8>),
++    /// bytes for the chip
++    Data(Vec<u8>),
++    /// the host's full line state after a SET-CONTROL
++    Lines { dtr: bool, rts: bool },
++}
++
++#[derive(Clone, Copy, Default)]
++struct Opt { us: bool, us_pending: bool, him: bool, him_pending: bool }
++
++#[derive(Clone, Copy, PartialEq, Eq)]
++enum Mode { Data, Iac, Neg(u8), Sub, SubIac }
++
++/// One connection's Telnet and com port state.
++pub struct ComPort {
++    mode: Mode,
++    sub: Vec<u8>,
++    opts: [Opt; 256],
++    pub dtr: bool,
++    pub rts: bool,
++    pub baud: u32,
++    datasize: u8,
++    parity: u8,
++    stopsize: u8,
++    brk: bool,
++    linestate_mask: u8,
++    modemstate_mask: u8,
++}
++
++impl Default for ComPort { fn default() -> Self { Self::new() } }
++
++/// `IAC SB COM-PORT-OPTION code value IAC SE`, with IAC in the value doubled.
++pub fn sb(code: u8, value: &[u8]) -> Vec<u8> {
++    let mut v = vec![IAC, SB, COM_PORT_OPTION, code];
++    v.extend_from_slice(&escape(value));
++    v.extend_from_slice(&[IAC, SE]);
++    v
++}
++
++/// Data byte 255 is sent as IAC IAC (RFC 856 §5).
++pub fn escape(data: &[u8]) -> Vec<u8> {
++    let mut v = Vec::with_capacity(data.len() + data.len() / 64);
++    for &b in data { v.push(b); if b == IAC { v.push(IAC); } }
++    v
++}
++
++impl ComPort {
++    /// Lines start deasserted: the port the machine hands out is at DTR = RTS = 0.
++    pub fn new() -> Self {
++        ComPort { mode: Mode::Data, sub: Vec::new(), opts: [Opt::default(); 256], dtr: false, rts: false, baud: 115_200, datasize: 8, parity: 1, stopsize: 1, brk: false, linestate_mask: 0, modemstate_mask: 255 }
++    }
++
++    /// The server's opening: WILL BINARY, DO BINARY (RFC 856).
++    pub fn greeting(&mut self) -> Vec<u8> {
++        self.opts[BINARY as usize].us_pending = true;
++        self.opts[BINARY as usize].him_pending = true;
++        vec![IAC, WILL, BINARY, IAC, DO, BINARY]
++    }
++
++    fn accepts(opt: u8) -> bool { matches!(opt, BINARY | SGA | COM_PORT_OPTION) }
++
++    /// Client bytes in; what to do, in order.
++    pub fn feed(&mut self, input: &[u8]) -> Vec<Action> {
++        let mut out: Vec<Action> = Vec::new();
++        let mut data: Vec<u8> = Vec::new();
++        let flush = |data: &mut Vec<u8>, out: &mut Vec<Action>| if !data.is_empty() { out.push(Action::Data(std::mem::take(data))); };
++        for &b in input {
++            match self.mode {
++                Mode::Data => if b == IAC { self.mode = Mode::Iac } else { data.push(b) },
++                Mode::Iac => match b {
++                    IAC => { data.push(IAC); self.mode = Mode::Data; }
++                    SB => { self.sub.clear(); self.mode = Mode::Sub; }
++                    WILL | WONT | DO | DONT => self.mode = Mode::Neg(b),
++                    _ => self.mode = Mode::Data,     // NOP, GA, a stray SE ...: nothing to do (RFC 856 §5)
++                },
++                Mode::Neg(cmd) => {
++                    self.mode = Mode::Data;
++                    if let Some(r) = self.negotiate(cmd, b) { flush(&mut data, &mut out); out.push(Action::Reply(r)); }
++                }
++                Mode::Sub => if b == IAC { self.mode = Mode::SubIac } else { self.sub.push(b) },
++                Mode::SubIac => match b {
++                    IAC => { self.sub.push(IAC); self.mode = Mode::Sub; }
++                    _ => {                           // IAC SE ends it; anything else ends a malformed one
++                        self.mode = Mode::Data;
++                        let sub = std::mem::take(&mut self.sub);
++                        flush(&mut data, &mut out);
++                        self.subnegotiation(&sub, &mut out);
++                    }
++                },
++            }
++        }
++        flush(&mut data, &mut out);
++        out
++    }
++
++    /// A DO/DONT/WILL/WONT from the client; the answer, if one is due. A request we made is
++    /// acknowledged by the matching answer and not answered again (no negotiation loops, RFC 854).
++    fn negotiate(&mut self, cmd: u8, opt: u8) -> Option<Vec<u8>> {
++        let o = &mut self.opts[opt as usize];
++        let reply = |c: u8| Some(vec![IAC, c, opt]);
++        match cmd {
++            WILL => {
++                if o.him { None }
++                else if o.him_pending { o.him = true; o.him_pending = false; None }
++                else if Self::accepts(opt) { o.him = true; reply(DO) }
++                else { reply(DONT) }
++            }
++            WONT => {
++                let was_on = o.him && !o.him_pending;
++                o.him = false; o.him_pending = false;
++                if was_on { reply(DONT) } else { None }
++            }
++            DO => {
++                if o.us { None }
++                else if o.us_pending { o.us = true; o.us_pending = false; None }
++                else if Self::accepts(opt) { o.us = true; reply(WILL) }
++                else { reply(WONT) }
++            }
++            _ => {                                   // DONT
++                let was_on = o.us && !o.us_pending;
++                o.us = false; o.us_pending = false;
++                if was_on { reply(WONT) } else { None }
++            }
++        }
++    }
++
++    fn subnegotiation(&mut self, sub: &[u8], out: &mut Vec<Action>) {
++        let [COM_PORT_OPTION, code, value @ ..] = sub else { return };
++        let answer = |out: &mut Vec<Action>, v: &[u8]| out.push(Action::Reply(sb(code + 100, v)));
++        match *code {
++            SIGNATURE => if value.is_empty() { out.push(Action::Reply(sb(SIGNATURE, b"esp32sim USB-Serial/JTAG"))); },
++            SET_BAUDRATE => {
++                if let Ok(v) = <[u8; 4]>::try_from(value.get(..4).unwrap_or(&[])) { let b = u32::from_be_bytes(v); if b != 0 { self.baud = b; } }
++                answer(out, &self.baud.to_be_bytes());
++            }
++            SET_DATASIZE => { if let Some(&v) = value.first() { if (5..=8).contains(&v) { self.datasize = v; } } answer(out, &[self.datasize]); }
++            SET_PARITY => { if let Some(&v) = value.first() { if (1..=5).contains(&v) { self.parity = v; } } answer(out, &[self.parity]); }
++            SET_STOPSIZE => { if let Some(&v) = value.first() { if (1..=3).contains(&v) { self.stopsize = v; } } answer(out, &[self.stopsize]); }
++            SET_CONTROL => {
++                let Some(&v) = value.first() else { return };
++                let lines = |s: &mut Self, out: &mut Vec<Action>| out.push(Action::Lines { dtr: s.dtr, rts: s.rts });
++                let now = match v {
++                    0..=3 | 17..=19 => 1,                               // flow control: none, whatever was asked
++                    4 => if self.brk { 5 } else { 6 },
++                    5 | 6 => { self.brk = v == 5; v }
++                    7 => if self.dtr { 8 } else { 9 },
++                    8 | 9 => { self.dtr = v == 8; lines(self, out); v }
++                    10 => if self.rts { 11 } else { 12 },
++                    11 | 12 => { self.rts = v == 11; lines(self, out); v }
++                    13..=16 => 14,                                      // inbound flow control: none
++                    _ => return,
++                };
++                answer(out, &[now]);
++            }
++            NOTIFY_LINESTATE | NOTIFY_MODEMSTATE => answer(out, &[0]),
++            SET_LINESTATE_MASK => { if let Some(&v) = value.first() { self.linestate_mask = v; } answer(out, &[self.linestate_mask]); }
++            SET_MODEMSTATE_MASK => { if let Some(&v) = value.first() { self.modemstate_mask = v; } answer(out, &[self.modemstate_mask]); }
++            PURGE_DATA => if let Some(&v) = value.first() { if (1..=3).contains(&v) { answer(out, &[v]); } },
++            _ => {}
++        }
++    }
++}
++
++/// Listen on 127.0.0.1:`port` (0 picks one); returns the port. Each connection is served on its own threads.
++pub fn start(port: u16, usj: UsjPort) -> std::io::Result<u16> {
++    let listener = TcpListener::bind(("127.0.0.1", port))?;
++    let port = listener.local_addr()?.port();
++    std::thread::spawn(move || {
++        for stream in listener.incoming().flatten() {
++            let usj = usj.clone();
++            std::thread::spawn(move || serve(stream, usj));
++        }
++    });
++    Ok(port)
++}
++
++/// One client: claim the port, negotiate, then carry bytes both ways until either side closes.
++pub fn serve(mut stream: TcpStream, usj: UsjPort) {
++    let peer = stream.peer_addr().map(|a| a.to_string()).unwrap_or_default();
++    let _ = stream.set_nodelay(true);
++    let Ok(mut out) = stream.try_clone() else { return };
++    let (tx, rx) = std::sync::mpsc::channel::<Vec<u8>>();
++    let sink_tx = tx.clone();
++    let session: Session = match usj.open(Box::new(move |o| match o {
++        PortOut::Data(d) => sink_tx.send(escape(&d)).is_ok(),
++        PortOut::Event(_) => true,     // the page's JSON events; the engine's log line says the same
++    })) {
++        Ok(s) => s,
++        Err(_) => {
++            eprintln!("[emu] rfc2217: {peer} refused: the USB-Serial/JTAG port is held by another client");
++            let _ = stream.write_all(b"esp32sim: the USB-Serial/JTAG port is held by another client\r\n");
++            return;
++        }
++    };
++    eprintln!("[emu] rfc2217: {peer} holds the USB-Serial/JTAG port (session {})", session.id());
++    let writer = std::thread::spawn(move || { for b in rx { if out.write_all(&b).is_err() { break; } } });
++    let mut proto = ComPort::new();
++    let _ = tx.send(proto.greeting());
++    let (mut n_in, mut buf) = (0u64, vec![0u8; 65536]);
++    loop {
++        let n = match stream.read(&mut buf) { Ok(0) | Err(_) => break, Ok(n) => n };
++        for a in proto.feed(&buf[..n]) {
++            match a {
++                Action::Reply(r) => { let _ = tx.send(r); }
++                Action::Data(d) => { n_in += d.len() as u64; session.data(d); }
++                Action::Lines { dtr, rts } => session.lines(dtr, rts),
++            }
++        }
++    }
++    eprintln!("[emu] rfc2217: {peer} closed the port after {n_in} bytes to the chip");
++    session.close();
++    drop(tx);
++    let _ = stream.shutdown(std::net::Shutdown::Both);
++    let _ = writer.join();
++}
++
++#[cfg(test)]
++mod tests;
+diff --git a/esp-soc/src/rfc2217/tests.rs b/esp-soc/src/rfc2217/tests.rs
+new file mode 100644
+index 0000000..5a27a22
+--- /dev/null
++++ b/esp-soc/src/rfc2217/tests.rs
+@@ -0,0 +1,134 @@
++use super::*;
++use crate::usj_port::PortIn;
++use std::time::Duration;
++
++fn replies(actions: &[Action]) -> Vec<u8> {
++    actions.iter().flat_map(|a| match a { Action::Reply(r) => r.clone(), _ => Vec::new() }).collect()
++}
++
++#[test]
++fn data_byte_255_is_doubled_both_ways() {
++    let mut p = ComPort::new();
++    assert_eq!(p.feed(&[0x01, IAC, IAC, 0x80, IAC, IAC, IAC, IAC]), [Action::Data(vec![0x01, 0xff, 0x80, 0xff, 0xff])]);
++    assert_eq!(escape(&[0xff, 0x00, 0xff, 0xff, 0xc0]), [0xff, 0xff, 0x00, 0xff, 0xff, 0xff, 0xff, 0xc0]);
++    // An IAC split across two reads is still one data byte.
++    assert!(p.feed(&[0x10, IAC]) == [Action::Data(vec![0x10])]);
++    assert_eq!(p.feed(&[IAC, 0x11]), [Action::Data(vec![0xff, 0x11])]);
++    // Every byte value survives escape -> feed.
++    let all: Vec<u8> = (0..=255u8).chain((0..=255u8).rev()).collect();
++    let got: Vec<u8> = p.feed(&escape(&all)).into_iter().flat_map(|a| match a { Action::Data(d) => d, _ => panic!("{a:?}") }).collect();
++    assert_eq!(got, all);
++}
++
++#[test]
++fn pyserial_open_negotiates_without_loops() {
++    // pyserial 3.5 Serial.open (rfc2217.py:429-469) sends these requests; the server answers each
++    // once, and the answers to its own greeting need no answer.
++    let mut p = ComPort::new();
++    assert_eq!(p.greeting(), [IAC, WILL, BINARY, IAC, DO, BINARY]);
++    let client = [IAC, DO, 1, IAC, WILL, SGA, IAC, DO, SGA, IAC, DO, COM_PORT_OPTION, IAC, WILL, COM_PORT_OPTION];
++    assert_eq!(replies(&p.feed(&client)), [IAC, WONT, 1, IAC, DO, SGA, IAC, WILL, SGA, IAC, WILL, COM_PORT_OPTION, IAC, DO, COM_PORT_OPTION]);
++    // The client's acceptance of BINARY (answers to the greeting): acknowledged, not answered.
++    assert!(p.feed(&[IAC, DO, BINARY, IAC, WILL, BINARY]).is_empty());
++    // Repeats are not answered again; an unknown option is refused.
++    assert!(p.feed(&[IAC, WILL, COM_PORT_OPTION, IAC, DO, SGA]).is_empty());
++    assert_eq!(replies(&p.feed(&[IAC, WILL, 24])), [IAC, DONT, 24]);
++    // Turning an agreed option off is confirmed once.
++    assert_eq!(replies(&p.feed(&[IAC, DONT, SGA])), [IAC, WONT, SGA]);
++    assert!(p.feed(&[IAC, DONT, SGA]).is_empty());
++}
++
++#[test]
++fn set_control_moves_the_lines_in_order_with_the_data_and_is_acknowledged() {
++    let mut p = ComPort::new();
++    let mut input = vec![0x41];
++    input.extend(sb(SET_CONTROL, &[8]));        // DTR on
++    input.push(0x42);
++    input.extend(sb(SET_CONTROL, &[11]));       // RTS on
++    input.extend(sb(SET_CONTROL, &[9]));        // DTR off: (RTS=1, DTR=0)
++    input.extend(sb(SET_CONTROL, &[7]));        // what is DTR?
++    input.extend(sb(SET_CONTROL, &[12]));       // RTS off
++    input.push(0x43);
++    let a = p.feed(&input);
++    assert_eq!(a, [
++        Action::Data(vec![0x41]),
++        Action::Lines { dtr: true, rts: false }, Action::Reply(sb(105, &[8])),
++        Action::Data(vec![0x42]),
++        Action::Lines { dtr: true, rts: true }, Action::Reply(sb(105, &[11])),
++        Action::Lines { dtr: false, rts: true }, Action::Reply(sb(105, &[9])),
++        Action::Reply(sb(105, &[9])),
++        Action::Lines { dtr: false, rts: false }, Action::Reply(sb(105, &[12])),
++        Action::Data(vec![0x43]),
++    ]);
++    // pyserial's _reconfigure_port (rfc2217.py:499-541): flow control "none" is echoed; a
++    // request for hardware flow control is answered with the setting in use, which pyserial
++    // reads as a refusal (check_answer compares the value).
++    assert_eq!(replies(&p.feed(&sb(SET_CONTROL, &[1]))), sb(105, &[1]));
++    assert_eq!(replies(&p.feed(&sb(SET_CONTROL, &[3]))), sb(105, &[1]));
++    assert_eq!(replies(&p.feed(&sb(SET_CONTROL, &[5]))), sb(105, &[5]), "BREAK recorded");
++    assert_eq!(replies(&p.feed(&sb(SET_CONTROL, &[4]))), sb(105, &[5]));
++}
++
++#[test]
++fn port_settings_echo_and_iac_in_a_value_is_escaped() {
++    let mut p = ComPort::new();
++    // 115200 = 0x0001C200, then a rate whose value holds a 0xFF byte.
++    assert_eq!(replies(&p.feed(&sb(SET_BAUDRATE, &115_200u32.to_be_bytes()))), sb(101, &115_200u32.to_be_bytes()));
++    let odd = 0x0001_ffffu32;
++    let req = sb(SET_BAUDRATE, &odd.to_be_bytes());
++    assert_eq!(req, [IAC, SB, COM_PORT_OPTION, 1, 0, 1, IAC, IAC, IAC, IAC, IAC, SE]);
++    // Split anywhere, the answer is the same.
++    let (a, b) = req.split_at(7);
++    assert!(p.feed(a).is_empty());
++    assert_eq!(replies(&p.feed(b)), sb(101, &odd.to_be_bytes()));
++    assert_eq!(p.baud, odd);
++    assert_eq!(replies(&p.feed(&sb(SET_BAUDRATE, &[0, 0, 0, 0]))), sb(101, &odd.to_be_bytes()), "0 asks for the current rate");
++    assert_eq!(replies(&p.feed(&sb(SET_DATASIZE, &[8]))), sb(102, &[8]));
++    assert_eq!(replies(&p.feed(&sb(SET_PARITY, &[1]))), sb(103, &[1]));
++    assert_eq!(replies(&p.feed(&sb(SET_STOPSIZE, &[1]))), sb(104, &[1]));
++    assert_eq!(replies(&p.feed(&sb(PURGE_DATA, &[1]))), sb(112, &[1]));
++    assert_eq!(replies(&p.feed(&sb(NOTIFY_MODEMSTATE, &[]))), sb(107, &[0]));
++    assert_eq!(replies(&p.feed(&sb(SET_MODEMSTATE_MASK, &[0]))), sb(111, &[0]));
++    assert_eq!(replies(&p.feed(&sb(SIGNATURE, &[]))), sb(SIGNATURE, b"esp32sim USB-Serial/JTAG"));
++}
++
++#[test]
++fn a_socket_client_reaches_the_port_and_a_second_is_refused() {
++    let usj = UsjPort::new();
++    let port = start(0, usj.clone()).unwrap();
++    let mut c = TcpStream::connect(("127.0.0.1", port)).unwrap();
++    c.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
++    let mut greeting = [0u8; 6];
++    c.read_exact(&mut greeting).unwrap();
++    assert_eq!(greeting, [IAC, WILL, BINARY, IAC, DO, BINARY]);
++    // Wait for the claim, then take the Open.
++    let mut ev = Vec::new();
++    for _ in 0..300 { ev.extend(usj.poll()); if !ev.is_empty() { break; } std::thread::sleep(Duration::from_millis(10)); }
++    let PortIn::Open(id) = ev[0] else { panic!("{ev:?}") };
++    let mut second = TcpStream::connect(("127.0.0.1", port)).unwrap();
++    second.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
++    let mut refusal = String::new();
++    second.read_to_string(&mut refusal).unwrap();
++    assert!(refusal.contains("held by another client"), "{refusal}");
++    // Client -> chip: 0xff doubled on the wire arrives once; lines follow in order.
++    let mut out = vec![0xc0, IAC, IAC, 0x00];
++    out.extend(sb(SET_CONTROL, &[11]));
++    c.write_all(&out).unwrap();
++    let mut got = Vec::new();
++    for _ in 0..300 { got.extend(usj.poll()); if got.len() >= 2 { break; } std::thread::sleep(Duration::from_millis(10)); }
++    assert_eq!(got, [PortIn::Data(vec![0xc0, 0xff, 0x00]), PortIn::Lines { dtr: false, rts: true }]);
++    let mut ack = vec![0u8; sb(105, &[11]).len()];
++    c.read_exact(&mut ack).unwrap();
++    assert_eq!(ack, sb(105, &[11]));
++    // Chip -> client: every byte value, 0xff doubled on the wire.
++    let all: Vec<u8> = (0..=255u8).collect();
++    assert!(usj.deliver(id, PortOut::Data(all.clone())));
++    let mut wire = vec![0u8; 257];
++    c.read_exact(&mut wire).unwrap();
++    assert_eq!(wire, escape(&all));
++    drop(c);
++    let mut closed = Vec::new();
++    for _ in 0..300 { closed.extend(usj.poll()); if !closed.is_empty() { break; } std::thread::sleep(Duration::from_millis(10)); }
++    assert_eq!(closed, [PortIn::Close(id)]);
++    assert!(!usj.held());
++}
 diff --git a/esp-soc/src/soc.rs b/esp-soc/src/soc.rs
-index a9052ae..65e6ec8 100644
+index a9052ae..7ef0ab1 100644
 --- a/esp-soc/src/soc.rs
 +++ b/esp-soc/src/soc.rs
 @@ -90,6 +90,10 @@ pub trait SocBus: Bus {
@@ -2108,6 +3149,564 @@ index a9052ae..65e6ec8 100644
      fn gpio_input(&self) -> u64;
      /// Start/stop recording GPIO edges (outputs as they reach the board, inputs as they are set).
      fn observe_gpio(&mut self, on: bool);
+@@ -129,6 +135,13 @@ pub trait SocBus: Bus {
+     fn set_psram_size(&mut self, _bytes: usize) -> Result<(), String> { Err("this chip has no PSRAM".into()) }
+     /// Strapping pins as the ROM reads them.
+     fn set_strap(&mut self, v: u32);
++    /// GPIO_STRAPPING as the ROM will read it, on chips that model the latch.
++    fn strap(&self) -> Option<u32> { None }
++    /// The USB host set the USB-Serial/JTAG's DTR and RTS (`esp_periph::UsjLines`). A chip whose
++    /// model has no line-driven reset only transports data and answers `None`.
++    fn usj_lines(&mut self, _dtr: bool, _rts: bool) -> esp_periph::LineEffect { esp_periph::LineEffect::None }
++    /// The host's line state, where the chip models it.
++    fn usj_line_state(&self) -> Option<esp_periph::UsjLines> { None }
+     /// The reset cause the ROM will report (to reproduce a real board's boot).
+     fn set_reset_cause(&mut self, cause: u32);
+     /// Chip-specific end-of-run statistics (audio, WiFi, crypto, DMA engines).
+diff --git a/esp-soc/src/usj_port.rs b/esp-soc/src/usj_port.rs
+new file mode 100644
+index 0000000..647da36
+--- /dev/null
++++ b/esp-soc/src/usj_port.rs
+@@ -0,0 +1,178 @@
++//! The host end of the USB-Serial/JTAG: one virtual serial port that at most one client holds
++//! open at a time, carried without loss between the machine and its front ends — the board UI's
++//! `/usj` WebSocket (`web.rs`, for the browser flasher) and an RFC 2217 server on a TCP port
++//! (`rfc2217.rs`, for esptool and pyserial).
++//!
++//! A front end claims the port with `UsjPort::open`; while another client holds it the claim fails
++//! with `Busy`, as a second open of an exclusively opened serial device does. The claim is a
++//! `Session`. Its bytes and DTR/RTS changes queue for the machine in the order the client made them,
++//! with no bound and no drop; the machine takes them at its next service point
++//! (`Machine::usj_service`), feeds the bytes to the controller's receive side in 64-byte USB
++//! packets (`UsbSerialJtag::host_input`) and hands the lines to the chip
++//! (`SocBus::usj_lines`). Closing or dropping the session queues `Close`, which the machine
++//! applies as DTR = RTS = 0 — so a chip held in reset (RTS=1, DTR=0) is let go when its host goes
++//! away — before it forgets the session.
++//!
++//! The controller's transmit side goes to the session's sink only between the machine's handling of
++//! that session's `Open` and its `Close`, matched by session id: output of one session never reaches
++//! the next, and while nobody holds the port the output stays on the console as before.
++use std::collections::VecDeque;
++use std::sync::{Arc, Mutex};
++
++/// From the client, in the order it acted.
++#[derive(Clone, Debug, PartialEq, Eq)]
++pub enum PortIn {
++    /// Session `id` holds the port from here on.
++    Open(u64),
++    /// Bytes for the controller's receive side (USB OUT).
++    Data(Vec<u8>),
++    /// The full line state after one change.
++    Lines { dtr: bool, rts: bool },
++    /// Session `id` let the port go.
++    Close(u64),
++}
++
++/// To the client.
++#[derive(Clone, Debug, PartialEq, Eq)]
++pub enum PortOut {
++    /// The controller's transmit side (USB IN), byte for byte.
++    Data(Vec<u8>),
++    /// A JSON event for the page (`hello`, `reset`, `release`); a raw-byte front end may drop it.
++    Event(String),
++}
++
++/// Where a session's output goes. False once the client is gone.
++pub type Sink = Box<dyn FnMut(PortOut) -> bool + Send>;
++
++/// The port is held by another client.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub struct Busy;
++
++struct Inner {
++    /// the session holding the port, 0 for none
++    owner: u64,
++    next_id: u64,
++    inbox: VecDeque<PortIn>,
++    sink: Option<(u64, Sink)>,
++}
++
++/// Cloneable handle; every clone is the same port.
++#[derive(Clone)]
++pub struct UsjPort(Arc<Mutex<Inner>>);
++
++impl Default for UsjPort { fn default() -> Self { Self::new() } }
++
++impl UsjPort {
++    pub fn new() -> Self { UsjPort(Arc::new(Mutex::new(Inner { owner: 0, next_id: 1, inbox: VecDeque::new(), sink: None }))) }
++
++    /// Claim the port; the machine's output for the new session goes to `sink`.
++    pub fn open(&self, sink: Sink) -> Result<Session, Busy> {
++        let mut i = self.0.lock().unwrap();
++        if i.owner != 0 { return Err(Busy); }
++        let id = i.next_id;
++        i.next_id += 1;
++        i.owner = id;
++        i.sink = Some((id, sink));
++        i.inbox.push_back(PortIn::Open(id));
++        Ok(Session { id, port: self.clone(), closed: false })
++    }
++
++    /// Is some client holding the port?
++    pub fn held(&self) -> bool { self.0.lock().unwrap().owner != 0 }
++
++    /// Machine side: everything the clients did since the last call, in order.
++    pub fn poll(&self) -> VecDeque<PortIn> { std::mem::take(&mut self.0.lock().unwrap().inbox) }
++
++    /// Machine side: output for session `id`. False (and dropped) when that session no longer
++    /// holds the port: its client closed it after the output was made.
++    pub fn deliver(&self, id: u64, out: PortOut) -> bool {
++        let mut i = self.0.lock().unwrap();
++        match &mut i.sink {
++            Some((sid, sink)) if *sid == id => {
++                if sink(out) { true } else { i.sink = None; false }
++            }
++            _ => false,
++        }
++    }
++
++    fn push(&self, id: u64, what: PortIn) {
++        let mut i = self.0.lock().unwrap();
++        if i.owner == id { i.inbox.push_back(what); }
++    }
++
++    fn release(&self, id: u64) {
++        let mut i = self.0.lock().unwrap();
++        if i.owner != id { return; }
++        i.owner = 0;
++        if i.sink.as_ref().is_some_and(|(sid, _)| *sid == id) { i.sink = None; }
++        i.inbox.push_back(PortIn::Close(id));
++    }
++}
++
++/// One client's hold on the port. Dropping it closes the port.
++pub struct Session { id: u64, port: UsjPort, closed: bool }
++
++impl Session {
++    pub fn id(&self) -> u64 { self.id }
++    /// Bytes for the controller's receive side.
++    pub fn data(&self, bytes: Vec<u8>) { if !bytes.is_empty() { self.port.push(self.id, PortIn::Data(bytes)); } }
++    /// The line state after one change (DTR, RTS as the host asserts them: true = active).
++    pub fn lines(&self, dtr: bool, rts: bool) { self.port.push(self.id, PortIn::Lines { dtr, rts }); }
++    /// Let the port go; no output reaches this session afterwards.
++    pub fn close(mut self) { self.closed = true; self.port.release(self.id); }
++}
++
++impl Drop for Session {
++    fn drop(&mut self) { if !self.closed { self.port.release(self.id); } }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use std::sync::mpsc;
++
++    fn sink() -> (Sink, mpsc::Receiver<PortOut>) {
++        let (tx, rx) = mpsc::channel();
++        (Box::new(move |o| tx.send(o).is_ok()), rx)
++    }
++
++    #[test]
++    fn one_holder_at_a_time_and_order_is_kept() {
++        let port = UsjPort::new();
++        let (s1, rx1) = sink();
++        let a = port.open(s1).unwrap();
++        let (s2, _rx2) = sink();
++        assert!(matches!(port.open(s2), Err(Busy)), "a second client is refused while the first holds the port");
++        a.data(vec![0xc0, 0xff, 0x00]);
++        a.lines(true, false);
++        a.data(vec![0x80]);
++        let id = a.id();
++        assert_eq!(Vec::from(port.poll()), [PortIn::Open(id), PortIn::Data(vec![0xc0, 0xff, 0x00]), PortIn::Lines { dtr: true, rts: false }, PortIn::Data(vec![0x80])]);
++        assert!(port.deliver(id, PortOut::Data(vec![0xfe, 0xff])));
++        assert_eq!(rx1.try_recv().unwrap(), PortOut::Data(vec![0xfe, 0xff]));
++        drop(a);
++        assert_eq!(Vec::from(port.poll()), [PortIn::Close(id)]);
++        assert!(!port.deliver(id, PortOut::Data(vec![1])), "a closed session gets nothing");
++        let (s3, rx3) = sink();
++        let b = port.open(s3).unwrap();
++        assert_ne!(b.id(), id);
++        assert!(!port.deliver(id, PortOut::Data(vec![2])), "the old session's output never reaches the new one");
++        assert!(rx3.try_recv().is_err());
++        b.close();
++        assert!(!port.held());
++    }
++
++    #[test]
++    fn nothing_is_dropped_under_load() {
++        let port = UsjPort::new();
++        let (s, rx) = sink();
++        let a = port.open(s).unwrap();
++        let id = a.id();
++        let _ = port.poll();
++        for i in 0..10_000u32 { a.data(i.to_le_bytes().to_vec()); assert!(port.deliver(id, PortOut::Data(i.to_be_bytes().to_vec()))); }
++        let got: Vec<u8> = port.poll().into_iter().flat_map(|p| match p { PortIn::Data(d) => d, _ => panic!() }).collect();
++        assert_eq!(got, (0..10_000u32).flat_map(|i| i.to_le_bytes()).collect::<Vec<_>>());
++        let out: Vec<u8> = rx.try_iter().flat_map(|o| match o { PortOut::Data(d) => d, _ => panic!() }).collect();
++        assert_eq!(out, (0..10_000u32).flat_map(|i| i.to_be_bytes()).collect::<Vec<_>>());
++    }
++}
+diff --git a/esp-soc/src/web.rs b/esp-soc/src/web.rs
+index cc629f8..4f4ce1a 100644
+--- a/esp-soc/src/web.rs
++++ b/esp-soc/src/web.rs
+@@ -1,5 +1,37 @@
+ //! Minimal HTTP + WebSocket (RFC 6455) server for the board UI — no external crates.
+-//! Text frames carry JSON; binary frames carry TFT frames (type 1) and audio (type 2).
++//!
++//! Two WebSocket endpoints, chosen by the path of the upgrade request:
++//!
++//! `/ws` (any path but `/usj`): the board UI. Text frames carry JSON both ways; binary frames from
++//! the machine carry pictures (type 1 RGB565, 5 linear light, 4 camera preview) and audio (type 2),
++//! from the page camera pictures (type 3). This is a view: under load a client's live frames may be
++//! dropped (a bounded queue), and at most 4 binary inputs wait at a time.
++//!
++//! `/usj`: the USB-Serial/JTAG as a serial port (`usj_port`), for the browser flasher's
++//! `navigator.serial` stand-in. Binary frames only; the first byte is the type. Nothing on this
++//! endpoint is dropped or bounded in either direction, and bytes are never re-encoded.
++//!
++//! | direction | frame | meaning |
++//! |---|---|---|
++//! | page -> engine | `0x00` + bytes | data for the controller's receive side (USB OUT), cut into 64-byte packets there |
++//! | page -> engine | `0x01` + `b` | the full line state after one change: bit 0 DTR, bit 1 RTS (1 = asserted) |
++//! | page -> engine | `0x02` | open: claim the port for this connection |
++//! | page -> engine | `0x03` | close: let it go (the engine then applies DTR = RTS = 0) |
++//! | engine -> page | `0x00` + bytes | the controller's transmit side (USB IN), exactly as sent |
++//! | engine -> page | `0x10` + JSON (UTF-8) | an event, below |
++//!
++//! Events: `{"t":"hello","proto":1,"chip":"esp32s3","dtr":0,"rts":0,"held":false,"reset":true}`
++//! once the machine has taken this connection's open (the port is open from here on; `reset`
++//! false means line resets are ignored by this run); `{"t":"error","error":"busy"}` when another
++//! client holds the port (the port stays closed for this connection); `{"t":"error","error":
++//! "not open"}` for data or lines before an open; `{"t":"closed"}` after a close;
++//! `{"t":"reset","cause":21,"download":true}` when RTS=1/DTR=0 begins (the chip is reset and held;
++//! `download` is the latched flag); `{"t":"release","strap":3}` when the pair leaves (1,0) (the
++//! chip runs; `strap` is GPIO_STRAPPING as its ROM reads it). Data and line frames are applied
++//! in the order they were sent. Text frames and unknown types are ignored (unknown types are logged
++//! once per connection). Output reaches the connection only while it holds the port; the rest of
++//! the time the USB console goes to `/ws` and stdout as before. Closing the WebSocket closes the port.
++use crate::usj_port::{Busy, PortOut, Session, UsjPort};
+ use std::collections::VecDeque;
+ use std::io::{Read, Write};
+ use std::net::{TcpListener, TcpStream};
+@@ -27,6 +59,8 @@ pub struct Shared {
+     pub incoming_bin: VecDeque<Vec<u8>>,
+     pub web_dir: String,
+     pub hello: Vec<Vec<u8>>,     // frames sent to every new client (board description etc.)
++    /// the port behind `/usj`; without one that path answers 404
++    pub usj: Option<UsjPort>,
+ }
+ 
+ #[derive(Clone)]
+@@ -78,7 +112,7 @@ impl WebServer {
+     pub fn start(port: u16, web_dir: String) -> std::io::Result<WebServer> {
+         let listener = TcpListener::bind(("127.0.0.1", port))?;
+         let port = listener.local_addr()?.port();
+-        let shared = Arc::new(Mutex::new(Shared { queue: false, outbox: VecDeque::new(), clients: Vec::new(), incoming: VecDeque::new(), incoming_bin: VecDeque::new(), web_dir, hello: Vec::new() }));
++        let shared = Arc::new(Mutex::new(Shared { queue: false, outbox: VecDeque::new(), clients: Vec::new(), incoming: VecDeque::new(), incoming_bin: VecDeque::new(), web_dir, hello: Vec::new(), usj: None }));
+         let s2 = shared.clone();
+         std::thread::spawn(move || {
+             for stream in listener.incoming().flatten() {
+@@ -91,7 +125,7 @@ impl WebServer {
+     /// A server with no sockets: everything sent is queued for whoever drains `take_outbox`
+     /// (the wasm glue), and input arrives through `push_incoming*`. Same protocol, no transport.
+     pub fn queued() -> WebServer {
+-        WebServer { shared: Arc::new(Mutex::new(Shared { queue: true, outbox: VecDeque::new(), clients: Vec::new(), incoming: VecDeque::new(), incoming_bin: VecDeque::new(), web_dir: String::new(), hello: Vec::new() })), port: 0 }
++        WebServer { shared: Arc::new(Mutex::new(Shared { queue: true, outbox: VecDeque::new(), clients: Vec::new(), incoming: VecDeque::new(), incoming_bin: VecDeque::new(), web_dir: String::new(), hello: Vec::new(), usj: None })), port: 0 }
+     }
+     pub fn send_text(&self, s: &str) { self.emit(1, s.as_bytes()); }
+     pub fn send_binary(&self, d: &[u8]) { self.emit(2, d); }
+@@ -114,6 +148,8 @@ impl WebServer {
+     pub fn poll_incoming(&self) -> Vec<String> { let mut sh = self.shared.lock().unwrap(); sh.incoming.drain(..).collect() }
+     pub fn poll_incoming_bin(&self) -> Vec<Vec<u8>> { let mut sh = self.shared.lock().unwrap(); sh.incoming_bin.drain(..).collect() }
+     pub fn clients(&self) -> usize { self.shared.lock().unwrap().clients.len() }
++    /// Serve `port` at `/usj`.
++    pub fn attach_usj(&self, port: UsjPort) { self.shared.lock().unwrap().usj = Some(port); }
+ }
+ 
+ /// The value of HTTP header `name` in a request head. Header names are case-insensitive
+@@ -192,10 +228,17 @@ fn handle_client(mut stream: TcpStream, shared: Arc<Mutex<Shared>>) {
+         let _ = http_response(&mut stream, "403 Forbidden", "text/plain", b"foreign Origin denied");
+         return;
+     }
++    let path = text.split_whitespace().nth(1).unwrap_or("/").split('?').next().unwrap_or("/");
++    let usj = if path == "/usj" {
++        let port = shared.lock().unwrap().usj.clone();
++        let Some(port) = port else { let _ = http_response(&mut stream, "404 Not Found", "text/plain", b"no USB-Serial/JTAG port in this run"); return; };
++        Some(port)
++    } else { None };
+     let Ok(mut out) = stream.try_clone() else { return; };
+     let accept = b64(&sha1(format!("{}258EAFA5-E914-47DA-95CA-C5AB0DC85B11", key).as_bytes()));
+     if write!(stream, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n\r\n").is_err() { return; }
+     let _ = stream.set_nodelay(true);
++    if let Some(port) = usj { return handle_usj(stream, out, req[head_end..].to_vec(), port); }
+     let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(256);
+     let hello = {
+         let mut sh = shared.lock().unwrap();
+@@ -210,28 +253,97 @@ fn handle_client(mut stream: TcpStream, shared: Arc<Mutex<Shared>>) {
+     });
+     // read loop
+     // A TCP read may have included the first frame after the HTTP head.
+-    let mut input = req[head_end..].chain(&mut stream);
++    read_frames(req[head_end..].chain(&mut stream), |op, data| {
++        match op {
++            9 => return tx.send(frame(10, &data)).is_ok(),
++            1 => { shared.lock().unwrap().incoming.push_back(String::from_utf8_lossy(&data).to_string()); }
++            2 => { let mut sh = shared.lock().unwrap(); if sh.incoming_bin.len() < 4 { sh.incoming_bin.push_back(data); } }
++            _ => {}
++        }
++        true
++    });
++    let mut sh = shared.lock().unwrap();
++    let me = stream.peer_addr().ok();
++    sh.clients.retain(|c| c.peer != me);
++}
++
++/// Read client frames (RFC 6455 §5.2) until the connection ends, a close frame (opcode 8)
++/// arrives or `on(opcode, payload)` returns false. Payloads are unmasked; a fragmented message
++/// (§5.4) is delivered once, whole, with its first frame's opcode, and control frames may come
++/// between its fragments. A control frame that is fragmented or over 125 bytes, a frame or
++/// message over 8 MiB, or a continuation with nothing to continue ends the connection.
++fn read_frames(mut input: impl Read, mut on: impl FnMut(u8, Vec<u8>) -> bool) -> Option<u8> {
++    const MAX: u64 = 8 << 20;
+     let mut read_exact = |n: usize| -> Option<Vec<u8>> { let mut v = vec![0u8; n]; input.read_exact(&mut v).ok()?; Some(v) };
++    let mut partial: Option<(u8, Vec<u8>)> = None;
+     while let Some(h) = read_exact(2) {
+-        let op = h[0] & 0xf; let masked = h[1] & 0x80 != 0; let mut len = (h[1] & 0x7f) as u64;
+-        if op >= 8 && (h[0] & 0x80 == 0 || len > 125) { break; }
++        let fin = h[0] & 0x80 != 0; let op = h[0] & 0xf; let masked = h[1] & 0x80 != 0; let mut len = (h[1] & 0x7f) as u64;
++        if op >= 8 && (!fin || len > 125) { break; }
+         if len == 126 { let Some(e) = read_exact(2) else { break }; len = u16::from_be_bytes([e[0], e[1]]) as u64; }
+         else if len == 127 { let Some(e) = read_exact(8) else { break }; len = u64::from_be_bytes(e.try_into().unwrap()); }
+         let mask = if masked { let Some(m) = read_exact(4) else { break }; m } else { vec![0; 4] };
+-        if len > 8 << 20 { break; }
++        if len > MAX { break; }
+         let Some(mut data) = read_exact(len as usize) else { break };
+         if masked { for (i, b) in data.iter_mut().enumerate() { *b ^= mask[i & 3]; } }
++        if op == 8 { return Some(8); }
++        let (op, data) = match (op, partial.take()) {
++            (0, Some((first, mut acc))) => {
++                if acc.len() as u64 + len > MAX { break; }
++                acc.extend_from_slice(&data);
++                if !fin { partial = Some((first, acc)); continue; }
++                (first, acc)
++            }
++            (0, None) => break,
++            (op, held) if op < 8 && !fin => { if held.is_some() { break; } partial = Some((op, data)); continue; }
++            (op, held) => { partial = held; (op, data) }
++        };
++        if !on(op, data) { break; }
++    }
++    None
++}
++
++/// `/usj`: one connection of the serial-port protocol in the module header.
++fn handle_usj(stream: TcpStream, mut out: TcpStream, early: Vec<u8>, port: UsjPort) {
++    let (tx, rx) = std::sync::mpsc::channel::<Vec<u8>>();
++    let writer = std::thread::spawn(move || { for f in rx { if out.write_all(&f).is_err() { break; } } });
++    let event = |tx: &std::sync::mpsc::Sender<Vec<u8>>, json: &str| { let mut v = vec![0x10]; v.extend_from_slice(json.as_bytes()); let _ = tx.send(frame(2, &v)); };
++    let mut session: Option<Session> = None;
++    let mut unknown_logged = false;
++    let peer = stream.peer_addr().map(|a| a.to_string()).unwrap_or_default();
++    let closing = read_frames(early.as_slice().chain(&stream), |op, data| {
+         match op {
+-            8 => break,
+-            9 => { if tx.send(frame(10, &data)).is_err() { break; } }
+-            1 => { shared.lock().unwrap().incoming.push_back(String::from_utf8_lossy(&data).to_string()); }
+-            2 => { let mut sh = shared.lock().unwrap(); if sh.incoming_bin.len() < 4 { sh.incoming_bin.push_back(data); } }
++            9 => return tx.send(frame(10, &data)).is_ok(),
++            2 => match (data.first().copied(), &session) {
++                (Some(0x00), Some(s)) => s.data(data[1..].to_vec()),
++                (Some(0x01), Some(s)) => if let Some(&b) = data.get(1) { s.lines(b & 1 != 0, b & 2 != 0) },
++                (Some(0x00 | 0x01), None) => event(&tx, "{\"t\":\"error\",\"error\":\"not open\"}"),
++                (Some(0x02), Some(_)) => {}
++                (Some(0x02), None) => {
++                    let sink_tx = tx.clone();
++                    let sink = Box::new(move |o: PortOut| {
++                        let (kind, body) = match o { PortOut::Data(d) => (0x00u8, d), PortOut::Event(j) => (0x10, j.into_bytes()) };
++                        let mut v = Vec::with_capacity(body.len() + 1);
++                        v.push(kind);
++                        v.extend_from_slice(&body);
++                        sink_tx.send(frame(2, &v)).is_ok()
++                    });
++                    match port.open(sink) {
++                        Ok(s) => { eprintln!("[emu] usj: {peer} holds the USB-Serial/JTAG port (session {})", s.id()); session = Some(s); }
++                        Err(Busy) => event(&tx, "{\"t\":\"error\",\"error\":\"busy\"}"),
++                    }
++                }
++                (Some(0x03), _) => { if let Some(s) = session.take() { eprintln!("[emu] usj: session {} closed", s.id()); s.close(); } event(&tx, "{\"t\":\"closed\"}"); }
++                (t, _) => if !std::mem::replace(&mut unknown_logged, true) { eprintln!("[emu] usj: {peer}: unknown frame type {:?} ignored", t); },
++            },
+             _ => {}
+         }
+-    }
+-    let mut sh = shared.lock().unwrap();
+-    let me = stream.peer_addr().ok();
+-    sh.clients.retain(|c| c.peer != me);
++        true
++    });
++    if let Some(s) = session.take() { eprintln!("[emu] usj: {peer} went away; session {} closed", s.id()); s.close(); }
++    if closing.is_some() { let _ = tx.send(frame(8, &[0x03, 0xe8])); }    // answer a close with 1000 (RFC 6455 §5.5.1)
++    drop(tx);
++    let _ = writer.join();
++    let _ = stream.shutdown(std::net::Shutdown::Both);
+ }
+ 
+ /// Tiny JSON helpers for the few message shapes the UI sends.
+diff --git a/esp-soc/src/web/tests.rs b/esp-soc/src/web/tests.rs
+index 9e1edb7..11fb8e7 100644
+--- a/esp-soc/src/web/tests.rs
++++ b/esp-soc/src/web/tests.rs
+@@ -230,3 +230,148 @@ fn websocket_origin_accepts_matching_forwarded_loopback_host() {
+     }
+     assert!(!local_origin("GET /ws HTTP/1.1\r\nHost: localhost:9000\r\nOrigin: http://localhost:9001\r\n\r\n", 8080));
+ }
++
++// ---------------------------------------------------------------- /usj
++
++use crate::usj_port::{PortIn, PortOut, UsjPort};
++
++impl Connection {
++    fn upgrade(&mut self, path: &str) -> String {
++        write!(self.socket, "GET {path} HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n").unwrap();
++        self.head()
++    }
++    /// One server frame: (opcode, payload); the server never masks.
++    fn read_frame(&mut self) -> (u8, Vec<u8>) {
++        let mut h = [0u8; 2];
++        self.socket.read_exact(&mut h).unwrap();
++        let mut len = (h[1] & 0x7f) as usize;
++        if len == 126 { let mut e = [0u8; 2]; self.socket.read_exact(&mut e).unwrap(); len = u16::from_be_bytes(e) as usize; }
++        else if len == 127 { let mut e = [0u8; 8]; self.socket.read_exact(&mut e).unwrap(); len = u64::from_be_bytes(e) as usize; }
++        let mut d = vec![0u8; len];
++        self.socket.read_exact(&mut d).unwrap();
++        (h[0] & 0x0f, d)
++    }
++}
++
++/// A client frame of any length, masked (RFC 6455 §5.3); `fin` false for a fragment.
++fn client_frame(opcode: u8, payload: &[u8], fin: bool) -> Vec<u8> {
++    let mask = [0x9a, 0x0b, 0xfe, 0x71];
++    let mut b = vec![(if fin { 0x80 } else { 0 }) | opcode];
++    let n = payload.len();
++    if n < 126 { b.push(0x80 | n as u8); } else if n < 65536 { b.push(0x80 | 126); b.extend_from_slice(&(n as u16).to_be_bytes()); } else { b.push(0x80 | 127); b.extend_from_slice(&(n as u64).to_be_bytes()); }
++    b.extend_from_slice(&mask);
++    b.extend(payload.iter().enumerate().map(|(i, x)| x ^ mask[i & 3]));
++    b
++}
++
++fn wait_for(port: &UsjPort, n: usize) -> Vec<PortIn> {
++    let mut got = Vec::new();
++    for _ in 0..500 { got.extend(port.poll()); if got.len() >= n { break; } std::thread::sleep(Duration::from_millis(10)); }
++    got
++}
++
++fn usj_web() -> (WebServer, UsjPort) {
++    let web = socket_web();
++    let port = UsjPort::new();
++    web.attach_usj(port.clone());
++    (web, port)
++}
++
++#[test]
++fn usj_is_lossless_both_ways_for_every_byte_value() {
++    let (web, port) = usj_web();
++    let mut c = Connection::new(&web);
++    assert!(c.upgrade("/usj").starts_with("HTTP/1.1 101"));
++    c.socket.write_all(&client_frame(2, &[0x02], true)).unwrap();
++    let open = wait_for(&port, 1);
++    let PortIn::Open(id) = open[0] else { panic!("{open:?}") };
++    // Host -> chip: 10,000 frames, every byte value, including 0x80..0xff that UTF-8 would mangle.
++    let mut want = Vec::new();
++    let mut wire = Vec::new();
++    for i in 0..10_000u32 {
++        let chunk: Vec<u8> = (0..(i % 70) as u8 + 1).map(|k| (i as u8).wrapping_mul(31).wrapping_add(k.wrapping_mul(97))).collect();
++        want.extend_from_slice(&chunk);
++        let mut f = vec![0x00];
++        f.extend_from_slice(&chunk);
++        wire.extend(client_frame(2, &f, true));
++    }
++    c.socket.write_all(&wire).unwrap();
++    let mut got = Vec::new();
++    for _ in 0..500 {
++        for e in port.poll() { match e { PortIn::Data(d) => got.extend(d), other => panic!("{other:?}") } }
++        if got.len() >= want.len() { break; }
++        std::thread::sleep(Duration::from_millis(10));
++    }
++    assert_eq!(got.len(), want.len(), "nothing dropped");
++    assert_eq!(got, want);
++    // Chip -> host: 10,000 outputs, raw.
++    for i in 0..10_000u32 { assert!(port.deliver(id, PortOut::Data(vec![0xff, i as u8, 0x80, (i >> 8) as u8]))); }
++    for i in 0..10_000u32 {
++        let (op, d) = c.read_frame();
++        assert_eq!((op, d), (2, vec![0x00, 0xff, i as u8, 0x80, (i >> 8) as u8]), "frame {i}");
++    }
++    assert!(port.deliver(id, PortOut::Event("{\"t\":\"hello\"}".into())));
++    assert_eq!(c.read_frame(), (2, b"\x10{\"t\":\"hello\"}".to_vec()));
++}
++
++#[test]
++fn usj_lines_keep_their_place_among_the_bytes_and_close_releases() {
++    let (web, port) = usj_web();
++    let mut c = Connection::new(&web);
++    assert!(c.upgrade("/usj?x=1").starts_with("HTTP/1.1 101"));
++    c.socket.write_all(&client_frame(2, &[0x00, 0x41], true)).unwrap();    // data before any open
++    assert_eq!(c.read_frame(), (2, b"\x10{\"t\":\"error\",\"error\":\"not open\"}".to_vec()));
++    let mut wire = client_frame(2, &[0x02], true);
++    wire.extend(client_frame(2, &[0x00, 0xc0], true));
++    wire.extend(client_frame(2, &[0x01, 0x01], true));                     // DTR
++    wire.extend(client_frame(2, &[0x00, 0xc1], true));
++    wire.extend(client_frame(2, &[0x01, 0x02], true));                     // RTS
++    // A fragmented data message arrives once, whole, with a ping between its fragments.
++    wire.extend(client_frame(2, &[0x00, 0x01], false));
++    wire.extend(client_frame(9, b"p", true));
++    wire.extend(client_frame(0, &[0x02, 0x03], true));
++    wire.extend(client_frame(1, b"text is ignored here", true));
++    wire.extend(client_frame(2, &[0x7e], true));                            // unknown type: logged, ignored
++    wire.extend(client_frame(2, &[0x03], true));
++    c.socket.write_all(&wire).unwrap();
++    let ev = wait_for(&port, 7);
++    let PortIn::Open(id) = ev[0] else { panic!("{ev:?}") };
++    assert_eq!(ev[1..], [PortIn::Data(vec![0xc0]), PortIn::Lines { dtr: true, rts: false }, PortIn::Data(vec![0xc1]),
++                         PortIn::Lines { dtr: false, rts: true }, PortIn::Data(vec![0x01, 0x02, 0x03]), PortIn::Close(id)]);
++    assert_eq!(c.read_frame(), (10, b"p".to_vec()));
++    assert_eq!(c.read_frame(), (2, b"\x10{\"t\":\"closed\"}".to_vec()));
++    assert!(!port.held());
++    // A close frame is answered with 1000.
++    c.socket.write_all(&client_frame(8, &[0x03, 0xe8], true)).unwrap();
++    assert_eq!(c.read_frame(), (8, vec![0x03, 0xe8]));
++}
++
++#[test]
++fn usj_second_client_is_refused_and_takes_over_after_the_first_leaves() {
++    let (web, port) = usj_web();
++    let mut a = Connection::new(&web);
++    assert!(a.upgrade("/usj").starts_with("HTTP/1.1 101"));
++    a.socket.write_all(&client_frame(2, &[0x02], true)).unwrap();
++    let ev = wait_for(&port, 1);
++    let PortIn::Open(first) = ev[0] else { panic!("{ev:?}") };
++    let mut b = Connection::new(&web);
++    assert!(b.upgrade("/usj").starts_with("HTTP/1.1 101"));
++    b.socket.write_all(&client_frame(2, &[0x02], true)).unwrap();
++    assert_eq!(b.read_frame(), (2, b"\x10{\"t\":\"error\",\"error\":\"busy\"}".to_vec()));
++    drop(a);                                                                 // the first client goes away
++    assert_eq!(wait_for(&port, 1), [PortIn::Close(first)]);
++    b.socket.write_all(&client_frame(2, &[0x02], true)).unwrap();
++    let ev = wait_for(&port, 1);
++    assert!(matches!(ev[0], PortIn::Open(id) if id != first), "{ev:?}");
++}
++
++#[test]
++fn usj_needs_a_port_and_a_local_origin() {
++    let web = socket_web();
++    let mut c = Connection::new(&web);
++    assert!(c.upgrade("/usj").starts_with("HTTP/1.1 404 Not Found\r\n"), "no port in this run");
++    let (web, _port) = usj_web();
++    let mut c = Connection::new(&web);
++    write!(c.socket, "GET /usj HTTP/1.1\r\nHost: localhost\r\nOrigin: https://nickoscope.github.io\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: abc==\r\n\r\n").unwrap();
++    assert!(c.head().starts_with("HTTP/1.1 403 Forbidden\r\n"), "a public page may not reach the port");
++}
 diff --git a/esp-soc/src/wifi.rs b/esp-soc/src/wifi.rs
 index c814c2a..ac992fb 100644
 --- a/esp-soc/src/wifi.rs
@@ -3730,7 +5329,7 @@ index 0000000..be56b45
 +    assert!(p.report().contains("knob 1 clicks"));
 +}
 diff --git a/esp32s3/src/bus.rs b/esp32s3/src/bus.rs
-index 5cfe19e..8fdc8af 100644
+index 5cfe19e..82f35cc 100644
 --- a/esp32s3/src/bus.rs
 +++ b/esp32s3/src/bus.rs
 @@ -48,6 +48,8 @@ pub struct SocBus {
@@ -3759,7 +5358,34 @@ index 5cfe19e..8fdc8af 100644
      pub debug: esp_soc::DebugFlags,
      /// Software TLB: the last resolved mapping per 64 KiB page, so loads, stores and fetches skip
      /// the address-range walk and the flash MMU. Cleared whenever the MMU changes.
-@@ -136,6 +145,18 @@ fn tlb_idx(addr: u32) -> usize { xtensa_lx7::bus::tlb_index(addr) }
+@@ -95,8 +104,26 @@ pub struct SocBus {
+     approximate_cache_yield_miss: bool,
+     cache_resource: CacheResource,
+     pub(crate) fetch_cache: xtensa_lx7::state::SharedFetchCache,
++    /// The USB host's DTR/RTS on the USB-Serial/JTAG (ESP32-S3 TRM v1.8 Table 33.3-2): host-side
++    /// state with no guest register, kept across the peripheral re-creation of a chip reset.
++    pub usj: esp_periph::UsjLines,
++    /// GPIO_STRAPPING as the last Chip Reset latched it: `--strap`, with the board's GPIO0/GPIO46
++    /// at a power-on reset. A USB download reset clears bits [3:2] of it for one boot (`reboot`).
++    pub strap_latched: u32,
++    /// 64 KiB pages of the reserved data window already reported (`RESERVED_DATA`).
++    reserved_reads: std::collections::BTreeSet<u32>,
+ }
+ 
++/// Reads here answer 0 instead of faulting. The S3's data bus maps internal ROM 1 up to
++/// 0x3FF1_FFFF (TRM v1.8 Table 4.3-1, p.403) and no table of chapter 4 maps the rest of this
++/// window; esptool-js 0.6.0 reads the ESP32's eFuse words 3 and 5 (0x3FF5A00C, 0x3FF5A014) and
++/// APB_CTL_DATE (0x3FF6607C) from an ESP32-S3 through the ROM's READ_REG, because its S3 target
++/// does not override `getChipRevision` (targets/esp32.ts:79-99, esploader.ts:719, 1242, 1307).
++/// The page flashed a real panel with those reads in it (2026-09-21), so silicon does not stop
++/// the ROM there; which value it returns is not verified — 0 gives "revision 0". Writes and
++/// instruction fetches here still fault.
++pub const RESERVED_DATA: std::ops::RangeInclusive<u32> = 0x3FF2_0000..=0x3FFF_FFFF;
++
+ /// One shared external resource, occupied only by priced fills/writebacks.
+ /// Requests within a compiled batch are serialized at its supplied start time.
+ #[derive(Default)]
+@@ -136,6 +163,18 @@ fn tlb_idx(addr: u32) -> usize { xtensa_lx7::bus::tlb_index(addr) }
  static BUS_EPOCHS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
  
  impl SocBus {
@@ -3778,7 +5404,7 @@ index 5cfe19e..8fdc8af 100644
      pub(crate) fn cancel_spi2_timing(&mut self) { self.spi2_scheduled = None; }
  
      pub fn new(flash_size: usize, psram_size: usize, mac: [u8; 6]) -> Self { Self::with_sizes(flash_size, psram_size, mac) }
-@@ -143,7 +164,7 @@ impl SocBus {
+@@ -143,15 +182,17 @@ impl SocBus {
          let bus_uninit = SocBus {
              sram: vec![0; SRAM_SIZE], irom: vec![0; (IROM_MASK_HIGH - IROM_MASK_LOW) as usize], drom: vec![0; (DROM_MASK_HIGH - DROM_MASK_LOW) as usize],
              rtc_fast: vec![0; 8192], rtc_slow: vec![0; 8192], flash: vec![0xff; flash_size], psram: vec![0; psram_size],
@@ -3787,7 +5413,17 @@ index 5cfe19e..8fdc8af 100644
              spi2_timing: false, spi2_scheduled: None,
              tlb: vec![TlbEntry::EMPTY; TLB_SIZE], page_ver: Vec::new(), ver_base: [0; 7], flash_epoch: BUS_EPOCHS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) << 32, code_blk: Vec::new(), tick_pending: 0, tick_budget: 0, defer_mmio: false, mmio_deferred: false, vq_violations: 0,
              approximate_cache: None, approximate_cache_pending: 0, approximate_cache_fast_internal: false, approximate_cache_inline: false,
-@@ -499,7 +520,10 @@ impl SocBus {
+             approximate_cache_yield_miss: false,
+             cache_resource: CacheResource::default(),
+             fetch_cache: xtensa_lx7::state::SharedFetchCache::default(),
++            usj: Default::default(), strap_latched: 0, reserved_reads: Default::default(),
+         };
+         let mut b = bus_uninit;
++        b.strap_latched = b.periph.gpio.strap;
+         b.rebuild_page_table();
+         b
+     }
+@@ -499,7 +540,10 @@ impl SocBus {
          if self.periph.spi_exec {
              self.periph.spi_exec = false;
              self.periph.spi1.execute(&mut self.flash, &mut self.psram);
@@ -3799,7 +5435,7 @@ index 5cfe19e..8fdc8af 100644
          }
      }
  
-@@ -541,12 +565,12 @@ impl SocBus {
+@@ -541,12 +585,12 @@ impl SocBus {
          for e in eth_in { if let Some(f) = self.periph.wifi.ap.as_mut().unwrap().data_from_ds(&e) { due.push(crate::wifi::AirFrame { at_us: now_us, frame: f }); } }
          if due.is_empty() { return; }
          // management responses (auth, assoc, probe) go before beacons: a connect exchange must not be
@@ -3815,7 +5451,46 @@ index 5cfe19e..8fdc8af 100644
      }
  
      /// Write one received frame into the next RX descriptor (rx_ctrl header + frame + FCS) and raise the RX event.
-@@ -767,6 +791,8 @@ impl SocBus {
+@@ -612,9 +656,19 @@ impl CacheResource {
+ 
+ impl SocBus {
+     // Const specialization keeps origin checks and CPU pricing out of DMA/host accessors.
++    /// A read nothing maps: 0 in `RESERVED_DATA`, reported once per 64 KiB page; a fault elsewhere.
++    #[cold]
++    fn unmapped_read(&mut self, addr: u32) -> Result<(), Fault> {
++        if RESERVED_DATA.contains(&addr) {
++            if self.reserved_reads.insert(addr >> 16) { eprintln!("[emu] read of reserved {:#010x} -> 0 (esptool-js reads ESP32 revision registers here)", addr); }
++            return Ok(());
++        }
++        self.last_fault = Some((addr, false));
++        Err(Fault::Unmapped)
++    }
+     fn read8_access<const CPU: bool>(&mut self, addr: u32) -> Result<u8, Fault> {
+         if Self::is_periph(addr) { self.last_fault = Some((addr, false)); return Err(Fault::Prohibited); }
+-        let Some(e) = self.lookup(addr) else { self.last_fault = Some((addr, false)); return Err(Fault::Unmapped) };
++        let Some(e) = self.lookup(addr) else { return self.unmapped_read(addr).map(|()| 0) };
+         if CPU { self.price_cached_data(e, addr, 1, false); }
+         Ok(self.buf(e.src as u8)[e.off as usize + (addr - e.lo) as usize])
+     }
+@@ -623,7 +677,7 @@ impl SocBus {
+         match self.lookup(addr) {
+             Some(e) if e.hi - addr >= 2 => { if CPU { self.price_cached_data(e, addr, 2, false); } let o = e.off as usize + (addr - e.lo) as usize; Ok(u16::from_le_bytes(self.buf(e.src as u8)[o..o + 2].try_into().unwrap())) }
+             Some(_) => Ok(u16::from_le_bytes([self.read8_access::<CPU>(addr)?, self.read8_access::<CPU>(addr + 1)?])),       // straddles a page
+-            None => { self.last_fault = Some((addr, false)); Err(Fault::Unmapped) }
++            None => self.unmapped_read(addr).map(|()| 0),
+         }
+     }
+     fn read32_access<const CPU: bool>(&mut self, addr: u32) -> Result<u32, Fault> {
+@@ -634,7 +688,7 @@ impl SocBus {
+         match self.lookup(addr) {
+             Some(e) if e.hi - addr >= 4 => { if CPU { self.price_cached_data(e, addr, 4, false); } let o = e.off as usize + (addr - e.lo) as usize; Ok(u32::from_le_bytes(self.buf(e.src as u8)[o..o + 4].try_into().unwrap())) }
+             Some(_) => Ok(u32::from_le_bytes([self.read8_access::<CPU>(addr)?, self.read8_access::<CPU>(addr + 1)?, self.read8_access::<CPU>(addr + 2)?, self.read8_access::<CPU>(addr + 3)?])),
+-            None => { self.last_fault = Some((addr, false)); Err(Fault::Unmapped) }
++            None => self.unmapped_read(addr).map(|()| 0),
+         }
+     }
+     fn write8_access<const CPU: bool>(&mut self, addr: u32, v: u8) -> Result<(), Fault> {
+@@ -767,6 +821,8 @@ impl SocBus {
          let p = &self.periph;
          p.i2s0.tx_running() || p.i2s1.tx_running()
              || p.lcd_cam.running || p.lcd_cam.lcd_running()
@@ -3824,7 +5499,7 @@ index 5cfe19e..8fdc8af 100644
              // EX157: a running GDMA IN channel is passive. Its only producers are the camera
              // (lcd_cam.running), AES (dma_pending) and mem-to-mem (needs the OUT side running),
              // all listed here, so an armed-but-idle receive channel does not hold the cadence.
-@@ -813,6 +839,7 @@ impl SocBus {
+@@ -813,6 +869,7 @@ impl SocBus {
          self.board.advance_to(self.cycles);
          for edge in self.board.take_edges() {
              if let Some(events) = &mut self.gpio_events { events.push((edge.cycle, edge.pin, edge.level)); }
@@ -3832,7 +5507,7 @@ index 5cfe19e..8fdc8af 100644
              let old_input = self.periph.gpio.input;
              self.periph.gpio.set_input(edge.pin, edge.level);
              // set_input reports latched edges only. Level IRQs can rise or fall
-@@ -842,7 +869,7 @@ impl SocBus {
+@@ -842,7 +899,7 @@ impl SocBus {
                  let mut replies = Vec::new();
                  for e in out { replies.extend(net.handle(&e, now_us)); }
                  replies.extend(net.poll(now_us));
@@ -4864,7 +6539,7 @@ index 29f538d..d7de311 100644
          match block {
              0x00 => "UART0", 0x02 => "SPI1", 0x03 => "SPI0", 0x04 => "GPIO", 0x05 => "FE2", 0x06 => "FE", 0x07 => "EFUSE", 0x08 => "RTC", 0x09 => "IO_MUX",
 diff --git a/esp32s3/src/soc.rs b/esp32s3/src/soc.rs
-index 8d8fc1a..1f8f0bb 100644
+index 8d8fc1a..573a9b1 100644
 --- a/esp32s3/src/soc.rs
 +++ b/esp32s3/src/soc.rs
 @@ -68,6 +68,12 @@ impl esp_soc::SocBus for SocBus {
@@ -4889,7 +6564,14 @@ index 8d8fc1a..1f8f0bb 100644
      /// Copy IRAM/DRAM segments, map IROM/DROM through the MMU, as the 2nd-stage bootloader would.
      fn boot_app(&mut self, app_off: usize) -> Result<u32, String> {
          let image = self.flash.get(app_off..).ok_or("app offset beyond flash")?;
-@@ -125,6 +133,29 @@ impl esp_soc::SocBus for SocBus {
+@@ -118,13 +126,57 @@ impl esp_soc::SocBus for SocBus {
+         let old = std::mem::replace(&mut self.periph, periph::Peripherals::new(mac));
+         let p = &mut self.periph;
+         p.efuse = old.efuse;
+-        p.gpio.strap = old.gpio.strap;
+         p.misc.log_unknown = old.misc.log_unknown; p.spi1.log = old.spi1.log;
+         p.spi0.jedec = old.spi0.jedec; p.spi1.jedec = old.spi1.jedec;   // the flash chip is not reset: its ID keeps the --flash-mb capacity
+         p.rtc.ram = old.rtc.ram; p.rtc.slow_ticks = old.rtc.slow_ticks;
          p.rtc.ram.write(0x38, cause | (cause << 6));
          p.rtc.ram.write(0x98, 0);                       // watchdog disarmed by the reset; the ROM re-arms it
          p.i2s0.pcm = old.i2s0.pcm; p.i2s0.frames_out = old.i2s0.frames_out; p.i2s1.pcm = old.i2s1.pcm; p.i2s1.frames_out = old.i2s1.frames_out;   // keep the captured audio continuous
@@ -4910,16 +6592,50 @@ index 8d8fc1a..1f8f0bb 100644
 +        // the boot-mode bits the board drives change: GPIO_STRAPPING[3] = GPIO0, [2] = GPIO46 (IDF
 +        // 5.5.4 soc/esp32s3/include/soc/boot_mode.h: IS_1XXX SPI boot, IS_00XX joint download).
 +        // The other bits stay `--strap`, and a board without input levels keeps them all.
-+        if cause == esp_periph::RST_POWERON {
-+            for (pin, level) in self.board.input_levels() {
-+                let bit = match pin { 0 => 3, 46 => 2, _ => continue };
-+                if level { self.periph.gpio.strap |= 1 << bit } else { self.periph.gpio.strap &= !(1 << bit) }
++        //
++        // A USB-Serial/JTAG reset (0x15) is a Core Reset (Table 7.1-1), so it samples nothing; the
++        // host's download mode flag, taken when RTS=1/DTR=0 began (`esp_periph::UsjLines`), picks
++        // the boot instead (Table 33.3-2, p.1248: "if the download mode flag is set when the
++        // ESP32-S3 is reset, the ESP32-S3 will reboot into download mode"). The model clears
++        // GPIO_STRAPPING[3:2], joint download (boot_mode.h IS_00XX), for that one boot, the effect
++        // TRM §8.2 (p.536) documents for RTC_CNTL_FORCE_DOWNLOAD_BOOT; which register the USB
++        // controller drives on silicon, and what GPIO_STRAPPING reads then, is not verified. Without
++        // the flag the reset boots with the latched pins: after BOOT held through power-on it stays
++        // in download mode, as esptool's docs say a USB reset cannot leave a strapped download mode
++        // ("Leaving Download Mode in USB-Serial/JTAG Mode", esp32s3). Any other reset keeps the
++        // register as it was. A power-on reset also resets the USB device: the lines start over.
++        let strap = match cause {
++            esp_periph::RST_POWERON => {
++                let mut v = self.strap_latched;
++                for (pin, level) in self.board.input_levels() {
++                    let bit = match pin { 0 => 3, 46 => 2, _ => continue };
++                    if level { v |= 1 << bit } else { v &= !(1 << bit) }
++                }
++                self.strap_latched = v;
++                self.usj = Default::default();
++                v
 +            }
-+        }
++            esp_periph::RST_USB_UART_CHIP if self.usj.latched_download => self.strap_latched & !0x0c,
++            esp_periph::RST_USB_UART_CHIP => self.strap_latched,
++            _ => old.gpio.strap,
++        };
++        self.periph.gpio.strap = strap;
          self.mmu = [MMU_INVALID; MMU_ENTRIES];
          self.invalidate_tlb();
          self.reset_approximate_cache();
-@@ -173,12 +204,15 @@ impl esp_soc::SocBus for SocBus {
+@@ -166,19 +218,26 @@ impl esp_soc::SocBus for SocBus {
+         self.rebuild_page_table();
+     }
+     fn set_psram_size(&mut self, bytes: usize) -> Result<(), String> { self.psram = vec![0; bytes]; self.rebuild_page_table(); Ok(()) }
+-    fn set_strap(&mut self, v: u32) { self.periph.gpio.strap = v; }
++    /// `--strap`: the pins as the next boot latches them (the run's first boot takes all of it).
++    fn set_strap(&mut self, v: u32) { self.periph.gpio.strap = v; self.strap_latched = v; }
++    fn strap(&self) -> Option<u32> { Some(self.periph.gpio.strap) }
++    fn usj_lines(&mut self, dtr: bool, rts: bool) -> esp_periph::LineEffect { self.usj.set(dtr, rts) }
++    fn usj_line_state(&self) -> Option<esp_periph::UsjLines> { Some(self.usj) }
+     fn set_reset_cause(&mut self, c: u32) { self.periph.rtc.ram.write(0x38, c | (c << 6)); }
+     fn report(&self) -> String {
+         let p = &self.periph;
          let mut s = format!("[emu] i2s frames out: {} (i2s0 @ {} Hz) {} (i2s1 @ {} Hz)\n", p.i2s0.frames_out, p.i2s0.sample_rate, p.i2s1.frames_out, p.i2s1.sample_rate);
          { let r = self.board.report(); if !r.is_empty() { s += &r; s += "\n"; } }
          { let w = &p.wifi;
@@ -5010,7 +6726,7 @@ index 72858f9..de9f182 100644
  #[test]
 diff --git a/esp32s3/tests/panel_inputs.rs b/esp32s3/tests/panel_inputs.rs
 new file mode 100644
-index 0000000..88c7487
+index 0000000..3b3ee25
 --- /dev/null
 +++ b/esp32s3/tests/panel_inputs.rs
 @@ -0,0 +1,146 @@
@@ -5142,7 +6858,7 @@ index 0000000..88c7487
 +        m.cores[0].pc = IRAM; m.cores[0].ps = 0;             // back to the sleeping loop (SRAM survives)
 +        m.bus.periph.gpio.strap
 +    };
-+    m.bus.periph.gpio.strap = 0x2f;                         // --strap: bit 5 is not the board's
++    m.bus.set_strap(0x2f);                                  // --strap: bit 5 is not the board's
 +    hold(&mut m, "boot", "down");
 +    assert!(!bit(&m, PIN_GPIO0));
 +    let strap = reset(&mut m, esp_periph::RST_SW_SYS);
@@ -5159,6 +6875,229 @@ index 0000000..88c7487
 +    // The knob's switch is on the same wired-AND.
 +    hold(&mut m, "sw", "down");
 +    assert_eq!(reset(&mut m, esp_periph::RST_POWERON) & 0x0c, 0);
++}
+diff --git a/esp32s3/tests/usj_reset.rs b/esp32s3/tests/usj_reset.rs
+new file mode 100644
+index 0000000..131ca3e
+--- /dev/null
++++ b/esp32s3/tests/usj_reset.rs
+@@ -0,0 +1,217 @@
++//! The USB host at the USB-Serial/JTAG, through the whole machine and without a ROM: the DTR/RTS
++//! sequences of ESP32-S3 TRM v1.8 Tables 33.4-3 and 33.4-4 (p.1254) reset the chip with cause 0x15
++//! and the strap the ROM will read, the chip is held while RTS=1/DTR=0, the strap latch of a
++//! power-on reset (BOOT held) and the USB reset agree, and the reserved data window esptool-js
++//! reads answers 0. The core sleeps in `waiti` in IRAM; after each reset it is put back there
++//! (SRAM survives a reset) in place of the ROM.
++use emu_core::{Bus, Core};
++use esp_soc::usj_port::{PortOut, Session, UsjPort};
++use esp_soc::{SocBus, Stop};
++use std::sync::mpsc::Receiver;
++
++const IRAM: u32 = 0x4037_0000;
++const WAITI_LOOP: [u8; 6] = [0x00, 0x70, 0x00, 0x06, 0xff, 0xff];   // waiti 0 ; j .
++const MS: u64 = 240_000;
++
++fn machine(board: &str) -> esp32s3::Machine {
++    let mut m = esp32s3::machine([1, 2, 3, 4, 5, 6]);
++    m.console.capture = true;
++    m.bus.board = esp32s3::board::make_board(board).unwrap();
++    m.bus.attach_board_devices();
++    SocBus::load_bytes(&mut m.bus, IRAM, &WAITI_LOOP).unwrap();
++    park(&mut m);
++    m.usj_reset = true;
++    m
++}
++
++fn park(m: &mut esp32s3::Machine) { m.cores[0].pc = IRAM; m.cores[0].ps = 0; }
++
++fn run_ms(m: &mut esp32s3::Machine, ms: u64) -> Stop {
++    m.max_cycles = m.bus.cycles + ms * MS;
++    m.run(u64::MAX)
++}
++
++/// Run until the chip resets, reboot it as the front end does, and put the core back to sleep.
++fn expect_reset(m: &mut esp32s3::Machine) -> (u32, u32) {
++    let stop = run_ms(m, 5);
++    assert!(matches!(stop, Stop::SwReset), "no reset: {stop:?}");
++    let cause = m.reboot();
++    park(m);
++    (cause, m.bus.periph.gpio.strap)
++}
++
++fn open(m: &mut esp32s3::Machine) -> (UsjPort, Session, Receiver<PortOut>) {
++    let port = UsjPort::new();
++    m.attach_usj(port.clone());
++    let (tx, rx) = std::sync::mpsc::channel();
++    let s = port.open(Box::new(move |o| tx.send(o).is_ok())).unwrap();
++    (port, s, rx)
++}
++
++fn events(rx: &Receiver<PortOut>) -> Vec<String> {
++    rx.try_iter().filter_map(|o| match o { PortOut::Event(e) => Some(e), PortOut::Data(_) => None }).collect()
++}
++
++/// (DTR, RTS) steps as the host sets them, one request each.
++fn lines(s: &Session, seq: &[(u8, u8)]) { for &(dtr, rts) in seq { s.lines(dtr != 0, rts != 0); } }
++
++#[test]
++fn trm_sequences_reset_into_download_then_into_flash_boot() {
++    let mut m = machine("none");
++    let (_port, s, rx) = open(&mut m);
++    assert!(matches!(run_ms(&mut m, 1), Stop::Halted));
++    assert_eq!(events(&rx), [r#"{"t":"hello","proto":1,"chip":"esp32s3","dtr":0,"rts":0,"held":false,"reset":true}"#]);
++    assert_eq!(m.bus.periph.gpio.strap, 0x0f, "--strap default: GPIO0 = 1, SPI boot");
++
++    // Table 33.4-3 up to "Clear DTR  RTS=1, DTR=0  Reset SoC".
++    lines(&s, &[(0, 0), (0, 0), (1, 0), (1, 0), (1, 1), (0, 1)]);
++    let (cause, strap) = expect_reset(&mut m);
++    assert_eq!(cause, esp_periph::RST_USB_UART_CHIP);
++    assert_eq!(esp_periph::reset_cause_name(cause), "USB_UART_CHIP_RESET");
++    assert_eq!(strap & 0x0c, 0, "GPIO_STRAPPING[3:2] = 00: joint download (boot_mode.h IS_00XX)");
++    assert_eq!(strap, 0x03, "the other bits stay as latched");
++    assert_eq!(m.bus.periph.rtc.ram.read(0x38) & 0x3f, 0x15, "RESET_STATE carries the cause for the ROM");
++    assert_eq!(events(&rx), [r#"{"t":"reset","cause":21,"download":true}"#]);
++
++    // Held while the lines stay (1,0): time passes, core 0 runs nothing.
++    let (insns, t0) = (m.cores[0].insn_count(), m.bus.cycles);
++    assert!(matches!(run_ms(&mut m, 20), Stop::Halted));
++    assert_eq!(m.cores[0].insn_count(), insns, "no instruction while held in reset");
++    assert!(m.bus.cycles >= t0 + 20 * MS);
++    assert!(m.usj_held());
++
++    // "Set RTS" (still 1,0) and "Clear RTS": out of reset, download flag cleared.
++    lines(&s, &[(0, 1), (0, 0)]);
++    assert!(matches!(run_ms(&mut m, 2), Stop::Halted));
++    assert!(!m.usj_held());
++    assert!(m.cores[0].insn_count() > insns, "the core runs again");
++    assert_eq!(events(&rx), [r#"{"t":"release","strap":3}"#]);
++    assert_eq!(m.bus.periph.gpio.strap, 0x03, "the release does not touch the latch");
++
++    // Table 33.4-4: Clear DTR, Clear RTS, Set RTS (reset, flag clear), Clear RTS.
++    lines(&s, &[(0, 0), (0, 0), (0, 1), (0, 0)]);
++    let (cause, strap) = expect_reset(&mut m);
++    assert_eq!(cause, 0x15);
++    assert_eq!(strap, 0x0f, "no flag: the latched pins, SPI boot (IS_1XXX)");
++    assert!(matches!(run_ms(&mut m, 2), Stop::Halted));
++    assert_eq!(events(&rx), [r#"{"t":"reset","cause":21,"download":false}"#, r#"{"t":"release","strap":15}"#]);
++}
++
++#[test]
++fn the_host_going_away_or_the_page_reset_releases_a_held_chip() {
++    let mut m = machine("none");
++    let (_port, s, _rx) = open(&mut m);
++    lines(&s, &[(0, 1)]);
++    expect_reset(&mut m);
++    assert!(matches!(run_ms(&mut m, 5), Stop::Halted));
++    assert!(m.usj_held());
++    drop(s);                                                 // the client disconnects in (1,0)
++    assert!(matches!(run_ms(&mut m, 2), Stop::Halted));
++    assert!(!m.usj_held(), "closing the port drops the lines");
++    assert_eq!(m.usj_session(), None);
++
++    let (_port, s, _rx) = open(&mut m);
++    lines(&s, &[(0, 1)]);
++    expect_reset(&mut m);
++    assert!(matches!(run_ms(&mut m, 2), Stop::Halted));
++    assert!(m.usj_held());
++    m.bus.request_reset(esp_periph::RST_POWERON);          // the page's RESET
++    assert!(matches!(run_ms(&mut m, 2), Stop::SwReset));
++    assert_eq!(m.reboot(), esp_periph::RST_POWERON);
++    park(&mut m);
++    assert!(!m.usj_held(), "a power-on reset resets the USB device and its lines");
++    assert!(matches!(run_ms(&mut m, 2), Stop::Halted));
++}
++
++#[test]
++fn boot_strap_and_usb_reset_agree() {
++    let mut m = machine("hub75-panel");
++    let (_port, s, _rx) = open(&mut m);
++    let hold = |m: &mut esp32s3::Machine, verb: &str| { m.bus.board_input("boot", verb).unwrap(); assert!(matches!(run_ms(m, 10), Stop::Halted)); };
++    let reset = |m: &mut esp32s3::Machine, cause: u32| -> u32 {
++        m.bus.request_reset(cause);
++        assert!(matches!(run_ms(m, 1), Stop::SwReset));
++        assert_eq!(m.reboot(), cause);
++        park(m);
++        m.bus.periph.gpio.strap
++    };
++    SocBus::set_strap(&mut m.bus, 0x2f);
++    hold(&mut m, "down");
++    assert_eq!(reset(&mut m, esp_periph::RST_POWERON), 0x23, "BOOT held through power-on: joint download");
++    // A USB reset without the flag keeps a strapped download mode (esptool docs, "Leaving
++    // Download Mode in USB-Serial/JTAG Mode": a USB reset does not re-read the pins).
++    lines(&s, &[(0, 0), (0, 1), (0, 0)]);
++    assert_eq!(expect_reset(&mut m).1, 0x23);
++    hold(&mut m, "up");
++    assert_eq!(reset(&mut m, esp_periph::RST_POWERON), 0x2b, "released: SPI boot; IO46 rests low");
++    // The download flag clears [3:2] for one boot ...
++    lines(&s, &[(1, 0), (0, 1), (0, 0)]);
++    assert_eq!(expect_reset(&mut m).1, 0x23);
++    // ... a software reset keeps the register ...
++    assert_eq!(reset(&mut m, esp_periph::RST_SW_SYS), 0x23);
++    // ... and a USB reset without the flag goes back to the latched pins.
++    lines(&s, &[(0, 1), (0, 0)]);
++    assert_eq!(expect_reset(&mut m).1, 0x2b);
++}
++
++#[test]
++fn a_run_that_cannot_reboot_only_logs_line_resets() {
++    let mut m = machine("none");
++    m.usj_reset = false;
++    let (_port, s, rx) = open(&mut m);
++    lines(&s, &[(1, 0), (0, 1)]);
++    assert!(matches!(run_ms(&mut m, 5), Stop::Halted));
++    assert!(!m.usj_held());
++    assert_eq!(events(&rx), [r#"{"t":"hello","proto":1,"chip":"esp32s3","dtr":0,"rts":0,"held":false,"reset":false}"#]);
++}
++
++#[test]
++fn port_data_reaches_the_controller_and_its_output_the_client_only() {
++    let mut m = machine("none");
++    m.bus.periph.usb.tx_out = b"before".to_vec();            // console output made before the open
++    let (_port, s, rx) = open(&mut m);
++    let all: Vec<u8> = (0..=255u8).collect();
++    s.data(all.clone());
++    assert!(matches!(run_ms(&mut m, 1), Stop::Halted));
++    let rx_fifo: Vec<u8> = std::iter::from_fn(|| (!m.bus.periph.usb.rx.is_empty()).then(|| m.bus.periph.usb.read(0) as u8)).collect();
++    assert_eq!(rx_fifo, all, "all 256 byte values, in 64-byte packets, in order");
++    assert_eq!(m.console.usb, b"before", "the earlier output stayed on the console");
++    m.bus.periph.usb.tx_out = vec![0xc0, 0xff, 0x80, 0x00];
++    assert!(matches!(run_ms(&mut m, 2), Stop::Halted));
++    let out: Vec<u8> = rx.try_iter().flat_map(|o| match o { PortOut::Data(d) => d, PortOut::Event(_) => Vec::new() }).collect();
++    assert_eq!(out, [0xc0, 0xff, 0x80, 0x00], "raw bytes to the client");
++    assert_eq!(m.console.usb, b"before", "and not to the page's console backlog");
++}
++
++#[test]
++fn script_lines_do_the_same() {
++    let mut m = machine("none");
++    m.load_script("0.001 usj 0 0\n0.002 usj 1 0\n0.003 usj 0 1\n0.010 usj 0 0\n0.011 usjhex c0 00 ff c0\n").unwrap();
++    assert!(matches!(m.script.events[1].1, esp_soc::ScriptAction::UsjLines(true, false)));
++    assert!(matches!(&m.script.events[4].1, esp_soc::ScriptAction::UsjData(d) if d == &[0xc0, 0x00, 0xff, 0xc0]));
++    assert!(m.load_script("0.1 usj 2 0").is_err());
++    assert!(m.load_script("0.1 usjhex c").is_err());
++    let (cause, strap) = expect_reset(&mut m);
++    assert_eq!((cause, strap), (0x15, 0x03));
++    let insns = m.cores[0].insn_count();
++    m.max_cycles = 8 * MS;                                    // until 8 ms: still held
++    assert!(matches!(m.run(u64::MAX), Stop::Halted));
++    assert_eq!(m.cores[0].insn_count(), insns);
++    assert!(matches!(run_ms(&mut m, 5), Stop::Halted));
++    assert!(!m.usj_held());
++    assert_eq!(m.bus.periph.usb.rx.len(), 4);
++}
++
++#[test]
++fn the_reserved_data_window_reads_zero() {
++    let mut m = machine("none");
++    // esptool-js 0.6.0 targets/esp32.ts:79-99: ESP32 eFuse words 3 and 5, APB_CTL_DATE.
++    for a in [0x3FF5_A00Cu32, 0x3FF5_A014, 0x3FF6_607C, 0x3FF2_0000, 0x3FFF_FFFC] {
++        assert_eq!(m.bus.read32(a), Ok(0), "{a:#x}");
++    }
++    assert_eq!(m.bus.read8(0x3FF5_A00F), Ok(0));
++    assert_eq!(m.bus.read16(0x3FF5_A00E), Ok(0));
++    assert!(m.bus.write32(0x3FF5_A00C, 1).is_err(), "writes still fault");
++    assert!(m.bus.read32(0x3FF1_FFFC).is_ok(), "internal ROM 1 is still ROM");
++    assert!(m.bus.read32(0x3FE0_0000).is_err(), "outside the window reads still fault");
 +}
 diff --git a/hub75/Cargo.toml b/hub75/Cargo.toml
 new file mode 100644
@@ -7790,6 +9729,105 @@ index 0000000..6d032b7
 +    let l = 0.5 * 2626.0 / 94208.0 * 32.0;
 +    assert!(close(p[0], enc(l), 1) && close(p[1], enc(0.1 * l), 1) && p[2] == 0, "{p:?}");
 +}
+diff --git a/hw/usjprobe.py b/hw/usjprobe.py
+new file mode 100755
+index 0000000..2517979
+--- /dev/null
++++ b/hw/usjprobe.py
+@@ -0,0 +1,93 @@
++#!/usr/bin/env python3
++"""Drive the USB-Serial/JTAG at ws://127.0.0.1:PORT/usj (protocol: esp-soc/src/web.rs) the way the
++browser flasher does, without a browser: open (and a second client is refused), esptool-js 0.6.0
++UsbJtagSerialReset (reset.ts:113-129) into download mode, SYNC, READ_REG of the ESP32 revision word
++esptool-js reads from every chip (0x3FF5A00C), ESP Web Tools' reset after flashing (RTS pulse),
++Improv Serial REQUEST_INFO to the booted firmware, close. Prints what it sees with wall times.
++usage: usjprobe.py PORT   (a run with --boot rom --web PORT). Standard library only."""
++import base64, json, os, socket, struct, sys, time
++
++class WS:
++    def __init__(self, port, path="/usj"):
++        self.s = socket.create_connection(("127.0.0.1", port)); self.s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
++        key = base64.b64encode(os.urandom(16)).decode()
++        self.s.sendall(f"GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n".encode())
++        head = b""
++        while b"\r\n\r\n" not in head: head += self.s.recv(1)
++        self.status = head.split(b"\r\n")[0].decode()
++        self.buf = b""
++    def send(self, payload, op=2):
++        m = os.urandom(4); n = len(payload)
++        h = bytes([0x80 | op]) + (bytes([0x80 | n]) if n < 126 else bytes([0x80 | 126]) + struct.pack(">H", n) if n < 65536 else bytes([0x80 | 127]) + struct.pack(">Q", n))
++        self.s.sendall(h + m + bytes(b ^ m[i & 3] for i, b in enumerate(payload)))
++    def _need(self, n, deadline):
++        while len(self.buf) < n:
++            self.s.settimeout(max(0.001, deadline - time.time()))
++            try: d = self.s.recv(65536)
++            except socket.timeout: return False
++            if not d: return False
++            self.buf += d
++        return True
++    def recv(self, timeout):
++        dl = time.time() + timeout
++        if not self._need(2, dl): return None
++        n = self.buf[1] & 0x7f; off = 2
++        if n == 126: self._need(4, dl); n = struct.unpack(">H", self.buf[2:4])[0]; off = 4
++        elif n == 127: self._need(10, dl); n = struct.unpack(">Q", self.buf[2:10])[0]; off = 10
++        if not self._need(off + n, dl): return None
++        op, d = self.buf[0] & 0xf, self.buf[off:off + n]; self.buf = self.buf[off + n:]
++        return op, d
++
++def slip(b): return b"\xc0" + b.replace(b"\xdb", b"\xdb\xdd").replace(b"\xc0", b"\xdb\xdc") + b"\xc0"
++def cmd(op, data, chk=0): return slip(struct.pack("<BBHI", 0, op, len(data), chk) + data)
++
++port = int(sys.argv[1]); t0 = time.time()
++def log(*a): print(f"{time.time() - t0:7.3f}", *a, flush=True)
++ws = WS(port); log("upgrade:", ws.status)
++data = bytearray()
++def pump(sec, until=None):
++    end = time.time() + sec
++    while time.time() < end:
++        f = ws.recv(end - time.time())
++        if f is None: break
++        op, d = f
++        if op == 2 and d[:1] == b"\x10": log("event", d[1:].decode())
++        elif op == 2 and d[:1] == b"\x00": data.extend(d[1:])
++        if until and until(): return True
++    return False
++ws.send(b"\x02"); pump(1.0, lambda: False)
++other = WS(port); other.send(b"\x02"); f = other.recv(2.0); log("second client:", f and f[1][1:].decode()); other.s.close()
++
++dtr = False
++def lines(d, r): ws.send(bytes([1, (1 if d else 0) | (2 if r else 0)]))
++def setDTR(v):
++    global dtr; dtr = v; lines(dtr, rts)
++def setRTS(v):
++    global rts; rts = v; lines(dtr, rts); setDTR(dtr)
++rts = False
++# esptool-js 0.6.0 reset.ts:113-129
++setRTS(False); setDTR(False); time.sleep(0.1)
++setDTR(True); setRTS(False); time.sleep(0.1)
++setRTS(True); setDTR(False); setRTS(True); time.sleep(0.1)
++setRTS(False); setDTR(False)
++pump(1.0, lambda: b"waiting for download" in data)
++log("banner:", bytes(data[data.find(b"rst:"):]).split(b"\r\n")[0].decode(errors="replace"), "| waiting for download:", b"waiting for download" in data)
++data.clear()
++ts = time.time(); ws.send(b"\x00" + cmd(0x08, b"\x07\x07\x12\x20" + b"\x55" * 32))
++pump(1.0, lambda: data.count(b"\xc0\x01\x08\x04\x00\x07\x07\x12\x20") >= 8)
++n_sync = data.count(bytes.fromhex("c00108040007071220")); log(f"SYNC: {n_sync} answers, all within {(time.time() - ts) * 1000:.0f} ms")
++data.clear()
++ts = time.time(); ws.send(b"\x00" + cmd(0x0a, struct.pack("<I", 0x3FF5A00C)))
++pump(1.0, lambda: data.endswith(b"\xc0") and len(data) >= 14)
++log(f"READ_REG 0x3ff5a00c -> {bytes(data).hex()} in {(time.time() - ts) * 1000:.0f} ms")
++data.clear()
++# ESP Web Tools 10.4.0 after flashing: setRTS(true), 100 ms, HardReset: 100 ms, setRTS(false)
++setRTS(True); time.sleep(0.2); setRTS(False)
++pump(8.0, lambda: b"Improv: listening" in data)
++log("after reset:", [l for l in bytes(data).decode(errors="replace").split("\r\n") if l.startswith("rst:") or "Improv" in l][:3])
++data.clear()
++imp = b"IMPROV" + bytes([1, 3, 2, 3, 0]); imp += bytes([sum(imp) & 0xff, 10])
++ws.send(b"\x00" + imp); pump(3.0, lambda: b"AnimatedPixelClock" in data)
++j = data.find(b"IMPROV"); log("improv info:", bytes(data[j + 9: j + 9 + data[j + 8]]) if j >= 0 else None)
++ws.send(b"\x03"); pump(1.0, lambda: False)
++ws.send(b"\x03\xe8", op=8); log("close answer:", ws.recv(1.0))
 diff --git a/tools/browser-benchmark/check-panel-page.mjs b/tools/browser-benchmark/check-panel-page.mjs
 new file mode 100644
 index 0000000..406b381
@@ -8248,10 +10286,10 @@ index 0000000..3fc9a52
 +14.0 stop
 diff --git a/web/panel.html b/web/panel.html
 new file mode 100644
-index 0000000..63ee6b8
+index 0000000..8229f60
 --- /dev/null
 +++ b/web/panel.html
-@@ -0,0 +1,388 @@
+@@ -0,0 +1,394 @@
 +<!doctype html>
 +<html lang="ru">
 +<head>
@@ -8319,6 +10357,7 @@ index 0000000..63ee6b8
 +  form.line { display: flex; gap: 6px; margin-top: 8px; }
 +  form.line input { flex: 1; min-width: 0; font: 12px var(--mono); color: var(--ink); background: #0a0b0c; border: 1px solid var(--rule); border-radius: 6px; padding: 7px 8px; }
 +  a { color: var(--amber); }
++  [hidden] { display: none !important; }
 +  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 +</style>
 +</head>
@@ -8328,6 +10367,8 @@ index 0000000..63ee6b8
 +  <span class="chip"><i class="dot" id="conn"></i><span id="connText">подключение</span></span>
 +  <span class="chip" id="board">плата —</span>
 +  <a class="chip" id="portalLink" href="http://127.0.0.1:8080/" target="_blank" rel="noopener" title="Собственный веб-портал прошивки: порт 80 двойника, проброшенный на Mac (twin.py run --http)">портал ↗</a>
++  <a class="chip" id="flasherLink" href="flasher/index.html" target="_blank" rel="noopener" hidden title="Копия веб-прошивальщика проекта: прошивает двойника через его USB-Serial/JTAG (twin.py run --web)">прошивальщик ↗</a>
++  <span class="chip" id="usbClaim" hidden title="Порт USB-Serial/JTAG открыт прошивальщиком: консоль USB идёт ему, ввод отсюда не принимается">USB занят прошивальщиком</span>
 +  <div class="stats">
 +    <span>время <b id="stTime">—</b></span>
 +    <span>кадров/с <b id="stFps">—</b></span>
@@ -8559,6 +10600,7 @@ index 0000000..63ee6b8
 +        if (m.t === 'serial' && m.src === 'usb') appendConsole(m.data);
 +        else if (m.t === 'board') $('board').textContent = 'плата ' + m.name;
 +        else if (m.t === 'stat') { $('stTime').textContent = m.time.toFixed(1) + ' с'; $('stBehind').textContent = (m.behind * 1000).toFixed(0) + ' мс'; }
++        else if (m.t === 'usj') { $('usbClaim').hidden = !m.claimed; $('lineIn').disabled = !!m.claimed; }
 +        return;
 +      }
 +      const b = new DataView(ev.data);
@@ -8607,6 +10649,8 @@ index 0000000..63ee6b8
 +  $('rh').addEventListener('input', () => $('rhv').textContent = $('rh').value);
 +  // The portal link follows the host the page was opened on; the port is twin.py's --http (8080).
 +  $('portalLink').href = `http://${location.hostname}:8080/`;
++  // The flasher is there when twin.py built the pages (tools/twin/flasher in the firmware repo).
++  fetch('flasher/index.html', { cache: 'no-store' }).then((r) => { if (r.ok) $('flasherLink').hidden = false; }).catch(() => {});
 +
 +  // ---- the knob
 +  // Its switch is GPIO0, which the firmware samples itself (control.cpp sampleTick): low for 40 ms
