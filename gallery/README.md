@@ -410,6 +410,18 @@ It does not repeat. The zoom, the twist and the drift of the centre each follow 
 
 ---
 
+## NEBULA
+
+![Nebula](preview/nebula.png)
+
+A cloud of gas and stars that never settles. Perlin noise in three octaves, sliced along time, makes a nebula that boils slowly, and a faint ripple from a wandering centre runs through it. The field sits low, so most of the sky stays dark and the clouds glow, coloured through a gradient from black to the gas's hot core. Stars twinkle in front, each by the noise at its own place in time.
+
+The button changes the mood: violet and rose, teal and ice, ember, aurora.
+
+**How it is drawn.** Each frame is one px.field call into a layer and one px.show through the palette. In Lua those 8,192 samples of fractal noise would take over 100 ms; the firmware samples each octave on a grid and interpolates, about 18 ms on the panel. It needs firmware 2.7.5 or later. On the panel it runs at 15 fps, about 31 ms a frame.
+
+---
+
 ## Adding one
 
 The loop, and only the last step needs a panel:

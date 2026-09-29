@@ -127,6 +127,14 @@
       "preview": "preview/minecraft.png"
     },
     {
+      "stem": "nebula",
+      "name": "NEBULA",
+      "file": "nebula.lua",
+      "line": "a cloud of gas and stars that never settles",
+      "bytes": 3686,
+      "preview": "preview/nebula.png"
+    },
+    {
       "stem": "oceanarium",
       "name": "OCEANARIUM",
       "file": "oceanarium.lua",
