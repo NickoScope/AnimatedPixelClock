@@ -384,6 +384,20 @@ A change of grid goes out as a wave and comes back in, and the scene's name show
 
 ---
 
+## KALEIDOSCOPE
+
+![Kaleidoscope](preview/kaleidoscope.png)
+
+A demoscene plasma folded into four mirrors, with colour that never plays the same way twice.
+
+Two fields of sines (along x, along y, along the diagonal and in rings round a point) are held in two 8-bit layers. The fields themselves do not move. Colour moves through them: each layer is shown through a palette with its own offset, stepping at its own speed and in its own direction, and where the second is brighter it wins. The bands of the two run through each other, and that is the motion. It is the palette cycling of the 8-bit machines.
+
+The palette is Inigo Quilez's cosine palette, rebuilt every frame while its parameters drift on slow periods of 37, 59 and 83 seconds that do not divide into each other. Every 40 seconds the light dips, and a new mood with two new fields comes in. The fields are seeded from the date and the minute, so tonight's kaleidoscope is not this morning's. The button changes the mood at once.
+
+**How it is drawn.** Three native calls a frame make the picture: px.show twice and px.mirror. The next fields are built a few rows a frame while the current scene plays, so a change costs no frame. It needs firmware 2.7.4 or later. On the panel it runs at 15 fps, about 7 ms a frame.
+
+---
+
 ## Adding one
 
 The loop, and only the last step needs a panel:

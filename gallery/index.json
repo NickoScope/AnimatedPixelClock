@@ -78,6 +78,14 @@
       "preview": "preview/golf_pestovo.png"
     },
     {
+      "stem": "kaleidoscope",
+      "name": "KALEIDOSCOPE",
+      "file": "kaleidoscope.lua",
+      "line": "colour that never plays the same twice",
+      "bytes": 6830,
+      "preview": "preview/kaleidoscope.png"
+    },
+    {
       "stem": "kinetic_digits_led",
       "name": "KINETIC_DIGITS_LED",
       "file": "kinetic_digits_led.lua",
