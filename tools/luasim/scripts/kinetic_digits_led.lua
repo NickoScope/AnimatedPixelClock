@@ -63,6 +63,7 @@ local SHOW = {
   { mode = "dots", src = "plasma", pal = "src", style = "plate", secs = 22 },
   { mode = "digits", size = "8x16", src = "text", pal = "flip", style = "line", ital = true, secs = 26 },
   { mode = "dots", src = "rings", pal = "rainbow", style = "plate", secs = 18 },
+  { mode = "dots", src = "cube", pal = "src", style = "plate", secs = 20 },
   { mode = "digits", size = "4x7", src = "plasma", pal = "src", style = "plate", secs = 18 },
 }
 local THR, INV = 110, false
@@ -147,6 +148,7 @@ local MARQ = chars(MARQUEE)
 
 -- ── time ────────────────────────────────────────────────────────────────────
 local T, tprev = 0, nil
+local DT = 1 / 15                   -- this frame's seconds
 local function ease(p) return p < 0.5 and 2 * p * p or 1 - ((-2 * p + 2) ^ 2) / 2 end
 
 -- ── the board ───────────────────────────────────────────────────────────────
@@ -689,6 +691,204 @@ function dots_order()
     local du, dv = ((i % W) * 2 + 1) / 12 - 6, (floor(i / W) * 2 + 1) / 12 - 3
     ORQ[i] = floor(sqrt(du * du + dv * dv) * 20)
   end
+end
+
+-- ── the cube in flip dots ───────────────────────────────────────────────────
+-- The owner (2026-09-29): a cube "переливающийся как плазма и точечный", whose
+-- speed, direction of turning and size change, which travels the screen and
+-- bounces off its edges by the laws of physics, all smoothly.
+--
+-- A body in two dimensions with a spin: it flies at a speed that drifts
+-- between targets, turns about an axis and at a rate that drift too, and
+-- breathes between sizes. At a wall the part of its velocity into the wall
+-- is turned back (restitution 0.97), and friction at the contact point
+-- trades the velocity along the wall for spin about the screen's axis and
+-- back - the contact point's own velocity is v + w x r, and the impulse that
+-- slows it is shared between the body's travel and its turning. A cube sent
+-- along a wall comes off it spinning.
+--
+-- Its twelve edges are drawn straight into the dots, an LED thick, nearer
+-- edges brighter; the colour of every dot is the plasma's field where it is,
+-- and a quarter of the lit dots is painted again every frame so the colour
+-- runs along the edges. Moving, nearly every dot of an edge changes every
+-- frame, too many to flip one by one (a flip is a timetable entry and a
+-- pixel): a new dot lights at once, a dot left behind glows at a third for
+-- a frame before it goes dark - the trail of the board's own afterglow.
+local dots_cube
+do
+local function rr(a, b) return a + (b - a) * rnd() end
+local function lp(v, to, dt, tau)
+  local k = dt / tau
+  if k > 1 then k = 1 end
+  return v + (to - v) * k
+end
+local CB = { mark = {}, litn = {}, litp = {}, fade = {}, nn = 0, np = 0, nf = 0, frame = 0,
+             shimmer = 0, x = 64, y = 32, vx = 14, vy = 9, R = 16, Rt = 16, sp = 16, spt = 16,
+             ax = 0.3, ay = 0.6, az = 0, wx = 0.3, wy = 0.6, wz = 0.1, wtx = 0.3, wty = 0.6, wtz = 0.1,
+             nextW = 0, nextR = 0, nextS = 0, V = {}, Z = {} }
+local function plasma_hue(x, y, i)
+  local v = TA[x] + TB[y] + TC[x + y] + TR[ORQ[i]]
+  return floor(v * 45 + T * 30) % 360
+end
+local CUBE_E = { { 0, 1 }, { 2, 3 }, { 4, 5 }, { 6, 7 }, { 0, 2 }, { 1, 3 }, { 4, 6 }, { 5, 7 },
+                 { 0, 4 }, { 1, 5 }, { 2, 6 }, { 3, 7 } }
+local function cube_physics(dt)
+  local c = CB
+  -- what drifts: the spin (axis, sense, rate), the size, the speed
+  if T >= c.nextW then
+    local ux, uy, uz = rr(-1, 1), rr(-1, 1), rr(-1, 1)
+    local m = sqrt(ux * ux + uy * uy + uz * uz) + 1e-3
+    local rate = rr(0.25, 1.6) * (rnd() < 0.5 and -1 or 1)
+    c.wtx, c.wty, c.wtz = ux / m * rate, uy / m * rate, uz / m * rate
+    c.nextW = T + rr(5, 8)
+  end
+  if T >= c.nextR then c.Rt = rr(10, 24); c.nextR = T + rr(6, 10) end
+  if T >= c.nextS then c.spt = rr(8, 26); c.nextS = T + rr(7, 11) end
+  c.wx, c.wy, c.wz = lp(c.wx, c.wtx, dt, 4), lp(c.wy, c.wty, dt, 4), lp(c.wz, c.wtz, dt, 4)
+  c.R = lp(c.R, c.Rt, dt, 3)
+  c.sp = lp(c.sp, c.spt, dt, 3)
+  local v = sqrt(c.vx * c.vx + c.vy * c.vy) + 1e-3
+  local k = lp(v, c.sp, dt, 2) / v
+  c.vx, c.vy = c.vx * k, c.vy * k
+  c.ax, c.ay, c.az = c.ax + c.wx * dt, c.ay + c.wy * dt, c.az + c.wz * dt
+  c.x, c.y = c.x + c.vx * dt, c.y + c.vy * dt
+  -- the vertices, turned (x, then y, then z) and in perspective
+  local cx, sx, cy, sy, cz, sz = cos(c.ax), sin(c.ax), cos(c.ay), sin(c.ay), cos(c.az), sin(c.az)
+  local minX, maxX, minY, maxY = 1e9, -1e9, 1e9, -1e9
+  for i = 0, 7 do
+    local x = (i & 1) > 0 and 1 or -1
+    local y = (i & 2) > 0 and 1 or -1
+    local z = (i & 4) > 0 and 1 or -1
+    local y1, z1 = y * cx - z * sx, y * sx + z * cx
+    local x2, z2 = x * cy + z1 * sy, -x * sy + z1 * cy
+    local x3, y3 = x2 * cz - y1 * sz, x2 * sz + y1 * cz
+    local p = 3.2 / (3.2 + z2)
+    local X, Y = c.x + x3 * c.R * 0.62 * p, c.y + y3 * c.R * 0.62 * p
+    c.V[i * 2], c.V[i * 2 + 1], c.Z[i] = X, Y, z2
+    if X < minX then minX = X end
+    if X > maxX then maxX = X end
+    if Y < minY then minY = Y end
+    if Y > maxY then maxY = Y end
+  end
+  -- the walls: back out, bounce, and friction at the contact point
+  local e, f = 0.97, 0.35
+  local r = max(1, (maxX - minX + maxY - minY) / 4)
+  local push = 0
+  if minX < 0 then
+    push = -minX
+    if c.vx < 0 then
+      c.vx = -c.vx * e
+      local u = c.vy - c.wz * r
+      c.vy = c.vy - f * u * 0.5
+      c.wz = c.wz + f * u / r * 0.5
+      c.wtz = c.wz
+    end
+  elseif maxX > W - 1 then
+    push = (W - 1) - maxX
+    if c.vx > 0 then
+      c.vx = -c.vx * e
+      local u = c.vy + c.wz * r
+      c.vy = c.vy - f * u * 0.5
+      c.wz = c.wz - f * u / r * 0.5
+      c.wtz = c.wz
+    end
+  end
+  if push ~= 0 then
+    c.x = c.x + push
+    for i = 0, 7 do c.V[i * 2] = c.V[i * 2] + push end
+  end
+  push = 0
+  if minY < 0 then
+    push = -minY
+    if c.vy < 0 then
+      c.vy = -c.vy * e
+      local u = c.vx + c.wz * r
+      c.vx = c.vx - f * u * 0.5
+      c.wz = c.wz - f * u / r * 0.5
+      c.wtz = c.wz
+    end
+  elseif maxY > H - 1 then
+    push = (H - 1) - maxY
+    if c.vy > 0 then
+      c.vy = -c.vy * e
+      local u = c.vx - c.wz * r
+      c.vx = c.vx - f * u * 0.5
+      c.wz = c.wz + f * u / r * 0.5
+      c.wtz = c.wz
+    end
+  end
+  if push ~= 0 then
+    c.y = c.y + push
+    for i = 0, 7 do c.V[i * 2 + 1] = c.V[i * 2 + 1] + push end
+  end
+end
+
+function dots_cube(sc, t)
+  local c = CB
+  local dt = DT
+  t = t * 0.5
+  c.frame = c.frame + 1
+  local fr = c.frame
+  -- the plasma's tables, for the colour, every other frame
+  if fr % 2 == 1 then
+    for x = 0, W - 1 do TA[x] = sin((x * 2 + 1) / 12 * 0.9 + t) end
+    for y = 0, H - 1 do TB[y] = sin((y * 2 + 1) / 12 * 1.1 - t * 0.7) end
+    for sxy = 0, W + H - 2 do TC[sxy] = sin((sxy * 2 + 2) / 12 * 0.6 + t * 0.5) end
+    for k = 0, 440 do TR[k] = sin(k / 20 * 1.2 - t * 1.3) end
+  end
+  cube_physics(dt)
+  local MARKF, LITN, LITP, FADE = c.mark, c.litn, c.litp, c.fade
+  local nn, np = 0, c.np
+  local V, Z = c.V, c.Z
+  for e = 1, 12 do
+    local a, b = CUBE_E[e][1], CUBE_E[e][2]
+    local x0, y0, x1, y1 = V[a * 2], V[a * 2 + 1], V[b * 2], V[b * 2 + 1]
+    -- nearer is brighter: z runs -1.7 (near) .. 1.7 (far)
+    local k = 1.0 - 0.28 * (Z[a] + Z[b])
+    if k > 1.25 then k = 1.25 elseif k < 0.35 then k = 0.35 end
+    local dx, dy = x1 - x0, y1 - y0
+    local steps = floor(max(abs(dx), abs(dy))) + 1
+    for s = 0, steps do
+      local xx = floor(x0 + dx * s / steps + 0.5)
+      local yy = floor(y0 + dy * s / steps + 0.5)
+      if xx >= 0 and xx < W and yy >= 0 and yy < H then
+        local i = yy * W + xx
+        local m = MARKF[i]
+        if m ~= fr then
+          local was = m == fr - 1
+          MARKF[i] = fr
+          nn = nn + 1
+          LITN[nn] = i
+          if not was or (s + fr) % 4 == 0 then
+            -- a new dot lights at once; an old one is painted again now and then
+            local col = HFACE[plasma_hue(xx, yy, i)]
+            pixel(xx, yy, min(255, floor(((col >> 16) & 255) * k)), min(255, floor(((col >> 8) & 255) * k)),
+                  min(255, floor((col & 255) * k)))
+          end
+        end
+      end
+    end
+  end
+  -- the afterglow: last frame's dots left behind glow at a third, then go
+  for j = 1, c.nf do
+    local i = FADE[j]
+    if MARKF[i] ~= fr then pixel(i % W, floor(i / W), 0, 0, 0) end
+    FADE[j] = nil
+  end
+  local nf = 0
+  for j = 1, np do
+    local i = LITP[j]
+    if MARKF[i] ~= fr then
+      local col = HFACE[plasma_hue(i % W, floor(i / W), i)]
+      pixel(i % W, floor(i / W), ((col >> 16) & 255) // 3, ((col >> 8) & 255) // 3, (col & 255) // 3)
+      nf = nf + 1
+      FADE[nf] = i
+    end
+  end
+  c.nf = nf
+  c.litn, c.litp = LITP, LITN
+  c.nn, c.np = np, nn
+end
 end
 
 local function dots_continuous(sc, t)
@@ -1301,6 +1501,7 @@ function draw()
   end
   tprev = t
   T = T + dt
+  DT = dt
 
   buttons()
   local sc = SHOW[scene]
@@ -1322,6 +1523,7 @@ function draw()
   else
     draw_active(sc.style)
     if DOTS and (sc.src == "plasma" or sc.src == "rings") then dots_continuous(sc, T)
+    elseif DOTS and sc.src == "cube" then dots_cube(sc, T)
     elseif not DOTS then digits_frame(sc, T)
     else sample_chunk(sc, T) end
     return
