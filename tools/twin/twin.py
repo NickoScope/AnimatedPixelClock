@@ -63,11 +63,13 @@ def cmd_run(a, extra):
     if os.path.exists(WIFI):
         ssid, pw = open(WIFI).read().splitlines()[:2]
         args += ["--wifi", f"ssid={ssid},psk={pw}"]
+        # The portal, the API and the UDP port, from the Mac only (127.0.0.1), as on the LAN.
+        args += ["--hostfwd", f"tcp:{a.http}-80", "--hostfwd", f"udp:{a.udp}-4210"]
         if a.provision:
             args += ["--serial-hex", improv_hex(ssid, pw)]
     if a.web:
         args += ["--web", str(a.web), "--web-dir", os.path.join(ENGINE, "web")]
-        print(f"the panel: http://127.0.0.1:{a.web}/panel.html", file=sys.stderr)
+        print(f"the panel: http://127.0.0.1:{a.web}/panel.html   its portal: http://127.0.0.1:{a.http}/", file=sys.stderr)
     if a.seconds:
         args += ["--max-seconds", str(a.seconds)]
     if a.png:
@@ -116,6 +118,8 @@ def main():
     r.add_argument("--png")
     r.add_argument("--fresh", action="store_true")
     r.add_argument("--provision", action="store_true", help="send the Wi-Fi pair over Improv at boot")
+    r.add_argument("--http", type=int, default=8080, help="the twin's port 80 on 127.0.0.1 (default 8080)")
+    r.add_argument("--udp", type=int, default=4210, help="the twin's UDP 4210 on 127.0.0.1")
     f = sub.add_parser("flash")
     f.add_argument("image")
     f.add_argument("--at")
