@@ -39,6 +39,7 @@ extern "C" {
 #include "px_raster.h"             // put, blend, glow, fade, blur, mode, shared with luasim
 #include "px_snapshot.h"           // px.save, px.restore, px.mix, px.forget (after px_raster.h)
 #include "px_layer.h"              // palette, pal, layer, capture, show, scroll, mirror, shared with luasim
+#include "px_feedback.h"           // px.feedback (after px_raster.h and px_layer.h)
 #include "lua_fx.h"                // LuaFx::charge
 
 #define W LUA_PX_W
@@ -373,6 +374,14 @@ static int l_mix(lua_State *L) {
   return n;
 }
 static int l_forget(lua_State *L) { return px_forget_lua(L); }
+// px.feedback is charged 3/4 of an instruction a pixel: our estimate until the
+// panel measures it.
+static int l_feedback(lua_State *L) {
+  unsigned long work = 0;
+  const int n = px_feedback_lua(L, canvasOf(L)->rgb, W, H, &work);
+  LuaFx::charge(L, (uint32_t)(work * 3 / 4));
+  return n;
+}
 
 // Charged like px.terrain: a quarter of an instruction a pixel touched, which
 // is about what a stamp costs on the panel against a Lua instruction (the gate
@@ -406,6 +415,7 @@ static const luaL_Reg kPxLib[] = {
   {"palette", l_palette}, {"pal", l_pal}, {"layer", l_layer}, {"capture", l_capture},
   {"show", l_show}, {"scroll", l_scroll}, {"mirror", l_mirror},
   {"weather", l_weather}, {"city", l_city}, {"mix", l_mix}, {"forget", l_forget},
+  {"feedback", l_feedback},
   {NULL, NULL}
 };
 

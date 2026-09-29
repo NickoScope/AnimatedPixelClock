@@ -1204,6 +1204,12 @@ async def effect_api() -> str:
                              "pixels; black comes in, or with wrap what went out",
             "px.mirror(m)": "firmware 2.7.4+. 'h' left half onto the right, 'v' top "
                             "onto the bottom, 'hv' top-left quarter onto all four",
+            "px.feedback{zoom,rot,dx,dy,cx,cy,decay,edge}": "firmware 2.7.5+. The canvas "
+                            "resampled: zoom (>1 grows) and rot radians (clockwise) about "
+                            "cx,cy (default the centre), shift dx,dy, darker by decay "
+                            "0..1, edge 'black'|'clamp'|'wrap'. Call it first each "
+                            "frame, then draw: what you draw streams away into "
+                            "spirals and tunnels (vortex.lua). All fields optional.",
             "px.weather()": "firmware 2.7.4+. -> {temp,min,max,humidity,wind,code,"
                             "fahrenheit} in C and km/h (the weather clock's data), or "
                             "nil while there is none; asking keeps the fetch going",

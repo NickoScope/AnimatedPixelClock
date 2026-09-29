@@ -895,6 +895,11 @@ What follows from that:
   scene, `px.save(2)`, paint the new one, `px.mix(2, 1 - u)` as `u` runs from
   0 to 1 - four snapshot slots, 24 KB of heap each, `px.forget(n)` to free
   one. `kaleidoscope.lua` does it over 3 s.
+- Endless motion from almost nothing (2.7.5): `px.feedback{zoom = 1.05,
+  rot = 0.03, decay = 0.04}` first thing in `draw()`, then a few bright dots
+  or lines at the centre - the picture streams outward in spirals, the
+  MilkDrop trick. `vortex.lua` does it; draw over (not "add") or the colours
+  pile up into white.
 - What the panel knows about outside: `px.weather()` (2.7.4) is the weather
   clock's data - `{temp, min, max, humidity, wind, code, fahrenheit}` in C and
   km/h - or nil while there is none (weather off in the portal, no location,
