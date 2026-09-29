@@ -70,13 +70,13 @@ static int pxd_aline(unsigned char *fb, int w, int h, int32_t x0, int32_t y0, in
   const int lim = (steep ? h : w) + 2;
   const int32_t dx = x1 - x0, dy = y1 - y0;
   // the gradient, Q16 minor per major
-  const int64_t grad = dx ? ((int64_t)dy << 16) / dx : 0;
+  const int64_t grad = dx ? ((int64_t)dy * 65536) / dx : 0;     // multiplied, not shifted: dy may be negative
   int xs = (x0 + 255) >> 8, xe = x1 >> 8;                 // pixel columns whose centres lie on the line
   if (xs < -2) xs = -2;
   if (xe > lim) xe = lim;
   int n = 0;
   for (int x = xs; x <= xe; x++, n++) {
-    const int64_t yq = ((int64_t)y0 << 8) + grad * (((int64_t)x << 8) - x0) / 256;   // Q16
+    const int64_t yq = (int64_t)y0 * 256 + grad * ((int64_t)x * 256 - x0) / 256;   // Q16
     const int yi = (int)(yq >> 16), f = (int)((yq >> 8) & 255);
     if (steep) {
       pxd_plot(fb, w, h, yi, x, r, g, b, ((256 - f) * a) >> 8, add);
@@ -118,9 +118,9 @@ static long pxd_tri(unsigned char *fb, int w, int h, int32_t x0, int32_t y0, int
   const int32_t X[3] = {x0, x1, x2}, Y[3] = {y0, y1, y2};
   long looked = 0;
   for (int py = miny; py <= maxy; py++) {
-    const int32_t cy = (py << 8) + 128;
+    const int32_t cy = py * 256 + 128;
     for (int px = minx; px <= maxx; px++, looked++) {
-      const int32_t cx = (px << 8) + 128;
+      const int32_t cx = px * 256 + 128;
       int in = 1;
       for (int e = 0; e < 3 && in; e++) {
         const int32_t ax = X[e], ay = Y[e], bx = X[(e + 1) % 3], by = Y[(e + 1) % 3];
@@ -212,7 +212,7 @@ static int pxm_read(lua_State *L, int t, const char *k, int stride, int maxn, in
           lua_Number c = !(x == x) ? 0 : x > 64 ? 64 : x < -64 ? -64 : x;
           outI[i] = (int32_t)(c * 4096);
         } else {
-          if (!(x >= 1 && x <= nv)) return luaL_error(L, "px.model: %s index %d is not a vertex", k, i + 1);
+          if (!(x >= 1 && x <= nv) || (lua_Number)(int)x != x) return luaL_error(L, "px.model: %s index %d is not a vertex", k, i + 1);
           outU[i] = (uint16_t)((int)x - 1);
         }
       }
@@ -328,7 +328,7 @@ static int px_mesh_lua(lua_State *L, unsigned char *fb, int w, int h, int add, P
   }
   lua_pop(L, 1);
   if (charge) charge(L, (unsigned long)m->nv * 20 + (unsigned long)(mode != 1 ? m->ne * 300 : 0) +
-                        (unsigned long)(mode != 0 ? m->nf * 200 : 0));
+                        (unsigned long)(mode != 0 ? m->nf * 20 : 0));          // the faces' fill: below, by their boxes
 
   // the turn: x, then y, then z, Q15 cosines and sines
   const int64_t cxr = pxl_cosq((uint32_t)ax & 0xFFFF), sxr = pxl_cosq(((uint32_t)ax - 16384u) & 0xFFFF);
@@ -343,8 +343,15 @@ static int px_mesh_lua(lua_State *L, unsigned char *fb, int w, int h, int add, P
     int64_t d = z2 + dist;
     if (d < 410) d = 410;                                  // 0.1 of a unit: nothing behind the eye
     const int64_t k = ((int64_t)dist << 12) / d;           // Q12, 1 at the model's centre
-    m->sx[i] = (int32_t)(ox + ((x3 * scale >> 12) * k >> 12));
-    m->sy[i] = (int32_t)(oy - ((y3 * scale >> 12) * k >> 12));
+    // held to +-8192 px as px.aline's and px.tri's own ends are, so every
+    // difference later stays in 32 bits (a vertex at the eye with a big scale
+    // otherwise ran past them)
+    const int64_t LIM = (int64_t)8192 * 256;
+    int64_t X = ox + ((x3 * scale >> 12) * k >> 12), Y = oy - ((y3 * scale >> 12) * k >> 12);
+    X = X > LIM ? LIM : X < -LIM ? -LIM : X;
+    Y = Y > LIM ? LIM : Y < -LIM ? -LIM : Y;
+    m->sx[i] = (int32_t)X;
+    m->sy[i] = (int32_t)Y;
     m->sz[i] = (int32_t)z2;
   }
   if (mode != 0 && m->nf) {
@@ -364,6 +371,24 @@ static int px_mesh_lua(lua_State *L, unsigned char *fb, int w, int h, int add, P
       int j = n++;
       while (j > 0 && depth[j - 1] < dz) { depth[j] = depth[j - 1]; order[j] = order[j - 1]; j--; }
       depth[j] = dz; order[j] = (uint16_t)i;
+    }
+    // the fill costs its faces' boxes (clipped to the canvas), charged before
+    // any is drawn, as px.tri charges its own
+    if (charge) {
+      unsigned long area = 0;
+      for (int k = 0; k < n; k++) {
+        const int i = order[k];
+        const int a = m->f[i * 3], b = m->f[i * 3 + 1], c = m->f[i * 3 + 2];
+        int32_t x0 = m->sx[a], x1 = m->sx[a], y0 = m->sy[a], y1 = m->sy[a];
+        x0 = m->sx[b] < x0 ? m->sx[b] : x0; x1 = m->sx[b] > x1 ? m->sx[b] : x1;
+        x0 = m->sx[c] < x0 ? m->sx[c] : x0; x1 = m->sx[c] > x1 ? m->sx[c] : x1;
+        y0 = m->sy[b] < y0 ? m->sy[b] : y0; y1 = m->sy[b] > y1 ? m->sy[b] : y1;
+        y0 = m->sy[c] < y0 ? m->sy[c] : y0; y1 = m->sy[c] > y1 ? m->sy[c] : y1;
+        long bw = (x1 >> 8) - (x0 >> 8) + 2, bh = (y1 >> 8) - (y0 >> 8) + 2;
+        bw = bw > w ? w : bw; bh = bh > h ? h : bh;
+        area += (unsigned long)(bw * bh);
+      }
+      charge(L, area / 2);
     }
     for (int k = 0; k < n; k++) {
       const int i = order[k];
