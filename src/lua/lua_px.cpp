@@ -42,6 +42,7 @@ extern "C" {
 
 #define W LUA_PX_W
 #define H LUA_PX_H
+static_assert(LUA_PX_H <= 64, "pxr_circle_fill keeps a span for each of at most 64 rows");
 
 static inline LuaPxCanvas *canvasOf(lua_State *L) {
   return static_cast<LuaPxCanvas *>(lua_touserdata(L, lua_upvalueindex(1)));

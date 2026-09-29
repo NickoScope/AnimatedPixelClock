@@ -36,6 +36,7 @@ static int    g_year = 2026;     /* the year yday counts in */
 /* put, blend, glow, fade, blur and px.mode: one code with the firmware */
 #include "../../src/lua/px_raster.h"
 static int g_add = 0;   /* px.mode: 1 while "add" */
+_Static_assert(H <= 64, "pxr_circle_fill keeps a span for each of at most 64 rows");
 
 static void put(int x, int y, int r, int g, int b) { pxr_put(fb, W, H, x, y, r, g, b, g_add); }
 
