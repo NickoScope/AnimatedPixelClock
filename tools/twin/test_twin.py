@@ -451,6 +451,7 @@ class Calibrate(unittest.TestCase):
             args = popen.call_args[0][0]
             self.assertEqual(args[args.index("--cpi") + 1], "2.45")
             self.assertEqual(args[args.index("--wifi") + 1], "ssid=Guest")
+            self.assertEqual(args[args.index("--flash-image") + 1], T.flasher_firmware()[0])   # not a hard-coded build
 
     def test_run_records_errors_instead_of_dying(self):
         with tempfile.TemporaryDirectory() as d, contextlib.redirect_stdout(io.StringIO()):
