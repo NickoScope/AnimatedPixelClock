@@ -31,7 +31,7 @@
 <script type="module">
 // Checks of twin-serial.js against the WICG Web Serial draft (2 June 2026, SerialPort §4.3-§4.10),
 // then esptool-js 0.6.0 through it: ESPLoader.main() and flashId() as ESP Web Tools 10.4.0 calls them
-// (src/flash.ts:44-67), and its hard reset (flash.ts:15-19). Results: window.__selftest.
+// (src/flash.ts:49-66), and its hard reset (flash.ts:16-20). Results: window.__selftest.
 const ST = window.__selftest = { started: false, done: false, ok: null, checks: [], terminal: [], banner: null, error: null, ms: {} };
 const $ = (id) => document.getElementById(id);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -127,7 +127,7 @@ async function esptool(port) {
   record('esptool-js: Chip is ESP32-S3', /Chip is ESP32-S3/.test(text), `main() ${ST.ms.main} ms`);
   record('esptool-js: stub 0.6.0 running', /Stub running/.test(text));
   record('esptool-js: flash c2 8039, 32MB', /Manufacturer: c2/.test(text) && /Device: 8039/.test(text) && /Detected flash size: 32MB/.test(text));
-  // ESP Web Tools' reset after flashing (flash.ts:15-19): RTS on, 100 ms, then HardReset (RTS off).
+  // ESP Web Tools' reset after flashing (flash.ts:16-20): RTS on, 100 ms, then HardReset (RTS off).
   await transport.setRTS(true);
   await sleep(100);
   await loader.after();
@@ -139,8 +139,8 @@ async function esptool(port) {
   const ev = journal().slice(mark).filter((e) => e.kind === 'event' && (e.t === 'reset' || e.t === 'release'));
   ST.events = ev.map((e) => (e.t === 'reset' ? `reset(cause ${e.cause}, download ${e.download})` : `release(strap ${e.strap})`));
   const s = ST.events.join(' ');
-  // GPIO_STRAP: bit 3 GPIO0, bit 2 GPIO46; (v & 0xC) == 0 is download mode, GPIO0 high boots from
-  // SPI flash (ESP32-S3 TRM v1.8 register 6.15, Table 8.1-1 / 8.2).
+  // GPIO_STRAPPING: bit 3 GPIO0, bit 2 GPIO46 (ESP32-S3 TRM v1.8 register 6.15). GPIO0 = 0 and
+  // GPIO46 = 0, (v & 0xC) == 0, is Joint Download Boot; GPIO0 = 1 is SPI Boot (Table 8.2-1).
   const first = ev.findIndex((e) => e.t === 'reset'), last = ev.map((e) => e.t).lastIndexOf('reset');
   const dl = first >= 0 && ev[first].cause === 21 && ev[first].download === true && ev[first + 1] && ev[first + 1].t === 'release' && (ev[first + 1].strap & 0x0c) === 0;
   const spi = last > first && ev[last].cause === 21 && ev[last].download === false && ev[last + 1] && ev[last + 1].t === 'release' && (ev[last + 1].strap & 0x08) !== 0;

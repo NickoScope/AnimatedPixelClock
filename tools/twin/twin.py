@@ -170,7 +170,7 @@ def flasher_index(html: str) -> str:
 
 def flasher_firmware(image=None, version=None):
     """(image, version) the twin's flasher offers: the release in docs/firmware/latest, or IMAGE under
-    VERSION. The page writes it at 0x0 (docs/flasher.js:51), so it has to be a merged image."""
+    VERSION. The page writes it at 0x0 (docs/flasher.js:53), so it has to be a merged image."""
     if image is None:
         if version is not None:
             sys.exit("--flasher-version goes with --flasher-image")
