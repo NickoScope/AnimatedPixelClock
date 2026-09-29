@@ -34,10 +34,42 @@ index 4e5407f..a06a308 100644
  [workspace.package]
  version = "0.2.0"
 diff --git a/cli/src/lib.rs b/cli/src/lib.rs
-index 86cc6fd..21fe360 100644
+index 86cc6fd..cb32ccd 100644
 --- a/cli/src/lib.rs
 +++ b/cli/src/lib.rs
-@@ -67,9 +67,9 @@ pub struct Opts {
+@@ -58,6 +58,31 @@ fn console_mask(name: &str) -> u32 {
+     })
+ }
+ 
++/// What `--net` puts behind the virtual access point.
++#[derive(Clone, Debug, Default, PartialEq, Eq)]
++pub enum NetMode {
++    /// `nat` (or `user`): the virtual network, with TCP/UDP relayed through host sockets
++    #[default]
++    Nat,
++    /// `none`: the virtual network alone; traffic past the gateway is refused
++    None,
++    /// `bridge:PATH`: the station's frames go to a real LAN through the socket_vmnet daemon at PATH
++    Bridge(String),
++}
++
++/// `--net nat|user|none|bridge:PATH`. Anything else is an error, not quietly `none`.
++pub fn net_mode(v: &str) -> Result<NetMode, String> {
++    match v {
++        "nat" | "user" => Ok(NetMode::Nat),
++        "none" => Ok(NetMode::None),
++        _ => match v.strip_prefix("bridge:") {
++            Some(path) if !path.is_empty() => Ok(NetMode::Bridge(path.to_string())),
++            Some(_) => Err("--net bridge:PATH needs the socket_vmnet socket, e.g. bridge:/var/run/socket_vmnet.bridged.en0".into()),
++            None => Err(format!("--net {v}: expected nat, none or bridge:PATH")),
++        },
++    }
++}
++
+ /// Everything the command line can say, chip-agnostic; `None` means "the chip's default".
+ #[derive(Default)]
+ pub struct Opts {
+@@ -67,9 +92,9 @@ pub struct Opts {
      pub approximate_cache: bool,
      pub chip: String,
      pub rom: Option<PathBuf>, pub bootloader: Option<String>, pub ptable: Option<String>, pub app: Option<String>, pub elfs: Vec<String>,
@@ -45,11 +77,20 @@ index 86cc6fd..21fe360 100644
 +    pub flash_image: Option<String>, pub flash_at: Vec<String>, pub boot: Option<String>, pub flash_mb: Option<usize>, pub psram_mb: Option<usize>, pub flash_id: Option<[u8; 3]>, pub flash_persist: Option<String>, pub cpi: Option<(u32, u32)>, pub serial_hex: Vec<u8>,
      pub mac: Option<[u8; 6]>, pub strap: Option<u32>, pub reset_cause: Option<u32>, pub efuse_regs: Option<String>, pub regs_init: Option<String>,
 -    pub board: String, pub wifi: Option<String>, pub net: String, pub cam_image: Option<String>, pub cam_fps: f64,
-+    pub board: String, pub wifi: Option<String>, pub net: String, pub hostfwd: Vec<esp_soc::nat::HostFwd>, pub cam_image: Option<String>, pub cam_fps: f64,
++    pub board: String, pub wifi: Option<String>, pub net: NetMode, pub hostfwd: Vec<esp_soc::nat::HostFwd>, pub cam_image: Option<String>, pub cam_fps: f64,
      pub spi2_timing: bool, pub measured_te: bool,
      pub max_insns: u64, pub max_seconds: Option<f64>, pub script: Option<String>, pub serial: Option<String>,
      pub console: Option<String>, pub console_prefix: bool, pub realtime: bool, pub web_port: Option<u16>, pub web_dir: Option<String>, pub no_reboot: bool,
-@@ -103,6 +103,9 @@ pub fn parse(args: &[String], default_chip: &str) -> Opts {
+@@ -83,7 +108,7 @@ pub struct Opts {
+ }
+ 
+ pub fn parse(args: &[String], default_chip: &str) -> Opts {
+-    let mut o = Opts { chip: default_chip.to_string(), board: "atech14".into(), net: "nat".into(), cam_fps: 10.0, max_insns: u64::MAX, dump: true, regtrace_max: u64::MAX, stop_exc: u64::MAX, cooja_slice_us: 100, ..Default::default() };
++    let mut o = Opts { chip: default_chip.to_string(), board: "atech14".into(), net: NetMode::Nat, cam_fps: 10.0, max_insns: u64::MAX, dump: true, regtrace_max: u64::MAX, stop_exc: u64::MAX, cooja_slice_us: 100, ..Default::default() };
+     let mut i = 1;
+     while i < args.len() {
+         let a = args[i].as_str();
+@@ -103,6 +128,9 @@ pub fn parse(args: &[String], default_chip: &str) -> Opts {
              "--flash-at" => o.flash_at.push(next()),
              "--boot" => o.boot = Some(next()),
              "--flash-mb" => o.flash_mb = Some(next().parse().expect("mb")),
@@ -59,10 +100,12 @@ index 86cc6fd..21fe360 100644
              "--psram-mb" => o.psram_mb = Some(next().parse().expect("mb")),
              "--mac" => { let v = next(); let b: Vec<u8> = v.split(':').filter_map(|x| u8::from_str_radix(x, 16).ok()).collect(); if b.len() != 6 { eprintln!("--mac wants xx:xx:xx:xx:xx:xx"); std::process::exit(2); } let mut m = [0u8; 6]; m.copy_from_slice(&b); o.mac = Some(m); }
              "--strap" => o.strap = Some(hex(&next(), "strap")),
-@@ -114,12 +117,25 @@ pub fn parse(args: &[String], default_chip: &str) -> Opts {
+@@ -113,13 +141,26 @@ pub fn parse(args: &[String], default_chip: &str) -> Opts {
+             "--spi2-timing" => o.spi2_timing = true,
              "--measured-te" => o.measured_te = true,
              "--wifi" => o.wifi = Some(next()),
-             "--net" => o.net = next(),
+-            "--net" => o.net = next(),
++            "--net" => o.net = net_mode(&next()).unwrap_or_else(|e| usage_error(&e)),
 +            // A host port on 127.0.0.1 forwarded into the guest: tcp:8080-80, udp:4210-4210
 +            "--hostfwd" => o.hostfwd.push(esp_soc::nat::HostFwd::parse(&next()).unwrap_or_else(|e| usage_error(&format!("--hostfwd {e}")))),
              "--cam-image" => o.cam_image = Some(next()),
@@ -85,7 +128,7 @@ index 86cc6fd..21fe360 100644
              "--console" => o.console = Some(next()),
              "--console-prefix" => o.console_prefix = true,
              "--realtime" => o.realtime = true,
-@@ -172,6 +188,23 @@ fn find_rom(name: &str) -> Option<PathBuf> {
+@@ -172,6 +213,54 @@ fn find_rom(name: &str) -> Option<PathBuf> {
      dirs.into_iter().rev().map(|d| d.join(name)).find(|p| p.exists())
  }
  
@@ -99,39 +142,78 @@ index 86cc6fd..21fe360 100644
 +    }
 +}
 +
-+/// `--hostfwd` needs the network behind `--wifi` with the NAT in front of it.
-+fn check_hostfwd(o: &Opts) {
-+    if o.hostfwd.is_empty() { return; }
-+    if o.wifi.is_none() { usage_error("--hostfwd needs --wifi: there is no network to forward into"); }
-+    if !(o.net == "nat" || o.net == "user") { usage_error("--hostfwd needs --net nat"); }
++/// `--hostfwd` needs the network behind `--wifi` with the NAT in front of it; a bridge needs `--wifi`.
++fn check_net(o: &Opts) -> Result<(), String> {
++    if let NetMode::Bridge(path) = &o.net {
++        if o.wifi.is_none() { return Err(format!("--net bridge:{path} needs --wifi: the station reaches the LAN through the virtual access point")); }
++        if !o.hostfwd.is_empty() { return Err(format!("--hostfwd does not go with --net bridge:{path}: the guest has its own address on the LAN, reach it there")); }
++    }
++    if o.hostfwd.is_empty() { return Ok(()); }
++    if o.wifi.is_none() { return Err("--hostfwd needs --wifi: there is no network to forward into".into()); }
++    if o.net != NetMode::Nat { return Err("--hostfwd needs --net nat".into()); }
++    Ok(())
++}
++fn check_hostfwd(o: &Opts) { check_net(o).unwrap_or_else(|e| usage_error(&e)) }
++
++/// Put the chosen backend behind the virtual network: the NAT (with its forwarded ports), a bridge
++/// to the LAN, or nothing. Says what it did; a bridge that cannot connect ends the run.
++fn attach_net(net: &mut esp_soc::net::VirtualNet, o: &Opts, station: [u8; 6], log: bool) {
++    match &o.net {
++        NetMode::Nat => {
++            let mut nat = esp_soc::nat::Nat::new(log);
++            eprintln!("[emu] NAT to the host network enabled (DNS via {}.{}.{}.{})", nat.resolver[0], nat.resolver[1], nat.resolver[2], nat.resolver[3]);
++            attach_hostfwd(&mut nat, o);
++            net.nat = Some(nat);
++            eprintln!("[emu] virtual network: station {}.{}.{}.{}, gateway {}.{}.{}.{} (DHCP, ARP, ICMP, DNS, NTP)", net.sta_ip[0], net.sta_ip[1], net.sta_ip[2], net.sta_ip[3], net.gw_ip[0], net.gw_ip[1], net.gw_ip[2], net.gw_ip[3]);
++        }
++        NetMode::None => eprintln!("[emu] virtual network: station {}.{}.{}.{}, gateway {}.{}.{}.{} (DHCP, ARP, ICMP, DNS, NTP; nothing past the gateway)", net.sta_ip[0], net.sta_ip[1], net.sta_ip[2], net.sta_ip[3], net.gw_ip[0], net.gw_ip[1], net.gw_ip[2], net.gw_ip[3]),
++        NetMode::Bridge(path) => {
++            let b = esp_soc::net::vmnet::Bridge::connect(path, station, log).unwrap_or_else(|e| {
++                eprintln!("--net bridge: {e}");
++                eprintln!("  is the socket_vmnet daemon installed and running? (tools/twin/README.md in AnimatedPixelClock: \"В домашней сети\")");
++                std::process::exit(2)
++            });
++            eprintln!("[emu] bridge to the LAN through {}: the station's frames go out as they are, the LAN's router serves DHCP; frames for {}, broadcast and multicast come back",
++                      path, esp_soc::wifi::mac_str(&station));
++            net.bridge = Some(b);
++        }
++    }
 +}
 +
  pub fn run_cli(default_chip: &str) {
      let args: Vec<String> = std::env::args().collect();
      let mut o = parse(&args, default_chip);
-@@ -219,8 +252,9 @@ fn run_cooja(o: &mut Opts) {
+@@ -218,9 +307,14 @@ fn run_cooja(o: &mut Opts) {
+     report(&mut m, o, match summary.stopped { Some(_) => Stop::Halted, None => Stop::MaxInsns }, dt);
  }
  
++/// The base MACs a run has without `--mac`; the WiFi station uses the base MAC.
++const S3_MAC: [u8; 6] = [0x44, 0x1b, 0xf6, 0x75, 0xdc, 0xe0];
++const C6_MAC: [u8; 6] = [0xdc, 0x1e, 0xd5, 0x6e, 0x8c, 0xdc];
++
  fn setup_s3(o: &Opts) -> esp32s3::Machine {
-+    check_hostfwd(o);
-     let mut m = esp32s3::machine(o.mac.unwrap_or([0x44, 0x1b, 0xf6, 0x75, 0xdc, 0xe0]));
+-    let mut m = esp32s3::machine(o.mac.unwrap_or([0x44, 0x1b, 0xf6, 0x75, 0xdc, 0xe0]));
 -    m.bus.board = esp32s3::board::make_board(&o.board).unwrap_or_else(|| { eprintln!("unknown board '{}' (atech14, waveshare-cam, waveshare-lcd4b, waveshare-amoled18-v2, none)", o.board); std::process::exit(2) });
++    check_hostfwd(o);
++    let mut m = esp32s3::machine(o.mac.unwrap_or(S3_MAC));
 +    m.bus.board = esp32s3::board::make_board(&o.board).unwrap_or_else(|| { eprintln!("unknown board '{}' (atech14, waveshare-cam, waveshare-lcd4b, waveshare-amoled18-v2, hub75-panel, none)", o.board); std::process::exit(2) });
      if o.measured_te {
          assert_eq!(m.bus.board.name(), "waveshare-amoled18-v2", "--measured-te requires the AMOLED V2 board");
          m.bus.board = Box::new(esp32s3::board::WaveshareAmoled18V2::with_measured_te());
-@@ -234,8 +268,9 @@ fn setup_s3(o: &Opts) -> esp32s3::Machine {
+@@ -233,18 +327,14 @@ fn setup_s3(o: &Opts) -> esp32s3::Machine {
+         eprintln!("[emu] virtual AP '{}' bssid {} channel {} ({})", cfg.ssid, esp32s3::wifi::mac_str(&cfg.bssid), cfg.channel, if cfg.psk.is_some() { "WPA2-PSK" } else { "open" });
          m.bus.periph.wifi.ap = Some(esp32s3::wifi::VirtualAp::new(cfg, m.bus.debug.has("wifi-frames")));
          let mut net = esp32s3::net::VirtualNet::new(m.bus.debug.has("net"));
-         if o.net == "nat" || o.net == "user" {
+-        if o.net == "nat" || o.net == "user" {
 -            let nat = esp32s3::nat::Nat::new(m.bus.debug.has("net"));
-+            let mut nat = esp32s3::nat::Nat::new(m.bus.debug.has("net"));
-             eprintln!("[emu] NAT to the host network enabled (DNS via {}.{}.{}.{})", nat.resolver[0], nat.resolver[1], nat.resolver[2], nat.resolver[3]);
-+            attach_hostfwd(&mut nat, o);
-             net.nat = Some(nat);
-         }
-         eprintln!("[emu] virtual network: station {}.{}.{}.{}, gateway {}.{}.{}.{} (DHCP, ARP, ICMP, DNS, NTP)", net.sta_ip[0], net.sta_ip[1], net.sta_ip[2], net.sta_ip[3], net.gw_ip[0], net.gw_ip[1], net.gw_ip[2], net.gw_ip[3]);
-@@ -245,6 +280,7 @@ fn setup_s3(o: &Opts) -> esp32s3::Machine {
+-            eprintln!("[emu] NAT to the host network enabled (DNS via {}.{}.{}.{})", nat.resolver[0], nat.resolver[1], nat.resolver[2], nat.resolver[3]);
+-            net.nat = Some(nat);
+-        }
+-        eprintln!("[emu] virtual network: station {}.{}.{}.{}, gateway {}.{}.{}.{} (DHCP, ARP, ICMP, DNS, NTP)", net.sta_ip[0], net.sta_ip[1], net.sta_ip[2], net.sta_ip[3], net.gw_ip[0], net.gw_ip[1], net.gw_ip[2], net.gw_ip[3]);
++        attach_net(&mut net, o, o.mac.unwrap_or(S3_MAC), m.bus.debug.has("net"));
+         m.bus.periph.wifi.net = Some(net);
+         m.bus.refresh_tick_budget();
+     }
      if let Some(p) = &o.cam_image { match esp_soc::picture::load(p) { Ok(pic) => { eprintln!("[emu] camera picture {} ({}x{})", p, pic.w, pic.h); m.bus.board.set_camera_picture(pic); } Err(e) => { eprintln!("[emu] {}", e); std::process::exit(2); } } }
      m.bus.periph.lcd_cam.frame_cycles = (esp32s3::periph::CPU_HZ as f64 / o.cam_fps) as u64;
      if let Some(mb) = o.flash_mb { if mb != 8 { m.bus.set_flash_size(mb << 20); } }
@@ -139,7 +221,7 @@ index 86cc6fd..21fe360 100644
      if let Some(mb) = o.psram_mb { if mb != 2 { m.bus.set_psram_size(mb << 20).unwrap(); } }
      if let Some(p) = &o.efuse_regs {
          let txt = std::fs::read_to_string(p).expect("efuse file");
-@@ -275,13 +311,14 @@ fn setup_c3(o: &Opts) -> esp32c3::Machine {
+@@ -275,14 +365,15 @@ fn setup_c3(o: &Opts) -> esp32c3::Machine {
      let mut m = esp32c3::machine(o.mac.unwrap_or([0x60, 0x55, 0xf9, 0x00, 0x11, 0x22]), o.flash_mb.unwrap_or(4) << 20);
      m.bus.set_flash_size(o.flash_mb.unwrap_or(4) << 20);   // the JEDEC capacity follows the size
      if !o.debug.is_empty() { let mut f = esp_soc::DebugFlags::from_env(); for d in &o.debug { f.parse(d); } m.set_debug(&f); }
@@ -151,24 +233,23 @@ index 86cc6fd..21fe360 100644
  }
  
  fn setup_c6(o: &Opts) -> esp32c6::Machine {
+-    let mut m = esp32c6::machine(o.mac.unwrap_or([0xdc, 0x1e, 0xd5, 0x6e, 0x8c, 0xdc]), o.flash_mb.unwrap_or(4) << 20);
 +    check_hostfwd(o);
-     let mut m = esp32c6::machine(o.mac.unwrap_or([0xdc, 0x1e, 0xd5, 0x6e, 0x8c, 0xdc]), o.flash_mb.unwrap_or(4) << 20);
++    let mut m = esp32c6::machine(o.mac.unwrap_or(C6_MAC), o.flash_mb.unwrap_or(4) << 20);
      m.bus.set_flash_size(o.flash_mb.unwrap_or(4) << 20);   // the JEDEC capacity follows the size
      if !o.debug.is_empty() { let mut f = esp_soc::DebugFlags::from_env(); for d in &o.debug { f.parse(d); } m.set_debug(&f); }
-@@ -292,7 +329,11 @@ fn setup_c6(o: &Opts) -> esp32c6::Machine {
+     let name = if o.board == "atech14" { "none" } else { o.board.as_str() };   // the S3 default means "bare module" here
+@@ -292,8 +383,7 @@ fn setup_c6(o: &Opts) -> esp32c6::Machine {
          eprintln!("[emu] virtual AP '{}' bssid {} channel {} ({})", cfg.ssid, esp_soc::wifi::mac_str(&cfg.bssid), cfg.channel, if cfg.psk.is_some() { "WPA2-PSK" } else { "open" });
          m.bus.periph.wifi_mac.ap = Some(esp_soc::wifi::VirtualAp::new(cfg, m.bus.debug.has("wifi-frames")));
          let mut net = esp_soc::net::VirtualNet::new(m.bus.debug.has("net"));
 -        if o.net == "nat" || o.net == "user" { net.nat = Some(esp_soc::nat::Nat::new(m.bus.debug.has("net"))); }
-+        if o.net == "nat" || o.net == "user" {
-+            let mut nat = esp_soc::nat::Nat::new(m.bus.debug.has("net"));
-+            attach_hostfwd(&mut nat, o);
-+            net.nat = Some(nat);
-+        }
-         eprintln!("[emu] virtual network: station {}.{}.{}.{}, gateway {}.{}.{}.{} (DHCP, ARP, ICMP, DNS, NTP)", net.sta_ip[0], net.sta_ip[1], net.sta_ip[2], net.sta_ip[3], net.gw_ip[0], net.gw_ip[1], net.gw_ip[2], net.gw_ip[3]);
+-        eprintln!("[emu] virtual network: station {}.{}.{}.{}, gateway {}.{}.{}.{} (DHCP, ARP, ICMP, DNS, NTP)", net.sta_ip[0], net.sta_ip[1], net.sta_ip[2], net.sta_ip[3], net.gw_ip[0], net.gw_ip[1], net.gw_ip[2], net.gw_ip[3]);
++        attach_net(&mut net, o, o.mac.unwrap_or(C6_MAC), m.bus.debug.has("net"));
          m.bus.periph.wifi_mac.net = Some(net);
      }
-@@ -325,6 +366,11 @@ fn run<S: Soc>(mut m: Machine<S>, o: &Opts) {
+     for (flag, on) in [("--cam-image", o.cam_image.is_some()), ("--psram-mb", o.psram_mb.is_some()), ("--efuse-regs", o.efuse_regs.is_some()), ("--regs-init", o.regs_init.is_some()), ("--regstat", o.regstat.is_some())] {
+@@ -325,6 +415,11 @@ fn run<S: Soc>(mut m: Machine<S>, o: &Opts) {
          m.set_cost_model(cost).unwrap_or_else(|e| usage_error(&format!("--approximate-timing: {e}")));
          eprintln!("[emu] APPROXIMATE timing: {:?}; use --boot rom; accuracy unvalidated", model.config);
      }
@@ -180,7 +261,7 @@ index 86cc6fd..21fe360 100644
      let boot = prepare(&mut m, o);
      let t0 = std::time::Instant::now();
      m.web_restart = !o.no_reboot;
-@@ -389,8 +435,19 @@ fn prepare<S: Soc>(m: &mut Machine<S>, o: &Opts) -> String {
+@@ -389,8 +484,19 @@ fn prepare<S: Soc>(m: &mut Machine<S>, o: &Opts) -> String {
          m.write_flash(off, &data).unwrap_or_else(|e| { eprintln!("--flash-at: {}", e); std::process::exit(2) });
          eprintln!("[emu] flash {:#x}: {} ({} bytes)", off, path, data.len());
      }
@@ -201,10 +282,10 @@ index 86cc6fd..21fe360 100644
          let n = m.trace_fns(pre);
          eprintln!("[emu] --trace-fn {}: {} functions", pre, n);
 diff --git a/cli/src/tests.rs b/cli/src/tests.rs
-index 685585b..cf36e5a 100644
+index 685585b..f112b60 100644
 --- a/cli/src/tests.rs
 +++ b/cli/src/tests.rs
-@@ -111,3 +111,11 @@ fn timing_cycle_values_report_usage_errors() {
+@@ -111,3 +111,36 @@ fn timing_cycle_values_report_usage_errors() {
          assert_eq!(timing_cycles("4294967295", name), Ok(u32::MAX));
      }
  }
@@ -216,8 +297,33 @@ index 685585b..cf36e5a 100644
 +    assert_eq!(o.hostfwd, [esp_soc::nat::HostFwd { udp: false, host_port: 8080, guest_port: 80 },
 +                           esp_soc::nat::HostFwd { udp: true, host_port: 4210, guest_port: 4210 }]);
 +}
++
++#[test]
++fn net_takes_nat_none_or_a_bridge_and_nothing_else() {
++    assert_eq!(net_mode("nat"), Ok(NetMode::Nat));
++    assert_eq!(net_mode("user"), Ok(NetMode::Nat));
++    assert_eq!(net_mode("none"), Ok(NetMode::None));
++    assert_eq!(net_mode("bridge:/var/run/socket_vmnet.bridged.en0"), Ok(NetMode::Bridge("/var/run/socket_vmnet.bridged.en0".into())));
++    for bad in ["", "tap", "bridge", "bridge:", "brige:/x", "NAT"] {
++        assert!(net_mode(bad).is_err(), "--net {bad:?} must be refused, not taken as none");
++    }
++    let args: Vec<String> = ["esp32sim", "--net", "bridge:/tmp/s"].iter().map(|s| s.to_string()).collect();
++    assert_eq!(parse(&args, "s3").net, NetMode::Bridge("/tmp/s".into()));
++    assert_eq!(parse(&["esp32sim".to_string()], "s3").net, NetMode::Nat);
++}
++
++#[test]
++fn a_bridge_needs_wifi_and_refuses_hostfwd() {
++    let opts = |a: &[&str]| { let v: Vec<String> = std::iter::once("esp32sim").chain(a.iter().copied()).map(String::from).collect(); parse(&v, "s3") };
++    assert!(check_net(&opts(&["--wifi", "ssid=x", "--net", "bridge:/tmp/s"])).is_ok());
++    assert!(check_net(&opts(&["--net", "bridge:/tmp/s"])).unwrap_err().contains("needs --wifi"));
++    let e = check_net(&opts(&["--wifi", "ssid=x", "--net", "bridge:/tmp/s", "--hostfwd", "tcp:8080-80"])).unwrap_err();
++    assert!(e.contains("--hostfwd") && e.contains("bridge"), "{e}");
++    assert!(check_net(&opts(&["--wifi", "ssid=x", "--net", "none", "--hostfwd", "tcp:8080-80"])).unwrap_err().contains("--net nat"));
++    assert!(check_net(&opts(&["--wifi", "ssid=x", "--hostfwd", "tcp:8080-80"])).is_ok());
++}
 diff --git a/docs/boards.md b/docs/boards.md
-index 44828e5..b85d20e 100644
+index 44828e5..2f04e4b 100644
 --- a/docs/boards.md
 +++ b/docs/boards.md
 @@ -20,6 +20,8 @@ pub trait BoardModel {
@@ -229,7 +335,7 @@ index 44828e5..b85d20e 100644
      fn named_pin(&self, name: &str) -> Option<u8>           // `btn1`, `sw`... for scripts and the UI
      fn encoder(&self) -> Option<(u8, u8)>                    // rotary encoder CLK/DT, for `knob`
      fn report(&self) -> String                               // end-of-run statistics
-@@ -86,6 +88,36 @@ combination is not selected by this board name. It needs `--flash-mb 16 --psram-
+@@ -86,6 +88,40 @@ combination is not selected by this board name. It needs `--flash-mb 16 --psram-
  Board input edges retain their intended timestamps. The current fast scheduler applies them to
  the SoC at its next existing bus tick.
  
@@ -258,8 +364,12 @@ index 44828e5..b85d20e 100644
 +`knob timing <state_ms> <gap_ms>`, `sw [ms]|down|up`, `boot [ms]|down|up`, and `press`/`release`
 +of `sw`, `knob`, `boot`; `climate <°C> <%RH>` sets the air at the SHTC3 from its next measurement
 +(-40..125 °C, 0..100 %RH, datasheet Tables 1-2). `press 0` is refused; `gpio 0 <level>` still writes the pin raw until the
-+next device edge. BOOT held through a reset does not select download mode here: the strap
-+register is `--strap`. `tools/panel-inputs-oracle/` replays a run's `--vcd` edges through the
++next device edge. BOOT or the knob's switch held through the page's RESET (a power-on Chip
++Reset) latches GPIO0 = 0 with IO46 = 0 into `GPIO_STRAPPING[3:2]`, so the ROM stops in joint
++download mode as the board does; released, the next RESET boots from flash. Software and
++watchdog resets keep the latch (only a Chip Reset samples the pins, ESP32-S3 TRM §8.1 and Table
++7.1-1), the other strap bits stay `--strap`, and the run's first boot takes the whole strap from
++`--strap`. `tools/panel-inputs-oracle/` replays a run's `--vcd` edges through the
 +firmware's own decoder sources built on the host (IRremoteESP8266 `decode()`, `ir_map.h`,
 +`control.cpp`).
 +
@@ -267,7 +377,7 @@ index 44828e5..b85d20e 100644
  
  | Device | Bus | Model |
 diff --git a/docs/cli.md b/docs/cli.md
-index fca0a87..4fb408f 100644
+index fca0a87..44d3def 100644
 --- a/docs/cli.md
 +++ b/docs/cli.md
 @@ -23,13 +23,14 @@ PSRAM and register presets.
@@ -281,7 +391,8 @@ index fca0a87..4fb408f 100644
  | `--flash-at OFFSET=FILE` (repeatable) | write a file into flash at a hex offset — a data partition's contents (the panel's `demo` partition takes `energydata.json`) |
  | `--stub SYMBOL[=value]` (repeatable) | return `value` (default 0) immediately when execution reaches the function's entry; numeric function addresses require a `0x` prefix; accepts decimal, `0x` hex, `true` (1) or `false` (0); rejects invalid values |
  | `--wifi SPEC` | attach a virtual access point the WiFi blob hears, plus a virtual network (DHCP/ARP/ICMP/DNS/SNTP; station 10.0.2.15, gateway 10.0.2.2) — for example `ssid=demo,chan=6,psk=demo-password,bssid=02:00:00:00:00:01`. `password` and `pass` alias `psk`; unknown keys and invalid values are rejected. Open and WPA2-PSK networks both join end to end, on the S3 (docs/wifi-plan.md) and on the C6 (docs/wifi-c6-plan.md) |
- | `--net nat\|none` | what the virtual network does with traffic it is not itself answering: `nat` (default) forwards TCP and UDP to the host's own network through ordinary sockets, `none` refuses it |
+-| `--net nat\|none` | what the virtual network does with traffic it is not itself answering: `nat` (default) forwards TCP and UDP to the host's own network through ordinary sockets, `none` refuses it |
++| `--net nat\|none\|bridge:PATH` | what the virtual network does with traffic it is not itself answering: `nat` (default) forwards TCP and UDP to the host's own network through ordinary sockets, `none` refuses it. `bridge:PATH` puts the station on a real LAN through a [socket_vmnet](https://github.com/lima-vm/socket_vmnet) daemon listening at PATH (bridged mode): the station's frames go out unchanged and the LAN's router serves DHCP; the virtual DHCP, ARP, DNS, NTP, ICMP and NAT stand aside. Needs `--wifi`, refuses `--hostfwd`. Any other value is an error |
 +| `--hostfwd tcp\|udp:HOSTPORT-GUESTPORT` (repeatable) | forward 127.0.0.1:HOSTPORT on the host into the guest's GUESTPORT once the station holds a DHCP lease; the guest sees clients as the gateway 10.0.2.2. Needs `--wifi` and `--net nat`; pair it with `--realtime` ([networking-howto.md](networking-howto.md)) |
  | `--trace-fn PREFIX` (repeatable) | log every call to functions whose name starts with PREFIX, with args and caller; append `$` for an exact name |
  | `--regstat FILE` | write per-register access statistics (count, pc, symbol) at exit — for reverse-engineering |
@@ -303,10 +414,29 @@ index fca0a87..4fb408f 100644
  real-time keep-up (push gaps, lag, audio delivered); `hw/wsaudio.py [port] [seconds]` listens to the
  UI's audio stream and reports sample counts/peak (how to check sound without listening).
 diff --git a/docs/networking-howto.md b/docs/networking-howto.md
-index 218eae4..1005ef1 100644
+index 218eae4..509e131 100644
 --- a/docs/networking-howto.md
 +++ b/docs/networking-howto.md
-@@ -37,6 +37,46 @@ network are the same code, the MAC model is the C6's own ([wifi-c6-plan.md](wifi
+@@ -32,11 +32,70 @@ adopts whatever you give it. The AP is WPA2-PSK when `psk=` is present and open
+ gateway with an immediate RST, so applications fail fast instead of hanging — useful when you want a
+ run to be reproducible and offline.
+ 
++`--net bridge:PATH` (macOS and Linux) puts the station on a real LAN instead: a
++[socket_vmnet](https://github.com/lima-vm/socket_vmnet) daemon in bridged mode, running as root,
++listens at PATH (for example `/var/run/socket_vmnet.bridged.en0`), and esp32sim connects to it as
++an ordinary user. The station's Ethernet frames go out as they are and the LAN's router gives it
++an address; none of the emulated services answer. The daemon floods every frame to every client,
++so only frames for the station's MAC (the source address of what it sends, `--mac` until then),
++broadcast and multicast are passed on. A reader thread empties the socket all the time, because a
++client that stops reading stalls the daemon for everyone (socket_vmnet issue #173); what the
++emulation has not taken in time is dropped. When the daemon goes away (sleep, a Wi-Fi reconnect)
++esp32sim reconnects with a growing delay. The counters (`rx_ok`, `rx_filtered`, `rx_dropped`, `tx`,
++`tx_dropped`, `reconnects`) are printed at the end of the run. Over Wi-Fi the host kernel rewrites
++the station's MAC to the host's own on the air (MAC-NAT), so the LAN's ARP tables show the host's
++MAC for the station's address; its own MAC still appears in DHCP.
++
+ The same `--wifi` and `--net` work on the **ESP32-C6** (`esp32sim-c6`): the access point and the
+ network are the same code, the MAC model is the C6's own ([wifi-c6-plan.md](wifi-c6-plan.md)). A C6
  radio run also needs `--stub bb_init=0`, and what has been tried is one station on one open or
  WPA2 network; `examples/c6-wifi-station` has the full command. The C3 has no WiFi model.
  
@@ -341,6 +471,11 @@ index 218eae4..1005ef1 100644
 +- **Several connections** are fine, up to the NAT's 64 flows shared with outbound traffic; beyond
 +  that, new ones wait in the backlog until a flow ends. A server that handles one client at a time
 +  (Arduino `WebServer`) serves parallel requests one after another.
++- **A chip reset** (the page's Restart, `esp_restart()`, the reboot after an OTA) leaves the AP,
++  the lease, the forwarded ports and the UDP flows in place. The NAT forgets the station's TCP
++  connections and closes their host sockets: the rebooted firmware's stack starts from nothing and
++  draws the same local ports as before (the emulated RNG repeats), so a flow left over would take
++  its first connections for old ones and drop them.
 +- **UDP.** A datagram to `HOSTPORT` reaches the guest's `GUESTPORT` from `10.0.2.2:HOSTPORT`; what
 +  the guest sends back to that address goes to the host peer that sent the last datagram. Payloads
 +  over 1472 bytes (one unfragmented packet) are dropped.
@@ -353,7 +488,7 @@ index 218eae4..1005ef1 100644
  ## What the network gives the firmware
  
  - **DHCP** — address, mask, gateway, DNS, so `esp_netif` reaches `IP_EVENT_STA_GOT_IP`.
-@@ -55,7 +95,7 @@ WPA2 network; `examples/c6-wifi-station` has the full command. The C3 has no WiF
+@@ -55,7 +114,7 @@ WPA2 network; `examples/c6-wifi-station` has the full command. The C3 has no WiF
  
  | Switch | Shows |
  | --- | --- |
@@ -362,7 +497,7 @@ index 218eae4..1005ef1 100644
  | `ESP_EMU_DEBUG_WIFI=1` | MAC-level events: descriptors, interrupts, TX queues |
  | `ESP_EMU_DEBUG_WIFI_FRAMES=1` | every 802.11 frame on the air, decoded |
  | `ESP_EMU_DEBUG_AES/SHA/RSA=1` | each accelerator operation as firmware requests it |
-@@ -75,8 +115,8 @@ WPA2 network; `examples/c6-wifi-station` has the full command. The C3 has no WiF
+@@ -75,8 +134,8 @@ WPA2 network; `examples/c6-wifi-station` has the full command. The C3 has no WiF
  
  ## Known limits
  
@@ -464,7 +599,7 @@ index 8bae55f..1387a4c 100644
      fn named_pin(&self, _name: &str) -> Option<u8> { None }
      /// The rotary encoder's (CLK, DT) pins, if there is one.
 diff --git a/esp-soc/src/machine.rs b/esp-soc/src/machine.rs
-index 8606f11..49788bf 100644
+index 8606f11..b0fcacb 100644
 --- a/esp-soc/src/machine.rs
 +++ b/esp-soc/src/machine.rs
 @@ -14,7 +14,7 @@ mod modeled;
@@ -510,17 +645,23 @@ index 8606f11..49788bf 100644
      pub fn has_observer(&self, name: &str) -> bool { self.observers.iter().any(|o| o.name() == name) }
      /// Every observer's end-of-run report, in the order they were added (files are written now).
      pub fn reports(&mut self) -> String {
-@@ -516,7 +527,8 @@ impl<S: Soc> Machine<S> {
+@@ -516,7 +527,14 @@ impl<S: Soc> Machine<S> {
  
      fn run_unmodeled<const APPROXIMATE: bool>(&mut self, max_insns: u64) -> Stop {
          assert!(self.quantum != 0, "scheduling quantum must be nonzero");
 -        let (cpi, max_quantum) = if APPROXIMATE { self.approximate_jit_timing.unwrap() } else { (1, self.quantum as u32) };
 +        let (cpi_base, max_quantum) = if APPROXIMATE { self.approximate_jit_timing.unwrap() } else { (1, self.quantum as u32) };
 +        let mut cpi = cpi_base;
++        // The cores keep the CPI of the last round of the previous call (base + 1 in frac/256 of
++        // rounds); a call that starts from `cpi_base` must start them there too, or each busy core
++        // charges base + 1 per instruction against a round of `quantum * base` until the next
++        // switch, and its CCOUNT runs ahead of bus time for good (review 9). The diffusion itself
++        // lives in `approximate_cpi_acc`, which carries across calls, so the average stays exact.
++        if APPROXIMATE { for core in &mut self.cores { core.set_approximate_cpi(cpi_base); } }
          self.stub_bloom = self.stubs.keys().fold(0, |m, &pc| m | pc_bit(pc));
          self.probe_bloom = self.fn_probes.keys().fold(0, |m, &pc| m | pc_bit(pc));
          for c in &mut self.cores {
-@@ -635,6 +647,11 @@ impl<S: Soc> Machine<S> {
+@@ -635,6 +653,11 @@ impl<S: Soc> Machine<S> {
                      } else { self.bb_stats[6] += 1; }
                  }
              }
@@ -532,7 +673,7 @@ index 8606f11..49788bf 100644
              let quantum = if APPROXIMATE {
                  // An instruction can overrun the deadline by at most CPI-1 cycles.
                  self.idle_budget(u64::from(max_quantum) * u64::from(cpi), &on)
-@@ -986,6 +1003,7 @@ impl<S: Soc> Machine<S> {
+@@ -986,6 +1009,7 @@ impl<S: Soc> Machine<S> {
                  ScriptAction::Stop => { self.max_cycles = 0; stopped = true; }
                  ScriptAction::Touch(x, y, d) => { self.bus.touch_input(x, y, d); }
                  ScriptAction::Poke(a, v) => { let _ = self.bus.write32_unpriced(a, v); }
@@ -540,7 +681,7 @@ index 8606f11..49788bf 100644
              }
          }
          stopped
-@@ -1050,6 +1068,7 @@ impl<S: Soc> Machine<S> {
+@@ -1050,6 +1074,7 @@ impl<S: Soc> Machine<S> {
      /// Parse a script: one action per line, `<seconds> <cmd> [args]`.
      ///   press <pin> [ms]   release <pin>   gpio <pin> <0|1>   serial <text...>   knob <cw|ccw> [detents]   touch <x> <y> <0|1>   poke <addr> <value>   stop
      /// Pins are numbers or the board's names (`btn1`, `sw`, ...); buttons/encoder are active-low with pull-ups (release = 1).
@@ -548,7 +689,7 @@ index 8606f11..49788bf 100644
      pub fn load_script(&mut self, text: &str) -> Result<(), String> {
          let hz = S::CPU_HZ as f64;
          let mut ev: Vec<(u64, ScriptAction)> = Vec::new();
-@@ -1063,6 +1082,11 @@ impl<S: Soc> Machine<S> {
+@@ -1063,6 +1088,11 @@ impl<S: Soc> Machine<S> {
              let board = self.bus.board_ref();
              let pin = |s: &str| -> Result<u8, String> { board.named_pin(s).map(Ok).unwrap_or_else(|| s.parse().map_err(|_| format!("line {}: bad pin {}", ln + 1, s))) };
              let c = (t * hz) as u64;
@@ -624,7 +765,7 @@ index f0cd30a..7006d5c 100644
                  "knob" => {
                      // Bound each browser message to about one second of encoder motion.
 diff --git a/esp-soc/src/nat.rs b/esp-soc/src/nat.rs
-index 2be4c78..e694b91 100644
+index 2be4c78..ac96365 100644
 --- a/esp-soc/src/nat.rs
 +++ b/esp-soc/src/nat.rs
 @@ -3,10 +3,15 @@
@@ -863,7 +1004,22 @@ index 2be4c78..e694b91 100644
          let idx = self.udp.iter().position(|f| f.guest_ip == *gip && f.guest_port == sport && f.dst_ip == *dip && f.dst_port == dport);
          let idx = match idx {
              Some(i) => i,
-@@ -249,7 +418,7 @@ impl Nat {
+@@ -238,7 +407,13 @@ impl Nat {
+         let flags = seg[13];
+         let data = &seg[off..];
+         let window = u16::from_be_bytes([seg[14], seg[15]]);
+-        let idx = self.tcp.iter().position(|c| c.guest_ip == *gip && c.guest_port == sport && c.dst_port == dport && c.dst_ip == *dip);
++        let mut idx = self.tcp.iter().position(|c| c.guest_ip == *gip && c.guest_port == sport && c.dst_port == dport && c.dst_ip == *dip);
++        // A pure SYN on the 4-tuple of a finished flow is a new connection: the guest's stack let
++        // the old one go (RFC 9293 section 3.6.1 MAY-2, a new SYN may reopen from TIME-WAIT). The
++        // old flow holds no host socket any more, so it simply makes room.
++        if flags & (SYN | ACK | RST) == SYN && idx.is_some_and(|i| matches!(self.tcp[i].transport, Transport::TimeWait | Transport::Closed)) {
++            self.tcp.remove(idx.take().unwrap());
++        }
+         if flags & (SYN | ACK | RST) == SYN && idx.is_none() {
+             let evict = if self.tcp.len() >= MAX_FLOWS {
+                 // Finished flows remember final ACKs only while their bounded slots are spare.
+@@ -249,7 +424,7 @@ impl Nat {
              if let Some(i) = evict { self.tcp.remove(i); }
              self.isn = self.isn.wrapping_add(0x10000);
              self.tcp.push(Tcp { guest_mac: *gmac, guest_ip: *gip, guest_port: sport, dst_ip: *dip, dst_port: dport,
@@ -872,11 +1028,14 @@ index 2be4c78..e694b91 100644
                  our_seq: self.isn, guest_seq: seq.wrapping_add(1), guest_window: window,
                  to_host: VecDeque::new(), unacked: VecDeque::new(), last_activity_us: now_us });
              if self.log { eprintln!("[nat] TCP {}:{} -> {}:{} connecting", ip(gip), sport, ip(dip), dport); }
-@@ -258,13 +427,24 @@ impl Nat {
+@@ -257,15 +432,39 @@ impl Nat {
+         }
          let Some(i) = idx else { return Vec::new() };
          let c = &mut self.tcp[i];
-         c.last_activity_us = now_us;
+-        c.last_activity_us = now_us;
 -        if flags & RST != 0 { c.transport = Transport::Closed; return Vec::new(); }
++        // Only a segment the flow takes keeps it alive: a dropped one refreshing the idle timer
++        // would let a guest's retries hold a stale flow open forever (review 6).
 +        if flags & RST != 0 {
 +            let refused = c.inbound && c.handshake_pending();
 +            c.transport = Transport::Closed;
@@ -887,18 +1046,47 @@ index 2be4c78..e694b91 100644
 +            return Vec::new();
 +        }
          if matches!(c.transport, Transport::TimeWait) {
-             return if flags & FIN != 0 { vec![c.segment(ACK, &[], c.our_seq)] } else { Vec::new() };
+-            return if flags & FIN != 0 { vec![c.segment(ACK, &[], c.our_seq)] } else { Vec::new() };
++            // A retransmitted FIN: ACK it and restart the 2 MSL timeout (RFC 9293 section
++            // 3.10.7.4, eighth step, TIME-WAIT STATE); anything else is dropped.
++            if flags & FIN == 0 { return Vec::new(); }
++            c.last_activity_us = now_us;
++            return vec![c.segment(ACK, &[], c.our_seq)];
          }
          if flags & SYN != 0 {
-+            if c.inbound { return c.syn_ack(seq, ack, flags, window); }
-             return if c.handshake_pending() { vec![c.segment(SYN | ACK, &[], c.unacked[0].seq)] } else { Vec::new() };
+-            return if c.handshake_pending() { vec![c.segment(SYN | ACK, &[], c.unacked[0].seq)] } else { Vec::new() };
++            if c.inbound { c.last_activity_us = now_us; return c.syn_ack(seq, ack, flags, window); }
++            if c.handshake_pending() { c.last_activity_us = now_us; return vec![c.segment(SYN | ACK, &[], c.unacked[0].seq)]; }
++            // A SYN on a synchronized connection gets a challenge ACK <SEQ=SND.NXT><ACK=RCV.NXT>
++            // (RFC 9293 section 3.10.7.4, fourth step, after RFC 5961). A guest that no longer has
++            // this connection sits in SYN-SENT and answers the bare ACK with a reset, then sends
++            // its SYN again at once (lwIP tcp_in.c SYN_SENT, "possibly a half-open connection", as
++            // read in IDF 5.5.4's copy; the firmware's IDF 4.4 esp-lwip not re-read): the reset
++            // closes this flow and the SYN opens a new one.
++            return if matches!(c.transport, Transport::Connected(_)) { vec![c.segment(ACK, &[], c.our_seq)] } else { Vec::new() };
          }
 +        // SYN-SENT accepts only a SYN-ACK or a reset (RFC 9293 section 3.10.7.3).
 +        if c.inbound && c.handshake_pending() { return Vec::new(); }
          if !matches!(c.transport, Transport::Connected(_)) { return Vec::new(); }
++        c.last_activity_us = now_us;
          if flags & ACK != 0 { c.acknowledge(ack); c.guest_window = window; }
          if c.handshake_pending() { return Vec::new(); }
-@@ -278,8 +458,16 @@ impl Nat {
+         if !data.is_empty() || flags & FIN != 0 {
+@@ -275,11 +474,30 @@ impl Nat {
+         Vec::new()
+     }
+ 
++    /// TCP flows held now, live or finishing (TIME-WAIT, closed until the next poll).
++    pub fn tcp_flows(&self) -> usize { self.tcp.len() }
++
++    /// The station rebooted and its TCP state is gone: forget every TCP flow, closing its host
++    /// socket (inbound forwarded connections too). Forwards, the lease, `next_port` and the UDP
++    /// flows stay. Without this the rebooted guest, whose ports repeat, meets its old flows.
++    pub fn station_reset(&mut self) {
++        if self.log && !self.tcp.is_empty() { eprintln!("[nat] station reset: {} TCP flows forgotten", self.tcp.len()); }
++        self.tcp.clear();
++    }
++
      /// Pump a bounded amount of host traffic, then retransmit and expire flows.
      pub fn poll(&mut self, now_us: u64) -> Vec<Vec<u8>> {
          let mut out = Vec::new();
@@ -916,7 +1104,7 @@ index 2be4c78..e694b91 100644
                  && matches!(c.transport, Transport::Connected(_)) {
                  // Release the host socket but keep enough state to re-ACK a lost final ACK.
 diff --git a/esp-soc/src/nat/tests.rs b/esp-soc/src/nat/tests.rs
-index e20436d..8a13bf6 100644
+index e20436d..3a5ac42 100644
 --- a/esp-soc/src/nat/tests.rs
 +++ b/esp-soc/src/nat/tests.rs
 @@ -3,7 +3,7 @@ use std::net::TcpListener;
@@ -928,7 +1116,7 @@ index e20436d..8a13bf6 100644
          guest_write: GuestWrite::Open, host_closed: false,
          our_seq: 100, guest_seq: 200, guest_window: WINDOW,
          to_host: VecDeque::new(), unacked: VecDeque::new(), last_activity_us: 0 }
-@@ -274,3 +274,242 @@ fn udp_ignores_other_senders_and_preserves_dns_reply_address() {
+@@ -274,3 +274,318 @@ fn udp_ignores_other_senders_and_preserves_dns_reply_address() {
      assert_eq!(&frames[0][26..30], &[10, 0, 2, 3]);
      assert_eq!(&frames[0][42..], b"answer");
  }
@@ -1171,11 +1359,87 @@ index e20436d..8a13bf6 100644
 +    assert!(nat.udp.is_empty(), "an answer to a forwarded datagram is not a new outbound flow");
 +    assert_eq!((nat.fwd_udp_in, nat.fwd_udp_out), (1, 1));
 +}
++
++// ---- A guest that reboots and draws the same ports (review 6) ----
++
++/// A chip reset takes the station's TCP stack with it: every TCP flow goes and its host socket
++/// closes, the forwarded ports, the lease and the UDP flows stay, and the forward still works.
++#[test]
++fn station_reset_forgets_tcp_flows_and_keeps_forwards_lease_and_udp() {
++    let receiver = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
++    let mut nat = Nat::new(false);
++    let at = tcp_forward(&mut nat);
++    nat.station = Some(STATION);
++    let mut forwarded = client(at);
++    establish(&mut nat, 7000);
++    let (socket, mut outbound) = socket_pair();
++    let mut c = flow(); c.transport = Transport::Connected(socket); nat.tcp.push(c);
++    let mut c = flow(); c.guest_port = 1235; c.transport = Transport::TimeWait; nat.tcp.push(c);
++    nat.udp_out(&[2; 6], &[10, 0, 2, 15], 1234, &[127, 0, 0, 1], &[127, 0, 0, 1], receiver.local_addr().unwrap().port(), b"ntp", 3);
++    assert_eq!((nat.tcp.len(), nat.udp.len()), (3, 1));
++    nat.station_reset();
++    assert!(nat.tcp.is_empty());
++    assert_eq!((nat.udp.len(), nat.forwards.len(), nat.station), (1, 1, Some(STATION)));
++    let mut byte = [0; 1];
++    for host in [&mut forwarded, &mut outbound] {
++        assert!(!matches!(host.read(&mut byte), Ok(1)), "the host side sees the connection end");
++    }
++    let _again = client(at);
++    let syn = seen(&poll_ready(&mut nat, 4)[0]);
++    assert_eq!((syn.flags, syn.dport), (SYN, 80), "the forward takes new connections after the reset");
++}
++
++/// Without a reset notice, a SYN from a port the NAT still holds a synchronized flow for gets a
++/// challenge ACK (RFC 9293 3.10.7.4); the guest's reset closes the flow and its immediate SYN
++/// opens a new one. The dropped SYN does not refresh the stale flow's idle timer.
++#[test]
++fn a_syn_on_a_synchronized_flow_gets_a_challenge_ack_and_the_port_reconnects() {
++    let (socket, _host) = socket_pair();
++    let mut c = flow(); c.transport = Transport::Connected(socket);
++    let mut nat = Nat::new(false); nat.tcp.push(c);
++    let reply = nat.tcp_in(&[2; 6], &[10, 0, 2, 15], &[127, 0, 0, 1], &segment(5000, 0, SYN, &[]), 1_000);
++    assert_eq!(reply.len(), 1);
++    let s = seen(&reply[0]);
++    assert_eq!((s.flags, s.seq, s.ack), (ACK, 100, 200), "<SEQ=SND.NXT><ACK=RCV.NXT><CTL=ACK>");
++    assert_eq!(nat.tcp[0].last_activity_us, 0, "a dropped SYN keeps no flow alive");
++    // lwIP in SYN-SENT: RST with the challenge's ACK as its sequence number, then the SYN again.
++    nat.tcp_in(&[2; 6], &[10, 0, 2, 15], &[127, 0, 0, 1], &segment(200, 5001, RST | ACK, &[]), 1_001);
++    assert!(nat.tcp[0].closed());
++    let (_tx, rx) = channel();
++    assert!(nat.tcp_in_with_connect(&[2; 6], &[10, 0, 2, 15], &[127, 0, 0, 1], &segment(5000, 0, SYN, &[]), 1_002, |_| Some(rx)).is_empty());
++    assert_eq!(nat.tcp.len(), 1);
++    assert!(matches!(nat.tcp[0].transport, Transport::Connecting(_)));
++    assert_eq!((nat.tcp[0].guest_seq, nat.tcp[0].last_activity_us), (5001, 1_002));
++}
++
++/// TIME-WAIT answers only a retransmitted FIN, and only that restarts its timer (RFC 9293
++/// 3.10.7.4, eighth step); a pure SYN on its 4-tuple is a new connection (3.6.1, MAY-2).
++#[test]
++fn time_wait_is_kept_only_by_a_fin_and_a_new_syn_replaces_it() {
++    let mut c = flow(); c.transport = Transport::TimeWait;
++    let mut nat = Nat::new(false); nat.tcp.push(c);
++    assert!(nat.tcp_in(&[2; 6], &[10, 0, 2, 15], &[127, 0, 0, 1], &segment(200, 100, ACK, &[]), 10).is_empty());
++    assert_eq!(nat.tcp[0].last_activity_us, 0);
++    let ack = nat.tcp_in(&[2; 6], &[10, 0, 2, 15], &[127, 0, 0, 1], &segment(199, 100, FIN | ACK, &[]), 20);
++    assert_eq!(seen(&ack[0]).flags, ACK);
++    assert_eq!(nat.tcp[0].last_activity_us, 20);
++    // Retries of anything else never hold it past its 2 MSL.
++    nat.tcp_in(&[2; 6], &[10, 0, 2, 15], &[127, 0, 0, 1], &segment(200, 100, ACK, &[]), TIME_WAIT_US);
++    nat.poll(TIME_WAIT_US + 20);
++    assert!(nat.tcp.is_empty());
++    let mut c = flow(); c.transport = Transport::TimeWait;
++    nat.tcp.push(c);
++    let (_tx, rx) = channel();
++    nat.tcp_in_with_connect(&[2; 6], &[10, 0, 2, 15], &[127, 0, 0, 1], &segment(9000, 0, SYN, &[]), 30, |_| Some(rx));
++    assert_eq!(nat.tcp.len(), 1);
++    assert!(matches!(nat.tcp[0].transport, Transport::Connecting(_)));
++    assert_eq!(nat.tcp[0].guest_seq, 9001);
++}
 diff --git a/esp-soc/src/net.rs b/esp-soc/src/net.rs
-index f4567c6..d2b6839 100644
+index f4567c6..a3febdb 100644
 --- a/esp-soc/src/net.rs
 +++ b/esp-soc/src/net.rs
-@@ -5,8 +5,8 @@
+@@ -5,12 +5,45 @@
  //!   10.0.2.2  gateway / DHCP server  (MAC 02:53:49:4d:00:02)
  //!   10.0.2.3  DNS
  //!   10.0.2.15 the station
@@ -1186,7 +1450,44 @@ index f4567c6..d2b6839 100644
  
  pub(crate) mod packet;
  use packet::{checksum, ethernet, ip_packet, transport_checksum, udp_packet, GATEWAY_MAC};
-@@ -20,6 +20,8 @@ pub struct VirtualNet {
+ 
++/// The bridge to a real LAN (`--net bridge:PATH`, socket_vmnet). Unix sockets only: the
++/// WebAssembly build gets a stand-in whose `connect` explains that.
++#[cfg(unix)]
++pub mod vmnet;
++#[cfg(not(unix))]
++#[path = "net/vmnet_stub.rs"]
++pub mod vmnet;
++// The stand-in is compiled on the host too, so a change to one side that the other lacks shows up
++// in the tests rather than only in a WebAssembly build.
++#[cfg(all(test, unix))]
++#[path = "net/vmnet_stub.rs"]
++#[allow(dead_code)]
++mod vmnet_stub;
++
++/// The bridge's counters, printed at the end of a run.
++#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
++pub struct BridgeStats {
++    /// frames from the LAN handed to the station
++    pub rx_ok: u64,
++    /// frames from the LAN for someone else (the daemon floods every frame to every client)
++    pub rx_filtered: u64,
++    /// frames for the station dropped because the emulation had not taken the earlier ones yet
++    pub rx_dropped: u64,
++    /// frames written to the daemon
++    pub tx: u64,
++    /// frames from the station dropped: queue full, daemon gone, or a failed write
++    pub tx_dropped: u64,
++    pub reconnects: u64,
++}
++
++/// Frames the network may hand the station per poll in bridge mode; the rest wait in the bridge.
++pub const BRIDGE_BATCH: usize = 32;
++
+ pub struct VirtualNet {
+     pub gw_mac: [u8; 6],
+     pub gw_ip: [u8; 4],
+@@ -20,6 +53,8 @@ pub struct VirtualNet {
      pub log: bool,
      /// user-mode NAT to the host's network; None keeps everything inside the emulated subnet
      pub nat: Option<crate::nat::Nat>,
@@ -1195,16 +1496,45 @@ index f4567c6..d2b6839 100644
      pub dhcp_acks: u64,
      pub dns_answers: u64,
      pub ntp_answers: u64,
-@@ -39,7 +41,7 @@ impl VirtualNet {
+@@ -27,6 +62,11 @@ pub struct VirtualNet {
+     pub arp_replies: u64,
+     pub pings: u64,
+     pub unhandled: u64,
++    /// `--net bridge:PATH`: the station's frames go to a real LAN as they are and the LAN's come
++    /// back; the DHCP server, ARP proxy, DNS, NTP, ICMP and NAT here stand aside
++    pub bridge: Option<vmnet::Bridge>,
++    /// frames for the station dropped because the queue in front of the air was full
++    pub eth_rx_dropped: u64,
+     now_us: u64,
+ }
+ 
+@@ -39,13 +79,24 @@ impl VirtualNet {
      pub fn new(log: bool) -> Self {
          VirtualNet { gw_mac: GATEWAY_MAC, gw_ip: [10, 0, 2, 2], dns_ip: [10, 0, 2, 3],
                       sta_ip: [10, 0, 2, 15], mask: [255, 255, 255, 0],
 -                     log, nat: None, dhcp_acks: 0, dns_answers: 0, ntp_answers: 0, tcp_rejects: 0, arp_replies: 0, pings: 0, unhandled: 0, now_us: 0 }
-+                     log, nat: None, lease: None, dhcp_acks: 0, dns_answers: 0, ntp_answers: 0, tcp_rejects: 0, arp_replies: 0, pings: 0, unhandled: 0, now_us: 0 }
++                     log, nat: None, lease: None, dhcp_acks: 0, dns_answers: 0, ntp_answers: 0, tcp_rejects: 0, arp_replies: 0, pings: 0, unhandled: 0,
++                     bridge: None, eth_rx_dropped: 0, now_us: 0 }
++    }
++
++    /// The end-of-run line for bridge mode, `None` otherwise.
++    pub fn bridge_report(&self) -> Option<String> {
++        let b = self.bridge.as_ref()?;
++        let s = b.stats();
++        Some(format!("[emu] bridge {}: rx_ok {}, rx_filtered {}, rx_dropped {}, tx {}, tx_dropped {}, reconnects {}; {} frames dropped before the air (station {})",
++                     b.path(), s.rx_ok, s.rx_filtered, s.rx_dropped, s.tx, s.tx_dropped, s.reconnects, self.eth_rx_dropped, crate::wifi::mac_str(&b.station())))
      }
  
      /// Handle one Ethernet frame from the station; returns frames to send back to it.
-@@ -161,7 +163,11 @@ impl VirtualNet {
+     pub fn handle(&mut self, eth: &[u8], now_us: u64) -> Vec<Vec<u8>> {
+         if eth.len() < 14 { return Vec::new(); }
+         self.now_us = now_us;
++        // bridged: the home router answers, not this network
++        if let Some(b) = &self.bridge { b.send(eth); return Vec::new(); }
+         let mut src = [0u8; 6]; src.copy_from_slice(&eth[6..12]);
+         match be16(&eth[12..14]) {
+             0x0806 => self.arp(&eth[14..], &src),
+@@ -161,7 +212,11 @@ impl VirtualNet {
          udp.extend_from_slice(&((8 + b.len()) as u16).to_be_bytes()); udp.extend_from_slice(&[0, 0]);   // checksum optional in IPv4
          udp.extend_from_slice(&b);
  
@@ -1217,7 +1547,15 @@ index f4567c6..d2b6839 100644
          if self.log { eprintln!("[net] DHCP {} -> {} for {}.{}.{}.{}", if msg_type == 1 { "DISCOVER" } else { "REQUEST" },
                                  if reply_type == 2 { "OFFER" } else { "ACK" },
                                  self.sta_ip[0], self.sta_ip[1], self.sta_ip[2], self.sta_ip[3]); }
-@@ -258,6 +264,25 @@ impl VirtualNet {
+@@ -178,6 +233,7 @@ impl VirtualNet {
+     /// Pump the NAT's host sockets; returns frames for the guest.
+     pub fn poll(&mut self, now_us: u64) -> Vec<Vec<u8>> {
+         self.now_us = now_us;
++        if let Some(b) = &self.bridge { return b.recv(BRIDGE_BATCH); }
+         match &mut self.nat { Some(n) => n.poll(now_us), None => Vec::new() }
+     }
+ 
+@@ -258,6 +314,69 @@ impl VirtualNet {
  mod tests {
      use super::*;
  
@@ -1240,9 +1578,512 @@ index f4567c6..d2b6839 100644
 +        assert_eq!(net.nat.as_ref().unwrap().station, Some(lease));
 +    }
 +
++    /// In bridge mode nothing here answers: the DHCP DISCOVER goes to the LAN unchanged, and what
++    /// the LAN sends back comes out of poll() a bounded batch at a time.
++    #[cfg(unix)]
++    #[test]
++    fn a_bridge_takes_the_frames_and_the_virtual_services_stand_aside() {
++        use std::io::{Read, Write};
++        let (ours, mut daemon) = std::os::unix::net::UnixStream::pair().unwrap();
++        let mac = [0x02, 0x54, 0x57, 0x49, 0x4e, 0x01];
++        let mut net = VirtualNet::new(false);
++        net.bridge = Some(vmnet::Bridge::start(ours, "/nonexistent", mac, false).unwrap());
++        let mut d = vec![0u8; 240];
++        d[0] = 1; d[1] = 1; d[2] = 6;
++        d[28..34].copy_from_slice(&mac);
++        d[236..240].copy_from_slice(&[0x63, 0x82, 0x53, 0x63]);
++        d.extend_from_slice(&[53, 1, 1, 255]);                              // DISCOVER
++        let udp = udp_packet(&[0; 4], &[255; 4], 68, 67, &d);
++        let discover = ethernet(&[0xff; 6], &mac, 0x0800, &ip_packet(17, &[0; 4], &[255; 4], &udp));
++        assert!(net.handle(&discover, 0).is_empty());
++        let mut hdr = [0u8; 4];
++        daemon.read_exact(&mut hdr).unwrap();
++        let mut body = vec![0u8; u32::from_be_bytes(hdr) as usize];
++        daemon.read_exact(&mut body).unwrap();
++        assert_eq!(body, discover);
++        // ARP and ping for the virtual gateway go out too instead of being answered
++        let arp = ethernet(&[0xff; 6], &mac, 0x0806, &[0, 1, 8, 0, 6, 4, 0, 1, 2, 0x54, 0x57, 0x49, 0x4e, 1, 10, 0, 2, 15, 0, 0, 0, 0, 0, 0, 10, 0, 2, 2]);
++        assert!(net.handle(&arp, 0).is_empty());
++        assert_eq!((net.dhcp_acks, net.arp_replies, net.unhandled), (0, 0, 0));
++
++        for i in 0..BRIDGE_BATCH + 5 {
++            let f = ethernet(&mac, &[0x02, 1, 2, 3, 4, i as u8], 0x0800, &[0x45; 40]);
++            let mut w = (f.len() as u32).to_be_bytes().to_vec(); w.extend_from_slice(&f);
++            daemon.write_all(&w).unwrap();
++        }
++        let t = std::time::Instant::now();
++        while net.bridge.as_ref().unwrap().stats().rx_ok < BRIDGE_BATCH as u64 + 5 {
++            assert!(t.elapsed().as_secs() < 10, "the frames did not arrive");
++            std::thread::sleep(std::time::Duration::from_millis(5));
++        }
++        assert_eq!(net.poll(0).len(), BRIDGE_BATCH);
++        assert_eq!(net.poll(0).len(), 5);
++        let r = net.bridge_report().unwrap();
++        assert!(r.contains("rx_ok 37") && r.contains("tx 2") && r.contains("reconnects 0"), "{r}");
++    }
++
      #[test]
      fn ntp_fraction_converts_nanoseconds() {
          assert_eq!(ntp_fraction(500_000_000), 0x8000_0000);
+diff --git a/esp-soc/src/net/vmnet.rs b/esp-soc/src/net/vmnet.rs
+new file mode 100644
+index 0000000..ff23b17
+--- /dev/null
++++ b/esp-soc/src/net/vmnet.rs
+@@ -0,0 +1,247 @@
++//! `--net bridge:PATH`: the station's Ethernet frames go to the real LAN through a socket_vmnet
++//! daemon (lima-vm/socket_vmnet v1.2.2, `--vmnet-mode=bridged`), and the LAN's come back. The
++//! home router, not `VirtualNet`, then serves DHCP, ARP and everything else.
++//!
++//! The wire format both ways is a 4-byte big-endian length followed by the Ethernet frame without
++//! its FCS. What the daemon does with it (socket_vmnet v1.2.2 `main.c`, read at the tag):
++//! - it reads a client's header with one `read()` of 4 bytes and the body with one `read()` of
++//!   that length, and `assert`s that the body came whole (main.c:553-575; the Makefile sets no
++//!   `NDEBUG`), so each frame goes out in a single `write()`, header and body together;
++//! - its buffer is 64 KiB and a longer header trips an `assert` (main.c:544, :564);
++//! - it sends every frame to every client with a blocking `writev()` (main.c:169-194, :603-627),
++//!   so one client that stops reading stalls all the others (socket_vmnet issue #173, open). A reader
++//!   thread therefore drains the socket continuously into a bounded queue and drops what does not
++//!   fit; a writer thread with its own bounded queue keeps a stalled daemon from freezing the
++//!   emulation;
++//! - it floods: every client sees every frame, and the emulated MAC has no address filter
++//!   (esp32s3 `bus.rs`, `wifi_rx_deliver`). The reader passes only frames addressed to the
++//!   station, broadcast and multicast.
++//! A restarted daemon drops every connection, and restarting it is what people do when the
++//! network stops working after the Mac wakes from sleep (issue #130), so a lost connection is
++//! retried with a growing delay.
++
++use std::io::{Read, Write};
++use std::os::unix::net::UnixStream;
++use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
++use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TryRecvError, TrySendError};
++use std::sync::{Arc, Mutex};
++use std::time::Duration;
++
++use super::BridgeStats;
++
++/// The daemon's receive buffer (socket_vmnet v1.2.2 main.c:544): nothing longer may be sent,
++/// and nothing longer can honestly come back.
++pub const MAX_FRAME: usize = 64 * 1024;
++/// The longest frame vmnet takes: its `vmnet_max_packet_size`, which the daemon logs at start
++/// ("vmnet_max_packet_size: 1514" on the owner's Mac, /var/log/socket_vmnet/bridged.en0.stderr,
++/// 2026-09-29). A longer one fails `vmnet_write` and the daemon then drops the whole connection
++/// (main.c:590-593), so it is not sent.
++pub const MAX_OUT: usize = 1514;
++/// Frames the reader may hold for the emulation, and frames the station may have in flight to the
++/// daemon. A burst of LAN broadcast past this is dropped and counted.
++pub const RX_QUEUE: usize = 256;
++pub const TX_QUEUE: usize = 256;
++const BACKOFF_FIRST: Duration = Duration::from_millis(200);
++const BACKOFF_MAX: Duration = Duration::from_secs(5);
++
++#[derive(Default)]
++struct Counters { rx_ok: AtomicU64, rx_filtered: AtomicU64, rx_dropped: AtomicU64, tx: AtomicU64, tx_dropped: AtomicU64, reconnects: AtomicU64 }
++
++/// The connection the writer uses; `generation` changes with every reconnect.
++struct Link { generation: u64, stream: Option<UnixStream> }
++
++struct Shared {
++    path: String,
++    /// The station's MAC, packed into the low 48 bits: `--mac` at first, then whatever source
++    /// address the station's own frames carry.
++    station: AtomicU64,
++    counters: Counters,
++    stop: AtomicBool,
++    link: Mutex<Link>,
++    log: bool,
++}
++
++pub struct Bridge {
++    shared: Arc<Shared>,
++    rx: Receiver<Vec<u8>>,
++    tx: Option<SyncSender<Vec<u8>>>,
++}
++
++fn pack(mac: &[u8]) -> u64 { mac.iter().take(6).fold(0, |a, &b| (a << 8) | b as u64) }
++fn unpack(v: u64) -> [u8; 6] { let b = v.to_be_bytes(); [b[2], b[3], b[4], b[5], b[6], b[7]] }
++
++/// One frame as the daemon expects it: length and body in one buffer, for one `write()`.
++pub fn encode(frame: &[u8]) -> Vec<u8> {
++    let mut b = Vec::with_capacity(4 + frame.len());
++    b.extend_from_slice(&(frame.len() as u32).to_be_bytes());
++    b.extend_from_slice(frame);
++    b
++}
++
++/// Send one frame: header and body in one buffer, handed to a single `write()`.
++pub fn write_frame(w: &mut impl Write, frame: &[u8]) -> std::io::Result<()> { w.write_all(&encode(frame)) }
++
++/// Read one frame. `Ok(None)` is a clean end of stream; a length past `MAX_FRAME` means the
++/// stream is out of step and is reported as an error so the caller reconnects.
++pub fn read_frame(r: &mut impl Read) -> std::io::Result<Option<Vec<u8>>> {
++    let mut hdr = [0u8; 4];
++    match r.read_exact(&mut hdr) {
++        Ok(()) => {}
++        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
++        Err(e) => return Err(e),
++    }
++    let len = u32::from_be_bytes(hdr) as usize;
++    if len > MAX_FRAME { return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, format!("frame length {len} past {MAX_FRAME}"))); }
++    let mut body = vec![0u8; len];
++    match r.read_exact(&mut body) {
++        Ok(()) => Ok(Some(body)),
++        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => Ok(None),
++        Err(e) => Err(e),
++    }
++}
++
++/// Does a frame from the LAN belong to the station? Its own MAC, broadcast and multicast (the
++/// group bit, which broadcast also has). The station's own frames never come back to it.
++pub fn for_station(frame: &[u8], station: &[u8; 6]) -> bool {
++    if frame.len() < 14 { return false; }
++    if frame[6..12] == station[..] { return false; }
++    frame[0] & 1 != 0 || frame[0..6] == station[..]
++}
++
++impl Bridge {
++    /// Connect to the daemon's socket, or say why not. Later losses are retried in the background.
++    pub fn connect(path: &str, mac: [u8; 6], log: bool) -> Result<Self, String> {
++        let stream = UnixStream::connect(path).map_err(|e| format!("cannot connect to {path}: {e}"))?;
++        Self::start(stream, path, mac, log)
++    }
++
++    /// Run the bridge over a connected stream; `path` is where to reconnect when it ends.
++    pub fn start(stream: UnixStream, path: &str, mac: [u8; 6], log: bool) -> Result<Self, String> {
++        let writer_half = stream.try_clone().map_err(|e| format!("{path}: {e}"))?;
++        let shared = Arc::new(Shared {
++            path: path.to_string(), station: AtomicU64::new(pack(&mac)), counters: Counters::default(),
++            stop: AtomicBool::new(false), link: Mutex::new(Link { generation: 1, stream: Some(writer_half) }), log,
++        });
++        let (rx_send, rx) = sync_channel(RX_QUEUE);
++        let (tx, tx_recv) = sync_channel::<Vec<u8>>(TX_QUEUE);
++        let s = shared.clone();
++        std::thread::Builder::new().name("vmnet-reader".into()).spawn(move || reader(s, stream, rx_send)).map_err(|e| e.to_string())?;
++        let s = shared.clone();
++        std::thread::Builder::new().name("vmnet-writer".into()).spawn(move || writer(s, tx_recv)).map_err(|e| e.to_string())?;
++        Ok(Bridge { shared, rx, tx: Some(tx) })
++    }
++
++    pub fn path(&self) -> &str { &self.shared.path }
++    pub fn station(&self) -> [u8; 6] { unpack(self.shared.station.load(Relaxed)) }
++
++    /// Queue one frame from the station for the LAN. Never blocks: a full queue drops the frame.
++    pub fn send(&self, eth: &[u8]) {
++        let c = &self.shared.counters;
++        if eth.len() < 14 || eth.len() > MAX_OUT { c.tx_dropped.fetch_add(1, Relaxed); return; }
++        if eth[6] & 1 == 0 { self.shared.station.store(pack(&eth[6..12]), Relaxed); }   // learn the station's MAC
++        let Some(tx) = &self.tx else { c.tx_dropped.fetch_add(1, Relaxed); return };
++        match tx.try_send(eth.to_vec()) {
++            Ok(()) => {}
++            Err(TrySendError::Full(_)) | Err(TrySendError::Disconnected(_)) => { c.tx_dropped.fetch_add(1, Relaxed); }
++        }
++    }
++
++    /// Up to `max` frames the LAN sent the station since the last call.
++    pub fn recv(&self, max: usize) -> Vec<Vec<u8>> {
++        let mut v = Vec::new();
++        while v.len() < max {
++            match self.rx.try_recv() { Ok(f) => v.push(f), Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => break }
++        }
++        v
++    }
++
++    pub fn stats(&self) -> BridgeStats {
++        let c = &self.shared.counters;
++        BridgeStats { rx_ok: c.rx_ok.load(Relaxed), rx_filtered: c.rx_filtered.load(Relaxed), rx_dropped: c.rx_dropped.load(Relaxed),
++                      tx: c.tx.load(Relaxed), tx_dropped: c.tx_dropped.load(Relaxed), reconnects: c.reconnects.load(Relaxed) }
++    }
++}
++
++impl Drop for Bridge {
++    fn drop(&mut self) {
++        self.shared.stop.store(true, Relaxed);
++        self.tx = None;                                                     // the writer's queue closes
++        if let Some(s) = self.shared.link.lock().unwrap().stream.take() { let _ = s.shutdown(std::net::Shutdown::Both); }
++    }
++}
++
++/// Wait `d`, but give up at once when the bridge is dropped. Returns false then.
++fn pause(shared: &Shared, d: Duration) -> bool {
++    let step = Duration::from_millis(20);
++    let mut left = d;
++    while !left.is_zero() {
++        if shared.stop.load(Relaxed) { return false; }
++        let s = left.min(step); std::thread::sleep(s); left -= s;
++    }
++    !shared.stop.load(Relaxed)
++}
++
++fn reader(shared: Arc<Shared>, mut stream: UnixStream, out: SyncSender<Vec<u8>>) {
++    let c = &shared.counters;
++    loop {
++        // drain this connection until it ends
++        let why = loop {
++            match read_frame(&mut stream) {
++                Ok(Some(f)) => {
++                    if !for_station(&f, &unpack(shared.station.load(Relaxed))) { c.rx_filtered.fetch_add(1, Relaxed); continue; }
++                    match out.try_send(f) {
++                        Ok(()) => { c.rx_ok.fetch_add(1, Relaxed); }
++                        Err(TrySendError::Full(_)) => { c.rx_dropped.fetch_add(1, Relaxed); }
++                        Err(TrySendError::Disconnected(_)) => return,     // the bridge is gone
++                    }
++                }
++                Ok(None) => break "the daemon closed the connection".to_string(),
++                Err(e) => break e.to_string(),
++            }
++        };
++        if shared.stop.load(Relaxed) { return; }
++        { let mut l = shared.link.lock().unwrap(); if let Some(s) = l.stream.take() { let _ = s.shutdown(std::net::Shutdown::Both); } }
++        eprintln!("[bridge] {}: {}; reconnecting", shared.path, why);
++        // come back with a growing delay: launchd restarts the daemon, which takes a moment
++        let mut delay = BACKOFF_FIRST;
++        stream = loop {
++            if !pause(&shared, delay) { return; }
++            match UnixStream::connect(&shared.path).and_then(|s| s.try_clone().map(|w| (s, w))) {
++                Ok((s, w)) => {
++                    let mut l = shared.link.lock().unwrap();
++                    l.generation += 1; l.stream = Some(w);
++                    c.reconnects.fetch_add(1, Relaxed);
++                    eprintln!("[bridge] {}: connected again", shared.path);
++                    break s;
++                }
++                Err(e) => { if shared.log { eprintln!("[bridge] {}: {} (next try in {:?})", shared.path, e, delay); } delay = (delay * 2).min(BACKOFF_MAX); }
++            }
++        };
++    }
++}
++
++fn writer(shared: Arc<Shared>, frames: Receiver<Vec<u8>>) {
++    let c = &shared.counters;
++    let mut current: (u64, Option<UnixStream>) = (0, None);
++    for f in frames {
++        {
++            let l = shared.link.lock().unwrap();
++            if l.generation != current.0 { current = (l.generation, l.stream.as_ref().and_then(|s| s.try_clone().ok())); }
++        }
++        let Some(s) = &mut current.1 else { c.tx_dropped.fetch_add(1, Relaxed); continue };
++        // one write for header and body: the daemon reads each with a single read()
++        match write_frame(s, &f) {
++            Ok(()) => { c.tx.fetch_add(1, Relaxed); }
++            Err(e) => {
++                c.tx_dropped.fetch_add(1, Relaxed);
++                if shared.log { eprintln!("[bridge] {}: write: {}", shared.path, e); }
++                // EPIPE and friends: end the connection, and the reader will make a new one
++                let _ = s.shutdown(std::net::Shutdown::Both);
++                current.1 = None;
++            }
++        }
++    }
++}
++
++#[cfg(test)]
++mod tests;
+diff --git a/esp-soc/src/net/vmnet/tests.rs b/esp-soc/src/net/vmnet/tests.rs
+new file mode 100644
+index 0000000..a59c31a
+--- /dev/null
++++ b/esp-soc/src/net/vmnet/tests.rs
+@@ -0,0 +1,174 @@
++//! The bridge against a stand-in for the socket_vmnet daemon that reads and writes the way
++//! v1.2.2's main.c does: one read() for the 4-byte header, one for the body, and one write
++//! (writev) per frame going the other way.
++
++use super::*;
++use std::os::unix::net::UnixListener;
++use std::time::Instant;
++
++const STATION: [u8; 6] = [0x02, 0x54, 0x57, 0x49, 0x4e, 0x01];
++const OTHER: [u8; 6] = [0x02, 0x11, 0x22, 0x33, 0x44, 0x55];
++
++fn frame(da: [u8; 6], sa: [u8; 6], len: usize) -> Vec<u8> {
++    let mut f = Vec::with_capacity(len);
++    f.extend_from_slice(&da); f.extend_from_slice(&sa); f.extend_from_slice(&[0x08, 0x00]);
++    while f.len() < len { f.push(f.len() as u8); }
++    f
++}
++
++/// What main.c:553-575 does with a client's frame: exactly one read() each, and an assert.
++fn daemon_read(s: &mut UnixStream) -> Vec<u8> {
++    let mut hdr = [0u8; 4];
++    assert_eq!(s.read(&mut hdr).unwrap(), 4, "the header came in pieces");
++    let len = u32::from_be_bytes(hdr) as usize;
++    assert!(len <= MAX_FRAME, "main.c:564 would abort on {len}");
++    let mut body = vec![0u8; MAX_FRAME];
++    let n = s.read(&mut body[..len]).unwrap();
++    assert_eq!(n, len, "main.c:575 would abort: the body came in pieces");
++    body.truncate(len);
++    body
++}
++
++/// What main.c:175-186 does towards a client: header and frame in one writev().
++fn daemon_write(s: &mut UnixStream, f: &[u8]) { s.write_all(&encode(f)).unwrap(); }
++
++fn wait_for(what: &str, cond: impl Fn() -> bool) {
++    let t = Instant::now();
++    while !cond() {
++        assert!(t.elapsed() < Duration::from_secs(10), "timed out waiting for {what}");
++        std::thread::sleep(Duration::from_millis(5));
++    }
++}
++
++fn pair() -> (Bridge, UnixStream) {
++    let (ours, daemon) = UnixStream::pair().unwrap();
++    (Bridge::start(ours, "/nonexistent/socket_vmnet", STATION, false).unwrap(), daemon)
++}
++
++#[test]
++fn a_frame_is_one_write_length_first() {
++    struct Writes(Vec<Vec<u8>>);
++    impl Write for Writes {
++        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> { self.0.push(b.to_vec()); Ok(b.len()) }
++        fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
++    }
++    let f = frame(OTHER, STATION, 1514);
++    let mut w = Writes(Vec::new());
++    write_frame(&mut w, &f).unwrap();
++    assert_eq!(w.0.len(), 1, "header and body must leave in one write()");
++    assert_eq!(&w.0[0][..4], &[0, 0, 0x05, 0xea]);
++    assert_eq!(&w.0[0][4..], &f[..]);
++}
++
++#[test]
++fn frames_cross_in_the_daemons_framing_both_ways() {
++    let (b, mut d) = pair();
++    for len in [60, 342, 1514] {
++        let f = frame([0xff; 6], STATION, len);
++        b.send(&f);
++        assert_eq!(daemon_read(&mut d), f);
++    }
++    let back = frame(STATION, OTHER, 590);
++    daemon_write(&mut d, &back);
++    wait_for("the frame from the LAN", || b.stats().rx_ok == 1);
++    assert_eq!(b.recv(8), vec![back]);
++    assert_eq!(b.stats(), BridgeStats { rx_ok: 1, tx: 3, ..Default::default() });
++}
++
++#[test]
++fn nothing_past_64_kib_goes_out_or_is_believed_coming_in() {
++    let mut ok = encode(&vec![0u8; MAX_FRAME]);
++    assert_eq!(read_frame(&mut &ok[..]).unwrap().unwrap().len(), MAX_FRAME);
++    ok[..4].copy_from_slice(&(MAX_FRAME as u32 + 1).to_be_bytes());
++    assert_eq!(read_frame(&mut &ok[..]).unwrap_err().kind(), std::io::ErrorKind::InvalidData);
++    assert!(read_frame(&mut &[0u8, 0][..]).unwrap().is_none(), "a short header is the end of the stream");
++
++    // vmnet itself takes no more than 1514 bytes, and a failed vmnet_write costs the connection
++    let (b, mut d) = pair();
++    b.send(&frame(OTHER, STATION, MAX_FRAME + 1));
++    b.send(&frame(OTHER, STATION, MAX_OUT + 1));
++    b.send(&frame(OTHER, STATION, 13)[..13]);
++    b.send(&frame(OTHER, STATION, MAX_OUT));
++    assert_eq!(daemon_read(&mut d).len(), MAX_OUT);
++    assert_eq!((b.stats().tx, b.stats().tx_dropped), (1, 3));
++}
++
++#[test]
++fn only_the_station_broadcast_and_multicast_come_through() {
++    assert!(for_station(&frame(STATION, OTHER, 60), &STATION));
++    assert!(for_station(&frame([0xff; 6], OTHER, 60), &STATION));
++    assert!(for_station(&frame([0x01, 0x00, 0x5e, 0x00, 0x00, 0xfb], OTHER, 60), &STATION));   // mDNS
++    assert!(for_station(&frame([0x33, 0x33, 0x00, 0x00, 0x00, 0x01], OTHER, 60), &STATION));   // IPv6 all-nodes
++    assert!(!for_station(&frame(OTHER, [0x02, 9, 9, 9, 9, 9], 60), &STATION));                 // someone else's
++    assert!(!for_station(&frame([0xff; 6], STATION, 60), &STATION));                           // our own, echoed
++    assert!(!for_station(&frame(STATION, OTHER, 60)[..13], &STATION));                          // runt
++
++    // The MAC is learned from what the station sends; --mac only covers the time before that.
++    let (b, mut d) = pair();
++    let learned = [0x02, 0x54, 0x57, 0x49, 0x4e, 0x02];
++    b.send(&frame([0xff; 6], learned, 342));
++    daemon_read(&mut d);
++    assert_eq!(b.station(), learned);
++    for f in [frame(learned, OTHER, 60), frame(STATION, OTHER, 60), frame(OTHER, [0x02, 9, 9, 9, 9, 9], 60), frame([0xff; 6], OTHER, 60)] {
++        daemon_write(&mut d, &f);
++    }
++    wait_for("four frames", || { let s = b.stats(); s.rx_ok + s.rx_filtered == 4 });
++    assert_eq!((b.stats().rx_ok, b.stats().rx_filtered), (2, 2));
++    let got = b.recv(8);
++    assert_eq!((got[0][..6].to_vec(), got[1][..6].to_vec()), (learned.to_vec(), vec![0xff; 6]));
++}
++
++#[test]
++fn the_daemon_never_waits_on_a_slow_emulation() {
++    // socket_vmnet #173: a client that stops reading blocks the daemon's writev for every client.
++    // The emulation takes nothing here, yet every write completes; the excess is dropped and counted.
++    let (b, mut d) = pair();
++    let total = RX_QUEUE + 300;       // well past the 8 KiB a Unix socket buffers on macOS
++    let (done, finished) = std::sync::mpsc::channel();
++    std::thread::spawn(move || {
++        for i in 0..total { let mut f = frame([0xff; 6], OTHER, 100); f[20] = i as u8; daemon_write(&mut d, &f); }
++        done.send(d).unwrap();
++    });
++    let _d = finished.recv_timeout(Duration::from_secs(10)).expect("the daemon blocked writing to the bridge");
++    wait_for("the reader to take every frame", || { let s = b.stats(); s.rx_ok + s.rx_dropped == total as u64 });
++    assert_eq!(b.stats().rx_ok, RX_QUEUE as u64);
++    assert_eq!(b.stats().rx_dropped, 300);
++    assert_eq!(b.recv(usize::MAX).len(), RX_QUEUE);
++    assert!(b.recv(usize::MAX).is_empty());
++}
++
++#[test]
++fn a_poll_takes_a_bounded_batch() {
++    let (b, mut d) = pair();
++    for _ in 0..10 { daemon_write(&mut d, &frame([0xff; 6], OTHER, 60)); }
++    wait_for("ten frames", || b.stats().rx_ok == 10);
++    assert_eq!(b.recv(4).len(), 4);
++    assert_eq!(b.recv(100).len(), 6);
++}
++
++#[test]
++fn it_reconnects_when_the_daemon_goes_away() {
++    let path = std::env::temp_dir().join(format!("esp32sim-vmnet-{}.sock", std::process::id()));
++    let _ = std::fs::remove_file(&path);
++    let listener = UnixListener::bind(&path).unwrap();
++    let b = Bridge::connect(path.to_str().unwrap(), STATION, false).unwrap();
++    let (first, _) = listener.accept().unwrap();
++    drop(first);                                   // the daemon restarts (sleep, Wi-Fi reconnect: #130)
++    let (mut second, _) = listener.accept().unwrap();
++    wait_for("the reconnect to count", || b.stats().reconnects == 1);
++    let out = frame([0xff; 6], STATION, 342);
++    b.send(&out);
++    assert_eq!(daemon_read(&mut second), out, "the writer moved to the new connection");
++    daemon_write(&mut second, &frame(STATION, OTHER, 60));
++    wait_for("a frame on the new connection", || b.stats().rx_ok == 1);
++    drop(b);
++    let _ = std::fs::remove_file(&path);
++}
++
++#[test]
++fn no_daemon_is_a_clear_error() {
++    let e = Bridge::connect("/nonexistent/socket_vmnet.bridged.en0", STATION, false).err().unwrap();
++    assert!(e.contains("/nonexistent/socket_vmnet.bridged.en0"), "{e}");
++    let e = crate::net::vmnet_stub::Bridge::connect("/x", STATION, false).err().unwrap();
++    assert!(e.contains("Unix host"), "{e}");
++}
+diff --git a/esp-soc/src/net/vmnet_stub.rs b/esp-soc/src/net/vmnet_stub.rs
+new file mode 100644
+index 0000000..b32f702
+--- /dev/null
++++ b/esp-soc/src/net/vmnet_stub.rs
+@@ -0,0 +1,20 @@
++//! `--net bridge:PATH` where there are no Unix sockets (the WebAssembly build): the same
++//! interface as `vmnet.rs`, and `connect` says why it cannot work here. No value of this type
++//! can exist, so the other methods are never reached.
++
++use super::BridgeStats;
++
++pub const MAX_FRAME: usize = 64 * 1024;
++
++pub struct Bridge { never: std::convert::Infallible }
++
++impl Bridge {
++    pub fn connect(path: &str, _mac: [u8; 6], _log: bool) -> Result<Self, String> {
++        Err(format!("--net bridge:{path}: the bridge needs a Unix host with a socket_vmnet daemon"))
++    }
++    pub fn path(&self) -> &str { match self.never {} }
++    pub fn station(&self) -> [u8; 6] { match self.never {} }
++    pub fn send(&self, _eth: &[u8]) { match self.never {} }
++    pub fn recv(&self, _max: usize) -> Vec<Vec<u8>> { match self.never {} }
++    pub fn stats(&self) -> BridgeStats { match self.never {} }
++}
 diff --git a/esp-soc/src/soc.rs b/esp-soc/src/soc.rs
 index a9052ae..65e6ec8 100644
 --- a/esp-soc/src/soc.rs
@@ -1267,6 +2108,251 @@ index a9052ae..65e6ec8 100644
      fn gpio_input(&self) -> u64;
      /// Start/stop recording GPIO edges (outputs as they reach the board, inputs as they are set).
      fn observe_gpio(&mut self, on: bool);
+diff --git a/esp-soc/src/wifi.rs b/esp-soc/src/wifi.rs
+index c814c2a..ac992fb 100644
+--- a/esp-soc/src/wifi.rs
++++ b/esp-soc/src/wifi.rs
+@@ -33,6 +33,37 @@ pub fn describe(f: &[u8]) -> String {
+ 
+ /// True for a beacon frame (management subtype 8).
+ pub fn is_beacon(f: &[u8]) -> bool { f.len() >= 2 && f[0] & 0x0c == 0 && (f[0] >> 4) & 0xf == 8 }
++/// True for a management frame (type 0): beacons, probe, auth and association exchanges.
++pub fn is_mgmt(f: &[u8]) -> bool { !f.is_empty() && f[0] & 0x0c == 0 }
++/// True for an EAPOL frame (a data frame whose LLC/SNAP header names 0x888e): the four-way handshake.
++pub fn is_eapol(f: &[u8]) -> bool {
++    if f.len() < 2 || f[0] & 0x0c != 0x08 { return false; }
++    let hdr = if (f[0] >> 4) & 8 != 0 { 26 } else { 24 };
++    f.len() >= hdr + 8 && f[hdr] == 0xaa && f[hdr + 6..hdr + 8] == [0x88, 0x8e]
++}
++/// Frames of the connect exchange: management frames other than beacons, and the handshake.
++fn is_control(f: &[u8]) -> bool { (is_mgmt(f) && !is_beacon(f)) || is_eapol(f) }
++
++/// The order frames that are due go on the air: the connect exchange first (management
++/// responses and the handshake must not wait behind anything), then the beacon, then data. A
++/// beacon behind queued data could wait for ever while a LAN keeps sending, and a station that
++/// hears no beacon for its inactive time drops the link (ESP-IDF `esp_wifi_set_inactive_time`:
++/// "Default 6s", Arduino-ESP32 2.0.17's SDK tools/sdk/esp32s3/include/esp_wifi/include/esp_wifi.h:1141-1142).
++pub fn air_order(a: &AirFrame) -> (u8, u64) {
++    (if is_control(&a.frame) { 0 } else if is_beacon(&a.frame) { 1 } else { 2 }, a.at_us)
++}
++
++/// How many frames may wait for the air, in the AP's queue and in front of it. Past this the
++/// oldest data frame goes (a LAN in bridge mode can send faster than the air delivers).
++pub const AIR_QUEUE_MAX: usize = 64;
++
++/// Append to a bounded frame queue, dropping the oldest when it is full; returns how many went.
++pub fn push_bounded(q: &mut Vec<Vec<u8>>, frames: impl IntoIterator<Item = Vec<u8>>, cap: usize) -> u64 {
++    q.extend(frames);
++    let over = q.len().saturating_sub(cap);
++    q.drain(..over);
++    over as u64
++}
+ 
+ /// RSN information element advertised in beacons and echoed in handshake message 3: WPA2-PSK, CCMP.
+ pub const RSN_IE: &[u8] = &[48, 20, 1, 0, 0x00, 0x0f, 0xac, 4, 1, 0, 0x00, 0x0f, 0xac, 4, 1, 0, 0x00, 0x0f, 0xac, 2, 0, 0];
+@@ -113,6 +144,8 @@ pub struct VirtualAp {
+     pub log: bool,
+     pub stats: (u64, u64, u64),   // beacons, probe responses, data frames from the station
+     pub pn: u64,                  // CCMP packet number for frames we send
++    /// frames dropped from a full `queue` (`AIR_QUEUE_MAX`), data frames first
++    pub queue_dropped: u64,
+ }
+ 
+ impl VirtualAp {
+@@ -126,7 +159,17 @@ impl VirtualAp {
+             for i in 0..16 { wpa.gtk[i] = seed[(i + 3) % 20] ^ 0x5a; }
+         }
+         VirtualAp { cfg, wpa, state: StaState::Idle, sta: [0; 6], aid: 1, next_beacon_us: 100_000, beacon_interval_us: 102_400, seq: 0,
+-                    queue: Vec::new(), pn: 0, log, stats: (0, 0, 0) }
++                    queue: Vec::new(), pn: 0, log, stats: (0, 0, 0), queue_dropped: 0 }
++    }
++    /// Put frames back on the queue (or on it for the first time), keeping it to `AIR_QUEUE_MAX`:
++    /// the oldest data frame goes first; a beacon or the connect exchange only if nothing else is left.
++    pub fn enqueue(&mut self, frames: impl IntoIterator<Item = AirFrame>) {
++        self.queue.extend(frames);
++        while self.queue.len() > AIR_QUEUE_MAX {
++            let i = self.queue.iter().position(|a| !is_mgmt(&a.frame) && !is_eapol(&a.frame)).unwrap_or(0);
++            self.queue.remove(i);
++            self.queue_dropped += 1;
++        }
+     }
+     fn hdr(&mut self, fc: u16, a1: &[u8; 6], a3: &[u8; 6]) -> Vec<u8> {
+         let mut f = Vec::with_capacity(128);
+@@ -156,16 +199,18 @@ impl VirtualAp {
+     }
+     fn send(&mut self, at_us: u64, frame: Vec<u8>) {
+         if self.log { let d = describe(&frame); if d.contains("auth") || d.contains("assoc") || d.contains("888e") { eprintln!("[wifi] AP -> {}  hex={:02x?}", d, frame); } else { eprintln!("[wifi] AP -> {} (t+{} us)", d, at_us); } }
+-        self.queue.push(AirFrame { at_us, frame });
++        self.enqueue([AirFrame { at_us, frame }]);
+     }
+     /// Time-driven behaviour (beacons). Returns frames due at or before `now_us`.
+     pub fn step(&mut self, now_us: u64) -> Vec<AirFrame> {
+-        let mgmt_pending = self.queue.iter().any(|a| !is_beacon(&a.frame));
++        // Only a pending management exchange (auth, association, probe response) holds the beacon
++        // back. Queued data must not: with a LAN behind the AP it may never drain.
++        let mgmt_pending = self.queue.iter().any(|a| is_mgmt(&a.frame) && !is_beacon(&a.frame));
+         if now_us >= self.next_beacon_us && !mgmt_pending {
+             self.next_beacon_us += self.beacon_interval_us;
+             if self.next_beacon_us <= now_us { self.next_beacon_us = now_us + self.beacon_interval_us; }
+             let b = self.beacon_like(8, &[0xff; 6], now_us); self.stats.0 += 1;
+-            self.queue.push(AirFrame { at_us: now_us, frame: b });
++            self.enqueue([AirFrame { at_us: now_us, frame: b }]);
+         }
+         let (due, later): (Vec<_>, Vec<_>) = std::mem::take(&mut self.queue).into_iter().partition(|a| a.at_us <= now_us);
+         self.queue = later;
+diff --git a/esp-soc/src/wifi/tests.rs b/esp-soc/src/wifi/tests.rs
+index 8334215..e979f95 100644
+--- a/esp-soc/src/wifi/tests.rs
++++ b/esp-soc/src/wifi/tests.rs
+@@ -164,3 +164,107 @@ fn ap_configuration_rejects_unknown_options_and_invalid_values() {
+         assert!(ApConfig::parse(spec).is_err(), "accepted {spec}");
+     }
+ }
++
++fn associated_ap() -> VirtualAp {
++    let mut ap = VirtualAp::new(config(), false);
++    ap.on_station_tx(&station_frame(11 << 4, &[0, 0, 1, 0, 0, 0]), 0);
++    ap.on_station_tx(&station_frame(0, &[1, 0, 0, 0]), 0);
++    assert_eq!(ap.state, StaState::Associated);
++    ap.queue.clear();
++    ap
++}
++
++fn lan_frame(n: u16) -> Vec<u8> {
++    let mut e = vec![0xff; 6];
++    e.extend_from_slice(&[2, 9, 9, 9, 9, 9]);
++    e.extend_from_slice(&[0x08, 0x00]);
++    e.extend_from_slice(&n.to_be_bytes());
++    e.resize(60, 0);
++    e
++}
++
++/// The S3's and C6's wifi_air_step: what is due, plus what the network sent, one frame on the air
++/// per 400 us, the rest back on the queue. Returns the times beacons reached the station.
++fn air(ap: &mut VirtualAp, until_us: u64, lan_per_step: u16, first_burst: u16) -> Vec<u64> {
++    let mut beacons = Vec::new();
++    let mut n = 0u16;
++    let mut now = 0;
++    while now < until_us {
++        let mut due = ap.step(now);
++        let burst = if now == 0 { first_burst } else { lan_per_step };
++        let mut eth_rx = Vec::new();
++        push_bounded(&mut eth_rx, (0..burst).map(|_| { n = n.wrapping_add(1); lan_frame(n) }), AIR_QUEUE_MAX);
++        for e in eth_rx { if let Some(f) = ap.data_from_ds(&e) { due.push(AirFrame { at_us: now, frame: f }); } }
++        if !due.is_empty() {
++            due.sort_by_key(air_order);
++            let first = due.remove(0);
++            if is_beacon(&first.frame) { beacons.push(now); }
++            ap.enqueue(due);
++        }
++        now += 400;
++    }
++    beacons
++}
++
++#[test]
++fn beacons_keep_their_interval_under_1000_queued_frames_and_a_steady_flood() {
++    // 1000 frames at once, then three per slot: more than the air delivers, for ten seconds (the
++    // station would drop the link after 6 s without a beacon, esp_wifi.h:1141-1142).
++    let mut ap = associated_ap();
++    let beacons = air(&mut ap, 10_000_000, 3, 1000);
++    let interval = ap.beacon_interval_us;
++    assert!(beacons.len() as u64 >= 10_000_000 / interval - 1, "{} beacons in 10 s", beacons.len());
++    let worst = beacons.windows(2).map(|w| w[1] - w[0]).max().unwrap();
++    assert!(worst <= interval + 400, "a {worst} us gap between beacons");
++    assert!(ap.queue.len() <= AIR_QUEUE_MAX);
++    assert!(ap.queue_dropped > 900);
++}
++
++#[test]
++fn only_a_management_exchange_holds_a_beacon_back() {
++    let mut ap = associated_ap();
++    for i in 0..10 { let f = ap.data_from_ds(&lan_frame(i)).unwrap(); ap.enqueue([AirFrame { at_us: 0, frame: f }]); }
++    let due = ap.step(ap.next_beacon_us);
++    assert!(due.iter().any(|a| is_beacon(&a.frame)), "queued data held the beacon back");
++    ap.queue.clear();
++    ap.on_station_tx(&station_frame(4 << 4, &[0, 0]), 0);                  // probe request: a response is queued
++    let t = ap.next_beacon_us;
++    ap.queue[0].at_us = t + 1_000;                                          // not due yet
++    assert!(!ap.step(t).iter().any(|a| is_beacon(&a.frame)));
++}
++
++#[test]
++fn the_air_queue_keeps_64_frames_losing_the_oldest_data_first() {
++    let mut ap = associated_ap();
++    ap.on_station_tx(&station_frame(4 << 4, &[0, 0]), 0);                  // one management frame
++    for i in 0..100 { let f = ap.data_from_ds(&lan_frame(i)).unwrap(); ap.enqueue([AirFrame { at_us: 0, frame: f }]); }
++    assert_eq!(ap.queue.len(), AIR_QUEUE_MAX);
++    assert_eq!(ap.queue_dropped, 100 + 1 - AIR_QUEUE_MAX as u64);
++    assert!(is_mgmt(&ap.queue[0].frame), "the management frame stays");
++    let first_data = &ap.queue[1].frame;
++    assert_eq!(&first_data[32..34], &(100 - 63u16).to_be_bytes(), "the newest 63 data frames stay");
++
++    let mut q: Vec<Vec<u8>> = Vec::new();
++    assert_eq!(push_bounded(&mut q, (0..100u16).map(lan_frame), AIR_QUEUE_MAX), 36);
++    assert_eq!(q.len(), AIR_QUEUE_MAX);
++    assert_eq!(q[0], lan_frame(36));
++}
++
++#[test]
++fn the_handshake_goes_before_queued_data_and_is_never_dropped_for_it() {
++    let mut cfg = config();
++    cfg.psk = Some("esp32sim-pass".into());
++    let mut ap = VirtualAp::new(cfg, false);
++    ap.on_station_tx(&station_frame(11 << 4, &[0, 0, 1, 0, 0, 0]), 0);
++    ap.on_station_tx(&station_frame(0, &[1, 0, 0, 0]), 0);                  // queues the assoc response and message 1
++    ap.queue.retain(|a| !is_mgmt(&a.frame));                                // the auth and assoc responses went out
++    let m1 = ap.queue.iter().find(|a| is_eapol(&a.frame)).unwrap().frame.clone();
++    for i in 0..200 { let f = ap.data_from_ds(&lan_frame(i)).unwrap(); ap.enqueue([AirFrame { at_us: 0, frame: f }]); }
++    assert!(ap.queue.iter().any(|a| a.frame == m1), "message 1 was dropped for data");
++    assert_eq!(ap.queue.len(), AIR_QUEUE_MAX);
++    let mut due = ap.step(1_000_000);
++    due.sort_by_key(air_order);
++    assert_eq!(due[0].frame, m1, "the handshake goes first");
++    assert!(is_beacon(&due[1].frame), "then the beacon");
++    assert!(due[2..].iter().all(|a| !is_mgmt(&a.frame) && !is_eapol(&a.frame)), "then data");
++}
+diff --git a/esp32c6/src/bus.rs b/esp32c6/src/bus.rs
+index 84eba7a..c5ecaa5 100644
+--- a/esp32c6/src/bus.rs
++++ b/esp32c6/src/bus.rs
+@@ -238,9 +238,9 @@ impl SocBus {
+             if let Some(f) = ap.data_from_ds(&e) { due.push(esp_soc::wifi::AirFrame { at_us: now_us, frame: f }); }
+         }
+         if due.is_empty() { return; }
+-        due.sort_by_key(|a| (esp_soc::wifi::is_beacon(&a.frame), a.at_us));   // a connect exchange goes before beacons
++        due.sort_by_key(esp_soc::wifi::air_order);   // a connect exchange goes before beacons, beacons before data
+         let first = due.remove(0);
+-        ap.queue.extend(due);
++        ap.enqueue(due);
+         self.wifi_rx_deliver(&first.frame, now_us);
+     }
+ 
+@@ -289,8 +289,10 @@ impl SocBus {
+         let due = now_us.wrapping_sub(mac.net_polled_us) >= 500;
+         if out.is_empty() && !due { return; }
+         if due { mac.net_polled_us = now_us; }
+-        for e in out { let r = net.handle(&e, now_us); mac.eth_rx.extend(r); }
+-        let r = net.poll(now_us); mac.eth_rx.extend(r);
++        let mut r = Vec::new();
++        for e in out { r.extend(net.handle(&e, now_us)); }
++        r.extend(net.poll(now_us));
++        net.eth_rx_dropped += esp_soc::wifi::push_bounded(&mut mac.eth_rx, r, esp_soc::wifi::AIR_QUEUE_MAX);
+     }
+ 
+     fn spi2_dma_tx(&mut self) {
+diff --git a/esp32c6/src/soc.rs b/esp32c6/src/soc.rs
+index 6a88a11..abe20b1 100644
+--- a/esp32c6/src/soc.rs
++++ b/esp32c6/src/soc.rs
+@@ -147,6 +147,7 @@ impl esp_soc::SocBus for SocBus {
+         if self.periph.spi2.transfers > 0 { r.push(format!("[emu] spi2: {} transfers", self.periph.spi2.transfers)); }
+         if self.periph.rmt.rmt.tx_count > 0 { r.push(format!("[emu] rmt: {} transmissions", self.periph.rmt.rmt.tx_count)); }
+         if self.periph.radio.scans > 0 { r.push(format!("[emu] 802.15.4: {} energy scans, last channel {} = {} dBm", self.periph.radio.scans, self.periph.radio.channel(), self.periph.radio.ed_rss)); }
++        if let Some(b) = self.periph.wifi_mac.net.as_ref().and_then(|n| n.bridge_report()) { r.push(b); }
+         let b = self.board.report(); if !b.is_empty() { r.push(b); }
+         r.join("\n")
+     }
 diff --git a/esp32s3/Cargo.toml b/esp32s3/Cargo.toml
 index d671d57..10a3240 100644
 --- a/esp32s3/Cargo.toml
@@ -2644,7 +3730,7 @@ index 0000000..be56b45
 +    assert!(p.report().contains("knob 1 clicks"));
 +}
 diff --git a/esp32s3/src/bus.rs b/esp32s3/src/bus.rs
-index 5cfe19e..d29e8ca 100644
+index 5cfe19e..8fdc8af 100644
 --- a/esp32s3/src/bus.rs
 +++ b/esp32s3/src/bus.rs
 @@ -48,6 +48,8 @@ pub struct SocBus {
@@ -2656,32 +3742,52 @@ index 5cfe19e..d29e8ca 100644
      pub psram: Vec<u8>,
      pub mmu: [u32; MMU_ENTRIES],
      pub periph: Peripherals,
-@@ -136,6 +138,15 @@ fn tlb_idx(addr: u32) -> usize { xtensa_lx7::bus::tlb_index(addr) }
+@@ -60,8 +62,15 @@ pub struct SocBus {
+     spi2_scheduled: Option<(u64, Spi2DmaCompletion)>,
+     /// set by any peripheral write: interrupt lines must be re-evaluated before the next instruction
+     pub irq_dirty: bool,
+-    /// GPIO edges for observers, while one wants them: (cycle, pin, level)
++    /// GPIO edges for observers, while one wants them: (cycle, pin, level). A board edge carries
++    /// the cycle the board scheduled it for; `board_edge_lag` says how late the GPIO model saw it.
+     pub gpio_events: Option<Vec<(u64, u8, bool)>>,
++    /// The most cycles any board edge reached the GPIO model after the cycle it was scheduled for;
++    /// a firmware that timestamps edges in its ISR (IRrecv's `micros()`) sees this lateness. Zero
++    /// for edges that come while the cores sleep, since the board's deadline bounds the device tick
++    /// (`refresh_tick_budget`) and the idle skip; while a core runs, device time moves at the end
++    /// of its round, so an edge due inside one lands up to a quantum late.
++    pub board_edge_lag: u64,
+     pub debug: esp_soc::DebugFlags,
+     /// Software TLB: the last resolved mapping per 64 KiB page, so loads, stores and fetches skip
+     /// the address-range walk and the flash MMU. Cleared whenever the MMU changes.
+@@ -136,6 +145,18 @@ fn tlb_idx(addr: u32) -> usize { xtensa_lx7::bus::tlb_index(addr) }
  static BUS_EPOCHS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
  
  impl SocBus {
 +    /// Write a changed flash range through to the backing file, so NVS, LittleFS and OTA slots
-+    /// survive the run as they survive a power cycle.
++    /// survive the run as they survive a power cycle. Seek and write through `&File`, which every
++    /// target has (`FileExt::write_at` is Unix-only and stopped the wasm32 build); on wasm32
++    /// `flash_file` is never set, and the calls would only return Unsupported there.
 +    fn persist_flash(&mut self, off: usize, len: usize) {
-+        use std::os::unix::fs::FileExt;
++        use std::io::{Seek, SeekFrom, Write};
 +        let Some(f) = &self.flash_file else { return };
 +        let end = (off + len).min(self.flash.len());
 +        if off >= end { return; }
-+        if let Err(e) = f.write_at(&self.flash[off..end], off as u64) { eprintln!("[emu] flash file: write at {:#x}: {}", off, e); }
++        let mut h: &std::fs::File = f;
++        if let Err(e) = h.seek(SeekFrom::Start(off as u64)).and_then(|_| h.write_all(&self.flash[off..end])) { eprintln!("[emu] flash file: write at {:#x}: {}", off, e); }
 +    }
      pub(crate) fn cancel_spi2_timing(&mut self) { self.spi2_scheduled = None; }
  
      pub fn new(flash_size: usize, psram_size: usize, mac: [u8; 6]) -> Self { Self::with_sizes(flash_size, psram_size, mac) }
-@@ -143,7 +154,7 @@ impl SocBus {
+@@ -143,7 +164,7 @@ impl SocBus {
          let bus_uninit = SocBus {
              sram: vec![0; SRAM_SIZE], irom: vec![0; (IROM_MASK_HIGH - IROM_MASK_LOW) as usize], drom: vec![0; (DROM_MASK_HIGH - DROM_MASK_LOW) as usize],
              rtc_fast: vec![0; 8192], rtc_slow: vec![0; 8192], flash: vec![0xff; flash_size], psram: vec![0; psram_size],
 -            mmu: [MMU_INVALID; MMU_ENTRIES], periph: Peripherals::new(mac), board: Box::new(crate::board::Atech14::new()), cycles: 0, last_fault: None, spi2_dma_fault: None, irq_dirty: false, gpio_events: None, debug: Default::default(),
-+            mmu: [MMU_INVALID; MMU_ENTRIES], flash_file: None, periph: Peripherals::new(mac), board: Box::new(crate::board::Atech14::new()), cycles: 0, last_fault: None, spi2_dma_fault: None, irq_dirty: false, gpio_events: None, debug: Default::default(),
++            mmu: [MMU_INVALID; MMU_ENTRIES], flash_file: None, periph: Peripherals::new(mac), board: Box::new(crate::board::Atech14::new()), cycles: 0, last_fault: None, spi2_dma_fault: None, irq_dirty: false, gpio_events: None, board_edge_lag: 0, debug: Default::default(),
              spi2_timing: false, spi2_scheduled: None,
              tlb: vec![TlbEntry::EMPTY; TLB_SIZE], page_ver: Vec::new(), ver_base: [0; 7], flash_epoch: BUS_EPOCHS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) << 32, code_blk: Vec::new(), tick_pending: 0, tick_budget: 0, defer_mmio: false, mmio_deferred: false, vq_violations: 0,
              approximate_cache: None, approximate_cache_pending: 0, approximate_cache_fast_internal: false, approximate_cache_inline: false,
-@@ -499,7 +510,10 @@ impl SocBus {
+@@ -499,7 +520,10 @@ impl SocBus {
          if self.periph.spi_exec {
              self.periph.spi_exec = false;
              self.periph.spi1.execute(&mut self.flash, &mut self.psram);
@@ -2693,8 +3799,50 @@ index 5cfe19e..d29e8ca 100644
          }
      }
  
+@@ -541,12 +565,12 @@ impl SocBus {
+         for e in eth_in { if let Some(f) = self.periph.wifi.ap.as_mut().unwrap().data_from_ds(&e) { due.push(crate::wifi::AirFrame { at_us: now_us, frame: f }); } }
+         if due.is_empty() { return; }
+         // management responses (auth, assoc, probe) go before beacons: a connect exchange must not be
+-        // crowded out by beacon traffic
+-        due.sort_by_key(|a| (crate::wifi::is_beacon(&a.frame), a.at_us));
++        // crowded out by beacon traffic; beacons go before data, which may never run dry
++        due.sort_by_key(crate::wifi::air_order);
+         let first = due.remove(0);
+         self.wifi_rx_deliver(&first.frame, now_us);
+         self.periph.wifi.last_rx_us = now_us;
+-        if let Some(ap) = &mut self.periph.wifi.ap { for a in due { ap.queue.push(a); } }
++        if let Some(ap) = &mut self.periph.wifi.ap { ap.enqueue(due); }
+     }
+ 
+     /// Write one received frame into the next RX descriptor (rx_ctrl header + frame + FCS) and raise the RX event.
+@@ -767,6 +791,8 @@ impl SocBus {
+         let p = &self.periph;
+         p.i2s0.tx_running() || p.i2s1.tx_running()
+             || p.lcd_cam.running || p.lcd_cam.lcd_running()
++            // an i8080 transaction whose TRANS_DONE is still to come, also one with no GDMA behind it
++            || p.lcd_cam.lcd_i8080_running()
+             // EX157: a running GDMA IN channel is passive. Its only producers are the camera
+             // (lcd_cam.running), AES (dma_pending) and mem-to-mem (needs the OUT side running),
+             // all listed here, so an armed-but-idle receive channel does not hold the cadence.
+@@ -813,6 +839,7 @@ impl SocBus {
+         self.board.advance_to(self.cycles);
+         for edge in self.board.take_edges() {
+             if let Some(events) = &mut self.gpio_events { events.push((edge.cycle, edge.pin, edge.level)); }
++            self.board_edge_lag = self.board_edge_lag.max(self.cycles.saturating_sub(edge.cycle));
+             let old_input = self.periph.gpio.input;
+             self.periph.gpio.set_input(edge.pin, edge.level);
+             // set_input reports latched edges only. Level IRQs can rise or fall
+@@ -842,7 +869,7 @@ impl SocBus {
+                 let mut replies = Vec::new();
+                 for e in out { replies.extend(net.handle(&e, now_us)); }
+                 replies.extend(net.poll(now_us));
+-                self.periph.wifi.eth_rx.extend(replies);
++                net.eth_rx_dropped += crate::wifi::push_bounded(&mut self.periph.wifi.eth_rx, replies, crate::wifi::AIR_QUEUE_MAX);
+             }
+         }
+         if !self.periph.gpio.changes.is_empty() {
 diff --git a/esp32s3/src/bus/dma.rs b/esp32s3/src/bus/dma.rs
-index d819590..9d20efa 100644
+index d819590..313213e 100644
 --- a/esp32s3/src/bus/dma.rs
 +++ b/esp32s3/src/bus/dma.rs
 @@ -531,6 +531,7 @@ impl SocBus {
@@ -2705,7 +3853,7 @@ index d819590..9d20efa 100644
          if !self.periph.lcd_cam.lcd_running() { return; }
          let (ha, va, bpp, frame_cycles) = self.periph.lcd_cam.lcd_geometry();
          let frame_bytes = (ha * va * bpp) as usize;
-@@ -584,6 +585,64 @@ impl SocBus {
+@@ -584,6 +585,86 @@ impl SocBus {
          }
      }
  
@@ -2715,6 +3863,15 @@ index d819590..9d20efa 100644
 +    /// rewriting that last `next` (ESP32-HUB75-MatrixPanel-DMA 3.0.14, gdma_lcd_parallel16.cpp,
 +    /// flip_dma_output_buffer). So every descriptor is read afresh, `next` included, as it is reached.
 +    /// The words go to the board in batches, stamped with the pixel clock.
++    ///
++    /// A transaction ends (LcdCam::i80_trans_done: TRANS_DONE, LCD_START cleared) when
++    /// (a) it has no data phase (LCD_DOUT clear): after its cmd and dummy cycles, nothing fetched;
++    /// (b) the chain runs out (`next == 0`), or the channel is stopped, has no descriptor or none is
++    ///     bound to trigger 5: nothing more can come. A HUB75 ring has no `next == 0` and never ends;
++    /// (d) without LCD_ALWAYS_OUT_EN, after LCD_DOUT_CYCLELEN + 1 words ("The cycles = this value + 1";
++    ///     always-out goes on "till LCD_CAM_LCD_START is cleared or LCD_CAM_LCD_RESET is set",
++    ///     lcd_cam_struct.h, LCD_USER).
++    /// An always-out transaction is seen to end at batch granularity, up to BATCH_WORDS PCLKs late.
 +    fn dma_lcd_i8080_step(&mut self, cycles: u64) {
 +        let pclk = self.periph.lcd_cam.lcd_pclk_hz();
 +        let hz = crate::periph::CPU_HZ;
@@ -2723,20 +3880,29 @@ index d819590..9d20efa 100644
 +        let words = lc.i80_frac / hz;
 +        lc.i80_frac -= words * hz;
 +        lc.i80_pending += words;
++        if lc.lcd_user & (1 << 24) == 0 {                                                  // (a) no DOUT phase
++            if lc.i80_pending >= lc.lcd_preamble_cycles() { self.irq_dirty |= lc.i80_trans_done(); }
++            return;
++        }
 +        const BATCH_WORDS: u64 = 4096;
-+        if lc.i80_pending < BATCH_WORDS { return; }
++        let left = if lc.lcd_user & (1 << 13) != 0 { u64::MAX }                             // (d) DOUT_CYCLELEN + 1 words
++                   else { (u64::from(lc.lcd_user & 0x1fff) + 1).saturating_sub(lc.i80_txn) };
++        if lc.i80_pending < BATCH_WORDS.min(left) { return; }
 +        let bus_bytes = lc.lcd_bus_bytes();
-+        let mut want = (lc.i80_pending as usize) * bus_bytes;
++        let batch = (lc.i80_pending.min(left) as usize) * bus_bytes;
++        let mut want = batch;
 +        lc.i80_pending = 0;
 +        let mut out = std::mem::take(&mut lc.i80_buf);
 +        out.clear();
 +        let log = lc.lcd_log;
++        let mut ended = true;                                                               // (b) no channel on trigger 5
 +        if let Some(ch) = self.periph.gdma.out_channel_for(5) {
++            ended = false;
 +            let mut walk = DescriptorWalk::new(GDMA_DESCRIPTOR_STEP_BUDGET);
 +            while want > 0 {
 +                let c = self.periph.gdma.out[ch];
-+                if !c.running || c.desc == 0 { break; }
-+                let Ok((_, d)) = walk.read(self, c.desc) else { self.fail_dma_out(ch); break };
++                if !c.running || c.desc == 0 { ended = true; break; }                        // (b) stopped, or no descriptor
++                let Ok((_, d)) = walk.read(self, c.desc) else { self.fail_dma_out(ch); ended = true; break };
 +                let (length, eof, buf, next) = (d.length, d.eof, d.buf, d.next);
 +                let remaining = length.saturating_sub(c.buf_pos) as usize;
 +                if remaining == 0 {
@@ -2750,12 +3916,12 @@ index d819590..9d20efa 100644
 +                    ch_ref.int_raw |= 1 << 0;
 +                    if eof { ch_ref.int_raw |= 1 << 1; ch_ref.eof_desc = c.desc; }
 +                    if ch_ref.int_raw & ch_ref.int_ena != 0 { self.irq_dirty = true; }
-+                    if next == 0 { ch_ref.running = false; ch_ref.desc = 0; ch_ref.int_raw |= 1 << 3; self.irq_dirty = true; break; }
++                    if next == 0 { ch_ref.running = false; ch_ref.desc = 0; ch_ref.int_raw |= 1 << 3; self.irq_dirty = true; ended = true; break; }   // (b)
 +                    ch_ref.desc = next; ch_ref.buf_pos = 0;
 +                    continue;
 +                }
 +                let take = remaining.min(want);
-+                if self.append_mapped_bytes(buf.wrapping_add(c.buf_pos), take, &mut out).is_err() { self.fail_dma_out(ch); break; }
++                if self.append_mapped_bytes(buf.wrapping_add(c.buf_pos), take, &mut out).is_err() { self.fail_dma_out(ch); ended = true; break; }
 +                self.periph.gdma.out[ch].buf_pos += take as u32;
 +                want -= take;
 +            }
@@ -2764,12 +3930,273 @@ index d819590..9d20efa 100644
 +            self.periph.lcd_cam.i80_words += (out.len() / bus_bytes) as u64;
 +            self.board.lcd_i8080(pclk, bus_bytes as u8, &out, false);
 +        }
-+        self.periph.lcd_cam.i80_buf = out;
++        let lc = &mut self.periph.lcd_cam;
++        lc.i80_buf = out;
++        let sent = ((batch - want) / bus_bytes) as u64;
++        lc.i80_txn += sent;
++        if ended || (left != u64::MAX && sent >= left) { self.irq_dirty |= lc.i80_trans_done(); }   // (b), (d)
 +    }
 +
      /// Gather a finite crypto transaction. Descriptor visits bound both runtime and allocation
      /// (4096 * 4095 bytes maximum); a visited set rejects cycles independently of owner checking.
      fn gather_dma_out(&mut self, ch: usize, limit: usize) -> Result<Vec<u8>, DmaDescriptorFault> {
+diff --git a/esp32s3/src/bus/dma_tests.rs b/esp32s3/src/bus/dma_tests.rs
+index 7144582..7e4f1f2 100644
+--- a/esp32s3/src/bus/dma_tests.rs
++++ b/esp32s3/src/bus/dma_tests.rs
+@@ -4,6 +4,11 @@ const DESC: u32 = DRAM_LOW;
+ const INPUT: u32 = DRAM_LOW + 0x100;
+ const RX_DESC: u32 = DRAM_LOW + 0x200;
+ const OUTPUT: u32 = DRAM_LOW + 0x300;
++/// The fastest LCD clock: PLL_D2 240 MHz / DIV_NUM 2, CLK_EQU_SYSCLK. 120 MHz, 2 CPU cycles a pixel.
++const LCD_FAST_CLOCK: u32 = (2 << 29) | (2 << 9) | (1 << 6);
++/// The HUB75 driver's clock: PLL_F160M / DIV_NUM 16, CLK_EQU_SYSCLK. 10 MHz, 24 CPU cycles a word.
++const LCD_HUB75_CLOCK: u32 = (3 << 29) | (16 << 9) | (1 << 6);
++const CYCLES_PER_WORD: u64 = 24;
+ 
+ fn bus_with_out(peripheral: u32, length: u32, next: u32) -> SocBus {
+     let mut bus = SocBus::new(1024, 1024, [0; 6]);
+@@ -34,10 +39,11 @@ fn empty_streaming_descriptor_cycles_raise_error_and_stop() {
+                 bus.dma_i2s_step(1);
+             }
+             _ => {
++                bus.periph.lcd_cam.lcd_clock = LCD_FAST_CLOCK;
+                 bus.periph.lcd_cam.lcd_user = 1 << 27;
+                 bus.periph.lcd_cam.lcd_ctrl = 1 << 31;
+                 bus.periph.lcd_cam.lcd_ctrl1 = 511 << 8;
+-                bus.dma_lcd_step(1);
++                bus.dma_lcd_step(2);
+             }
+         }
+         assert!(!bus.periph.gdma.out[0].running, "peripheral {peripheral}");
+@@ -194,10 +200,11 @@ fn streaming_dma_buffer_faults_raise_error_instead_of_emitting_zeros() {
+             bus.dma_i2s_step(1);
+             assert!(bus.periph.i2s0.pcm.is_empty());
+         } else {
++            bus.periph.lcd_cam.lcd_clock = LCD_FAST_CLOCK;
+             bus.periph.lcd_cam.lcd_user = 1 << 27;
+             bus.periph.lcd_cam.lcd_ctrl = 1 << 31;
+             bus.periph.lcd_cam.lcd_ctrl1 = 511 << 8;
+-            bus.dma_lcd_step(1);
++            bus.dma_lcd_step(2);
+             assert_eq!(bus.periph.lcd_cam.lcd_frames, 0);
+         }
+         assert!(!bus.periph.gdma.out[0].running);
+@@ -222,3 +229,114 @@ fn crypto_owner_check_is_controlled_by_conf1() {
+         }
+     }
+ }
++
++#[test]
++fn lcd_clock_div_num_follows_the_trm_at_both_ends() {
++    // TRM §29.3.3.1: DIV_NUM 0 divides by 256, 1 by 2 (hub75::timing::lcd_pclk_hz agrees).
++    let mut lc = crate::periph::LcdCam::new();
++    for (div_num, hz) in [(0, 625_000), (1, 80_000_000), (2, 80_000_000), (16, 10_000_000)] {
++        lc.lcd_clock = (3 << 29) | (div_num << 9) | (1 << 6);
++        assert_eq!(lc.lcd_pclk_hz(), hz, "DIV_NUM {div_num}");
++        assert_eq!(lc.lcd_pclk_hz() as f64, hub75::timing::lcd_pclk_hz(hub75::timing::PLL_F160M_HZ, div_num, 0, 0, true, 0));
++    }
++    // The RGB path takes the same divider: a 1 x 1 frame lasts one PCLK.
++    lc.lcd_ctrl = 1 << 31;
++    for (div_num, cycles) in [(1, 3), (2, 3), (16, 24)] {
++        lc.lcd_clock = (3 << 29) | (div_num << 9) | (1 << 6);
++        assert_eq!(lc.lcd_geometry().3, cycles, "DIV_NUM {div_num}");
++    }
++}
++
++/// An i8080 LCD (RGB_MODE_EN clear) at 10 MHz with `user` in LCD_USER, START written through the register.
++fn start_i8080(bus: &mut SocBus, user: u32) {
++    bus.periph.lcd_cam.lcd_clock = LCD_HUB75_CLOCK;
++    bus.periph.lcd_cam.int_ena = 1 << 1;
++    bus.periph.lcd_cam.write(0x14, user | (1 << 27));
++}
++fn trans_done(bus: &SocBus) -> bool {
++    bus.periph.lcd_cam.read(0x6c) & (1 << 1) != 0 && bus.periph.lcd_cam.read(0x14) & (1 << 27) == 0
++}
++
++#[test]
++fn i8080_dummy_only_transaction_ends_without_fetching_data() {
++    // IDF v4.4.7 esp_lcd_new_i80_bus: lcd_ll_set_phase_cycles(dev, 0, 1, 0); lcd_ll_start(dev); then a
++    // busy-wait for TRANS_DONE. IDF 5.x also starts GDMA on a 4-byte buffer first: DOUT is clear, so
++    // the LCD must not take it.
++    let mut bus = bus_with_out(5, 4, 0);
++    start_i8080(&mut bus, 1 << 25);                                  // DUMMY, one cycle; no CMD, no DOUT
++    bus.dma_lcd_step(CYCLES_PER_WORD - 1);
++    assert!(!trans_done(&bus), "still in the dummy cycle");
++    bus.irq_dirty = false;
++    bus.dma_lcd_step(1);
++    assert!(trans_done(&bus));
++    assert!(bus.irq_dirty && bus.periph.lcd_cam.irq());
++    assert!(!bus.periph.lcd_cam.lcd_i8080_running());
++    let ch = bus.periph.gdma.out[0];
++    assert!(ch.running && ch.buf_pos == 0 && ch.int_raw == 0, "no data phase, nothing fetched");
++    assert_eq!(bus.periph.lcd_cam.i80_words, 0);
++    // CMD for two cycles plus DUMMY for four: six PCLKs.
++    let mut bus = bus_with_out(5, 4, 0);
++    start_i8080(&mut bus, (1 << 31) | (1 << 26) | (3 << 29) | (1 << 25));
++    bus.dma_lcd_step(6 * CYCLES_PER_WORD - 1);
++    assert!(!trans_done(&bus));
++    bus.dma_lcd_step(1);
++    assert!(trans_done(&bus));
++}
++
++#[test]
++fn i8080_data_phase_ends_with_the_chain_and_a_ring_never_ends() {
++    const ALWAYS_OUT_16BIT: u32 = (1 << 24) | (1 << 23) | (1 << 13) | (1 << 25);
++    // (b) A one-off chain (next == 0): the words are sent, then TRANS_DONE and START clear.
++    let mut bus = bus_with_out(5, 16, 0);
++    start_i8080(&mut bus, ALWAYS_OUT_16BIT);
++    bus.dma_lcd_step(4096 * CYCLES_PER_WORD);
++    assert!(trans_done(&bus));
++    assert_eq!(bus.periph.lcd_cam.i80_words, 8);
++    assert!(!bus.periph.gdma.out[0].running);
++    assert_ne!(bus.periph.gdma.out[0].int_raw & (1 << 3), 0, "OUT_TOTAL_EOF");
++    assert!(bus.irq_dirty);
++    // Nothing more streams once the transaction is over.
++    bus.dma_lcd_step(8192 * CYCLES_PER_WORD);
++    assert_eq!(bus.periph.lcd_cam.i80_words, 8);
++    // The HUB75 ring: the last `next` points back to the first, so the transaction never ends.
++    let mut bus = bus_with_out(5, 16, DESC);
++    start_i8080(&mut bus, ALWAYS_OUT_16BIT);
++    bus.dma_lcd_step(4096 * CYCLES_PER_WORD);
++    assert!(!trans_done(&bus));
++    assert!(bus.periph.lcd_cam.lcd_i8080_running() && bus.periph.gdma.out[0].running);
++    assert_eq!(bus.periph.lcd_cam.i80_words, 4096);
++    assert_eq!(bus.periph.lcd_cam.int_raw, 0);
++    // No GDMA channel on trigger 5: nothing can ever feed the data phase.
++    let mut bus = SocBus::new(1024, 1024, [0; 6]);
++    start_i8080(&mut bus, ALWAYS_OUT_16BIT);
++    bus.dma_lcd_step(4096 * CYCLES_PER_WORD);
++    assert!(trans_done(&bus));
++}
++
++#[test]
++fn i8080_without_always_out_sends_dout_cyclelen_plus_one_words() {
++    // (d) LCD_DOUT_CYCLELEN = 3: four words, from a ring that would go on forever.
++    let mut bus = bus_with_out(5, 16, DESC);
++    start_i8080(&mut bus, (1 << 24) | (1 << 23) | 3);
++    bus.dma_lcd_step(3 * CYCLES_PER_WORD);
++    assert!(!trans_done(&bus));
++    bus.dma_lcd_step(CYCLES_PER_WORD);
++    assert!(trans_done(&bus));
++    assert_eq!(bus.periph.lcd_cam.i80_words, 4);
++    assert_eq!(bus.periph.gdma.out[0].buf_pos, 8);
++    assert!(bus.periph.gdma.out[0].running);
++}
++
++#[test]
++fn i8080_lcd_reset_drops_the_words_counted_before_it() {
++    let mut bus = bus_with_out(5, 16, DESC);
++    start_i8080(&mut bus, (1 << 24) | (1 << 23) | (1 << 13));
++    bus.dma_lcd_step(4000 * CYCLES_PER_WORD);
++    assert_eq!(bus.periph.lcd_cam.i80_pending, 4000);
++    let user = bus.periph.lcd_cam.read(0x14);
++    bus.periph.lcd_cam.write(0x14, user | (1 << 28));                       // LCD_RESET
++    assert_eq!((bus.periph.lcd_cam.i80_pending, bus.periph.lcd_cam.i80_frac), (0, 0));
++    bus.dma_lcd_step(96 * CYCLES_PER_WORD);                                  // 4000 + 96 would be a batch
++    assert_eq!(bus.periph.lcd_cam.i80_words, 0);
++    assert_eq!(bus.periph.gdma.out[0].buf_pos, 0);
++}
+diff --git a/esp32s3/src/bus/tests.rs b/esp32s3/src/bus/tests.rs
+index 80794c5..d98163c 100644
+--- a/esp32s3/src/bus/tests.rs
++++ b/esp32s3/src/bus/tests.rs
+@@ -737,6 +737,7 @@ fn quiet_backstop_keeps_the_original_cadence_for_active_devices() {
+         ("i2s1", |p| p.i2s1.tx_conf |= 1 << 2),
+         ("camera", |p| p.lcd_cam.running = true),
+         ("lcd", |p| { p.lcd_cam.lcd_user |= 1 << 27; p.lcd_cam.lcd_ctrl |= 1 << 31; }),
++        ("lcd-i8080", |p| p.lcd_cam.lcd_user |= 1 << 27),
+         ("gdma-out", |p| p.gdma.out[0].running = true),
+         ("wifi-tx", |p| p.wifi.tx_pending.push((0, 0))),
+         ("wifi-ap", |p| p.wifi.ap = Some(crate::wifi::VirtualAp::new(crate::wifi::ApConfig {
+@@ -929,12 +930,13 @@ fn read_flush_reports_terminal_i2s_and_lcd_dma_descriptors() {
+             3 => { bus.periph.i2s0.write(0x2c, 15 << 13); bus.periph.i2s0.write(0x54, (1 << 16) | 3); bus.periph.i2s0.write(0x24, 4); bus.periph.i2s0.sample_rate = crate::periph::CPU_HZ as u32; }
+             4 => { bus.periph.i2s1.write(0x2c, 15 << 13); bus.periph.i2s1.write(0x54, (1 << 16) | 3); bus.periph.i2s1.write(0x24, 4); bus.periph.i2s1.sample_rate = crate::periph::CPU_HZ as u32; }
+             _ => {
++                bus.periph.lcd_cam.lcd_clock = (2 << 29) | (2 << 9) | (1 << 6);   // 240 MHz / 2: a pixel every 2 cycles
+                 bus.periph.lcd_cam.lcd_user = 1 << 27;
+                 bus.periph.lcd_cam.lcd_ctrl = 1 << 31;
+                 bus.periph.lcd_cam.lcd_ctrl1 = 511 << 8;
+             }
+         }
+-        read_flush(&mut bus, 1);
++        read_flush(&mut bus, 2);
+         assert!(bus.periph.gdma.out[0].irq(), "DMA {peripheral}");
+         assert!(bus.block_break(), "DMA {peripheral}");
+     }
+@@ -1291,3 +1293,72 @@ fn stable_pages_move_their_epoch() {
+     assert_eq!(bus.stable_pages().1, first - 1, "the last flash page is left to per-page compares");
+     assert_eq!(bus.page_versions()[first as usize - 1], before[first as usize - 1] + 3);
+ }
++
++#[test]
++fn sdmmc_card_detect_follows_the_gpio_matrix_and_commands_time_out() {
++    const SDMMC: u32 = PERIPH_BASE + 0x28_000;
++    const IN_SEL: u32 = PERIPH_BASE + 0x4_000 + 0x154;          // GPIO_FUNC0_IN_SEL_CFG
++    const CD_N_1: u32 = 194;                                    // SDHOST_CARD_DETECT_N_1_IDX
++    let mut bus = SocBus::new(1024, 1024, [0; 6]);
++    // No CD pin: IDF v4.4.7 sdmmc_host_init_slot routes GPIO_MATRIX_CONST_ZERO_INPUT (0x3C) through
++    // the ROM's gpio_matrix_in, which sets SIG_IN_SEL: 0xBC. Card present, as on hardware.
++    bus.write32(IN_SEL + 4 * CD_N_1, 0xbc).unwrap();
++    bus.write32(IN_SEL + 4 * (CD_N_1 + 1), 0xb8).unwrap();     // slot 1 on constant one: no card
++    assert_eq!(bus.read32(SDMMC + 0x50).unwrap(), 0b10);
++    // A CD switch on GPIO5, active low, and the same switch through IN_INV_SEL.
++    bus.write32(IN_SEL + 4 * CD_N_1, 0x80 | 5).unwrap();
++    bus.periph.gpio.set_input(5, false);
++    assert_eq!(bus.read32(SDMMC + 0x50).unwrap() & 1, 0);
++    bus.periph.gpio.set_input(5, true);
++    assert_eq!(bus.read32(SDMMC + 0x50).unwrap() & 1, 1);
++    bus.write32(IN_SEL + 4 * CD_N_1, 0xc0 | 5).unwrap();
++    assert_eq!(bus.read32(SDMMC + 0x50).unwrap() & 1, 0);
++    // With the card "present" a command goes out; one expecting a response times out. IDF's ISR
++    // (sdmmc_host.c sdmmc_isr) reads MINTSTS, clears what it saw, then reads MINTSTS.sdio: the
++    // RTO event comes first and alone, CMD_DONE keeps the line up for a second event.
++    const RTO: u32 = 1 << 8;
++    const CMD_DONE: u32 = 1 << 2;
++    bus.write32(SDMMC + 0x24, CMD_DONE | RTO).unwrap();         // INTMASK
++    bus.write32(SDMMC, 1 << 4).unwrap();                         // CTRL.int_enable
++    bus.write32(SDMMC + 0x2c, (1 << 31) | (1 << 6) | 8).unwrap(); // start_command, response_expect, CMD8
++    assert_eq!(bus.read32(SDMMC + 0x2c).unwrap() >> 31, 0, "start_command taken");
++    assert!(bus.periph.sdmmc.irq());
++    let pending = bus.read32(SDMMC + 0x40).unwrap();
++    assert_eq!(pending, RTO);
++    bus.write32(SDMMC + 0x44, pending).unwrap();
++    bus.read32(SDMMC + 0x40).unwrap();
++    assert!(bus.periph.sdmmc.irq(), "CMD_DONE still pending");
++    let pending = bus.read32(SDMMC + 0x40).unwrap();
++    assert_eq!(pending, CMD_DONE);
++    bus.write32(SDMMC + 0x44, pending).unwrap();
++    assert!(!bus.periph.sdmmc.irq());
++    // A command with no response (CMD0) is done at once.
++    bus.write32(SDMMC + 0x2c, 1 << 31).unwrap();
++    assert_eq!(bus.read32(SDMMC + 0x44).unwrap(), CMD_DONE);
++    assert_eq!(bus.periph.sdmmc.cmds, 2);
++}
++
++/// Review 7: the `--flash-persist` write-through is portable (seek + write through `&File`, no
++/// Unix `write_at`), lands each changed range at its own offset, clamps at the end of the flash
++/// and leaves the rest of the file alone.
++#[test]
++fn persist_flash_writes_each_changed_range_at_its_offset() {
++    let path = std::env::temp_dir().join(format!("esp32s3-persist-{}.bin", std::process::id()));
++    let mut bus = SocBus::new(4 << 16, 2 << 16, [0; 6]);
++    std::fs::write(&path, &bus.flash).unwrap();
++    bus.flash_file = Some(std::fs::OpenOptions::new().write(true).open(&path).unwrap());
++    let n = bus.flash.len();
++    bus.flash[0x1_0010..0x1_0013].copy_from_slice(&[1, 2, 3]);
++    bus.flash[n - 2..].copy_from_slice(&[4, 5]);
++    bus.flash[0x100] = 9;                           // changed, but never reported: stays 0xff on disk
++    bus.persist_flash(0x1_0010, 3);
++    bus.persist_flash(n - 2, 16);                   // clamped at the end of the flash
++    bus.persist_flash(n, 4);                        // wholly past the end: nothing
++    let disk = std::fs::read(&path).unwrap();
++    std::fs::remove_file(&path).unwrap();
++    assert_eq!(disk.len(), n, "the file never grows past the flash");
++    assert_eq!(&disk[0x1_0010..0x1_0013], &[1, 2, 3]);
++    assert_eq!(&disk[n - 2..], &[4, 5]);
++    assert_eq!(disk[0x100], 0xff);
++    assert_eq!(disk.iter().filter(|&&b| b != 0xff).count(), 5);
++}
 diff --git a/esp32s3/src/i2c.rs b/esp32s3/src/i2c.rs
 index 7fd0ffd..9783e19 100644
 --- a/esp32s3/src/i2c.rs
@@ -3208,7 +4635,7 @@ index 0000000..9015575
 +    }
 +}
 diff --git a/esp32s3/src/periph.rs b/esp32s3/src/periph.rs
-index 29f538d..0051ac5 100644
+index 29f538d..d7de311 100644
 --- a/esp32s3/src/periph.rs
 +++ b/esp32s3/src/periph.rs
 @@ -19,6 +19,7 @@ pub const SRC_SPI2: usize = 21;
@@ -3219,22 +4646,23 @@ index 29f538d..0051ac5 100644
  pub const SRC_I2S0: usize = 25;
  pub const SRC_I2S1: usize = 26;
  pub const SRC_RMT: usize = 40;
-@@ -222,15 +223,33 @@ impl Pcnt {
+@@ -222,15 +223,57 @@ impl Pcnt {
  pub struct LcdCam { pub ram: RegRam, pub cam_ctrl: u32, pub cam_ctrl1: u32, pub int_raw: u32, pub int_ena: u32, pub running: bool,
                      pub frame_cycles: u64, pub acc: u64, pub frames: u64, pub dropped: u64,
                      // LCD side (RGB / DPI mode): the panel is refreshed from a GDMA out-channel on trigger 5
 -                    pub lcd_clock: u32, pub lcd_user: u32, pub lcd_ctrl: u32, pub lcd_ctrl1: u32, pub lcd_acc: u64, pub lcd_frames: u64, pub lcd_line: Vec<u8>, pub lcd_fifo: std::collections::VecDeque<u8>, pub lcd_log: bool }
 +                    pub lcd_clock: u32, pub lcd_user: u32, pub lcd_ctrl: u32, pub lcd_ctrl1: u32, pub lcd_acc: u64, pub lcd_frames: u64, pub lcd_line: Vec<u8>, pub lcd_fifo: std::collections::VecDeque<u8>, pub lcd_log: bool,
 +                    // LCD side, i8080 mode with LCD_ALWAYS_OUT_EN: one bus word per PCLK for as long as the
-+                    // GDMA out-channel on trigger 5 feeds it (a HUB75 panel's looping descriptor chain)
-+                    pub i80_frac: u64, pub i80_pending: u64, pub i80_words: u64, pub i80_buf: Vec<u8> }
++                    // GDMA out-channel on trigger 5 feeds it (a HUB75 panel's looping descriptor chain).
++                    // `i80_txn` counts the words of the current transaction (LCD_START to TRANS_DONE).
++                    pub i80_frac: u64, pub i80_pending: u64, pub i80_words: u64, pub i80_txn: u64, pub i80_buf: Vec<u8> }
  impl Default for LcdCam { fn default() -> Self { Self::new() } }
  
  impl LcdCam {
      pub fn new() -> Self { LcdCam { ram: RegRam::new(), cam_ctrl: 0, cam_ctrl1: 0, int_raw: 0, int_ena: 0, running: false, frame_cycles: CPU_HZ / 10, acc: 0, frames: 0, dropped: 0,
 -                                    lcd_clock: 0, lcd_user: 0, lcd_ctrl: 0, lcd_ctrl1: 0, lcd_acc: 0, lcd_frames: 0, lcd_line: Vec::new(), lcd_fifo: std::collections::VecDeque::new(), lcd_log: false } }
 +                                    lcd_clock: 0, lcd_user: 0, lcd_ctrl: 0, lcd_ctrl1: 0, lcd_acc: 0, lcd_frames: 0, lcd_line: Vec::new(), lcd_fifo: std::collections::VecDeque::new(), lcd_log: false,
-+                                    i80_frac: 0, i80_pending: 0, i80_words: 0, i80_buf: Vec::new() } }
++                                    i80_frac: 0, i80_pending: 0, i80_words: 0, i80_txn: 0, i80_buf: Vec::new() } }
      pub fn irq(&self) -> bool { self.int_raw & self.int_ena != 0 }
      /// LCD RGB mode running: LCD_START (USER bit 27) with LCD_RGB_MODE_EN (CTRL bit 31).
      pub fn lcd_running(&self) -> bool { self.lcd_user & (1 << 27) != 0 && self.lcd_ctrl & (1 << 31) != 0 }
@@ -3242,12 +4670,35 @@ index 29f538d..0051ac5 100644
 +    pub fn lcd_i8080_running(&self) -> bool { self.lcd_user & (1 << 27) != 0 && self.lcd_ctrl & (1 << 31) == 0 }
 +    /// Bytes per i8080 bus word: LCD_2BYTE_EN (USER bit 23) selects a 16-bit bus.
 +    pub fn lcd_bus_bytes(&self) -> usize { if self.lcd_user & (1 << 23) != 0 { 2 } else { 1 } }
++    /// PCLK cycles of the phases before DOUT: LCD_CMD (bit 26) is 1 cycle, 2 with LCD_CMD_2_CYCLE_EN
++    /// (bit 31); LCD_DUMMY (bit 25) is LCD_DUMMY_CYCLELEN (bits 29..30) + 1 (lcd_cam_struct.h, LCD_USER).
++    pub fn lcd_preamble_cycles(&self) -> u64 {
++        let u = self.lcd_user;
++        (if u & (1 << 26) != 0 { 1 + u64::from(u >> 31) } else { 0 }) + if u & (1 << 25) != 0 { u64::from((u >> 29) & 3) + 1 } else { 0 }
++    }
++    /// The i8080 transaction is over: LCD_TRANS_DONE (LC_DMA_INT_RAW bit 1) rises and LCD_START clears.
++    /// TRANS_DONE is what IDF waits on: v4.4.7 esp_lcd_panel_io_i80.c busy-waits for it after a
++    /// dummy-only start in lcd_periph_trigger_quick_trans_done_event() and after each tx_param, and
++    /// its ISR moves the i80 queue on it (lcd_ll.h: LCD_LL_EVENT_TRANS_DONE = 1 << 1). LCD_START
++    /// clearing itself is inferred from drivers that poll it, `while (LCD_CAM.lcd_user.lcd_start);`
++    /// in ESP32-HUB75-MatrixPanel-DMA 3.0.14 gdma_lcd_parallel16.cpp:280 and the Adafruit_Protomatter
++    /// comment it carries ("The LCD peripheral stops transmitting at the end of the DMA xfer"), not
++    /// read in the TRM (not checked). Returns whether the LCD_CAM interrupt line may have changed.
++    pub fn i80_trans_done(&mut self) -> bool {
++        self.lcd_user &= !(1 << 27); self.i80_pending = 0; self.i80_frac = 0;
++        self.int_raw |= 1 << 1; self.int_ena & (1 << 1) != 0
++    }
++    /// The integer divider N of LCD_CLK. DIV_NUM holds N except at the ends of its 2..=256 range:
++    /// 0 is 256 and 1 is 2 (ESP32-S3 TRM §29.3.3.1 "LCD Clock", Register 29.1; IDF lcd_ll.h
++    /// lcd_ll_set_group_clock_coeff writes 0 for LCD_LL_CLK_FRAC_DIV_N_MAX = 256). The same mapping
++    /// as hub75::timing::lcd_pclk_hz; both PCLK paths below go through this one helper.
++    pub fn lcd_div_num(clock: u32) -> f64 { match (clock >> 9) & 0xff { 0 => 256.0, 1 => 2.0, v => v as f64 } }
 +    /// The pixel clock in Hz: source / (DIV_NUM + DIV_B/DIV_A), then / (CLKCNT_N + 1) unless
 +    /// CLK_EQU_SYSCLK (TRM, LCD_CAM clock). The HUB75 driver sets PLL_F160M, DIV_NUM 16 and
 +    /// CLK_EQU_SYSCLK: 10 MHz (gdma_lcd_parallel16.cpp).
 +    pub fn lcd_pclk_hz(&self) -> u64 {
 +        let src = match (self.lcd_clock >> 29) & 3 { 1 => 40_000_000f64, 2 => 240_000_000.0, _ => 160_000_000.0 };
-+        let div_num = ((self.lcd_clock >> 9) & 0xff).max(1) as f64; let div_b = ((self.lcd_clock >> 17) & 0x3f) as f64; let div_a = ((self.lcd_clock >> 23) & 0x3f) as f64;
++        let div_num = Self::lcd_div_num(self.lcd_clock); let div_b = ((self.lcd_clock >> 17) & 0x3f) as f64; let div_a = ((self.lcd_clock >> 23) & 0x3f) as f64;
 +        let lcd_clk = src / (div_num + if div_a > 0.0 { div_b / div_a } else { 0.0 });
 +        let n = if self.lcd_clock & (1 << 6) != 0 { 1.0 } else { (self.lcd_clock & 0x3f) as f64 + 1.0 };
 +        (lcd_clk / n).max(1.0) as u64
@@ -3255,7 +4706,30 @@ index 29f538d..0051ac5 100644
      /// (active width, active height, bytes per pixel, CPU cycles per frame) from the timing registers.
      pub fn lcd_geometry(&self) -> (u32, u32, u32, u64) {
          // the registers hold (value - 1): lcd_ll_set_horizontal/vertical_timing
-@@ -376,6 +395,51 @@ impl Device for FeIq {
+@@ -239,7 +282,7 @@ impl LcdCam {
+         let bpp = if self.lcd_user & (1 << 23) != 0 { 2 } else { 1 };
+         // lcd_clk = src / (div_num + div_b/div_a); pclk = lcd_clk / (clkcnt_n + 1) unless CLK_EQU_SYSCLK
+         let src = match (self.lcd_clock >> 29) & 3 { 1 => 40_000_000f64, 2 => 240_000_000.0, _ => 160_000_000.0 };
+-        let div_num = ((self.lcd_clock >> 9) & 0xff).max(1) as f64; let div_b = ((self.lcd_clock >> 17) & 0x3f) as f64; let div_a = ((self.lcd_clock >> 23) & 0x3f) as f64;
++        let div_num = Self::lcd_div_num(self.lcd_clock); let div_b = ((self.lcd_clock >> 17) & 0x3f) as f64; let div_a = ((self.lcd_clock >> 23) & 0x3f) as f64;
+         let lcd_clk = src / (div_num + if div_a > 0.0 { div_b / div_a } else { 0.0 });
+         let n = if self.lcd_clock & (1 << 6) != 0 { 1.0 } else { (self.lcd_clock & 0x3f) as f64 + 1.0 };
+         let pclk = (lcd_clk / n).max(1_000_000.0) as u64;
+@@ -253,9 +296,11 @@ impl LcdCam {
+     pub fn write(&mut self, off: u32, v: u32) {
+         match off {
+             0x00 => self.lcd_clock = v,
+-            0x14 => { let was = self.lcd_running(); self.lcd_user = v;
+-                      if v & (1 << 28) != 0 { self.lcd_line.clear(); self.lcd_fifo.clear(); self.lcd_acc = 0; }                       // LCD_RESET
++            0x14 => { let (was, was_i80) = (self.lcd_running(), self.lcd_i8080_running()); self.lcd_user = v;
++                      // LCD_RESET: nothing collected before it streams out afterwards (the i8080 words too)
++                      if v & (1 << 28) != 0 { self.lcd_line.clear(); self.lcd_fifo.clear(); self.lcd_acc = 0; self.i80_pending = 0; self.i80_frac = 0; self.i80_txn = 0; self.i80_buf.clear(); }
+                       if !was && self.lcd_running() { self.lcd_line.clear(); self.lcd_acc = 0; }
++                      if !was_i80 && self.lcd_i8080_running() { self.i80_pending = 0; self.i80_frac = 0; self.i80_txn = 0; }   // a new i8080 transaction
+                       if self.lcd_log { eprintln!("[lcd] USER <- {:#010x} (start {} reset {} update {})", v, v >> 27 & 1, v >> 28 & 1, v >> 20 & 1); } }
+             0x18 => { if v & (1 << 27) != 0 { self.lcd_fifo.clear(); if self.lcd_log { eprintln!("[lcd] AFIFO reset"); } } self.ram.write(off, v); }   // LCD_MISC.AFIFO_RESET
+             0x1c => self.lcd_ctrl = v, 0x20 => self.lcd_ctrl1 = v,
+@@ -376,6 +421,68 @@ impl Device for FeIq {
      fn write(&mut self, _off: u32, v: u32) -> WriteEffect { self.word = v; WriteEffect::NONE }
  }
  
@@ -3264,9 +4738,26 @@ index 29f538d..0051ac5 100644
 +/// expects a response times out (RINTSTS.RTO), as with no card in the socket. The IDF driver then
 +/// fails `sdmmc_card_init` with a timeout and the firmware carries on without a card, instead of
 +/// spinning forever in `sdmmc_host_reset` on reset bits no hardware clears.
-+pub struct Sdmmc { pub ram: RegRam, pub rintsts: u32, pub cmds: u64 }
++///
++/// The slot is empty but its card-detect switch is not wired, and the host does not know it is
++/// empty: CDETECT (0x50) shows the card_detect_n inputs, active low, as the GPIO matrix routes them
++/// (`cdetect`, kept current by `Peripherals::pre_access`). With no CD pin (SDMMC_SLOT_NO_CD, as
++/// SD_MMC.setPins(CLK, CMD, D0) leaves it) IDF routes the input to GPIO_MATRIX_CONST_ZERO_INPUT,
++/// "default to CD low (card present)" (IDF v4.4.7 driver/sdmmc_host.c:472-483). So commands go out
++/// (sdmmc_host_start_command returns ESP_ERR_NOT_FOUND only on a set CDETECT bit, :264), time out,
++/// and card init fails in sdmmc_init_ocr with ESP_ERR_TIMEOUT (0x107), as on hardware.
++///
++/// A response timeout reaches the CPU as two events, RTO and then CMD_DONE: IDF's process_events
++/// takes an RTO in SENDING_CMD and then waits "for the CMD_DONE interrupt" (v4.4.7
++/// driver/sdmmc_transaction.c), and an S3 whose card does not answer logs
++/// "process_command_response: error 0x107  (status=00000100)", RTO alone (esp-idf issue #12986).
++/// Given both in one event, IDF leaves CMD_DONE unhandled and sits out each command's 1 s event
++/// timeout. So CMD_DONE (`cmd_done_due`) rises on the status read after the one that first sees RTO.
++pub struct Sdmmc { pub ram: RegRam, pub rintsts: u32, pub cmds: u64, pub cdetect: u32, pub cmd_done_due: bool }
 +impl Sdmmc {
-+    pub fn new() -> Self { Sdmmc { ram: RegRam::new(), rintsts: 0, cmds: 0 } }
++    pub fn new() -> Self { Sdmmc { ram: RegRam::new(), rintsts: 0, cmds: 0, cdetect: 0, cmd_done_due: false } }
++    /// A read of MINTSTS or RINTSTS: the value it saw goes back, then a CMD_DONE due behind an RTO rises.
++    fn status_read(&mut self, v: u32) -> u32 { if self.cmd_done_due { self.cmd_done_due = false; self.rintsts |= 1 << 2; } v }
 +    fn int_on(&self) -> bool { self.ram.read(0x00) & (1 << 4) != 0 }               // CTRL.int_enable
 +    pub fn irq(&self) -> bool { self.int_on() && self.rintsts & self.ram.read(0x24) != 0 }   // RINTSTS & INTMASK
 +}
@@ -3277,10 +4768,10 @@ index 29f538d..0051ac5 100644
 +            0x00 => self.ram.read(0x00) & !0x7,                    // CTRL: controller/fifo/dma reset done
 +            0x2c => self.ram.read(0x2c) & !(1 << 31),             // CMD: start_command taken
 +            0x30..=0x3c => 0,                                      // RESP0..3: nothing answered
-+            0x40 => if self.int_on() { self.rintsts & self.ram.read(0x24) } else { 0 },   // MINTSTS
-+            0x44 => self.rintsts,                                  // RINTSTS
++            0x40 => { let v = if self.int_on() { self.rintsts & self.ram.read(0x24) } else { 0 }; self.status_read(v) }   // MINTSTS
++            0x44 => self.status_read(self.rintsts),                // RINTSTS
 +            0x48 => 1 << 2,                                        // STATUS: FIFO empty, FSMs idle, no card on DAT3
-+            0x50 => 0x3,                                           // CDETECT, active low: no card in slot 0 or 1
++            0x50 => self.cdetect,                                  // CDETECT, active low, from the GPIO matrix
 +            0x80 => self.ram.read(0x80) & !1,                      // BMOD: IDMAC software reset done
 +            0x8c => 0,                                             // IDSTS
 +            _ => self.ram.read(off),
@@ -3293,8 +4784,8 @@ index 29f538d..0051ac5 100644
 +                self.ram.write(0x2c, v);
 +                if v & (1 << 31) != 0 && v & (1 << 21) == 0 {     // start_command, not update_clk_reg
 +                    self.cmds += 1;
-+                    self.rintsts |= 1 << 2;                        // cmd_done
-+                    if v & (1 << 6) != 0 { self.rintsts |= 1 << 8; }   // response_expect: RTO
++                    if v & (1 << 6) != 0 { self.rintsts |= 1 << 8; self.cmd_done_due = true; }   // response_expect: RTO, then cmd_done
++                    else { self.rintsts |= 1 << 2; }               // cmd_done
 +                }
 +            }
 +            _ => self.ram.write(off, v),
@@ -3307,7 +4798,7 @@ index 29f538d..0051ac5 100644
  // ------------------------------------------------------------------ all together
  pub struct Peripherals {
      pub usb: UsbSerialJtag,
-@@ -392,6 +456,7 @@ pub struct Peripherals {
+@@ -392,6 +499,7 @@ pub struct Peripherals {
      pub spi1: SpiMem,
      pub i2c: [crate::i2c::I2c; 2],
      pub lcd_cam: LcdCam,
@@ -3315,7 +4806,7 @@ index 29f538d..0051ac5 100644
      pub spi2: GpSpi,
      pub pcnt: Pcnt,
      pub wifi: WifiMac,
-@@ -445,6 +510,7 @@ device_set! { Peripherals; clock: (clock) CPU_HZ, [(ClockDomain::Systimer, 15),
+@@ -445,6 +553,7 @@ device_set! { Peripherals; clock: (clock) CPU_HZ, [(ClockDomain::Systimer, 15),
      0x13 "I2C0" (i2c[0]) => [SRC_I2C0];
      0x27 "I2C1" (i2c[1]) => [SRC_I2C1];
      0x41 "LCD_CAM" (lcd_cam) => [SRC_LCD_CAM];
@@ -3323,7 +4814,13 @@ index 29f538d..0051ac5 100644
      0x24 "SPI2" (spi2) => [SRC_SPI2];
      0x17 "PCNT" (pcnt) => [SRC_PCNT];
      0x33 "WIFI_MAC" (wifi) => [SRC_WIFI_MAC];
-@@ -469,7 +535,9 @@ impl DeviceSet for Peripherals {
+@@ -464,12 +573,15 @@ impl DeviceSet for Peripherals {
+     fn block_name(block: u32) -> &'static str { Peripherals::block_name(block) }
+     fn misc(&self) -> &Misc { &self.misc }
+     fn misc_mut(&mut self) -> &mut Misc { &mut self.misc }
+-    /// The three registers whose value depends on another device.
++    /// The registers whose value depends on another device.
+     fn pre_access(&mut self, block: u32, _off: u32, write: bool) {
          match block {
              0xc2 if !write => self.intmatrix.status = self.source_status(),   // INTERRUPT_*_STATUS reads the live sources
              0x35 => self.wifi.now_cycles = self.clock.cycles(),               // TSF timestamps
@@ -3331,10 +4828,11 @@ index 29f538d..0051ac5 100644
 +            // IQ estimation is a calibration of the radio itself: silicon completes it with no AP in
 +            // range too (a panel with no network configured still boots into its setup portal).
 +            0x06 => self.fe.done = true,
++            0x28 if !write => self.sdmmc.cdetect = self.sd_card_detect_n(),              // SDMMC CDETECT
              _ => {}
          }
      }
-@@ -481,7 +549,7 @@ impl Peripherals {
+@@ -481,7 +593,7 @@ impl Peripherals {
              usb: UsbSerialJtag::new(CPU_HZ), uart: [Uart::new(UartLayout::S3), Uart::new(UartLayout::S3), Uart::new(UartLayout::S3)], systimer: Systimer::new(),
              timg: [TimerGroup::new(), TimerGroup::new()], intmatrix: IntMatrix::new(), gpio: Gpio::new(), rtc: RtcCntl::new(),
              efuse: Efuse::new(mac), system: SystemRegs::new(0x30), extmem: Extmem::new(), spi0: SpiMem::new(false), spi1: SpiMem::new(true),
@@ -3343,8 +4841,30 @@ index 29f538d..0051ac5 100644
              aes: Aes::new(), rsa: Rsa::new(), sha: Sha::new(), wdev: Wdev::new(), i2c_mst: I2cMst::new(), gdma: Gdma::new(), i2s0: I2s::new(CPU_HZ), i2s1: I2s::new(CPU_HZ), rmt: Rmt::new(CPU_HZ),
              io_mux: RegRam::new(), misc: Misc::new(), fake_reads: std::env::var("ESP_EMU_FAKE_READ").ok().map(|v| v.split(',').filter_map(|e| { let mut p = e.split(':'); let a = u32::from_str_radix(p.next()?.trim_start_matches("0x"), 16).ok()?; let o = u32::from_str_radix(p.next().unwrap_or("0").trim_start_matches("0x"), 16).ok()?; let m = u32::from_str_radix(p.next().unwrap_or("ffffffff").trim_start_matches("0x"), 16).ok()?; Some((a, (o, m))) }).collect()).unwrap_or_default(),
              clock: Self::new_clock(),
+@@ -490,6 +602,21 @@ impl Peripherals {
+     }
+ 
+     pub fn block_name_pub(block: u32) -> String { Self::block_name(block).to_string() }
++
++    /// The level GPIO-matrix input signal `sig` sees. FUNCn_IN_SEL_CFG holds the source in IN_SEL
++    /// (bits 0..5): a pad, or GPIO_MATRIX_CONST_ONE_INPUT 0x38 / CONST_ZERO_INPUT 0x3C
++    /// (soc/esp32s3/include/soc/gpio_pins.h); IN_INV_SEL (bit 6) inverts. The ROM's gpio_matrix_in
++    /// (0x40050014) writes `gpio | inv << 6 | 0x80`, the 0x80 (SIG_IN_SEL) left out only for 0x3A,
++    /// the IO_MUX bypass. IN_SEL is read here whatever SIG_IN_SEL says: the signals asked about have
++    /// no IO_MUX pad (not checked for the bypass case).
++    pub fn matrix_input(&self, sig: usize) -> bool {
++        let sel = self.gpio.func_in_sel.get(sig).copied().unwrap_or(0x3c);
++        let level = match sel & 0x3f { 0x38 => true, 0x3c => false, p if p < 49 => self.gpio.input >> p & 1 != 0, _ => false };
++        level ^ (sel & 0x40 != 0)
++    }
++    /// SDMMC CDETECT: bit n is slot n's card_detect_n input, SDHOST_CARD_DETECT_N_1_IDX 194 and
++    /// _N_2_IDX 195 (soc/esp32s3/include/soc/gpio_sig_map.h; sdmmc_periph.c binds them to slots 0, 1).
++    pub fn sd_card_detect_n(&self) -> u32 { self.matrix_input(194) as u32 | (self.matrix_input(195) as u32) << 1 }
+     fn block_name(block: u32) -> &'static str {
+         match block {
+             0x00 => "UART0", 0x02 => "SPI1", 0x03 => "SPI0", 0x04 => "GPIO", 0x05 => "FE2", 0x06 => "FE", 0x07 => "EFUSE", 0x08 => "RTC", 0x09 => "IO_MUX",
 diff --git a/esp32s3/src/soc.rs b/esp32s3/src/soc.rs
-index 8d8fc1a..b8b85b0 100644
+index 8d8fc1a..1f8f0bb 100644
 --- a/esp32s3/src/soc.rs
 +++ b/esp32s3/src/soc.rs
 @@ -68,6 +68,12 @@ impl esp_soc::SocBus for SocBus {
@@ -3369,23 +4889,46 @@ index 8d8fc1a..b8b85b0 100644
      /// Copy IRAM/DRAM segments, map IROM/DROM through the MMU, as the 2nd-stage bootloader would.
      fn boot_app(&mut self, app_off: usize) -> Result<u32, String> {
          let image = self.flash.get(app_off..).ok_or("app offset beyond flash")?;
-@@ -125,6 +133,11 @@ impl esp_soc::SocBus for SocBus {
+@@ -125,6 +133,29 @@ impl esp_soc::SocBus for SocBus {
          p.rtc.ram.write(0x38, cause | (cause << 6));
          p.rtc.ram.write(0x98, 0);                       // watchdog disarmed by the reset; the ROM re-arms it
          p.i2s0.pcm = old.i2s0.pcm; p.i2s0.frames_out = old.i2s0.frames_out; p.i2s1.pcm = old.i2s1.pcm; p.i2s1.frames_out = old.i2s1.frames_out;   // keep the captured audio continuous
 +        // The virtual AP and the network behind it are the world outside the chip: a reset leaves
 +        // them there. The AP forgets the station (it must associate again), the network keeps its
-+        // NAT flows, forwarded host ports and lease, as a router would for a rebooting client.
++        // forwarded host ports, lease and UDP flows, as a router would for a rebooting client. The
++        // station's TCP connections died with its stack: the NAT forgets them, or the rebooted
++        // guest, whose fixed-seed RNG draws the same local ports, meets its old flows (review 6).
 +        p.wifi.ap = old.wifi.ap.map(|a| { let stats = a.stats; let mut n = crate::wifi::VirtualAp::new(a.cfg, a.log); n.stats = stats; n });
 +        p.wifi.net = old.wifi.net;
++        if let Some(nat) = p.wifi.net.as_mut().and_then(|n| n.nat.as_mut()) { nat.station_reset(); }
++        // A Chip Reset re-latches the strapping pins from the levels on them (ESP32-S3 TRM §8.1
++        // "During Chip Reset ... hardware captures samples"; datasheet §3 "At Chip Reset, the
++        // latches sample"). Its code is 0x01 (TRM Table 7.1-1; IDF soc/esp32s3/reset_reasons.h
++        // RESET_REASON_CHIP_POWER_ON, _CHIP_BROWN_OUT and _CHIP_SUPER_WDT are all 0x01). 0x0F is
++        // the System Reset form of brown-out (RESET_REASON_SYS_BROWN_OUT), 0x10/0x12/0x13 are
++        // System Resets in that table, the rest core and CPU resets: none of them re-latch. Only
++        // the boot-mode bits the board drives change: GPIO_STRAPPING[3] = GPIO0, [2] = GPIO46 (IDF
++        // 5.5.4 soc/esp32s3/include/soc/boot_mode.h: IS_1XXX SPI boot, IS_00XX joint download).
++        // The other bits stay `--strap`, and a board without input levels keeps them all.
++        if cause == esp_periph::RST_POWERON {
++            for (pin, level) in self.board.input_levels() {
++                let bit = match pin { 0 => 3, 46 => 2, _ => continue };
++                if level { self.periph.gpio.strap |= 1 << bit } else { self.periph.gpio.strap &= !(1 << bit) }
++            }
++        }
          self.mmu = [MMU_INVALID; MMU_ENTRIES];
          self.invalidate_tlb();
          self.reset_approximate_cache();
-@@ -175,10 +188,12 @@ impl esp_soc::SocBus for SocBus {
+@@ -173,12 +204,15 @@ impl esp_soc::SocBus for SocBus {
+         let mut s = format!("[emu] i2s frames out: {} (i2s0 @ {} Hz) {} (i2s1 @ {} Hz)\n", p.i2s0.frames_out, p.i2s0.sample_rate, p.i2s1.frames_out, p.i2s1.sample_rate);
+         { let r = self.board.report(); if !r.is_empty() { s += &r; s += "\n"; } }
          { let w = &p.wifi;
-           if w.tx_frames + w.rx_frames > 0 { s += &format!("[emu] wifi: {} frames sent by the station, {} received ({} dropped: no descriptor){}\n", w.tx_frames, w.rx_frames, w.rx_dropped, w.ap.as_ref().map_or(String::new(), |ap| format!("; AP: {} beacons, {} probe responses, {} data frames from the station, state {:?}", ap.stats.0, ap.stats.1, ap.stats.2, ap.state))); }
-           if let Some(n) = &w.net { s += &format!("[emu] net: {} DHCP leases, {} ARP replies, {} DNS answers, {} NTP answers, {} TCP refused, {} pings, {} frames ignored\n", n.dhcp_acks, n.arp_replies, n.dns_answers, n.ntp_answers, n.tcp_rejects, n.pings, n.unhandled);
+-          if w.tx_frames + w.rx_frames > 0 { s += &format!("[emu] wifi: {} frames sent by the station, {} received ({} dropped: no descriptor){}\n", w.tx_frames, w.rx_frames, w.rx_dropped, w.ap.as_ref().map_or(String::new(), |ap| format!("; AP: {} beacons, {} probe responses, {} data frames from the station, state {:?}", ap.stats.0, ap.stats.1, ap.stats.2, ap.state))); }
+-          if let Some(n) = &w.net { s += &format!("[emu] net: {} DHCP leases, {} ARP replies, {} DNS answers, {} NTP answers, {} TCP refused, {} pings, {} frames ignored\n", n.dhcp_acks, n.arp_replies, n.dns_answers, n.ntp_answers, n.tcp_rejects, n.pings, n.unhandled);
 -            if let Some(t) = &n.nat { s += &format!("[emu] nat: {} TCP connections ({} failed), {} UDP flows ({} evicted, {} send errors), {} bytes out, {} bytes in\n", t.tcp_opened, t.tcp_refused, t.udp_flows, t.udp_evicted, t.udp_send_errors, t.bytes_to_host, t.bytes_to_guest); } } }
++          if w.tx_frames + w.rx_frames > 0 { s += &format!("[emu] wifi: {} frames sent by the station, {} received ({} dropped: no descriptor){}\n", w.tx_frames, w.rx_frames, w.rx_dropped, w.ap.as_ref().map_or(String::new(), |ap| format!("; AP: {} beacons, {} probe responses, {} data frames from the station, {} dropped from a full queue, state {:?}", ap.stats.0, ap.stats.1, ap.stats.2, ap.queue_dropped, ap.state))); }
++          if let Some(r) = w.net.as_ref().and_then(|n| n.bridge_report()) { s += &r; s += "\n"; }
++          if let Some(n) = w.net.as_ref().filter(|n| n.bridge.is_none()) { s += &format!("[emu] net: {} DHCP leases, {} ARP replies, {} DNS answers, {} NTP answers, {} TCP refused, {} pings, {} frames ignored\n", n.dhcp_acks, n.arp_replies, n.dns_answers, n.ntp_answers, n.tcp_rejects, n.pings, n.unhandled);
 +            if let Some(t) = &n.nat { s += &format!("[emu] nat: {} TCP connections ({} failed), {} UDP flows ({} evicted, {} send errors), {} bytes out, {} bytes in\n", t.tcp_opened, t.tcp_refused, t.udp_flows, t.udp_evicted, t.udp_send_errors, t.bytes_to_host, t.bytes_to_guest);
 +                if t.fwd_tcp + t.fwd_udp_in > 0 { s += &format!("[emu] hostfwd: {} TCP connections into the guest ({} refused or unanswered), {} UDP datagrams in, {} answers out\n", t.fwd_tcp, t.fwd_refused, t.fwd_udp_in, t.fwd_udp_out); } } } }
          { let (a, sh, r) = (&p.aes, &p.sha, &p.rsa);
@@ -3395,14 +4938,85 @@ index 8d8fc1a..b8b85b0 100644
          if p.lcd_cam.frames + p.lcd_cam.dropped > 0 { s += &format!("[emu] camera: {} frames delivered, {} dropped (no DMA/no picture)\n", p.lcd_cam.frames, p.lcd_cam.dropped); }
          if p.rmt.tx_count > 0 { s += &format!("[emu] rmt tx {}\n", p.rmt.tx_count); }
          s.trim_end().to_string()
+diff --git a/esp32s3/tests/approximate_timing.rs b/esp32s3/tests/approximate_timing.rs
+index 3134185..2cd7f3d 100644
+--- a/esp32s3/tests/approximate_timing.rs
++++ b/esp32s3/tests/approximate_timing.rs
+@@ -94,3 +94,30 @@ fn modeled_self_modifying_code_invalidates_through_the_dram_alias() {
+     assert_eq!(machine.cores[0].get_ar(2), 6, "the second ADDI must use the rewritten immediate");
+     assert_eq!(machine.cores[0].insn_count, 4);
+ }
++
++/// Review 9: a fractional CPI (`--cpi 2.05`: base 2, 13/256) keeps a busy core's CCOUNT on the bus
++/// clock across `run` calls and chip resets. Each call used to start its rounds at the base CPI
++/// while the cores kept base + 1 from the last round of the call before, so CCOUNT ran ahead of
++/// the bus by up to a quantum per round until the next switch.
++#[test]
++fn fractional_cpi_keeps_ccount_on_the_bus_clock_across_run_calls_and_reboots() {
++    let mut machine = esp32s3::machine([0; 6]);
++    let pc = 0x4038_0000;
++    esp_soc::SocBus::load_bytes(&mut machine.bus, pc, &[0x06, 0xff, 0xff]).unwrap(); // j .
++    machine.cores[0].pc = pc;
++    machine.set_approximate_jit_timing(2, 64).unwrap();
++    machine.set_approximate_cpi_fraction(13).unwrap();
++    let mut wrapped = 0;
++    for call in 0..200 {
++        if call == 100 { machine.reboot(); machine.cores[0].pc = pc; }
++        let before = esp_soc::SocBus::cycles(&machine.bus);
++        assert!(matches!(machine.run(64), esp_soc::Stop::MaxInsns));
++        let cycles = esp_soc::SocBus::cycles(&machine.bus);
++        if machine.cores[0].approximate_cpi == 3 { wrapped += 1; }
++        assert_eq!(machine.cores[0].ccount as u64, cycles, "call {call} ({before}..{cycles}): CCOUNT left the bus clock");
++    }
++    assert!(wrapped >= 5, "some calls must end on a base + 1 round ({wrapped})");
++    let cycles = esp_soc::SocBus::cycles(&machine.bus) as f64;
++    let per_insn = cycles / machine.cores[0].insn_count as f64;
++    assert!((per_insn - (2.0 + 13.0 / 256.0)).abs() < 0.01, "average CPI {per_insn}");
++}
+diff --git a/esp32s3/tests/machine.rs b/esp32s3/tests/machine.rs
+index 72858f9..de9f182 100644
+--- a/esp32s3/tests/machine.rs
++++ b/esp32s3/tests/machine.rs
+@@ -378,6 +378,30 @@ fn reboot_keeps_what_silicon_keeps() {
+     assert!(!m.dump_regs().contains("core1:"), "core 1 is back in reset");
+ }
+ 
++/// Review 6: a chip reset keeps the virtual network (lease, forwards, UDP) but the NAT forgets the
++/// station's TCP flows. The rebooted guest's fixed-seed RNG draws the same local ports, and a
++/// flow left over from the last boot would swallow its SYNs.
++#[test]
++fn reboot_leaves_the_network_but_forgets_the_stations_tcp_flows() {
++    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
++    let port = listener.local_addr().unwrap().port();
++    let mut m = machine();
++    let mut net = esp32s3::net::VirtualNet::new(false);
++    net.nat = Some(esp32s3::nat::Nat::new(false));
++    m.bus.periph.wifi.net = Some(net);
++    let mut syn = vec![0u8; 20];
++    syn[..2].copy_from_slice(&0xdc22u16.to_be_bytes()); syn[2..4].copy_from_slice(&port.to_be_bytes());
++    syn[4..8].copy_from_slice(&7000u32.to_be_bytes()); syn[12] = 0x50; syn[13] = 0x02; syn[14..16].copy_from_slice(&5840u16.to_be_bytes());
++    let nat = m.bus.periph.wifi.net.as_mut().unwrap().nat.as_mut().unwrap();
++    nat.tcp_in(&[2; 6], &[10, 0, 2, 15], &[127, 0, 0, 1], &syn, 0);
++    assert_eq!(nat.tcp_flows(), 1, "the guest's SYN opened a flow");
++    m.cores[0].pc = IRAM;
++    m.bus.periph.rtc.reset_cause = esp_periph::RST_SW_CPU;
++    m.reboot();
++    let net = m.bus.periph.wifi.net.as_ref().expect("the network outlives the chip reset");
++    assert_eq!(net.nat.as_ref().unwrap().tcp_flows(), 0, "the old boot's TCP flows are gone");
++}
++
+ /// Host touch keeps its intended board-edge timestamp and is applied at the fast scheduler's next
+ /// existing bus tick, which is bounded by one instruction quantum.
+ #[test]
 diff --git a/esp32s3/tests/panel_inputs.rs b/esp32s3/tests/panel_inputs.rs
 new file mode 100644
-index 0000000..e3e9548
+index 0000000..88c7487
 --- /dev/null
 +++ b/esp32s3/tests/panel_inputs.rs
-@@ -0,0 +1,103 @@
+@@ -0,0 +1,146 @@
 +//! The `hub75-panel` board's inputs through a whole machine: script verbs, the board's deadline
-+//! bounding the device tick, the edges reaching the GPIO model and latching its edge interrupt.
++//! bounding the device tick (each edge reaches the GPIO model on the cycle it was scheduled for,
++//! `SocBus::board_edge_lag`), the edges latching the GPIO edge interrupt.
 +use esp32s3::board::panel_inputs::{remote_code, NEC_MESSAGE_US, PIN_ENC_A, PIN_ENC_B, PIN_GPIO0};
 +use esp_soc::{ScriptAction, SocBus, Stop};
 +
@@ -3465,7 +5079,12 @@ index 0000000..e3e9548
 +    assert_eq!(g0.len(), 68 + 2, "a data message, then the switch press");
 +    let start = g0[0].0;
 +    assert!((240_001..=240_001 + 64 * 4).contains(&start), "first edge {start} just after the script time");
-+    // The NEC message's runs, exact to the cycle, as the board scheduled them.
++    // Each edge reached the GPIO model on the cycle the board scheduled it for: the board's
++    // deadline bounds the device tick. Without that bound the edges arrive up to a tick backstop
++    // late and batched (review 4 measured 32,639 cycles), which IRrecv's ISR would timestamp.
++    assert_eq!(m.bus.board_edge_lag, 0, "a board edge reached GPIO_IN after its cycle");
++    // The NEC message's runs, exact to the cycle, as the board scheduled them (and, by the lag
++    // above, as the GPIO model saw them).
 +    let widths: Vec<u64> = g0[..68].windows(2).map(|w| (w[1].0 - w[0].0) / US).collect();
 +    assert_eq!(&widths[..3], [8960, 4480, 560]);
 +    let mut code = 0u32;
@@ -3503,6 +5122,43 @@ index 0000000..e3e9548
 +    let ev = SocBus::take_gpio_events(&mut m.bus);
 +    assert!(ev.iter().any(|e| e.1 == PIN_ENC_B && e.2), "anticlockwise: B leads");
 +    assert!(!bit(&m, PIN_GPIO0), "the switch is still held down");
++}
++
++/// Review 5: BOOT (or the knob's switch) held through the board's RESET, a power-on Chip Reset,
++/// latches GPIO0 = 0 with IO46 = 0 (R60 pull-down): joint download boot, as on the hardware and
++/// as the firmware's `control.cpp` expects. Released, the next reset boots from SPI flash. A
++/// software reset does not sample the pins. Only GPIO_STRAPPING[3:2] follow the board.
++#[test]
++fn boot_held_through_a_power_on_reset_latches_download_mode() {
++    let mut m = machine();
++    let hold = |m: &mut esp32s3::Machine, verb: &str, line: &str| {
++        m.bus.board_input(verb, line).unwrap();
++        m.max_cycles = m.bus.cycles + 10 * 240_000;           // 10 ms: the edge lands, the core sleeps
++        assert!(matches!(m.run(u64::MAX), Stop::Halted));
++    };
++    let reset = |m: &mut esp32s3::Machine, cause: u32| -> u32 {
++        m.bus.request_reset(cause);
++        assert_eq!(m.reboot(), cause);
++        m.cores[0].pc = IRAM; m.cores[0].ps = 0;             // back to the sleeping loop (SRAM survives)
++        m.bus.periph.gpio.strap
++    };
++    m.bus.periph.gpio.strap = 0x2f;                         // --strap: bit 5 is not the board's
++    hold(&mut m, "boot", "down");
++    assert!(!bit(&m, PIN_GPIO0));
++    let strap = reset(&mut m, esp_periph::RST_SW_SYS);
++    assert_eq!(strap, 0x2f, "a software reset keeps the latch");
++    let strap = reset(&mut m, esp_periph::RST_RTCWDT_RTC);
++    assert_eq!(strap, 0x2f, "an RTC watchdog System Reset keeps the latch (TRM Table 7.1-1)");
++    let strap = reset(&mut m, esp_periph::RST_POWERON);
++    assert_eq!(strap & 0x0c, 0, "GPIO0 = 0, GPIO46 = 0: joint download (boot_mode.h IS_00XX)");
++    assert_eq!(strap, 0x23, "the other bits stay as --strap set them");
++    assert!(!bit(&m, PIN_GPIO0), "BOOT is still held after the reset");
++    hold(&mut m, "boot", "up");
++    let strap = reset(&mut m, esp_periph::RST_POWERON);
++    assert_eq!(strap, 0x2b, "GPIO0 = 1: SPI boot (IS_1XXX); IO46 rests low");
++    // The knob's switch is on the same wired-AND.
++    hold(&mut m, "sw", "down");
++    assert_eq!(reset(&mut m, esp_periph::RST_POWERON) & 0x0c, 0);
 +}
 diff --git a/hub75/Cargo.toml b/hub75/Cargo.toml
 new file mode 100644
@@ -6134,6 +7790,220 @@ index 0000000..6d032b7
 +    let l = 0.5 * 2626.0 / 94208.0 * 32.0;
 +    assert!(close(p[0], enc(l), 1) && close(p[1], enc(0.1 * l), 1) && p[2] == 0, "{p:?}");
 +}
+diff --git a/tools/browser-benchmark/check-panel-page.mjs b/tools/browser-benchmark/check-panel-page.mjs
+new file mode 100644
+index 0000000..406b381
+--- /dev/null
++++ b/tools/browser-benchmark/check-panel-page.mjs
+@@ -0,0 +1,208 @@
++// Check web/panel.html in a real browser, both review findings of 2026-09-29:
++// - the LED face is composited as light, the way hub75/src/render.rs makes it: the GOB's share
++//   leaves the dot, dot and halo add in linear light, sRGB-encoded once. The expected pixels are
++//   computed here from the same formulas, so a lit area that clips or a colour that shifts fails;
++// - dragging the knob turns it without closing its switch (GPIO0), and a click holds the switch
++//   150 ms: longer than the firmware's 40 ms debounce, shorter than its 500 ms click limit
++//   (control.cpp, CTRL_SW_DEBOUNCE_MIN_MS and kSwShortMaxMs).
++// Light frames go in through a captured WebSocket and pixels come back from the canvas; the knob
++// gets real CDP mouse and key input. No emulator and no firmware. `?webgl=0` checks the canvas 2D
++// fallback. Run against an isolated headless Chrome (README "CPU sampling" has the launch line)
++// and `python3 -m http.server --directory web PORT`:
++//   node tools/browser-benchmark/check-panel-page.mjs http://127.0.0.1:PORT/panel.html [DEBUG_PORT]
++import assert from 'node:assert/strict';
++const [url, port = '9228'] = process.argv.slice(2);
++if (!url) throw Error('Usage: node check-panel-page.mjs PAGE_URL [DEBUG_PORT]');
++const version = await (await fetch(`http://127.0.0.1:${port}/json/version`)).json();
++assert.ok(version['User-Agent'].includes('HeadlessChrome/'), 'Use isolated headless Chrome: visible-page timers are required without taking user focus');
++const socket = new WebSocket(version.webSocketDebuggerUrl);
++await new Promise(resolve => socket.onopen = resolve);
++let nextId = 0;
++const pending = new Map();
++socket.onmessage = ({data}) => {
++  const message = JSON.parse(data);
++  if (!message.id) return;
++  const task = pending.get(message.id); pending.delete(message.id);
++  message.error ? task.reject(Error(JSON.stringify(message.error))) : task.resolve(message.result);
++};
++const send = (method, params = {}, sessionId) => new Promise((resolve, reject) => {
++  const id = ++nextId; pending.set(id, {resolve, reject});
++  socket.send(JSON.stringify({id, method, params, sessionId}));
++});
++const sleep = ms => new Promise(r => setTimeout(r, ms));
++
++// The page's model, mirrored: CSS Color 4 gam_sRGB, the room black #040405 as linear light, the
++// dot and the gaussian halo normalised over its 7x7 taps (render.rs render_panel_into).
++const W = 128, H = 64, DOT_R = 0.36, SIGMA = 0.9, R = Math.ceil(3 * SIGMA);
++const BG = [4, 4, 5].map(v => v / 255 / 12.92);
++const enc = v => { v = Math.min(1, Math.max(0, v)); return Math.round(255 * (v > 0.0031308 ? 1.055 * v ** (1 / 2.4) - 0.055 : 12.92 * v)); };
++function expected(field, glow, px, py, p, dots = true) {
++  const qx = (px + 0.5) / p, qy = (py + 0.5) / p, cx = Math.floor(qx), cy = Math.floor(qy), ux = qx - cx - 0.5, uy = qy - cy - 0.5;
++  const cov = dots ? Math.min(1, Math.max(0, (DOT_R - Math.hypot(ux, uy)) * p + 0.5)) : 1;
++  const own = field(cx, cy), acc = [0, 0, 0]; let sum = 0;
++  for (let j = -R; j <= R; j++) for (let i = -R; i <= R; i++) {
++    const w = Math.exp(-((ux - i) ** 2 + (uy - j) ** 2) / (2 * SIGMA * SIGMA)); sum += w;
++    const x = cx + i, y = cy + j;
++    if (x >= 0 && x < W && y >= 0 && y < H) field(x, y).forEach((l, k) => acc[k] += w * l);
++  }
++  return [0, 1, 2].map(k => enc(BG[k] + (1 - glow) * cov * own[k] + (glow > 0 ? glow * acc[k] / sum : 0)));
++}
++const q = v => Math.round(Math.min(1, v) * 65535) / 65535;   // what the u16 wire carries
++
++let targetId;
++const checks = [];
++try {
++  ({targetId} = await send('Target.createTarget', {url: 'about:blank', background: false}));
++  const {sessionId} = await send('Target.attachToTarget', {targetId, flatten: true});
++  const evaluate = async expression => {
++    const result = await send('Runtime.evaluate', {expression, returnByValue: true, awaitPromise: true}, sessionId);
++    if (result.exceptionDetails) throw Error(JSON.stringify(result.exceptionDetails));
++    return result.result.value;
++  };
++  await send('Page.enable', {}, sessionId);
++  await send('Emulation.setDeviceMetricsOverride', {width: 1400, height: 1000, deviceScaleFactor: 1, mobile: false}, sessionId);
++  await send('Page.addScriptToEvaluateOnNewDocument', {source: `
++    window.sent = [];
++    window.WebSocket = class { constructor() { this.readyState = 1; window.fakeWs = this; setTimeout(() => this.onopen && this.onopen()); }
++      send(d) { window.sent.push({...JSON.parse(d), at: performance.now()}); } close() {} };
++    window.pushLight = (fn) => {
++      const W = 128, H = 64, b = new ArrayBuffer(5 + W * H * 6), v = new DataView(b);
++      v.setUint8(0, 5); v.setUint16(1, W, true); v.setUint16(3, H, true);
++      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const c = fn(x, y);
++        for (let k = 0; k < 3; k++) v.setUint16(5 + ((y * W + x) * 3 + k) * 2, Math.round(Math.min(1, c[k]) * 65535), true); }
++      window.fakeWs.onmessage({data: b});
++      return new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
++    };
++    window.pixels = (pts) => { const c = document.getElementById('panel'), t = document.createElement('canvas');
++      t.width = c.width; t.height = c.height; const g = t.getContext('2d'); g.drawImage(c, 0, 0);
++      return pts.map(([x, y]) => [...g.getImageData(x, y, 1, 1).data.slice(0, 3)]); };
++    if (location.search.includes('webgl=0')) { const get = HTMLCanvasElement.prototype.getContext;
++      HTMLCanvasElement.prototype.getContext = function (type, ...a) { return type === 'webgl2' ? null : get.call(this, type, ...a); }; }
++  `}, sessionId);
++  const load = async u => {
++    await send('Page.navigate', {url: u}, sessionId);
++    for (let i = 0; i < 100 && !await evaluate('!!window.fakeWs && document.readyState === "complete"'); i++) await sleep(20);
++    assert.ok(await evaluate('!!window.fakeWs && document.readyState === "complete"'), 'page initialization timeout');
++    await sleep(100);
++  };
++  const set = (id, value) => evaluate(`(() => { const e = document.getElementById('${id}');
++    if (e.type === 'checkbox') e.checked = ${value}; else e.value = '${value}'; e.dispatchEvent(new Event('input')); })()`);
++  // A field, its samples (LED centre, and the corner between four dots) and the expected pixels.
++  const face = async (fieldSrc, pts) => {
++    const field = eval(fieldSrc);
++    await evaluate(`pushLight(${fieldSrc})`);
++    const p = await evaluate('document.getElementById("panel").width') / W;
++    const at = pts.map(([kind, x, y]) => kind === 'dot' ? [Math.floor((x + 0.5) * p), Math.floor((y + 0.5) * p)] : [Math.floor((x + 1) * p), Math.floor((y + 1) * p)]);
++    return {got: await evaluate(`pixels(${JSON.stringify(at)})`), at, p, field: (x, y) => field(x, y).map(q)};
++  };
++  const near = (got, want, tol, what) => assert.ok(got.every((g, k) => Math.abs(g - want[k]) <= tol), `${what}: got ${got}, want ${want} ±${tol}`);
++
++  // ---- WebGL2: linear light
++  await load(url);
++  assert.equal(await evaluate('!!document.getElementById("panel").getContext("webgl2")'), true, 'the page draws with WebGL2');
++  const glow = 0.55;   // the page's default
++  for (const [name, src] of [
++    ['white at brightness 255 (2626 clocks)', '() => [0.892, 0.892, 0.892]'],
++    ['orange fill (255,128,0)', '() => [0.892, 0.207, 0]'],
++    ['code 193 (1478 clocks)', '() => [0.502, 0.502, 0.502]'],
++    ['code 194 (1134 clocks)', '() => [0.385, 0.385, 0.385]'],
++  ]) {
++    const {got, at, p, field} = await face(src, [['dot', 64, 32], ['gap', 64, 32]]);
++    near(got[0], expected(field, glow, ...at[0], p), 1, `${name}, dot centre`);
++    near(got[1], expected(field, glow, ...at[1], p), 1, `${name}, between dots`);
++    near(got[0], field(64, 32).map((l, k) => enc(l + BG[k])), 1, `${name}: a lit area stays at its light`);
++  }
++  checks.push('uniform fields keep their light', 'orange stays orange', '193/194 dip visible');
++  {
++    const src = '(x, y) => x === 64 && y === 32 ? [1, 1, 1] : [0, 0, 0]';
++    const {got, at, p, field} = await face(src, [['dot', 64, 32], ['dot', 65, 32], ['dot', 66, 33], ['gap', 64, 32]]);
++    got.forEach((g, i) => near(g, expected(field, glow, ...at[i], p), 1, `one lit LED, sample ${i}`));
++    assert.ok(got[1][0] > 4 && got[1][0] < got[0][0], 'the halo reaches the next dot, dimmer');
++    checks.push('halo of one LED matches the gaussian');
++  }
++  await set('glow', 0);
++  {
++    const {got, at, p, field} = await face('() => [0.892, 0.892, 0.892]', [['dot', 10, 10], ['gap', 10, 10]]);
++    near(got[0], expected(field, 0, ...at[0], p), 1, 'glow 0, dot'); near(got[1], [4, 4, 5], 1, 'glow 0, room black between dots');
++  }
++  await set('glow', 0.55); await set('dots', false);
++  {
++    const {got, at, p, field} = await face('() => [0.892, 0.207, 0]', [['dot', 10, 10], ['gap', 10, 10]]);
++    near(got[0], expected(field, glow, ...at[0], p, false), 1, 'no dots, cell'); near(got[1], got[0], 1, 'no dots: the cell is uniform');
++  }
++  await set('dots', true); await set('exposure', 2);
++  {
++    const {got, at, p, field} = await face('() => [0.3, 0.3, 0.3]', [['dot', 10, 10]]);
++    near(got[0], expected((x, y) => field(x, y).map(l => 2 * l), glow, ...at[0], p), 1, 'exposure 2');
++  }
++  await set('exposure', 1);
++  checks.push('glow 0', 'dots off', 'exposure');
++
++  // ---- the knob, with real mouse and key input
++  const knob = await evaluate(`(() => { const k = document.getElementById('knob'); k.scrollIntoView({block: 'center'});
++    const r = k.getBoundingClientRect(); return {x: r.left + r.width / 2, y: r.top + r.height / 2}; })()`);
++  const mouse = (type, dy = 0) => send('Input.dispatchMouseEvent', {type, x: knob.x, y: knob.y + dy, button: 'left',
++    buttons: type === 'mouseReleased' ? 0 : 1, clickCount: type === 'mouseMoved' ? 0 : 1}, sessionId);
++  const take = async () => { const s = await evaluate('window.sent.splice(0)'); return s.filter(m => m.t === 'knob' || m.t === 'knobpress'); };
++  await take();
++  const presses = s => s.filter(m => m.t === 'knobpress');
++  const holds = s => { const p = presses(s); const out = []; for (let i = 0; i + 1 < p.length; i += 2) { assert.deepEqual([p[i].v, p[i + 1].v], ['1', '0']); out.push(p[i + 1].at - p[i].at); } return out; };
++
++  await mouse('mousePressed'); await mouse('mouseReleased'); await sleep(450);
++  let s = await take();
++  assert.deepEqual(s.map(m => m.t + m.v), ['knobpress1', 'knobpress0'], 'a click is one press');
++  assert.ok(holds(s).every(h => h >= 145 && h < 400), `the press holds past the 40 ms debounce and under the 500 ms click: ${holds(s)}`);
++  checks.push('click = one 150 ms press');
++
++  await mouse('mousePressed'); await sleep(300);
++  for (const dy of [10, 30, 60, 90]) { await mouse('mouseMoved', dy); await sleep(30); }
++  await mouse('mouseReleased', 90); await sleep(450);
++  s = await take();
++  assert.deepEqual(s.map(m => m.t + (m.d || m.v)), ['knob1', 'knob1', 'knob1'], 'a drag turns three clicks and never presses the switch');
++  await mouse('mousePressed'); await sleep(30);
++  for (const dy of [-30, -60]) { await mouse('mouseMoved', dy); await sleep(30); }
++  await mouse('mouseReleased', -60); await sleep(450);
++  s = await take();
++  assert.deepEqual(s.map(m => m.t + (m.d || m.v)), ['knob-1', 'knob-1'], 'a quick drag the other way: turns only');
++  checks.push('drag turns without pressing');
++
++  await mouse('mousePressed'); await sleep(1200);
++  assert.equal(presses(await evaluate('window.sent')).length, 0, 'nothing is pressed while the pointer is still down');
++  await mouse('mouseReleased'); await sleep(450);
++  s = await take();
++  assert.deepEqual(s.map(m => m.t + m.v), ['knobpress1', 'knobpress0'], 'a held pointer released in place is one click (the firmware folds LONG into a click)');
++
++  await mouse('mousePressed'); await mouse('mouseReleased'); await sleep(40); await mouse('mousePressed'); await mouse('mouseReleased'); await sleep(900);
++  s = presses(await take());
++  assert.deepEqual(s.map(m => m.v), ['1', '0', '1', '0'], 'a double click is two presses');
++  assert.ok(s[2].at - s[1].at >= 145, `the second press waits for the switch to settle up: ${s[2].at - s[1].at} ms`);
++  checks.push('hold = one click', 'double click serialised');
++
++  await mouse('mousePressed');
++  await evaluate(`document.getElementById('knob').dispatchEvent(new PointerEvent('pointercancel', {pointerId: 1}))`);
++  await mouse('mouseReleased'); await sleep(450);
++  assert.deepEqual(await take(), [], 'a cancelled pointer never presses');
++
++  await evaluate(`document.getElementById('knob').focus()`);
++  const key = (type, autoRepeat = false) => send('Input.dispatchKeyEvent', {type, key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, autoRepeat}, sessionId);
++  await key('keyDown'); await key('keyDown', true); await key('keyDown', true); await key('keyUp'); await sleep(450);
++  s = await take();
++  assert.deepEqual(s.map(m => m.t + m.v), ['knobpress1', 'knobpress0'], 'Enter is one click; its auto-repeat adds none');
++  assert.ok(holds(s).every(h => h >= 145 && h < 400));
++  checks.push('cancel', 'Enter');
++
++  // ---- canvas 2D fallback: encoded layers, but the dot gives up the glow's share
++  await load(url + (url.includes('?') ? '&' : '?') + 'webgl=0');
++  assert.ok(await evaluate('!!document.getElementById("panel").getContext("2d")'), 'the fallback draws with canvas 2D');
++  {
++    const {got, field} = await face('() => [0.892, 0.207, 0]', [['dot', 64, 32]]);
++    const want = field(64, 32).map(enc);
++    assert.ok(got[0][0] <= want[0] + 5 && got[0][1] <= want[1] + 5 && got[0][0] < 255, `2D fallback, orange dot centre: got ${got[0]}, want about ${want} (+4 room black)`);
++    assert.ok(got[0][0] >= want[0] - 2 && got[0][1] >= want[1] - 2, `2D fallback keeps the level: got ${got[0]}, want ${want}`);
++  }
++  checks.push('2D fallback does not clip');
++  console.log(JSON.stringify({passed: true, browser: version.Browser, checks, scope: 'actual panel.html drawing and knob listeners, captured transport; no firmware'}));
++} finally {
++  if (targetId) await send('Target.closeTarget', {targetId});
++  socket.close();
++}
 diff --git a/tools/panel-inputs-oracle/build.sh b/tools/panel-inputs-oracle/build.sh
 new file mode 100755
 index 0000000..84cbadf
@@ -6378,16 +8248,16 @@ index 0000000..3fc9a52
 +14.0 stop
 diff --git a/web/panel.html b/web/panel.html
 new file mode 100644
-index 0000000..85a63fa
+index 0000000..63ee6b8
 --- /dev/null
 +++ b/web/panel.html
-@@ -0,0 +1,281 @@
+@@ -0,0 +1,388 @@
 +<!doctype html>
-+<html lang="en">
++<html lang="ru">
 +<head>
 +<meta charset="utf-8">
 +<meta name="viewport" content="width=device-width, initial-scale=1">
-+<title>NickoScope Twin</title>
++<title>Двойник панели NickoScope</title>
 +<style>
 +  /* One deliberate world: a dark room with the panel in it. */
 +  :root {
@@ -6454,58 +8324,67 @@ index 0000000..85a63fa
 +</head>
 +<body>
 +<header>
-+  <h1>NickoScope <span>Twin</span></h1>
-+  <span class="chip"><i class="dot" id="conn"></i><span id="connText">connecting</span></span>
-+  <span class="chip" id="board">board —</span>
++  <h1>NickoScope <span>двойник</span></h1>
++  <span class="chip"><i class="dot" id="conn"></i><span id="connText">подключение</span></span>
++  <span class="chip" id="board">плата —</span>
++  <a class="chip" id="portalLink" href="http://127.0.0.1:8080/" target="_blank" rel="noopener" title="Собственный веб-портал прошивки: порт 80 двойника, проброшенный на Mac (twin.py run --http)">портал ↗</a>
 +  <div class="stats">
-+    <span>time <b id="stTime">—</b></span>
-+    <span>refresh windows/s <b id="stFps">—</b></span>
-+    <span>behind <b id="stBehind">—</b></span>
++    <span>время <b id="stTime">—</b></span>
++    <span>кадров/с <b id="stFps">—</b></span>
++    <span>отставание <b id="stBehind">—</b></span>
 +  </div>
 +</header>
 +<main>
 +  <div class="stage">
-+    <div class="frame"><canvas id="panel" width="1024" height="512" aria-label="The LED panel as the real firmware drives it"></canvas></div>
++    <div class="frame"><canvas id="panel" width="1024" height="512" aria-label="Светодиодная панель так, как её ведёт настоящая прошивка"></canvas></div>
 +    <div class="look">
-+      <label>Exposure <input id="exposure" type="range" min="0.25" max="4" step="0.05" value="1"></label>
-+      <label>GOB glow <input id="glow" type="range" min="0" max="1" step="0.05" value="0.55"></label>
-+      <label><input id="dots" type="checkbox" checked> LED dots</label>
-+      <label>Seen by <select id="shutter">
-+        <option value="eye">an eye (1/60 s)</option>
-+        <option value="250">a camera, 1/250 s</option>
-+        <option value="1000">a camera, 1/1000 s</option>
-+        <option value="4000">a camera, 1/4000 s</option>
-+        <option value="16000">a camera, 1/16000 s</option>
++      <label>Экспозиция <input id="exposure" type="range" min="0.25" max="4" step="0.05" value="1"></label>
++      <label>Свечение GOB <input id="glow" type="range" min="0" max="1" step="0.05" value="0.55"></label>
++      <label><input id="dots" type="checkbox" checked> Точки светодиодов</label>
++      <label>Смотрит <select id="shutter">
++        <option value="eye">глаз (1/60 с)</option>
++        <option value="250">камера, 1/250 с</option>
++        <option value="1000">камера, 1/1000 с</option>
++        <option value="4000">камера, 1/4000 с</option>
++        <option value="16000">камера, 1/16000 с</option>
 +      </select></label>
-+      <button id="snap" type="button">Save PNG</button>
++      <button id="snap" type="button">Сохранить PNG</button>
 +    </div>
-+    <p class="note">Light is counted per LED from the HUB75 bitstream the firmware clocks out of LCD_CAM, over whole refreshes: 1.0 is an LED lit for its entire row slot of the 1/32 scan. Glow, dot size and exposure are a look, not yet calibrated against photos of the panel.</p>
++    <p class="note">Свет каждого светодиода считается по потоку HUB75, который прошивка выводит через LCD_CAM, за целые кадры развёртки: 1,0 — светодиод горел всё время своей строки при развёртке 1/32. Свечение, размер точек и экспозиция — пока на глаз, по фото панели ещё не выверены.</p>
 +  </div>
 +  <aside>
 +    <section class="card">
-+      <h2>IR remote</h2>
++      <h2>ИК-пульт</h2>
 +      <div class="remote" id="remote">
 +        <div class="ir"><i id="irled"></i></div>
 +      </div>
-+      <p class="hint">Click to press; hold to send NEC repeat frames. The receiver on GPIO0 decodes them in the firmware, as on the panel.</p>
++      <p class="hint">Нажмите — одно нажатие; удерживайте — пойдут повторы NEC. Приёмник на GPIO0 декодирует их в самой прошивке, как на панели.</p>
 +    </section>
 +    <section class="card">
-+      <h2>Knob</h2>
++      <h2>Энкодер</h2>
 +      <div class="knobrow">
-+        <button id="ccw" type="button" aria-label="Turn left">⟲</button>
-+        <div class="knob" id="knob" role="button" tabindex="0" aria-label="Knob: drag or scroll to turn, click to press"></div>
-+        <button id="cw" type="button" aria-label="Turn right">⟳</button>
++        <button id="ccw" type="button" aria-label="Повернуть влево">⟲</button>
++        <div class="knob" id="knob" role="button" tabindex="0" aria-label="Ручка: крутите колёсиком, стрелками или перетаскиванием; клик, Enter или пробел — нажатие"></div>
++        <button id="cw" type="button" aria-label="Повернуть вправо">⟳</button>
 +      </div>
-+      <p class="hint">Scroll or drag to turn a detent at a time; click to press, hold for a long press.</p>
++      <p class="hint">Колёсико мыши или перетаскивание — поворот по одному щелчку; кнопку ручки он не нажимает, как и у настоящего EC11. Клик без перетаскивания — нажатие; долгое нажатие прошивка всё равно считает обычным.</p>
 +      <div class="board-keys">
-+        <button id="boot" type="button" title="GPIO0 low while held, as the board's BOOT key">BOOT</button>
-+        <button id="rst" type="button" title="The board's RESET key: the chip restarts, the flash keeps everything">RESET</button>
++        <button id="boot" type="button" title="Пока нажата, GPIO0 в нуле — как кнопка BOOT на плате">BOOT</button>
++        <button id="rst" type="button" title="Кнопка RESET платы: чип перезапускается, флэш всё помнит">RESET</button>
 +      </div>
 +    </section>
 +    <section class="card">
-+      <h2>Console · USB</h2>
++      <h2>Комната · SHTC3</h2>
++      <div class="look" style="gap:12px">
++        <label>°C <input id="tC" type="range" min="10" max="35" step="0.5" value="22.5"><b id="tCv">22.5</b></label>
++        <label>%RH <input id="rh" type="range" min="10" max="90" step="1" value="45"><b id="rhv">45</b></label>
++      </div>
++      <p class="hint">Воздух у датчика платы (I2C0 0x70). Прошивка читает его для часов с погодой и сглаживает за минуту.</p>
++    </section>
++    <section class="card">
++      <h2>Консоль · USB</h2>
 +      <pre id="console"></pre>
-+      <form class="line" id="line"><input id="lineIn" placeholder="ir help" autocomplete="off"><button type="submit">Send</button></form>
++      <form class="line" id="line"><input id="lineIn" placeholder="ir help" autocomplete="off"><button type="submit">Отправить</button></form>
 +      <p class="hint" id="portal"></p>
 +    </section>
 +  </aside>
@@ -6513,65 +8392,134 @@ index 0000000..85a63fa
 +<script>
 +(() => {
 +  const $ = (id) => document.getElementById(id);
-+  const canvas = $('panel'), ctx = canvas.getContext('2d');
 +  const W = 128, H = 64;
-+  const led = document.createElement('canvas'); led.width = W; led.height = H;
-+  const lctx = led.getContext('2d');
-+  const img = lctx.createImageData(W, H);
-+  let light = new Uint16Array(W * H * 3);
++  let light = new Uint16Array(W * H * 3);    // R G B per LED, 65535 = lit all its row slot (board/panel.rs)
 +  let dirty = true, windows = 0, lastCount = 0, lastT = performance.now();
 +
-+  // sRGB OETF (CSS Color 4, conversions.js lin_sRGB_to_sRGB) as a lookup over linear light
-+  const LUT = new Uint8ClampedArray(4097);
-+  for (let i = 0; i <= 4096; i++) { const l = i / 4096; LUT[i] = Math.round(255 * (l <= 0.0031308 ? 12.92 * l : 1.055 * Math.pow(l, 1 / 2.4) - 0.055)); }
-+
-+  // Canvas at device resolution; the dot mask follows its size.
-+  let mask = null, dotsLayer = null, glowLayer = null;
-+  function resize() {
-+    const r = canvas.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
-+    const w = Math.max(256, Math.round(r.width * dpr)), h = Math.round(w / 2);
-+    if (canvas.width === w && mask) return;
-+    canvas.width = w; canvas.height = h;
-+    const p = w / W;                         // device px per LED (2 mm pitch)
-+    mask = document.createElement('canvas'); mask.width = w; mask.height = h;
-+    const m = mask.getContext('2d'); m.fillStyle = '#fff';
-+    const rad = p * 0.36;                    // LED lens ≈ 0.72 of the pitch (look, uncalibrated)
-+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { m.beginPath(); m.arc((x + .5) * p, (y + .5) * p, rad, 0, 2 * Math.PI); m.fill(); }
-+    dotsLayer = document.createElement('canvas'); dotsLayer.width = w; dotsLayer.height = h;
-+    glowLayer = document.createElement('canvas'); glowLayer.width = w; glowLayer.height = h;
-+    dirty = true;
++  // The face is composited the way hub75/src/render.rs (render_panel_into) makes it: the GOB takes
++  // its share (glow) of each LED's light out of the dot and spreads it as a gaussian halo whose
++  // weights are normalised so a uniform field glows at its own level; dot and halo add in linear
++  // light, sRGB-encoded once at the end (CSS Color 4 gam_sRGB). A lit area stays at its light, as
++  // hub75's test uniform_field_glow_floor_is_glow_fraction checks for the crate. Adding the halo
++  // on top of a full dot, as encoded sRGB, clipped every LED above 0.37 linear at glow 0.55
++  // (review, 2026-09-29). Dot size, glow share and spread are a look, uncalibrated (ADR-TWIN-01 §4.2 B3).
++  const DOT_R = 0.36, GLOW_SIGMA = 0.9;      // in LED pitches (2 mm): lens radius; GOB spread, one sigma
++  const BG = [4, 4, 5].map((v) => v / 255 / 12.92);   // the room black #040405, as linear light
++  let canvas = $('panel'), view = null;
++  try { view = glView(canvas); } catch (e) {  // a context this canvas cannot give back: draw on a fresh one
++    console.warn('panel: WebGL2 view failed, drawing with canvas 2D', e);
++    const c = canvas.cloneNode(); canvas.replaceWith(c); canvas = c;
 +  }
-+  new ResizeObserver(resize).observe(canvas);
++  if (!view) view = canvasView(canvas);
 +
-+  function draw() {
-+    if (dirty && mask) {
-+      dirty = false;
-+      const g = parseFloat($('exposure').value), d = img.data;
++  function glView(canvas) {
++    const gl = canvas.getContext('webgl2', { alpha: false, antialias: false, preserveDrawingBuffer: true });
++    if (!gl) return null;
++    const f = (x) => x.toFixed(6), R = Math.ceil(3 * GLOW_SIGMA);   // taps each way, ceil(3 sigma) as render.rs
++    const vs = `#version 300 es
++void main() { gl_Position = vec4(vec2(gl_VertexID & 1, gl_VertexID >> 1) * 4.0 - 1.0, 0.0, 1.0); }`;
++    const fs = `#version 300 es
++precision highp float; precision highp int; precision highp usampler2D;
++uniform usampler2D light; uniform vec2 res; uniform float gain, glow; uniform bool dots;
++out vec4 color;
++const ivec2 N = ivec2(${W}, ${H}); const int R = ${R};
++const float DOT_R = ${f(DOT_R)}, SIGMA = ${f(GLOW_SIGMA)};
++const vec3 BG = vec3(${BG.map(f).join(', ')});
++vec3 led(ivec2 c) { return vec3(texelFetch(light, c, 0).rgb) * gain; }
++void main() {
++  float p = res.x / float(N.x);                                  // device px per LED
++  vec2 q = vec2(gl_FragCoord.x, res.y - gl_FragCoord.y) / p;     // in LEDs, y down
++  ivec2 c = min(ivec2(q), N - 1); vec2 u = q - vec2(c) - 0.5;    // offset from its own LED's centre
++  float cov = dots ? clamp((DOT_R - length(u)) * p + 0.5, 0.0, 1.0) : 1.0;
++  vec3 v = BG + (1.0 - glow) * cov * led(c);
++  if (glow > 0.0) {
++    vec3 acc = vec3(0.0); float sum = 0.0;
++    for (int j = -R; j <= R; j++) for (int i = -R; i <= R; i++) {
++      vec2 d = u - vec2(i, j); float w = exp(-dot(d, d) / (2.0 * SIGMA * SIGMA)); sum += w;
++      ivec2 n = c + ivec2(i, j);
++      if (all(greaterThanEqual(n, ivec2(0))) && all(lessThan(n, N))) acc += w * led(n);
++    }
++    v += glow * acc / sum;
++  }
++  v = clamp(v, 0.0, 1.0);
++  color = vec4(mix(12.92 * v, 1.055 * pow(v, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, v)), 1.0);
++}`;
++    const prog = gl.createProgram();
++    for (const [type, src] of [[gl.VERTEX_SHADER, vs], [gl.FRAGMENT_SHADER, fs]]) {
++      const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
++      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw Error(gl.getShaderInfoLog(s));
++      gl.attachShader(prog, s);
++    }
++    gl.linkProgram(prog);
++    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw Error(gl.getProgramInfoLog(prog));
++    gl.useProgram(prog);
++    const u = (n) => gl.getUniformLocation(prog, n);
++    gl.bindTexture(gl.TEXTURE_2D, gl.createTexture());    // unit 0; an integer texture is only texelFetch-ed
++    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
++    gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGB16UI, W, H);
++    return (exposure, glow, dots) => {
++      gl.viewport(0, 0, canvas.width, canvas.height);
++      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, W, H, gl.RGB_INTEGER, gl.UNSIGNED_SHORT, light);
++      gl.uniform2f(u('res'), canvas.width, canvas.height); gl.uniform1f(u('gain'), exposure / 65535);
++      gl.uniform1f(u('glow'), glow); gl.uniform1i(u('dots'), dots ? 1 : 0);
++      gl.drawArrays(gl.TRIANGLES, 0, 3);
++    };
++  }
++
++  // Without WebGL2: layers added as encoded sRGB ('lighter'), so only an approximation of light,
++  // but the dot still gives up the glow's share and a uniform field stays at its level.
++  function canvasView(canvas) {
++    const ctx = canvas.getContext('2d');
++    const led = document.createElement('canvas'); led.width = W; led.height = H;
++    const lctx = led.getContext('2d'), img = lctx.createImageData(W, H);
++    // sRGB OETF (CSS Color 4, conversions.js lin_sRGB_to_sRGB) as a lookup over linear light
++    const LUT = new Uint8ClampedArray(4097);
++    for (let i = 0; i <= 4096; i++) { const l = i / 4096; LUT[i] = Math.round(255 * (l <= 0.0031308 ? 12.92 * l : 1.055 * Math.pow(l, 1 / 2.4) - 0.055)); }
++    let mask = null, dotsLayer = null, glowLayer = null;
++    return (exposure, glow, dots) => {
++      const w = canvas.width, h = canvas.height, p = w / W, d = img.data;
++      if (!mask || mask.width !== w || mask.height !== h) {   // the dot mask follows the canvas size
++        mask = document.createElement('canvas'); mask.width = w; mask.height = h;
++        const m = mask.getContext('2d'); m.fillStyle = '#fff';
++        for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { m.beginPath(); m.arc((x + .5) * p, (y + .5) * p, DOT_R * p, 0, 2 * Math.PI); m.fill(); }
++        dotsLayer = document.createElement('canvas'); dotsLayer.width = w; dotsLayer.height = h;
++        glowLayer = document.createElement('canvas'); glowLayer.width = w; glowLayer.height = h;
++      }
 +      for (let i = 0, j = 0; i < W * H; i++, j += 4) {
-+        d[j] = LUT[Math.min(4096, (light[i * 3] * g / 16) | 0)];
-+        d[j + 1] = LUT[Math.min(4096, (light[i * 3 + 1] * g / 16) | 0)];
-+        d[j + 2] = LUT[Math.min(4096, (light[i * 3 + 2] * g / 16) | 0)];
++        d[j] = LUT[Math.min(4096, (light[i * 3] * exposure / 16) | 0)];
++        d[j + 1] = LUT[Math.min(4096, (light[i * 3 + 1] * exposure / 16) | 0)];
++        d[j + 2] = LUT[Math.min(4096, (light[i * 3 + 2] * exposure / 16) | 0)];
 +        d[j + 3] = 255;
 +      }
 +      lctx.putImageData(img, 0, 0);
-+      const w = canvas.width, h = canvas.height, p = w / W;
 +      ctx.globalCompositeOperation = 'source-over';
 +      ctx.fillStyle = '#040405'; ctx.fillRect(0, 0, w, h);
-+      const glow = parseFloat($('glow').value);
-+      if (glow > 0) {                        // GOB epoxy spreads each LED's light (look, uncalibrated)
++      if (glow > 0) {
 +        const gc = glowLayer.getContext('2d');
 +        gc.clearRect(0, 0, w, h); gc.imageSmoothingEnabled = true;
-+        gc.filter = `blur(${(p * 0.9).toFixed(1)}px)`; gc.drawImage(led, 0, 0, w, h); gc.filter = 'none';
++        gc.filter = `blur(${(p * GLOW_SIGMA).toFixed(1)}px)`; gc.drawImage(led, 0, 0, w, h); gc.filter = 'none';
 +        ctx.globalAlpha = glow; ctx.globalCompositeOperation = 'lighter'; ctx.drawImage(glowLayer, 0, 0);
-+        ctx.globalAlpha = 1;
 +      }
 +      const dc = dotsLayer.getContext('2d');
 +      dc.globalCompositeOperation = 'source-over'; dc.clearRect(0, 0, w, h);
 +      dc.imageSmoothingEnabled = false; dc.drawImage(led, 0, 0, w, h);
-+      if ($('dots').checked) { dc.globalCompositeOperation = 'destination-in'; dc.drawImage(mask, 0, 0); }
-+      ctx.globalCompositeOperation = 'lighter'; ctx.drawImage(dotsLayer, 0, 0);
-+      ctx.globalCompositeOperation = 'source-over';
-+    }
++      if (dots) { dc.globalCompositeOperation = 'destination-in'; dc.drawImage(mask, 0, 0); }
++      ctx.globalAlpha = 1 - glow; ctx.globalCompositeOperation = 'lighter'; ctx.drawImage(dotsLayer, 0, 0);
++      ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
++    };
++  }
++
++  // Canvas at device resolution.
++  function resize() {
++    const r = canvas.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
++    const w = Math.max(256, Math.round(r.width * dpr)), h = Math.round(w / 2);
++    if (canvas.width === w && canvas.height === h) return;
++    canvas.width = w; canvas.height = h; dirty = true;
++  }
++  new ResizeObserver(resize).observe(canvas);
++
++  function draw() {
++    if (dirty) { dirty = false; view(parseFloat($('exposure').value), parseFloat($('glow').value), $('dots').checked); }
 +    const now = performance.now();
 +    if (now - lastT > 1000) { $('stFps').textContent = ((windows - lastCount) * 1000 / (now - lastT)).toFixed(0); lastCount = windows; lastT = now; }
 +    requestAnimationFrame(draw);
@@ -6589,18 +8537,28 @@ index 0000000..85a63fa
 +    conBuf += s; if (conBuf.length > 60000) conBuf = conBuf.slice(-40000);
 +    const atEnd = con.scrollTop + con.clientHeight >= con.scrollHeight - 4;
 +    con.textContent = conBuf; if (atEnd) con.scrollTop = con.scrollHeight;
-+    const m = /IP Address: ([0-9.]+)/.exec(s); if (m) $('portal').innerHTML = `The firmware got ${m[1]} on the virtual Wi-Fi. With <code>--hostfwd tcp:8080-80</code> its portal is <a href="http://127.0.0.1:8080/" target="_blank" rel="noopener">127.0.0.1:8080</a>.`;
++    const m = /IP Address: ([0-9.]+)/.exec(s);
++    if (m) {
++      // 10.0.2.x: the engine's own NAT, the portal is forwarded to 127.0.0.1:8080 (twin.py run).
++      // Any other address came from the home router through the bridge (twin.py run --lan).
++      const nat = m[1].startsWith('10.0.2.');
++      const url = nat ? 'http://127.0.0.1:8080/' : `http://${m[1]}/`;
++      $('portalLink').href = url;
++      $('portal').innerHTML = nat
++        ? `Прошивка получила адрес ${m[1]} в виртуальной Wi-Fi; её портал проброшен на <a href="${url}" target="_blank" rel="noopener">127.0.0.1:8080</a>.`
++        : `Двойник в домашней сети: адрес ${m[1]} от роутера. Портал: <a href="${url}" target="_blank" rel="noopener">${m[1]}</a>.`;
++    }
 +  }
 +  function connect() {
 +    ws = new WebSocket(`ws://${location.host}/ws`); ws.binaryType = 'arraybuffer';
-+    ws.onopen = () => { $('conn').classList.add('on'); $('connText').textContent = 'running'; };
-+    ws.onclose = () => { $('conn').classList.remove('on'); $('connText').textContent = 'stopped'; setTimeout(connect, 1500); };
++    ws.onopen = () => { $('conn').classList.add('on'); $('connText').textContent = 'работает'; };
++    ws.onclose = () => { $('conn').classList.remove('on'); $('connText').textContent = 'остановлен'; setTimeout(connect, 1500); };
 +    ws.onmessage = (ev) => {
 +      if (typeof ev.data === 'string') {
 +        let m; try { m = JSON.parse(ev.data); } catch { return; }
 +        if (m.t === 'serial' && m.src === 'usb') appendConsole(m.data);
-+        else if (m.t === 'board') $('board').textContent = 'board ' + m.name;
-+        else if (m.t === 'stat') { $('stTime').textContent = m.time.toFixed(1) + ' s'; $('stBehind').textContent = (m.behind * 1000).toFixed(0) + ' ms'; }
++        else if (m.t === 'board') $('board').textContent = 'плата ' + m.name;
++        else if (m.t === 'stat') { $('stTime').textContent = m.time.toFixed(1) + ' с'; $('stBehind').textContent = (m.behind * 1000).toFixed(0) + ' мс'; }
 +        return;
 +      }
 +      const b = new DataView(ev.data);
@@ -6618,21 +8576,21 @@ index 0000000..85a63fa
 +
 +  // ---- the remote: the owner's ten learned buttons (ir_map.h slots 1..10, functions as bound on the panel)
 +  const BUTTONS = [
-+    { n: 5, label: 'Power', fn: 'power', code: 0xFF28D7, cls: 'accent' },
-+    { n: 8, label: 'Home', fn: 'home', code: 0xFF12ED },
-+    { n: 7, label: 'Carousel', fn: 'carousel', code: 0xFF19E6 },
++    { n: 5, label: 'Питание', fn: 'power', code: 0xFF28D7, cls: 'accent' },
++    { n: 8, label: 'Домой', fn: 'home', code: 0xFF12ED },
++    { n: 7, label: 'Карусель', fn: 'carousel', code: 0xFF19E6 },
 +    { n: 1, label: '◀', fn: 'ccw', code: 0xFF708F, cls: 'round' },
 +    { n: 3, label: 'OK', fn: 'ok', code: 0xFFE01F, cls: 'round accent' },
 +    { n: 2, label: '▶', fn: 'cw', code: 0xFF58A7, cls: 'round' },
-+    { n: 9, label: 'Bright −', fn: 'bright_down', code: 0xFF40BF },
-+    { n: 4, label: 'Long', fn: 'long', code: 0xFF41BE },
-+    { n: 6, label: 'Bright +', fn: 'bright_up', code: 0xFFC03F },
-+    { n: 10, label: 'Play/Pause', fn: 'media_toggle', code: 0xFFC936 },
++    { n: 9, label: 'Ярче −', fn: 'bright_down', code: 0xFF40BF },
++    { n: 4, label: 'Долгое', fn: 'long', code: 0xFF41BE },
++    { n: 6, label: 'Ярче +', fn: 'bright_up', code: 0xFFC03F },
++    { n: 10, label: 'Пуск/пауза', fn: 'media_toggle', code: 0xFFC936 },
 +  ];
 +  const remote = $('remote');
 +  for (const b of BUTTONS) {
 +    const el = document.createElement('button'); el.type = 'button'; if (b.cls) el.className = b.cls;
-+    el.innerHTML = `${b.label}<small>${b.n}</small>`; el.title = `button ${b.n}, NEC 0x${b.code.toString(16).toUpperCase()}`;
++    el.innerHTML = `${b.label}<small>${b.n}</small>`; el.title = `кнопка ${b.n}, NEC 0x${b.code.toString(16).toUpperCase()}`;
 +    if (b.n === 10) el.style.gridColumn = '2';
 +    let t0 = 0;
 +    // `ir down <code>` starts the NEC message and its repeats; `ir up` stops them (panel_inputs.rs)
@@ -6642,23 +8600,42 @@ index 0000000..85a63fa
 +    remote.appendChild(el);
 +  }
 +
++  // ---- the room at the SHTC3
++  const air = () => { $('tCv').textContent = $('tC').value; $('rhv').textContent = $('rh').value; send({ t: 'input', line: `climate ${$('tC').value} ${$('rh').value}` }); };
++  $('tC').addEventListener('change', air); $('rh').addEventListener('change', air);
++  $('tC').addEventListener('input', () => $('tCv').textContent = $('tC').value);
++  $('rh').addEventListener('input', () => $('rhv').textContent = $('rh').value);
++  // The portal link follows the host the page was opened on; the port is twin.py's --http (8080).
++  $('portalLink').href = `http://${location.hostname}:8080/`;
++
 +  // ---- the knob
-+  const knob = $('knob'); let angle = 0;
++  // Its switch is GPIO0, which the firmware samples itself (control.cpp sampleTick): low for 40 ms
++  // is a press (CTRL_SW_DEBOUNCE_MIN_MS, the IR receiver sharing the pin), up again within 500 ms a
++  // click (kSwShortMaxMs), held 1 s CTRL_LONG, which main.cpp folds into a click. Turning a real
++  // EC11 never closes its switch, so a drag only turns. A pointer released without dragging, Enter
++  // or Space is one click: GPIO0 low 150 ms, as run.html holds a press (or down and up can land on
++  // one emulated cycle), and the next click waits until the firmware has seen the switch up again.
++  const knob = $('knob'); let angle = 0, sw = Promise.resolve();
 +  const turn = (d) => { angle += d * 18; knob.style.setProperty('--a', angle + 'deg'); send({ t: 'knob', d: String(d) }); };
++  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
++  const click = () => { sw = sw.then(async () => {
++    knob.classList.add('down'); send({ t: 'knobpress', v: '1' }); await wait(150);
++    knob.classList.remove('down'); send({ t: 'knobpress', v: '0' }); await wait(150);
++  }); };
 +  $('ccw').addEventListener('click', () => turn(-1)); $('cw').addEventListener('click', () => turn(1));
 +  let wheelAcc = 0;
 +  knob.addEventListener('wheel', (e) => { e.preventDefault(); wheelAcc += e.deltaY; while (Math.abs(wheelAcc) >= 60) { turn(wheelAcc > 0 ? 1 : -1); wheelAcc -= Math.sign(wheelAcc) * 60; } }, { passive: false });
 +  let dragY = null, moved = false;
-+  knob.addEventListener('pointerdown', (e) => { knob.setPointerCapture(e.pointerId); dragY = e.clientY; moved = false; knob.classList.add('down'); send({ t: 'knobpress', v: '1' }); });
-+  knob.addEventListener('pointermove', (e) => { if (dragY === null) return; const dy = e.clientY - dragY; if (Math.abs(dy) >= 24) { if (!moved) { moved = true; send({ t: 'knobpress', v: '0' }); knob.classList.remove('down'); } turn(dy > 0 ? 1 : -1); dragY = e.clientY; } });
-+  const release = () => { if (dragY === null) return; dragY = null; knob.classList.remove('down'); if (!moved) send({ t: 'knobpress', v: '0' }); };
-+  knob.addEventListener('pointerup', release); knob.addEventListener('pointercancel', release);
++  knob.addEventListener('pointerdown', (e) => { knob.setPointerCapture(e.pointerId); dragY = e.clientY; moved = false; knob.classList.add('down'); });
++  knob.addEventListener('pointermove', (e) => { if (dragY === null) return; const dy = e.clientY - dragY; if (Math.abs(dy) >= 24) { moved = true; knob.classList.remove('down'); turn(dy > 0 ? 1 : -1); dragY = e.clientY; } });
++  knob.addEventListener('pointerup', () => { if (dragY === null) return; dragY = null; knob.classList.remove('down'); if (!moved) click(); });
++  knob.addEventListener('pointercancel', () => { dragY = null; knob.classList.remove('down'); });   // never a click
 +  const boot = $('boot');
 +  boot.addEventListener('pointerdown', (e) => { e.preventDefault(); boot.classList.add('held'); send({ t: 'input', line: 'boot down' }); });
 +  const bootUp = () => { if (!boot.classList.contains('held')) return; boot.classList.remove('held'); send({ t: 'input', line: 'boot up' }); };
 +  boot.addEventListener('pointerup', bootUp); boot.addEventListener('pointerleave', bootUp);
 +  $('rst').addEventListener('click', () => send({ t: 'reset' }));
-+  knob.addEventListener('keydown', (e) => { if (e.key === 'ArrowLeft') turn(-1); else if (e.key === 'ArrowRight') turn(1); else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); send({ t: 'knobpress', v: '1' }); setTimeout(() => send({ t: 'knobpress', v: '0' }), 120); } });
++  knob.addEventListener('keydown', (e) => { if (e.key === 'ArrowLeft') turn(-1); else if (e.key === 'ArrowRight') turn(1); else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); if (!e.repeat) click(); } });
 +})();
 +</script>
 +</body>
