@@ -82,7 +82,7 @@ static const int kCallbackDepth = 3;
 static int guardedCall(lua_State *L) {
     int *depth = static_cast<int *>(lua_touserdata(L, lua_upvalueindex(2)));
     if (*depth >= kCallbackDepth)
-        return luaL_error(L, "gsub, format, sort, table.concat/unpack/move/insert/remove, tostring, print and log nest at most %d deep",
+        return luaL_error(L, "gsub, format, sort, table.concat/unpack/move/insert/remove, tostring, print, log, math.max/min nest at most %d deep",
                           kCallbackDepth);
     const int n = lua_gettop(L);
     lua_pushvalue(L, lua_upvalueindex(1));
@@ -92,6 +92,24 @@ static int guardedCall(lua_State *L) {
     (*depth)--;
     if (st != LUA_OK) return lua_error(L);
     return lua_gettop(L);
+}
+
+// setmetatable without __gc. Lua 5.4 runs a finalizer with hooks off
+// (GCTM sets allowhook = 0), so the instruction budget and the frame's
+// deadline cannot stop one: `__gc = function() while true do end end` would
+// hold the effect task until the task watchdog restarts the panel. An object
+// is only marked for finalization when __gc is in its metatable at
+// setmetatable time (luaC_checkfinalizer), so refusing it there is enough.
+static int sandboxSetmetatable(lua_State *L) {
+    if (lua_type(L, 2) == LUA_TTABLE) {
+        lua_pushliteral(L, "__gc");
+        if (lua_rawget(L, 2) != LUA_TNIL) return luaL_error(L, "setmetatable: __gc is not allowed in an effect");
+        lua_pop(L, 1);
+    }
+    lua_pushvalue(L, lua_upvalueindex(1));
+    lua_insert(L, 1);
+    lua_call(L, lua_gettop(L) - 1, 1);
+    return 1;
 }
 
 static void guardCallbacks(lua_State *L) {
@@ -107,13 +125,15 @@ static void guardCallbacks(lua_State *L) {
     // wrapped levels plus 9 of those plus the deepest leaf came to 12.3-12.5 KB.
     // Wrapped, and 3 deep, what is left unwrapped is plain metamethods at
     // ~256 B a level. A pcall around a table.insert is a few microseconds; no
-    // shipped script calls one more than a handful of times a frame.
+    // shipped script calls one more than a handful of times a frame. The
+    // fourth audit added math.max and math.min through __lt (448 B a level).
     static const char *const kWrap[][2] = {{LUA_STRLIBNAME, "gsub"}, {LUA_STRLIBNAME, "format"},
                                            {LUA_TABLIBNAME, "sort"}, {LUA_TABLIBNAME, "concat"},
                                            {LUA_TABLIBNAME, "unpack"}, {LUA_TABLIBNAME, "move"},
                                            {LUA_TABLIBNAME, "insert"}, {LUA_TABLIBNAME, "remove"},
                                            {LUA_GNAME, "tostring"}, {LUA_GNAME, "print"},
-                                           {LUA_GNAME, "log"}};
+                                           {LUA_GNAME, "log"}, {LUA_MATHLIBNAME, "max"},
+                                           {LUA_MATHLIBNAME, "min"}};
     for (size_t i = 0; i < sizeof(kWrap) / sizeof(kWrap[0]); i++) {
         if (strcmp(kWrap[i][0], LUA_GNAME) == 0) lua_pushglobaltable(L);
         else lua_getglobal(L, kWrap[i][0]);
@@ -185,4 +205,8 @@ extern "C" void nslua_sandbox_open(lua_State *L) {
     lua_setglobal(L, "require");
 
     guardCallbacks(L);          // after print, which it wraps too
+
+    lua_getglobal(L, "setmetatable");
+    lua_pushcclosure(L, sandboxSetmetatable, 1);
+    lua_setglobal(L, "setmetatable");
 }
