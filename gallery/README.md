@@ -437,6 +437,18 @@ The field drifts along time, so the currents change and the pictures they draw n
 
 ---
 
+## REACTION
+
+![Reaction](preview/reaction.png)
+
+Living patterns that grow, split and never settle. Two chemicals spread over the screen and react, in the Gray-Scott model from Karl Sims's reaction-diffusion tutorial. From a few drops grow spots that divide like cells, then coral, a labyrinth, or worms; which of them depends on two numbers, the feed and the kill.
+
+It never settles because those two numbers keep moving: they travel slowly from one regime to the next, spending a minute on each, so spots stretch into worms and worms knot into a maze. Every 25 seconds a few new drops fall. The colours drift too. The button moves to the next regime at once and drops new seeds.
+
+**How it is drawn.** The model runs in the firmware, px.reaction: 8,192 cells, three steps a frame of about 10 ms each on the panel, in integers so the panel and the simulator grow the same patterns. It needs firmware 2.7.6 or later. On the panel it runs at 15 fps, about 33 ms a frame.
+
+---
+
 ## Adding one
 
 The loop, and only the last step needs a panel:

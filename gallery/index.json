@@ -160,6 +160,14 @@
       "by": "openclaw"
     },
     {
+      "stem": "reaction",
+      "name": "REACTION",
+      "file": "reaction.lua",
+      "line": "living patterns that grow, split and never settle",
+      "bytes": 4271,
+      "preview": "preview/reaction.png"
+    },
+    {
       "stem": "room_radar",
       "name": "ROOM_RADAR",
       "file": "room_radar.lua",
