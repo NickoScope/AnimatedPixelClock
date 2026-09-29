@@ -98,6 +98,16 @@ do
     HUE_R[h], HUE_G[h], HUE_B[h] = f(p, q, hh + 1 / 3) * 255, f(p, q, hh) * 255, f(p, q, hh - 1 / 3) * 255
   end
 end
+-- and the brightness of each hue, as the threshold sees it
+local HUE_L = {}
+for h = 0, 359 do HUE_L[h] = HUE_R[h] * 0.299 + HUE_G[h] * 0.587 + HUE_B[h] * 0.114 end
+-- a hue's face in the "source colour" palette: normalised to its brightest
+-- channel, so it depends on the hue only and is a lookup, not arithmetic
+local HFACE = {}
+for h = 0, 359 do
+  local m = max(HUE_R[h], HUE_G[h], HUE_B[h], 1)
+  HFACE[h] = (floor(HUE_R[h] / m * 255) << 16) | (floor(HUE_G[h] / m * 255) << 8) | floor(HUE_B[h] / m * 255)
+end
 local function hue(h)
   local i = floor(h) % 360
   return HUE_R[i], HUE_G[i], HUE_B[i]
@@ -143,12 +153,19 @@ local function ease(p) return p < 0.5 and 2 * p * p or 1 - ((-2 * p + 2) ^ 2) / 
 -- G holds the grid; the segment state is flat arrays indexed by
 -- (digit * 7 + segment), the dot state by LED.
 local G = nil
-local ON, FROM, T0, DL, COL = {}, {}, {}, {}, {}       -- target, start amount, start time, delay, colour
+local ON, FROM, ST, COL = {}, {}, {}, {}       -- target, start amount, start time, delay, colour
 local RX, RY, RW, RH = {}, {}, {}, {}                 -- a segment's rect (and its italic second rect)
 local RX2, RY2, RW2, RH2 = {}, {}, {}, {}
 local HORIZ = {}
 local SXs, SYs = {}, {}                              -- a segment's sample point on the work canvas
-local LX0, LY0, LX1, LY1 = {}, {}, {}, {}            -- and its rectangle of life cells
+-- the coarse grid the smooth sources are evaluated on (see "updating the board")
+local SP, NXn, NYn = 12, 0, 0       -- grid spacing in work units, nodes across and down
+local GA, GXf, GYf = {}, {}, {}     -- per digit sample: top-left node, and the weights
+local CXI, CXF = {}, {}             -- per LED column in the dot mode
+local CH, CHN = {}, 0               -- a pass's changes: i to turn on, -(i+1) to turn off
+local function field_grid(Wc, Hc)
+  NXn, NYn = floor(Wc / SP) + 2, floor(Hc / SP) + 2
+end
 local ACTIVE, NACT = {}, 0                            -- the segments or dots in flight
 local INACT = {}
 local scene, sceneAt, going = 1, 0, false
@@ -176,9 +193,37 @@ local function segrects(s, cw, ch, ital)
   return x + 1, y, rw, top, x, y + top, rw, rh - top
 end
 
+-- Flips are put on a timetable: a bucket every 1/60 s holds what starts (a
+-- segment) or what happens (a dot) in it, so a frame touches only what is
+-- due. Before, every frame walked every flip in progress, the ones the wave
+-- had not reached yet included - a hundred thousand instructions a frame
+-- when a dot board changed thousands of dots at once.
+local BK, BKlast = {}, 0
+local BKN = {}                      -- entries in each bucket; buckets are reused, not made
+local POOL, NPOOL = {}, 0
+local RATE = 60
+local function schedule(time, e)
+  local k = floor(time * RATE)
+  -- A flip whose moment has already gone by (a commit spread over frames
+  -- starts from its first frame) goes in the next bucket: a bucket behind
+  -- the timetable is never read, and that flip would never happen.
+  if k <= BKlast then k = BKlast + 1 end
+  local b = BK[k]
+  if not b then
+    if NPOOL > 0 then b = POOL[NPOOL]; POOL[NPOOL] = nil; NPOOL = NPOOL - 1 else b = {} end
+    BK[k] = b
+    BKN[k] = 0
+  end
+  local n = BKN[k] + 1
+  BKN[k] = n
+  b[n] = e
+end
 local function reset_active()
-  for i = 1, NACT do INACT[ACTIVE[i]] = nil; ACTIVE[i] = nil end
+  for i = 1, NACT do ACTIVE[i] = nil end
   NACT = 0
+  for i = 0, #INACT do INACT[i] = false end
+  for k in pairs(BK) do BK[k] = nil; BKN[k] = nil end
+  BKlast = floor(T * RATE)
 end
 
 local function build(sc)
@@ -191,13 +236,20 @@ local function build(sc)
   -- are filled in.
   local need = sc.mode == "dots" and W * H or 32 * 9 * 7
   for i = 0, need - 1 do
-    if ON[i] == nil then ON[i] = 0; FROM[i] = 0; T0[i] = 0; DL[i] = 0; COL[i] = 0
+    if ON[i] == nil then ON[i] = 0; FROM[i] = 0; ST[i] = 0; COL[i] = 0; INACT[i] = false
     else ON[i] = 0; FROM[i] = 0 end
   end
   DOTS = sc.mode == "dots"
   if DOTS then
-    G = { cols = W, rows = H, n = W * H }
-    G.P = 0
+    G = { cols = W, rows = H, n = W * H, phase = "idle", P = 0 }
+    SP = 8                                    -- 4 LEDs
+    field_grid(W * 2, H * 2)
+    for x = 0, W - 1 do
+      local wx = (x * 2 + 1) / SP
+      CXI[x] = floor(wx)
+      CXF[x] = wx - CXI[x]
+    end
+    CHN = 0
     return
   end
   local cw, ch = sc.size:match("(%d+)x(%d+)")
@@ -205,7 +257,10 @@ local function build(sc)
   local cols, rows = floor(W / cw), floor(H / ch)
   G = { cw = cw, ch = ch, cols = cols, rows = rows, n = cols * rows,
         ox = floor((W - cols * cw) / 2), oy = floor((H - rows * ch) / 2) }
-  G.P = 0
+  G.P, G.phase = 0, "idle"
+  CHN = 0
+  SP = 12                                     -- a digit's width
+  field_grid(cols * 12, rows * 18)
   for d = 0, cols * rows - 1 do
     local dx, dy = d % cols, floor(d / cols)
     local bx, by = G.ox + dx * cw, G.oy + dy * ch
@@ -217,19 +272,20 @@ local function build(sc)
       RX2[i] = x2 and bx + x2 or nil
       RY2[i], RW2[i], RH2[i] = y2 and by + y2, rw2, rh2
       HORIZ[i] = (s == "a" or s == "g" or s == "d")
-      ON[i], FROM[i], T0[i], DL[i], COL[i] = 0, 0, 0, 0, 0
+      ON[i], FROM[i], ST[i], COL[i] = 0, 0, 0, 0
       -- where the segment is sampled: V is 2 x 2 a digit, H is 1 x 3
       if HORIZ[i] then
         local row = (s == "a" and 0 or (s == "g" and 1 or 2))
         SXs[i], SYs[i] = dx * 12 + 6, dy * 18 + row * 6 + 3
-        LX0[i], LY0[i], LX1[i], LY1[i] = dx * 4, dy * 6 + row * 2, dx * 4 + 4, dy * 6 + row * 2 + 2
       else
         local sx = (s == "b" or s == "c") and 1 or 0
         local sy = (s == "e" or s == "c") and 1 or 0
         SXs[i], SYs[i] = dx * 12 + sx * 6 + 3, dy * 18 + sy * 9 + 4.5
-        LX0[i], LY0[i] = dx * 4 + sx * 2, dy * 6 + sy * 3
-        LX1[i], LY1[i] = LX0[i] + 2, LY0[i] + 3
       end
+      -- and where that point falls in the field's grid
+      local gx, gy = SXs[i] / SP, SYs[i] / SP
+      local cx, cy = floor(gx), floor(gy)
+      GA[i], GXf[i], GYf[i] = cy * NXn + cx, gx - cx, gy - cy
     end
   end
 end
@@ -416,6 +472,15 @@ end
 -- Text on the board: the clock on the top row, the marquee along the middle
 -- at 2.5 characters a second, an underline along the bottom. The bits are
 -- the font's; in the digits mode they go to the segments directly.
+-- The clock line, made once a pass: px.now() makes a table and
+-- string.format a string, and made once a digit they were most of the
+-- garbage the collector had to clear.
+local textClock = ""
+local function text_clock(cols)
+  local now = px.now()
+  textClock = cols >= 8 and string.format("%02d-%02d-%02d", now.hour, now.min, now.sec)
+                         or string.format("%02d%02d", now.hour, now.min)
+end
 local function text_bits(x, y, cols, rows, t)
   local mid = floor((rows - 1) / 2)
   if y == mid then
@@ -425,9 +490,7 @@ local function text_bits(x, y, cols, rows, t)
     return ch and (FONT[ch] or 0) or 0, 255, 255, 255
   end
   if y == 0 and rows > 2 then
-    local now = px.now()
-    local s = cols >= 8 and string.format("%02d-%02d-%02d", now.hour, now.min, now.sec)
-                         or string.format("%02d%02d", now.hour, now.min)
+    local s = textClock
     local s0 = floor((cols - #s) / 2)
     local j = x - s0 + 1
     if j < 1 or j > #s then return 0, 0, 0, 0 end
@@ -453,45 +516,85 @@ end
 local function pack(r, g, b) return (r << 16) | (g << 8) | b end
 
 -- A change: the segment or dot i now wants `want`, starting after `delay`.
-local function retarget(i, want, delay)
+local function retarget(i, want, delay, base)
+  base = base or T
   local from, to = FROM[i], ON[i]
   if from ~= to then
-    local p = (T - T0[i] - DL[i]) / FLIP
+    local p = (T - ST[i]) / FLIP
     if p < 0 then p = 0 elseif p > 1 then p = 1 end
     from = from + (to - from) * ease(p)
   end
-  FROM[i], ON[i], T0[i], DL[i] = from, want, T, delay
-  if not INACT[i] then NACT = NACT + 1; ACTIVE[NACT] = i; INACT[i] = true end
+  local start = base + delay
+  FROM[i], ON[i], ST[i] = from, want, start
+  if DOTS then
+    -- A dot is one LED: its flip is two moments, the edge and the new face.
+    schedule(start + FLIP * 0.5, -(i + 1))
+    schedule(start + FLIP, i)
+  elseif not INACT[i] then
+    INACT[i] = true
+    schedule(start, i)
+  end
 end
 
 local function lum(r, g, b) return r * 0.299 + g * 0.587 + b * 0.114 end
 local function lit(l) return (l > THR) ~= INV end
 
 -- ── updating the board ──────────────────────────────────────────────────────
--- A pointer runs over the board, a budget of samples a frame, so no frame
--- pays for the whole board: what a sample costs differs by source (Lua
--- instructions, estimated from the host counts), and the budget buys as many
--- as fit. A pass starts at most DFPS times a second, so the cheap sources
--- refresh at 12 Hz and the dear ones as fast as the budget allows.
--- measured per sample with the loop around it (fxhost --exact, 2026-09-29)
-local COST = { text = 50, clock = 70, rings = 100, plasma = 120, life = 170, cube = 300 }
-local BUDGET = 20000
+-- A pass works out what the whole board should show, a budget of work a
+-- frame, WITHOUT showing any of it; when the pass is complete every change is
+-- started at once, as one wave, the way the prototype's 12 Hz frame does. An
+-- earlier version flipped each part as soon as it was sampled, and the owner
+-- saw it (2026-09-29): the dot screens were redrawn band by band, top to
+-- bottom, instead of changing.
+--
+-- Plasma and rings are smooth fields: they are evaluated on a coarse grid of
+-- nodes and interpolated at each sample, and only the cheap last step - the
+-- bands and the hue - is done per sample. In the dot mode that is per LED, a
+-- row at a time, with the weights worked out once.
+local BUDGET = 30000                -- Lua instructions a frame for the update (digits)
+local BUDGET_DOTS = 55000           -- the dot board's frames draw little, so it gets more
+local COST = { text = 50, clock = 70, life = 170, cube = 300, node = 60, fieldsample = 45, dotrow = 4500 }
 local TEXTB, TEXTR, TEXTG, TEXTB2 = {}, {}, {}, {}
 local lastSlot = -1
+local NODE = {}                     -- the field on the coarse grid
+local ROWV = {}
+local plasmaC = 6
+
+local FIELD = {}
+function FIELD.plasma(x, y, t)
+  local u, v = x / unit, y / unit
+  local du, dv = u - plasmaC, v - 3
+  return sin(u * 0.9 + t) + sin(v * 1.1 - t * 0.7) + sin((u + v) * 0.6 + t * 0.5)
+         + sin(sqrt(du * du + dv * dv) * 1.2 - t * 1.3)
+end
+function FIELD.rings(x, y, t)
+  local dx, dy = x - ringC[1], y - ringC[2]
+  return sqrt(dx * dx + dy * dy)
+end
+-- the last step: a field value to a hue index and a brightness 0..1
+local function shade(src, v, t)
+  if src == "plasma" then
+    return floor(v * 45 + t * 25) % 360, sin(v * 1.9) * 0.5 + 0.5
+  end
+  return floor(v / unit * 18 + t * 40) % 360, sin(v * 1.9 / unit - t * 3.2) * 0.5 + 0.5
+end
 
 local function pass_setup(sc, t)
   local src = sc.src
-  if DOTS then
-    if src == "rings" then ringC[1], ringC[2] = 128 + sin(t * 0.4) * 46, 64 + cos(t * 0.3) * 23 end
-    return
-  end
-  local cols, rows = G.cols, G.rows
-  local Wc, Hc = cols * 12, rows * 18
+  CHN = 0
+  unit = 12
+  plasmaC = 6 + 3 * sin(t * 0.3)
+  local Wc, Hc
+  if DOTS then Wc, Hc = W * 2, H * 2 else Wc, Hc = G.cols * 12, G.rows * 18 end
   if src == "rings" then
     ringC[1], ringC[2] = Wc / 2 + sin(t * 0.4) * Wc * 0.18, Hc / 2 + cos(t * 0.3) * Hc * 0.18
-  elseif src == "clock" then clock_setup(Wc, Hc)
+  end
+  if DOTS then return end
+  local cols, rows = G.cols, G.rows
+  if src == "clock" then clock_setup(Wc, Hc)
   elseif src == "cube" then cube_setup(Wc, Hc, t)
   elseif src == "text" then
+    text_clock(cols)
     for d = 0, G.n - 1 do
       TEXTB[d], TEXTR[d], TEXTG[d], TEXTB2[d] = text_bits(d % cols, floor(d / cols), cols, rows, t)
     end
@@ -499,54 +602,157 @@ local function pass_setup(sc, t)
 end
 
 local SEGBIT = { [0] = 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x01 }
+
+-- One sample's result into the pass: its colour now, its state at the commit.
+local function result(i, want, pal, r, g, b, col, cols, t, constFace)
+  if want == 1 then COL[i] = constFace or pack(face(pal, r, g, b, col, cols, t)) end
+  if ON[i] ~= want then CHN = CHN + 1; CH[CHN] = want == 1 and i or -(i + 1) end
+end
+
+-- The changes start from one moment (the pass's commit), though starting
+-- them is spread over a few frames when there are thousands: the wave is
+-- the same either way, because each flip's time is the commit's plus its
+-- own delay.
+local COMMIT_PER_FRAME = 700
+local commitAt, commitK = 0, 1
+local function commit()
+  if commitK == 1 then commitAt = T end
+  local last = min(CHN, commitK + COMMIT_PER_FRAME - 1)
+  for k = commitK, last do
+    local e = CH[k]
+    local i = e < 0 and -e - 1 or e
+    local delay
+    if DOTS then delay = (i % W) / 8 * WAVE + floor(i / W) / 16 * WAVE
+    else local d = floor(i / 7); delay = (d % G.cols) * WAVE + floor(d / G.cols) * WAVE * 0.5 end
+    retarget(i, e < 0 and 0 or 1, delay + rnd() * 0.010, commitAt)
+    CH[k] = nil
+  end
+  if last >= CHN then CHN, commitK = 0, 1; return true end
+  commitK = last + 1
+  return false
+end
+
 local function sample_chunk(sc, t)
   local src = sc.src
-  local n = DOTS and G.n or G.n * 7
-  local want_n = floor(BUDGET / (COST[src] or 80))
-  if want_n > n then want_n = n end
-  local f = SRC[src]
+  local isField = FIELD[src] ~= nil
   local pal = sc.pal
   local constFace = FACE[pal] and pack(FACE[pal][1], FACE[pal][2], FACE[pal][3])
-  unit = 12
   if src == "life" and not DOTS then life_chunk(G.cols * 4, G.rows * 6) end
-  local P = G.P
-  for _ = 1, want_n do
-    if P == 0 then
+  local spent = 0
+  local BUDGET = DOTS and BUDGET_DOTS or BUDGET
+  while spent < BUDGET do
+    local ph = G.phase
+    if ph == "idle" then
       local slot = floor(t * DFPS)
-      if slot == lastSlot then break end
+      if slot == lastSlot then return end
       lastSlot = slot
       pass_setup(sc, t)
-    end
-    local i = P
-    local r, g, b, l
-    local col, cols
-    if DOTS then
-      local x, y = i % W, floor(i / W)
-      r, g, b = f(x * 2 + 1, y * 2 + 1, t)
-      col, cols = x, W
-    else
-      local d = floor(i / 7)
-      col, cols = d % G.cols, G.cols
-      if src == "text" then
-        if (TEXTB[d] & SEGBIT[i % 7]) > 0 then r, g, b = TEXTR[d], TEXTG[d], TEXTB2[d] else r, g, b = 0, 0, 0 end
-      elseif src == "life" then
-        if life then r, g, b, l = life_avg(LX0[i], LY0[i], LX1[i], LY1[i]) else r, g, b, l = 0, 0, 0, 0 end
-      else
-        r, g, b = f(SXs[i], SYs[i], t)
+      G.phase, G.P = isField and "nodes" or "samples", 0
+    elseif ph == "nodes" then
+      -- the field on the grid
+      local f = FIELD[src]
+      local k, nN = G.P, NXn * NYn
+      while k < nN and spent < BUDGET do
+        NODE[k] = f((k % NXn) * SP, floor(k / NXn) * SP, t)
+        k = k + 1
+        spent = spent + COST.node
       end
+      G.P = k
+      if k >= nN then G.phase, G.P = "samples", 0 end
+    elseif ph == "samples" then
+      if DOTS then
+        -- a row of LEDs at a time: the row of the grid, then each LED along it
+        local y = G.P
+        while y < H and spent < BUDGET do
+          local wy = (y * 2 + 1) / SP
+          local j = floor(wy)
+          local fy = wy - j
+          local r0, r1 = j * NXn, (j + 1) * NXn
+          for c = 0, NXn - 1 do ROWV[c] = NODE[r0 + c] + (NODE[r1 + c] - NODE[r0 + c]) * fy end
+          local base = y * W
+          local plasma = src == "plasma"
+          local k1 = plasma and 45 or 18 / unit
+          local k0 = plasma and t * 25 or t * 40
+          local b1 = plasma and 1.9 or 1.9 / unit
+          local b0 = plasma and 0 or -t * 3.2
+          local srcFace = pal == "src"
+          for x = 0, W - 1 do
+            local c = CXI[x]
+            local a = ROWV[c]
+            local v = a + (ROWV[c + 1] - a) * CXF[x]
+            local h = floor(v * k1 + k0) % 360
+            local band = sin(v * b1 + b0) * 0.5 + 0.5
+            local want = ((HUE_L[h] * band) > THR) ~= INV and 1 or 0
+            local i = base + x
+            if want == 1 then
+              if constFace then COL[i] = constFace
+              elseif srcFace and not INV then COL[i] = HFACE[h]
+              else COL[i] = pack(face(pal, HUE_R[h] * band, HUE_G[h] * band, HUE_B[h] * band, x, W, t)) end
+            end
+            if ON[i] ~= want then CHN = CHN + 1; CH[CHN] = want == 1 and i or -(i + 1) end
+          end
+          y = y + 1
+          spent = spent + COST.dotrow
+        end
+        G.P = y
+        if y >= H then G.phase = "commit" end
+      else
+        local n = G.n * 7
+        local i = G.P
+        local per = isField and COST.fieldsample or (COST[src] or 80)
+        local f = SRC[src]
+        local cols = G.cols
+        while i < n and spent < BUDGET do
+          local d = floor(i / 7)
+          local r, g, b, l
+          if isField then
+            local a, fx, fy = GA[i], GXf[i], GYf[i]
+            local top = NODE[a] + (NODE[a + 1] - NODE[a]) * fx
+            local bot = NODE[a + NXn] + (NODE[a + NXn + 1] - NODE[a + NXn]) * fx
+            local h, band = shade(src, top + (bot - top) * fy, t)
+            l = HUE_L[h] * band
+            if pal == "src" and not INV then
+              -- straight to the face: it depends on the hue only
+              local want = (l > THR) and 1 or 0
+              if want == 1 then COL[i] = HFACE[h] end
+              if ON[i] ~= want then CHN = CHN + 1; CH[CHN] = want == 1 and i or -(i + 1) end
+              goto next
+            end
+            r, g, b = HUE_R[h] * band, HUE_G[h] * band, HUE_B[h] * band
+          elseif src == "text" then
+            if (TEXTB[d] & SEGBIT[i % 7]) > 0 then r, g, b = TEXTR[d], TEXTG[d], TEXTB2[d] else r, g, b = 0, 0, 0 end
+          elseif src == "life" then
+            if life then
+              -- the segment's rectangle of life cells: 4 x 6 cells a digit
+              local k7, dx, dy = i % 7, d % cols, floor(d / cols)
+              if k7 == 0 or k7 == 3 or k7 == 6 then
+                local row = k7 == 0 and 0 or (k7 == 6 and 1 or 2)
+                r, g, b, l = life_avg(dx * 4, dy * 6 + row * 2, dx * 4 + 4, dy * 6 + row * 2 + 2)
+              else
+                local sx = (k7 == 1 or k7 == 2) and 2 or 0
+                local sy = (k7 == 2 or k7 == 4) and 3 or 0
+                r, g, b, l = life_avg(dx * 4 + sx, dy * 6 + sy, dx * 4 + sx + 2, dy * 6 + sy + 3)
+              end
+            else r, g, b, l = 0, 0, 0, 0 end
+          else
+            r, g, b = f(SXs[i], SYs[i], t)
+          end
+          do
+            local want = lit(l or lum(r, g, b)) and 1 or 0
+            result(i, want, pal, r, g, b, d % cols, cols, t, constFace)
+          end
+          ::next::
+          i = i + 1
+          spent = spent + per
+        end
+        G.P = i
+        if i >= n then G.phase = "commit" end
+      end
+    else
+      if commit() then G.phase = "idle" end
+      return
     end
-    local want = lit(l or lum(r, g, b)) and 1 or 0
-    if want == 1 then COL[i] = constFace or pack(face(pal, r, g, b, col, cols, t)) end
-    if ON[i] ~= want then
-      local delay
-      if DOTS then delay = (i % W) / 8 * WAVE + floor(i / W) / 16 * WAVE
-      else local d = floor(i / 7); delay = (d % G.cols) * WAVE + floor(d / G.cols) * WAVE * 0.5 end
-      retarget(i, want, delay + rnd() * 0.010)
-    end
-    P = P + 1
-    if P >= n then P = 0 end
   end
-  G.P = P
 end
 
 -- ── drawing what is in flight ───────────────────────────────────────────────
@@ -557,11 +763,52 @@ local function draw_seg(i, r, g, b)
   if RX2[i] then rect(RX2[i], RY2[i], RW2[i], RH2[i], r, g, b, true) end
 end
 
+local function run_timetable(style)
+  local now = floor(T * RATE)
+  for k = BKlast + 1, now do
+    local b = BK[k]
+    if b then
+      local bn = BKN[k]
+      BK[k], BKN[k] = nil, nil
+      for j = 1, bn do
+        local e = b[j]
+        if DOTS then
+          local i = e < 0 and -e - 1 or e
+          local st = ST[i]
+          local c = COL[i]
+          local cr, cg, cb = (c >> 16) & 255, (c >> 8) & 255, c & 255
+          if e < 0 then
+            -- the edge: only if this is still the flip it was set for
+            if abs(T - (st + FLIP * 0.5)) < 0.06 and FROM[i] ~= ON[i] then
+              if style == "line" then
+                pixel(i % W, floor(i / W), floor(cr * 0.5), floor(cg * 0.5), floor(cb * 0.5))
+              else
+                pixel(i % W, floor(i / W), 89 + floor(cr * 0.15), 89 + floor(cg * 0.15), 89 + floor(cb * 0.15))
+              end
+            end
+          elseif T >= st + FLIP - 1 / RATE then
+            if ON[i] == 1 then pixel(i % W, floor(i / W), cr, cg, cb)
+            else pixel(i % W, floor(i / W), 0, 0, 0) end
+            FROM[i] = ON[i]
+          end
+        else
+          NACT = NACT + 1
+          ACTIVE[NACT] = e
+        end
+      end
+      if NPOOL < 16 and bn <= 256 then NPOOL = NPOOL + 1; POOL[NPOOL] = b end
+    end
+  end
+  BKlast = now
+end
+
 local function draw_active(style)
+  run_timetable(style)
+  if DOTS then return end
   local n, keep = NACT, 0
   for j = 1, n do
     local i = ACTIVE[j]
-    local p = (T - T0[i] - DL[i]) / FLIP
+    local p = (T - ST[i]) / FLIP
     local done = p >= 1
     local waiting = p <= 0                 -- the wave has not reached it: it shows what it showed
     if p < 0 then p = 0 elseif p > 1 then p = 1 end
@@ -614,7 +861,7 @@ local function draw_active(style)
     end
     if done then
       FROM[i] = to
-      INACT[i] = nil
+      INACT[i] = false
     else
       keep = keep + 1
       ACTIVE[keep] = i
