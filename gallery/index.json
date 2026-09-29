@@ -86,6 +86,14 @@
       "preview": "preview/la_gioconda.png"
     },
     {
+      "stem": "laser_clock",
+      "name": "LASER_CLOCK",
+      "file": "laser_clock.lua",
+      "line": "a laser on the pavement writes the time on the wall",
+      "bytes": 24386,
+      "preview": "preview/laser_clock.png"
+    },
+    {
       "stem": "living_ocean",
       "name": "LIVING_OCEAN",
       "file": "living_ocean.lua",

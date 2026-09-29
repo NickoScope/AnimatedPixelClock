@@ -343,6 +343,25 @@ How it works, with the tank running and the numbers from the panel: [in English]
 
 ---
 
+## LASER CLOCK
+
+![Laser Clock](preview/laser_clock.png)
+
+Night, the back wall of a house, and a small laser projector on the pavement in front of it. A thin beam, lit up by the dust in the air, carries one bright dot over the bricks. The dot writes on the wall stroke by stroke. The beam goes dark between strokes, and sparks fly where the dot burns. Once a text is written, the projector runs over it again and again, fast, the way a real one does. The lines shimmer as the scan comes round, and the beam in the air becomes a flickering fan.
+
+**Every 5 seconds the wall says the next thing:**
+- the time;
+- the day of the week;
+- the date;
+- the temperature outside, from the weather clock's data if weather is set up in the portal;
+- Cannes.
+
+Each screen has its own colour of the RGB laser, and the temperature's colour goes from ice blue to red with the reading. While the time is up, a digit that changes goes dark and is written again. The colon blinks. The button changes the laser: each screen its own colour, then green, red, blue or violet for everything, then a colour for each character.
+
+**How it is drawn.** The digits are true arcs and strokes, leaning a little like neon lettering. The letters come from the panel's own 5x7 system font, Latin and Cyrillic. They are drawn once at load, read back and joined into strokes, so the day of the week is in Russian. The glow comes from px.mode("add") and px.blur, and the wall is drawn once and put back with px.restore each frame. It needs firmware 2.7.4 or later for the glow and the temperature; on older firmware it runs flatter and skips the temperature. On the panel it runs at about 15 fps.
+
+---
+
 ## Adding one
 
 The loop, and only the last step needs a panel:
