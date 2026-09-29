@@ -46,6 +46,14 @@
       "by": "openclaw"
     },
     {
+      "stem": "flow",
+      "name": "FLOW",
+      "file": "flow.lua",
+      "line": "hundreds of particles on currents that never repeat",
+      "bytes": 4047,
+      "preview": "preview/flow.png"
+    },
+    {
       "stem": "football_clock",
       "name": "FOOTBALL_CLOCK",
       "file": "football_clock.lua",
