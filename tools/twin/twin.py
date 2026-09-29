@@ -19,11 +19,18 @@ as on the panel.
       console, which the firmware's own Improv code takes. The virtual AP uses the same pair.
   twin.py erase
       forget everything (a new chip): the next run starts from the image again.
+  twin.py run --lan ...
+      the twin on the home network with its own address from the router (esp32sim --net bridge
+      through the socket_vmnet daemon; README "В домашней сети"). Refuses unless the daemon's
+      socket answers, the network is the one `lan-setup` recorded, and the name starts with TWIN-.
+  twin.py lan-setup
+      at home, once: record this network's gateway (IP and MAC) in ~/twin/state/lan.txt, the
+      home guard for --lan. The file stays outside every repository.
 
 Paths (override with the environment): TWIN_HOME (~/twin) holds the engine, the ROM, the flash
 file and the default image.
 """
-import argparse, os, shutil, subprocess, sys
+import argparse, os, shutil, struct, subprocess, sys
 
 HOME = os.path.expanduser(os.environ.get("TWIN_HOME", "~/twin"))
 ENGINE = os.path.join(HOME, "esp32sim")
@@ -44,6 +51,25 @@ FLASH_ID = "c28039"
 # Locally administered (bit 1 of the first byte set, IEEE 802 §8.4), so it can belong to no
 # vendor's device; 54 57 49 4E is "TWIN" in ASCII.
 MAC = "02:54:57:49:4E:01"
+# The bridge (ADR-TWIN-02): socket_vmnet v1.2.2 in bridged mode on en0, installed once by the owner.
+LAN_SOCKET = os.environ.get("TWIN_LAN_SOCKET", "/var/run/socket_vmnet.bridged.en0")
+LAN_IFACE = "en0"
+LAN_STATE = os.path.join(STATE, "lan.txt")
+LAN_INSTALL = """\
+The bridge daemon is not there. Once, with sudo (ADR-TWIN-02 §3; tools/twin/README.md "В домашней сети"):
+
+  cd ~/Downloads
+  curl -OSL https://github.com/lima-vm/socket_vmnet/releases/download/v1.2.2/socket_vmnet-1.2.2-arm64.tar.gz
+  gh attestation verify --owner=lima-vm socket_vmnet-1.2.2-arm64.tar.gz
+  sudo tar Cxzvf / socket_vmnet-1.2.2-arm64.tar.gz opt/socket_vmnet
+  sudo mkdir -p /var/log/socket_vmnet
+  sudo cp /opt/socket_vmnet/share/doc/socket_vmnet/launchd/io.github.lima-vm.socket_vmnet.bridged.en0.plist /Library/LaunchDaemons/
+  sudo launchctl bootstrap system /Library/LaunchDaemons/io.github.lima-vm.socket_vmnet.bridged.en0.plist
+  sudo launchctl enable system/io.github.lima-vm.socket_vmnet.bridged.en0
+  sudo launchctl kickstart -kp system/io.github.lima-vm.socket_vmnet.bridged.en0
+
+If it is installed but stopped: sudo launchctl kickstart -k system/io.github.lima-vm.socket_vmnet.bridged.en0
+"""
 
 
 def improv_hex(ssid: str, password: str) -> str:
@@ -55,8 +81,105 @@ def improv_hex(ssid: str, password: str) -> str:
     return (pkt + bytes([sum(pkt) & 0xFF])).hex()
 
 
+def nvs_string(flash, namespace, key):
+    """A string from the firmware's NVS in the flash file, as ESP-IDF lays it out: 4 KiB pages,
+    a 32-byte header (state, sequence), a 32-byte table of 2-bit entry states (0b10 written), then
+    126 entries of 32 bytes: ns, type (0x01 u8, 0x21 string), span, chunk, crc, key[16], data[8];
+    a string's bytes follow in the next span-1 entries (ESP-IDF nvs_constants.h, nvs_types.hpp,
+    nvs.h). The partition comes from the table at 0x8000. None if there is no such value."""
+    with open(flash, "rb") as f:
+        f.seek(0x8000); table = f.read(0xC00)
+        nvs = None
+        for i in range(0, len(table), 32):
+            e = table[i:i + 32]
+            if e[:2] != b"\xaa\x50": break
+            if e[2] == 1 and e[3] == 2: nvs = struct.unpack("<II", e[4:12])
+        if not nvs: return None
+        f.seek(nvs[0]); data = f.read(nvs[1])
+    found, ns_index = [], None
+    for want_ns in (True, False):
+        for page in range(0, len(data), 4096):
+            state, seq = struct.unpack("<II", data[page:page + 8])
+            if state not in (0xFFFFFFFE, 0xFFFFFFFC, 0xFFFFFFF8): continue   # active, full, freeing
+            bitmap = int.from_bytes(data[page + 32:page + 64], "little")
+            i = 0
+            while i < 126:
+                e = data[page + 64 + 32 * i:page + 96 + 32 * i]
+                if (bitmap >> (2 * i)) & 3 != 0b10: i += 1; continue
+                ns, typ, span, name = e[0], e[1], max(e[2], 1), e[8:24].split(b"\0")[0].decode(errors="replace")
+                if want_ns and ns == 0 and typ == 0x01 and name == namespace: ns_index = e[24]
+                if not want_ns and ns == ns_index and typ == 0x21 and name == key:
+                    size = struct.unpack("<H", e[24:26])[0]
+                    start = page + 64 + 32 * (i + 1)
+                    found.append((seq, data[start:start + size].split(b"\0")[0].decode(errors="replace")))
+                i += span
+        if ns_index is None: return None
+    return max(found)[1] if found else None
+
+
+def default_gateway():
+    """(interface, gateway IP, gateway MAC) of the default route, from route(8) and arp(8)."""
+    route = subprocess.run(["route", "-n", "get", "default"], capture_output=True, text=True).stdout
+    fields = dict(l.strip().split(": ", 1) for l in route.splitlines() if ": " in l)
+    ip, iface = fields.get("gateway"), fields.get("interface")
+    mac = None
+    if ip:
+        words = subprocess.run(["arp", "-n", ip], capture_output=True, text=True).stdout.split()
+        if "at" in words:
+            octets = words[words.index("at") + 1].split(":")
+            if len(octets) == 6 and all(o and len(o) <= 2 for o in octets):
+                mac = ":".join(f"{int(o, 16):02x}" for o in octets)
+    return iface, ip, mac
+
+
+def lan_checks():
+    """What must hold before the twin goes on the LAN (ADR-TWIN-02 §4.2). Exits with the reason."""
+    import socket
+    if not os.path.exists(LAN_SOCKET):
+        sys.exit(f"{LAN_SOCKET}: no such socket\n\n{LAN_INSTALL}")
+    try:
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM); s.settimeout(2); s.connect(LAN_SOCKET); s.close()
+    except OSError as e:
+        sys.exit(f"{LAN_SOCKET}: {e}\n\n{LAN_INSTALL}")
+    # The home guard: the daemon bridges whatever network en0 is on, so the twin goes out only on
+    # the one recorded at home.
+    if not os.path.exists(LAN_STATE):
+        sys.exit(f"no {LAN_STATE}: run `twin.py lan-setup` once at home first")
+    want = dict(l.split("=", 1) for l in open(LAN_STATE).read().split() if "=" in l)
+    iface, ip, mac = default_gateway()
+    here = {"interface": iface, "gateway_ip": ip, "gateway_mac": mac}
+    wrong = [k for k in ("interface", "gateway_ip", "gateway_mac") if want.get(k) != here[k]]
+    if wrong:
+        sys.exit(f"not the home network ({', '.join(wrong)} differ from {LAN_STATE}): the twin stays off this LAN")
+    name = nvs_string(FLASH, "pcmonitor", "deviceName") if os.path.exists(FLASH) else None
+    if not (name or "").startswith("TWIN-"):
+        sys.exit(f"the twin's name is {name or 'the default (none stored)'}, not TWIN-...: rename it first in a normal run, "
+                 f"so the router and HA can tell it from the panel:\n  curl -X POST -d '{{\"name\":\"TWIN-NickoScopeMatrix-64x128-01\"}}' "
+                 f"http://127.0.0.1:8080/api/rename   (then restart the twin)")
+    print(f"LAN: {LAN_SOCKET}, home network ({ip} on {iface}), name {name}", file=sys.stderr)
+
+
+def cmd_lan_setup(a, _):
+    iface, ip, mac = default_gateway()
+    if not (ip and mac):
+        sys.exit(f"no default gateway with a known MAC (route: {ip}, arp: {mac}); ping the router once and retry")
+    if iface != LAN_IFACE:
+        sys.exit(f"the default route goes through {iface}, not {LAN_IFACE}, the interface the daemon bridges")
+    os.makedirs(STATE, exist_ok=True)
+    with open(os.open(LAN_STATE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as f:
+        f.write("# twin.py lan-setup: the home network, the guard for run --lan. Not in any repository.\n")
+        f.write(f"interface={iface}\ngateway_ip={ip}\ngateway_mac={mac}\n")
+    print(f"recorded the home network: gateway {ip} ({mac}) on {iface} -> {LAN_STATE}")
+
+
 def cmd_run(a, extra):
     os.makedirs(STATE, exist_ok=True)
+    if a.lan:                                   # before --fresh could touch the flash
+        if a.fresh:
+            sys.exit("--lan with --fresh: a new chip has no TWIN- name yet; name it in a normal run first")
+        if not os.path.exists(WIFI):
+            sys.exit("--lan needs the virtual AP: twin.py wifi SSID PASSWORD first")
+        lan_checks()
     if a.fresh and os.path.exists(FLASH):
         os.remove(FLASH)
     args = [EXE, "--board", "panel", "--boot", "rom", "--rom", ROM, "--flash-image", IMAGE,
@@ -67,13 +190,18 @@ def cmd_run(a, extra):
     if os.path.exists(WIFI):
         ssid, pw = open(WIFI).read().splitlines()[:2]
         args += ["--wifi", f"ssid={ssid},psk={pw}"]
-        # The portal, the API and the UDP port, from the Mac only (127.0.0.1), as on the LAN.
-        args += ["--hostfwd", f"tcp:{a.http}-80", "--hostfwd", f"udp:{a.udp}-4210"]
+        if a.lan:
+            # its own address from the router; nothing forwarded to 127.0.0.1
+            args += ["--net", f"bridge:{LAN_SOCKET}"]
+        else:
+            # The portal, the API and the UDP port, from the Mac only (127.0.0.1), as on the LAN.
+            args += ["--hostfwd", f"tcp:{a.http}-80", "--hostfwd", f"udp:{a.udp}-4210"]
         if a.provision:
             args += ["--serial-hex", improv_hex(ssid, pw)]
     if a.web:
         args += ["--web", str(a.web), "--web-dir", os.path.join(ENGINE, "web")]
-        print(f"the panel: http://127.0.0.1:{a.web}/panel.html   its portal: http://127.0.0.1:{a.http}/", file=sys.stderr)
+        portal = f"http://<the IP Address line>/ (discover.py --mac {a.mac})" if a.lan else f"http://127.0.0.1:{a.http}/"
+        print(f"the panel: http://127.0.0.1:{a.web}/panel.html   its portal: {portal}", file=sys.stderr)
     if a.seconds:
         args += ["--max-seconds", str(a.seconds)]
     if a.png:
@@ -142,6 +270,8 @@ def main():
     r.add_argument("--provision", action="store_true", help="send the Wi-Fi pair over Improv at boot")
     r.add_argument("--http", type=int, default=8080, help="the twin's port 80 on 127.0.0.1 (default 8080)")
     r.add_argument("--udp", type=int, default=4210, help="the twin's UDP 4210 on 127.0.0.1")
+    r.add_argument("--lan", action="store_true", help="on the home network with its own IP (socket_vmnet bridge); "
+                   "no ports on 127.0.0.1 then, the portal is at the twin's own address")
     f = sub.add_parser("flash")
     f.add_argument("image")
     f.add_argument("--at")
@@ -149,8 +279,9 @@ def main():
     w.add_argument("ssid")
     w.add_argument("password")
     sub.add_parser("erase")
+    sub.add_parser("lan-setup")
     a = ap.parse_args(argv)
-    {"run": cmd_run, "flash": cmd_flash, "wifi": cmd_wifi, "erase": cmd_erase}[a.cmd](a, extra)
+    {"run": cmd_run, "flash": cmd_flash, "wifi": cmd_wifi, "erase": cmd_erase, "lan-setup": cmd_lan_setup}[a.cmd](a, extra)
 
 
 if __name__ == "__main__":
