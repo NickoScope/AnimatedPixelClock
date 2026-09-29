@@ -38,6 +38,7 @@ extern "C" {
 #include "px_terrain.h"            // px.terrain, shared with luasim
 #include "px_snapshot.h"           // px.save, px.restore, shared with luasim
 #include "px_raster.h"             // put, blend, glow, fade, blur, mode, shared with luasim
+#include "px_layer.h"              // palette, pal, layer, capture, show, scroll, mirror, shared with luasim
 #include "lua_fx.h"                // LuaFx::charge
 
 #define W LUA_PX_W
@@ -287,6 +288,24 @@ static int l_blur(lua_State *L) {
 }
 static int l_mode(lua_State *L) { return px_mode_lua(L, &s_add); }
 
+// Palettes and layers (px_layer.h). The whole-canvas passes are charged a
+// third of an instruction a pixel: our estimate until the panel measures them.
+static int l_palette(lua_State *L) { LuaFx::charge(L, 256); return px_palette_lua(L); }
+static int l_pal(lua_State *L) { return px_pal_lua(L); }
+static int l_layer(lua_State *L) { LuaFx::charge(L, W * H / 8); return px_layer_lua(L, W, H); }
+#define PXL_PASS(name, fn)                                     \
+  static int name(lua_State *L) {                              \
+    unsigned long work = 0;                                    \
+    const int n = fn(L, canvasOf(L)->rgb, W, H, &work);        \
+    LuaFx::charge(L, (uint32_t)(work / 3));                    \
+    return n;                                                  \
+  }
+PXL_PASS(l_capture, px_capture_lua)
+PXL_PASS(l_show, px_show_lua)
+PXL_PASS(l_scroll, px_scroll_lua)
+PXL_PASS(l_mirror, px_mirror_lua)
+#undef PXL_PASS
+
 // A sample of the ground costs about what a Lua instruction does on the panel
 // (100-odd cycles), so each one is charged as one: the frame's instruction
 // budget and its deadline see the native work too.
@@ -339,6 +358,8 @@ static const luaL_Reg kPxLib[] = {
   {"text", l_text}, {"width", l_width}, {"terrain", l_terrain},
   {"save", l_save}, {"restore", l_restore}, {"grab", l_grab}, {"blit", l_blit},
   {"button", l_button}, {"fade", l_fade}, {"blur", l_blur}, {"mode", l_mode},
+  {"palette", l_palette}, {"pal", l_pal}, {"layer", l_layer}, {"capture", l_capture},
+  {"show", l_show}, {"scroll", l_scroll}, {"mirror", l_mirror},
   {NULL, NULL}
 };
 

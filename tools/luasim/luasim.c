@@ -237,6 +237,16 @@ static int l_fade(lua_State *L) { unsigned long work; return px_fade_lua(L, fb, 
 static int l_blur(lua_State *L) { unsigned long work; return px_blur_lua(L, fb, W, H, &work); }
 static int l_mode(lua_State *L) { return px_mode_lua(L, &g_add); }
 
+/* palette, pal, layer, capture, show, scroll, mirror: one code with the firmware */
+#include "../../src/lua/px_layer.h"
+static int l_palette(lua_State *L) { return px_palette_lua(L); }
+static int l_pal(lua_State *L)     { return px_pal_lua(L); }
+static int l_layer(lua_State *L)   { return px_layer_lua(L, W, H); }
+static int l_capture(lua_State *L) { unsigned long work; return px_capture_lua(L, fb, W, H, &work); }
+static int l_show(lua_State *L)    { unsigned long work; return px_show_lua(L, fb, W, H, &work); }
+static int l_scroll(lua_State *L)  { unsigned long work; return px_scroll_lua(L, fb, W, H, &work); }
+static int l_mirror(lua_State *L)  { unsigned long work; return px_mirror_lua(L, fb, W, H, &work); }
+
 #include "../../src/lua/px_terrain.h"   /* px.terrain, shared with the firmware */
 #include "../../src/lua/px_snapshot.h"  /* px.save, px.restore, shared with the firmware */
 static int l_save(lua_State *L)    { return px_save_lua(L, fb, sizeof(fb)); }
@@ -256,6 +266,8 @@ static const luaL_Reg px_lib[] = {
   {"text", l_text}, {"width", l_width}, {"terrain", l_terrain},
   {"save", l_save}, {"restore", l_restore}, {"grab", l_grab}, {"blit", l_blit},
   {"button", l_button}, {"fade", l_fade}, {"blur", l_blur}, {"mode", l_mode},
+  {"palette", l_palette}, {"pal", l_pal}, {"layer", l_layer}, {"capture", l_capture},
+  {"show", l_show}, {"scroll", l_scroll}, {"mirror", l_mirror},
   {NULL, NULL}
 };
 

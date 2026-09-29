@@ -1184,6 +1184,26 @@ async def effect_api() -> str:
                           "canvas (saturating at 255) instead of overwriting it; "
                           "blend, glow and blit are not affected. Each script starts "
                           "in 'set'. nil on older firmware: rawget(px, \"mode\").",
+            "px.palette(stops) / px.palette{'cos',a,b,c,d}": "firmware 2.7.4+. -> a "
+                                "768-byte string, 256 RGB colours. stops = {{pos,r,g,b},...}, "
+                                "pos 0..255 rising, interpolated; or iq's cosine palette "
+                                "a+b*cos(2pi(c*t+d)), a,b,c,d each {r,g,b} in 0..1 terms. "
+                                "Cheap: rebuild every frame for drifting colour. "
+                                "src/lua/px_layer.h",
+            "px.pal(pal,i[,bri])": "firmware 2.7.4+. -> r,g,b of colour i (wrapped), "
+                                   "scaled by bri 0..1",
+            "px.layer([v])": "firmware 2.7.4+. -> an 8-bit layer the canvas's size "
+                             "(8 KB of heap); L:set(x,y,v), L:get(x,y), L:fill(v)",
+            "px.capture(L)": "firmware 2.7.4+. The canvas into L, each pixel's "
+                             "brightest channel",
+            "px.show(L,pal[,offset[,bri[,mode]]])": "firmware 2.7.4+. L onto the canvas "
+                             "through pal, colour (v+offset)&255, scaled by bri; mode "
+                             "'set', 'add', 'max' or 'skip0' (0 transparent). Step offset "
+                             "each frame: palette cycling. kaleidoscope.lua",
+            "px.scroll(dx,dy[,wrap])": "firmware 2.7.4+. The canvas moved by whole "
+                             "pixels; black comes in, or with wrap what went out",
+            "px.mirror(m)": "firmware 2.7.4+. 'h' left half onto the right, 'v' top "
+                            "onto the bottom, 'hv' top-left quarter onto all four",
             "px.save() / px.restore()": "firmware 2.6.6+. The canvas put aside (one "
                                         "copy, 24 KB of the effect's heap) and back; "
                                         "restore -> true, or false if nothing was saved. "

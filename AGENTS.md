@@ -869,6 +869,12 @@ What follows from that:
   spread (5 ms), and `px.mode("add")` so overlapping light adds up. On older
   firmware they are nil: take them with `rawget(px, "fade")` and keep a
   fallback, as `cannes.lua` does.
+- Colour through a palette instead of computing it a pixel at a time: build a
+  field once into a `px.layer`, then each frame one `px.show(L, pal, offset)`
+  paints the canvas through a `px.palette`; stepping `offset` is palette
+  cycling. `px.scroll` and `px.mirror` move or fold the whole canvas in one
+  call. `kaleidoscope.lua` does a full-screen plasma this way at a few
+  thousand instructions a frame.
 - Paint what does not move once, at load or on the first frame. The canvas
   keeps it.
 - Redraw only what changes.
