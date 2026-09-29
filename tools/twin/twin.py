@@ -12,8 +12,10 @@ as on the panel.
       without it the run is headless and as fast as the Mac allows. --fresh starts from an erased
       chip written with the image, like a new board.
   twin.py flash IMAGE [--at OFFSET]
-      write an image into the twin's flash, as esptool write_flash would: a full image
-      (firmware-vX-waveshare.bin) at 0x0, an app image (firmware.bin, OTA_ONLY_...) at 0x10000.
+      write an image into the twin's flash, as `pio run -t upload` would: a full image
+      (firmware-vX-waveshare.bin) at 0x0; an app image (firmware.bin, OTA_ONLY_...) at 0x10000 with
+      otadata set back to app0 (boot_app0.bin), so it boots even after an OTA put the twin on app1.
+      Anything else (bootloader.bin, partitions.bin) needs --at, as esptool always does.
   twin.py wifi SSID PASSWORD
       provision Wi-Fi at the next boot the way a person does: an Improv-Serial packet on the USB
       console, which the firmware's own Improv code takes. The virtual AP uses the same pair.
@@ -23,7 +25,7 @@ as on the panel.
 Paths (override with the environment): TWIN_HOME (~/twin) holds the engine, the ROM, the flash
 file and the default image.
 """
-import argparse, os, shutil, subprocess, sys
+import argparse, binascii, os, subprocess, sys
 
 HOME = os.path.expanduser(os.environ.get("TWIN_HOME", "~/twin"))
 ENGINE = os.path.join(HOME, "esp32sim")
@@ -44,6 +46,55 @@ FLASH_ID = "c28039"
 # Locally administered (bit 1 of the first byte set, IEEE 802 §8.4), so it can belong to no
 # vendor's device; 54 57 49 4E is "TWIN" in ASCII.
 MAC = "02:54:57:49:4E:01"
+# Where an app image goes: ESP32_APP_OFFSET, app0 in this build's partition table (tools/flash/README.md).
+APP0 = 0x10000
+# esp_app_desc_t.magic_word, ESP_APP_DESC_MAGIC_WORD (IDF 4.4 esp_app_format.h), at 0x20 of an app
+# image: after the 24-byte image header and the first 8-byte segment header
+# (bootloader_common_get_partition_description). A bootloader image has no app descriptor.
+APP_DESC_MAGIC = (0xABCD5432).to_bytes(4, "little")
+
+
+def _boot_app0() -> bytes:
+    """otadata as `pio run -t upload` writes it at 0xe000 (tools/flash/README.md:62, 70, 77):
+    framework-arduinoespressif32 tools/partitions/boot_app0.bin, sha256 f94c5d78..., the same 8 KiB
+    as merged.bin's 0xe000. Entry 0: ota_seq 1, label and state blank, crc = crc32_le(UINT32_MAX,
+    seq) (IDF 4.4 bootloader_common_ota_select_crc); entry 1, the second sector: ota_seq 0, crc
+    blank, so not valid. The bootloader therefore starts ota_{(1 - 1) % 2} = app0."""
+    seq = (1).to_bytes(4, "little")
+    e0 = seq + b"\xff" * 24 + binascii.crc32(seq, 0xFFFFFFFF).to_bytes(4, "little")
+    return e0 + b"\xff" * (0x1000 - 32) + b"\0" * 4 + b"\xff" * (0x1000 - 4)
+
+
+BOOT_APP0 = _boot_app0()
+
+
+def partitions(head: bytes):
+    """The partition table at 0x8000: esp_partition_info_t, 32 bytes each (magic AA 50, type, subtype,
+    offset, size, label[16], flags; IDF 4.4 esp_flash_partitions.h), up to 0xC00 bytes
+    (ESP_PARTITION_TABLE_MAX_LEN), ended by the MD5 entry (EB EB) or blank flash.
+    Returns (type, subtype, offset, size, label) tuples."""
+    out = []
+    for i in range(0x8000, 0x8C00, 32):
+        e = head[i:i + 32]
+        if e[:2] != b"\xaa\x50":
+            break
+        out.append((e[2], e[3], int.from_bytes(e[4:8], "little"), int.from_bytes(e[8:12], "little"),
+                    e[12:28].split(b"\0")[0].decode("ascii", "replace")))
+    return out
+
+
+def boot_slot(otadata: bytes, apps: int) -> int:
+    """The OTA slot the IDF 4.4 bootloader starts (bootloader_utility.c): of the two otadata entries
+    (one per 4 KiB sector), the valid one - ota_seq not blank, ota_state not INVALID (3) or ABORTED
+    (4), crc right (bootloader_common_ota_select_valid) - with the highest ota_seq picks
+    ota_{(seq - 1) % apps}. With neither valid it tries ota_0 (this layout has no factory app)."""
+    best = None
+    for k in (0, 0x1000):
+        e = otadata[k:k + 32]
+        seq, state, crc = (int.from_bytes(e[o:o + 4], "little") for o in (0, 24, 28))
+        if seq != 0xFFFFFFFF and state not in (3, 4) and crc == binascii.crc32(e[:4], 0xFFFFFFFF):
+            best = seq if best is None else max(best, seq)
+    return 0 if best is None else (best - 1) % apps
 
 
 def improv_hex(ssid: str, password: str) -> str:
@@ -97,7 +148,15 @@ def cmd_run(a, extra):
 
 def cmd_flash(a, _):
     data = open(a.image, "rb").read()
-    at = int(a.at, 0) if a.at else (0x0 if data[:1] == b"\xe9" and len(data) > 0x10000 and data[0x8000:0x8002] == b"\xaa\x50" else 0x10000)
+    if a.at:
+        at = int(a.at, 0)
+    elif data[:1] == b"\xe9" and len(data) > 0x10000 and data[0x8000:0x8002] == b"\xaa\x50":
+        at = 0x0                  # a merged image: bootloader, partition table, otadata and app
+    elif data[:1] == b"\xe9" and data[0x20:0x24] == APP_DESC_MAGIC:
+        at = APP0                 # an app image
+    else:
+        sys.exit(f"{a.image}: neither a merged image nor an app image, so give its address with --at, as esptool "
+                 "needs: in this build's merged.bin the bootloader is at 0x0 and the partition table at 0x8000")
     if not os.path.exists(FLASH):
         sys.exit("no twin flash yet: run the twin once (it creates it), or pass --fresh to run")
     size = os.path.getsize(FLASH)
@@ -106,7 +165,26 @@ def cmd_flash(a, _):
     with open(FLASH, "r+b") as f:
         f.seek(at)
         f.write(data)
-    print(f"wrote {len(data)} bytes at {at:#x} into {FLASH}")
+        print(f"wrote {len(data)} bytes at {at:#x} into {FLASH}")
+        f.seek(0)
+        table = partitions(f.read(0x8C00))
+        apps = sorted((p for p in table if p[0] == 0 and 0x10 <= p[1] <= 0x1F), key=lambda p: p[1])   # ota_0..
+        ota = next((p for p in table if p[0] == 1 and p[1] == 0), None)
+        slot = next((i for i, p in enumerate(apps) if p[2] == at), None)
+        if ota is None or slot is None:
+            return
+        if slot == 0 and ota[3] >= len(BOOT_APP0):
+            # pio upload writes boot_app0.bin with every app: after an OTA (app1 selected) an app
+            # written to app0 alone would never run (tools/flash/README.md:77).
+            f.seek(ota[2])
+            f.write(BOOT_APP0)
+            print(f"otadata at {ota[2]:#x} set to boot {apps[0][4]} (boot_app0.bin, as pio upload writes it)")
+            return
+        f.seek(ota[2])
+        active = boot_slot(f.read(0x2000), len(apps))
+        if active != slot:
+            print(f"note: otadata still starts {apps[active][4]}; this image in {apps[slot][4]} runs only once "
+                  "an OTA selects it", file=sys.stderr)
 
 
 def cmd_wifi(a, _):
