@@ -12,26 +12,25 @@
 -- the beam in the air becomes a flickering fan.
 --
 -- Every 5 s the wall says the next thing: the time, the day of the week, the
--- date, the temperature outside, the city in Russian and Cannes - each in its own colour of the
+-- date, the temperature outside and КАННЫ - each in its own colour of the
 -- RGB laser, the temperature's going from ice blue to red with the reading.
--- A screen with nothing to say (no weather set up in the portal, no home city
--- on the world clock) is skipped. While the time is up, a digit that changes
+-- The temperature is skipped while the panel has no weather (off in the
+-- portal, or not fetched yet). While the time is up, a digit that changes
 -- goes dark and is written again. The colon blinks. The button changes the
 -- laser: each screen its colour, then green, red, blue, violet, then a colour
 -- a character.
 --
 -- The digits are true arcs and strokes; the letters come from the panel's
 -- own 5x7 system font, Latin and Cyrillic, read at load and joined into
--- strokes. The weather is the weather clock's (px.weather), the city the
--- world clock's home (px.city).
+-- strokes. The weather is the weather clock's (px.weather).
 --
 -- The glow: lines are drawn in px.mode("add"), the wall around the writing
 -- softened with px.blur, and the hot core drawn again over it. The wall and
 -- the projector are drawn once and px.restore()d each frame.
 --
 -- Needs firmware 2.7.4 or later for the glow (px.mode, px.blur), the
--- temperature (px.weather) and the city (px.city); without them it is flatter
--- and skips those two screens.
+-- temperature (px.weather); without them it is flatter and skips the
+-- temperature.
 -- ============================================================
 PERIOD = 600.0
 FPS = 15
@@ -303,7 +302,7 @@ local LASERS = {
 }
 local RAINBOW = { { 255, 40, 60 }, { 255, 170, 30 }, { 255, 255, 120 }, { 40, 255, 90 }, { 60, 200, 255 }, { 170, 80, 255 } }
 local SCREEN_COL = { time = { 40, 255, 70 }, day = { 40, 210, 255 }, date = { 255, 185, 40 },
-                     city = { 255, 60, 200 }, cannes = { 255, 120, 40 }, temp = { 255, 255, 255 } }
+                     cannes = { 255, 120, 40 }, temp = { 255, 255, 255 } }
 local colour = 0                      -- 0: each screen its own
 local screenCol = SCREEN_COL.time
 local function temp_colour(t)
@@ -459,27 +458,10 @@ end
 
 -- ---------------------------------------------------------------- screens
 -- Each 5 s the wall says the next thing: the time, the day, the date, the
--- temperature outside, the city. A screen with nothing to say (no weather
--- set up, no home city) is skipped.
+-- temperature outside, Cannes. The temperature is skipped while the panel
+-- has no weather.
 local DAYS = { "\208\146\208\158\208\161\208\154\208\160\208\149\208\161\208\149\208\157\208\172\208\149", "\208\159\208\158\208\157\208\149\208\148\208\149\208\155\208\172\208\157\208\152\208\154", "\208\146\208\162\208\158\208\160\208\157\208\152\208\154",
                "\208\161\208\160\208\149\208\148\208\144", "\208\167\208\149\208\162\208\146\208\149\208\160\208\147", "\208\159\208\175\208\162\208\157\208\152\208\166\208\144", "\208\161\208\163\208\145\208\145\208\158\208\162\208\144" }
--- The city in Russian: the world clock's built-in cities and the owner's,
--- then a few more a home might be; any other name is shown as the world clock
--- prints it.
-local RU_CITY = {
-  ["CANNES"] = "КАННЫ", ["MOSCOW"] = "МОСКВА", ["NEW YORK"] = "НЬЮ-ЙОРК", ["LONDON"] = "ЛОНДОН",
-  ["DUBAI"] = "ДУБАЙ", ["ALMATY"] = "АЛМАТЫ", ["GUILDFORD"] = "ГИЛФОРД",
-  ["NICE"] = "НИЦЦА", ["MONACO"] = "МОНАКО", ["ANTIBES"] = "АНТИБ", ["PARIS"] = "ПАРИЖ",
-  ["SAINT PETERSBURG"] = "ПЕТЕРБУРГ", ["ST PETERSBURG"] = "ПЕТЕРБУРГ", ["BERLIN"] = "БЕРЛИН",
-  ["ROME"] = "РИМ", ["MILAN"] = "МИЛАН", ["MADRID"] = "МАДРИД", ["BARCELONA"] = "БАРСЕЛОНА",
-  ["VIENNA"] = "ВЕНА", ["PRAGUE"] = "ПРАГА", ["GENEVA"] = "ЖЕНЕВА", ["ZURICH"] = "ЦЮРИХ",
-  ["AMSTERDAM"] = "АМСТЕРДАМ", ["ISTANBUL"] = "СТАМБУЛ", ["TOKYO"] = "ТОКИО",
-  ["SINGAPORE"] = "СИНГАПУР", ["HONG KONG"] = "ГОНКОНГ", ["LOS ANGELES"] = "ЛОС-АНДЖЕЛЕС",
-  ["MIAMI"] = "МАЙАМИ", ["TEL AVIV"] = "ТЕЛЬ-АВИВ", ["KYIV"] = "КИЕВ", ["MINSK"] = "МИНСК",
-  ["TBILISI"] = "ТБИЛИСИ", ["YEREVAN"] = "ЕРЕВАН", ["TASHKENT"] = "ТАШКЕНТ", ["ASTANA"] = "АСТАНА",
-  ["SOCHI"] = "СОЧИ", ["KAZAN"] = "КАЗАНЬ", ["WOKING"] = "УОКИНГ",
-}
-
 local function ymd(now)
   local y, d = now.year, now.yday + 1
   local leap = (y % 4 == 0 and y % 100 ~= 0) or y % 400 == 0
@@ -510,17 +492,7 @@ local SCREENS = {
       local n = floor(t + 0.5)
       return (n > 0 and "+" or "") .. n .. "\194\176" .. (w.fahrenheit and "F" or "C"), temp_colour(w.temp)
     end },
-  { key = "city", make = function()
-      local c = rawget(px, "city") and px.city()
-      if not c or c == "" then return nil end
-      return RU_CITY[c] or c, SCREEN_COL.city
-    end },
-  -- and Cannes, the owner's other city, unless it is home already
-  { key = "cannes", make = function()
-      local c = rawget(px, "city") and px.city()
-      if c == "CANNES" then return nil end
-      return "КАННЫ", SCREEN_COL.cannes
-    end },
+  { key = "cannes", make = function() return "КАННЫ", SCREEN_COL.cannes end },
 }
 
 function draw()
