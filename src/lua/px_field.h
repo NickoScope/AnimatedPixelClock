@@ -166,7 +166,8 @@ static int pxn_step(int32_t sc) {
 
 // What a call costs, in Lua instructions, by the panel's measurements
 // (2026-09-29, 410 ns an instruction): a noise sample 8, a pixel of a sin
-// term 1.1, of the interpolated noise sum 1; ring and ray are estimates (3).
+// term 1.1, of a ring or a ray 3.3 (11 ms a whole-screen term), an octave's
+// interpolation 0.9 a pixel (3 octaves at scale 0.035: 20 ms).
 // charge (may be NULL) is told before the work, so a call that would run past
 // the frame's budget or deadline is refused before it starts.
 typedef void (*PxfCharge)(lua_State *L, unsigned long instructions);
@@ -180,6 +181,7 @@ static int px_field_lua(lua_State *L, int w, int h, unsigned long *work, PxfChar
   const int base = (int)(!(basen == basen) ? 128 : basen < -1024 ? -1024 : basen > 1024 ? 1024 : basen);
   *work = 0;
   if (l->w != w || l->h != h) return luaL_error(L, "px.field: the layer is not the canvas's size");
+  if (w > 256) return luaL_error(L, "px.field: a canvas over 256 wide");   // colG holds x/g in a byte
   const int n = (int)lua_rawlen(L, 2);
   if (n > 8) return luaL_error(L, "px.field: at most 8 terms");
   PxfTerm T[8];
@@ -231,17 +233,17 @@ static int px_field_lua(lua_State *L, int w, int h, unsigned long *work, PxfChar
   int noiseTerms = 0;
   for (int i = 0; i < n; i++) {
     if (T[i].kind == 0) cost += (unsigned long)w * h * 11 / 10;
-    else if (T[i].kind <= 2) cost += (unsigned long)w * h * 3;
+    else if (T[i].kind <= 2) cost += (unsigned long)w * h * 33 / 10;
     else {
       noiseTerms++;
       int32_t sc = T[i].a;
       for (int o = 0; o < T[i].oct; o++, sc <<= 1) {
         const int g = pxn_step(sc);
         cost += (unsigned long)((w - 1) / g + 2) * (unsigned long)((h - 1) / g + 2) * 8;
+        cost += (unsigned long)w * h * 9 / 10;           // its interpolation over every pixel
       }
     }
   }
-  if (noiseTerms) cost += (unsigned long)w * h;
   if (charge) charge(L, cost);
   *work = cost;
 
@@ -250,8 +252,11 @@ static int px_field_lua(lua_State *L, int w, int h, unsigned long *work, PxfChar
   int32_t *nsum = 0;
   if (noiseTerms) {
     const int gwMax = (w - 1) + 2, ghMax = (h - 1) + 2;
-    nsum = pxn_scratch(L, ((size_t)w * h + (size_t)gwMax * ghMax) * sizeof(int32_t));
+    // the sum, one octave's grid, and two column tables (bytes), all in the heap:
+    // the effect task's stack has no room to spare
+    nsum = pxn_scratch(L, ((size_t)w * h + (size_t)gwMax * ghMax) * sizeof(int32_t) + 2 * (size_t)w);
     int32_t *grid = nsum + w * h;
+    unsigned char *colG = (unsigned char *)(grid + gwMax * ghMax), *colF = colG + w;
     memset(nsum, 0, (size_t)w * h * sizeof(int32_t));
     for (int i = 0; i < n; i++) {
       const PxfTerm *q = &T[i];
@@ -269,12 +274,14 @@ static int px_field_lua(lua_State *L, int w, int h, unsigned long *work, PxfChar
             const int32_t ny = (int32_t)(((int64_t)gy * g * sc) & 0x7FFFFFFF);
             grid[gy * gw + gx] = (int32_t)(((int64_t)pxn_noise3(nx, ny, zz) * amp) >> 16);   // Q15
           }
+        // where each column falls on the grid, once an octave, not a division a pixel
+        for (int x = 0; x < w; x++) { colG[x] = (unsigned char)(x / g); colF[x] = (unsigned char)(((x % g) << 8) / g); }
         for (int y = 0; y < h; y++) {
           const int gy = y / g, fy = ((y - gy * g) << 8) / g;
           const int32_t *r0 = &grid[gy * gw], *r1 = r0 + gw;
           int32_t *acc = &nsum[y * w];
           for (int x = 0; x < w; x++) {
-            const int gx = x / g, fx = ((x - gx * g) << 8) / g;
+            const int gx = colG[x], fx = colF[x];
             const int32_t top = r0[gx] + (((r0[gx + 1] - r0[gx]) * fx) >> 8);
             const int32_t bot = r1[gx] + (((r1[gx + 1] - r1[gx]) * fx) >> 8);
             const int32_t v = top + (((bot - top) * fy) >> 8);
