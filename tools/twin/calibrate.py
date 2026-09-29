@@ -90,7 +90,8 @@ class Twin:
     def wait_reports(self, effect, after, n=2, limit=900):
         t0 = time.time()
         while time.time() - t0 < limit:
-            got = [r for r in self.reports()[after:] if r[0] == effect]
+            key = effect.replace(" ", "_")   # the log names an effect by its id: spaces become _
+            got = [r for r in self.reports()[after:] if r[0].replace(" ", "_") == key]
             if len(got) >= n:
                 return got[n - 1]
             time.sleep(3)
@@ -109,6 +110,9 @@ def run(name, port, out, results):
     res = {"config": name, "flags": flags(name), "scenes": [], "oceanarium": None}
     try:
         t.wait_up()
+        # A fresh chip's defaults run the carousel (15 s a page), which would take the effect off
+        # the screen before its 30-second report; the owner's panel has it off.
+        t.post("/api/panel", {"carousel": {"enabled": False}})
         t.post("/api/panel", {"show": {"page": 0}}); time.sleep(2)
         effects = json.loads(t.get("/api/lua"))["effects"]
         if not any("KINETIC" in e for e in effects):
@@ -140,7 +144,7 @@ def run(name, port, out, results):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--configs", default="cpi1,cpi2,cpi3,approx40")
+    ap.add_argument("--configs", default="cpi1,cpi2,approx40,approx100")
     ap.add_argument("--out", default=os.path.join(HOME, "calibration"))
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)

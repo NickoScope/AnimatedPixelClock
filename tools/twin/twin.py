@@ -74,6 +74,20 @@ def cmd_run(a, extra):
         args += ["--max-seconds", str(a.seconds)]
     if a.png:
         args += ["--tft-png", a.png]
+    if a.cpi:
+        args += ["--cpi", a.cpi]
+    if a.web and a.open:
+        # Open the page once the engine's web server answers (macOS `open`).
+        import threading, time, urllib.request
+        def opener():
+            for _ in range(60):
+                try:
+                    urllib.request.urlopen(f"http://127.0.0.1:{a.web}/panel.html", timeout=1); break
+                except Exception:
+                    time.sleep(0.5)
+            subprocess.run(["open", f"http://127.0.0.1:{a.web}/panel.html"])
+        threading.Thread(target=opener, daemon=True).start()
+        sys.exit(subprocess.call(args + extra))
     os.execv(EXE, args + extra)
 
 
@@ -116,6 +130,9 @@ def main():
     r.add_argument("--web", type=int)
     r.add_argument("--seconds", type=float)
     r.add_argument("--png")
+    r.add_argument("--open", action="store_true", help="with --web, open the panel page in the browser")
+    r.add_argument("--cpi", default="2.45", help="cycles per instruction; 2.45 matches the panel's Lua draw times "
+                   "(calibrate.py: 10 scenes, validate.py: 3 held out, within about 16%%); 1 = the engine's full speed")
     r.add_argument("--fresh", action="store_true")
     r.add_argument("--provision", action="store_true", help="send the Wi-Fi pair over Improv at boot")
     r.add_argument("--http", type=int, default=8080, help="the twin's port 80 on 127.0.0.1 (default 8080)")
