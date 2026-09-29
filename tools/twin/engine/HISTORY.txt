@@ -37,3 +37,4 @@ a9350e9 USB-Serial/JTAG host end: lossless /usj channel, DTR/RTS resets, RFC 221
 6bf1a9c panel.html: a link to the twin's web flasher, and a chip while it holds the USB port
 7a88776 panel.html: the GOB glow is off by default and the look is remembered
 37f85bb web: a page opened during flashing sees the USB port taken
+980c70b web: a path ending in '/' serves that directory's index.html (/flasher/ opens the flasher)

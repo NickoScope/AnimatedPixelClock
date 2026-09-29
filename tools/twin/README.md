@@ -89,7 +89,7 @@ Verified with the real v2.7.3 image, unmodified (2026-09-29):
 ```
 tools/twin/twin.py wifi NickoTwin twin-demo-2026   # виртуальная точка: её предложит Improv
 tools/twin/twin.py run --blank --web 8790          # новый чип, пустой (ROM: invalid header); старый flash.bin уходит в state/backup/
-#   http://127.0.0.1:8790/flasher/index.html → Connect → «Двойник» → Install AnimatedPixelClock
+#   http://127.0.0.1:8790/flasher/ → Connect → «Двойник» → Install AnimatedPixelClock
 #   → Erase device → Install; затем Configure Wi-Fi: NickoTwin и пароль из `twin.py wifi`
 tools/twin/twin.py verify                          # flash двойника = образ вне data-разделов?
 python3 tools/twin/flasher/check_flasher.py --port 8790   # без человека: headless Chrome

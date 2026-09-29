@@ -3354,7 +3354,7 @@ index 0000000..647da36
 +    }
 +}
 diff --git a/esp-soc/src/web.rs b/esp-soc/src/web.rs
-index cc629f8..4f4ce1a 100644
+index cc629f8..a5899f5 100644
 --- a/esp-soc/src/web.rs
 +++ b/esp-soc/src/web.rs
 @@ -1,5 +1,37 @@
@@ -3432,7 +3432,19 @@ index cc629f8..4f4ce1a 100644
  }
  
  /// The value of HTTP header `name` in a request head. Header names are case-insensitive
-@@ -192,10 +228,17 @@ fn handle_client(mut stream: TcpStream, shared: Arc<Mutex<Shared>>) {
+@@ -180,7 +216,10 @@ fn handle_client(mut stream: TcpStream, shared: Arc<Mutex<Shared>>) {
+     let Some(key) = key else {
+         // plain HTTP: serve a file
+         let path = text.split_whitespace().nth(1).unwrap_or("/").split('?').next().unwrap_or("/");
+-        let path = if path == "/" { "/run.html" } else { path };
++        // A path ending in '/' is its directory's index.html, as web servers do: /flasher/ opens the
++        // twin's web flasher (twin.py builds it there).
++        let dir_index;
++        let path = if path == "/" { "/run.html" } else if path.ends_with('/') { dir_index = format!("{path}index.html"); dir_index.as_str() } else { path };
+         let web_dir = shared.lock().unwrap().web_dir.clone();
+         let body = static_file(&web_dir, path);
+         let ctype = content_type(path);
+@@ -192,10 +231,17 @@ fn handle_client(mut stream: TcpStream, shared: Arc<Mutex<Shared>>) {
          let _ = http_response(&mut stream, "403 Forbidden", "text/plain", b"foreign Origin denied");
          return;
      }
@@ -3450,7 +3462,7 @@ index cc629f8..4f4ce1a 100644
      let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(256);
      let hello = {
          let mut sh = shared.lock().unwrap();
-@@ -210,28 +253,97 @@ fn handle_client(mut stream: TcpStream, shared: Arc<Mutex<Shared>>) {
+@@ -210,28 +256,97 @@ fn handle_client(mut stream: TcpStream, shared: Arc<Mutex<Shared>>) {
      });
      // read loop
      // A TCP read may have included the first frame after the HTTP head.
