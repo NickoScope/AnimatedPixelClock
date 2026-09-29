@@ -375,7 +375,8 @@ The loop, which needs a panel only at the very end:
 
 ```
 effect_api      → the whole drawing API and every budget (px.save/restore,
-                  px.grab/blit sprites, px.button, px.terrain included)
+                  px.grab/blit sprites, px.button, px.terrain, and since
+                  2.7.4 px.fade, px.blur and px.mode("add") included)
 effect_write    → tools/luasim/scripts/<name>.lua
 effect_preview  → luasim + render.py → a GIF you can look at
 effect_check    → fx_parity.py: the firmware's real runtime and real budgets

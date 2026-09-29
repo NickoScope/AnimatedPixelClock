@@ -862,7 +862,13 @@ includes the Lua loop around the call):
 | `px.terrain` (2.6.3, native) | not measured on the panel yet | a whole 3D view in one call; each ground sample is charged to the frame's budget as one instruction |
 
 What follows from that:
-- Never do a per-pixel pass with `blend` or `glow` every frame.
+- Never do a per-pixel pass with `blend` or `glow` every frame. For a
+  whole-canvas or whole-box pass use the one-call helpers of 2.7.4
+  (`src/lua/px_raster.h`): `px.fade(a[,r,g,b[,x,y,w,h]])` for trails, smoke and
+  a fading sky (2.2 ms the whole canvas), `px.blur(a[,x,y,w,h])` for a soft
+  spread (5 ms), and `px.mode("add")` so overlapping light adds up. On older
+  firmware they are nil: take them with `rawget(px, "fade")` and keep a
+  fallback, as `cannes.lua` does.
 - Paint what does not move once, at load or on the first frame. The canvas
   keeps it.
 - Redraw only what changes.
