@@ -491,6 +491,22 @@ upload `OTA_ONLY_firmware-v<version>-waveshare.bin`. Do not upload the full
 table and belongs at `0x0` over USB. Downloads can be checked against
 `SHA256SUMS.txt`.
 
+## Virtual twin
+
+The real firmware image, unchanged, running on a Mac: an emulated ESP32-S3 and a model of the
+128x64 HUB75 panel. It shows on screen what the LEDs would show. It takes the IR remote and the
+knob at pin level, so the firmware decodes them itself. It joins Wi-Fi (a virtual access point, or
+your home network through a bridge), serves the web portal and API, runs Lua effects, updates
+over OTA, and can be flashed from the web flasher like a new board. Use it to try a build or an
+effect before it goes to the panel.
+
+- The emulator: [NickoScope/TWIN-NickoScopeMatrix-64x128](https://github.com/NickoScope/TWIN-NickoScopeMatrix-64x128),
+  our fork of [esp32sim](https://github.com/joakimeriksson/esp32sim) by Joakim Eriksson (MIT),
+  branch `nickoscope/twin`.
+- How to set it up and run it: [`tools/twin/README.md`](tools/twin/README.md).
+- What it matches and what it cannot (cycle timing, the radio, the look of the LEDs): the
+  "Known differences" section there.
+
 ## HTTP control API
 
 Simple GET endpoints for home automation (Home Assistant, Node-RED, cron + curl).
