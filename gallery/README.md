@@ -449,6 +449,18 @@ It never settles because those two numbers keep moving: they travel slowly from 
 
 ---
 
+## SOLIDS
+
+![Solids](preview/solids.png)
+
+The Platonic solids turning among slow stars: a tetrahedron, a cube, an octahedron and an icosahedron, one at a time, each on a spin that wanders. They are shown as a lit solid, as a wireframe with anti-aliased edges, or as both.
+
+Every 20 seconds the solid on screen reshapes itself into the next one. All of them share one skin, a sphere of 162 points; for each solid every point is carried out along its ray to that solid's surface, with the corners kept sharp. At a change each point slides from the old shape to the new one, so a tetrahedron swells and settles into a cube, and when it has arrived the new solid takes on its own edges. Behind it a field of stars drifts at fractions of a pixel a frame, each star an anti-aliased dot, so it glides instead of stepping. The button brings the next solid at once.
+
+**How it is drawn.** The firmware turns, projects, depth-sorts, lights and draws each solid in one call (px.model once, px.mesh a frame); the script only decides where it points. It needs firmware 2.7.6 or later. On the panel it runs at 15 fps, about 6 ms a frame.
+
+---
+
 ## Adding one
 
 The loop, and only the last step needs a panel:

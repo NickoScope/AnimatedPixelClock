@@ -192,6 +192,14 @@
       "preview": "preview/snooker_clock.png"
     },
     {
+      "stem": "solids",
+      "name": "SOLIDS",
+      "file": "solids.lua",
+      "line": "the Platonic solids turning among slow stars",
+      "bytes": 10701,
+      "preview": "preview/solids.png"
+    },
+    {
       "stem": "sotd_0923_evening",
       "name": "SOTD_0923_EVENING",
       "file": "sotd_0923_evening.lua",
