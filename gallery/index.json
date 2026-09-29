@@ -200,6 +200,14 @@
       "line": "HH:MM that clears like completed lines and is rebuilt by falling tetrominoes.",
       "bytes": 9819,
       "preview": "preview/tetris_clock.png"
+    },
+    {
+      "stem": "vortex",
+      "name": "VORTEX",
+      "file": "vortex.lua",
+      "line": "light poured into a whirlpool that never ends",
+      "bytes": 4834,
+      "preview": "preview/vortex.png"
     }
   ]
 }
