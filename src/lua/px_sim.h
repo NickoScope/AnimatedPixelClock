@@ -188,12 +188,18 @@ static int pxrd_params_lua(lua_State *L) {
 // R:seed(x, y, r): B = 1 in a disc
 static int pxrd_seed(lua_State *L) {
   PxRD *r = pxrd_check(L);
-  const lua_Integer cx = luaL_checkinteger(L, 2), cy = luaL_checkinteger(L, 3), rad = luaL_optinteger(L, 4, 3);
+  // taken modulo the field first, in 64 bits: the loop below then runs over at
+  // most 129 x 129 small numbers, whatever a script passes (near INT_MAX a
+  // 32-bit bound wrapped and the loop never ended on the panel)
+  const long long w = r->w, h = r->h;
+  const long long cx = (((long long)luaL_checkinteger(L, 2) % w) + w) % w;
+  const long long cy = (((long long)luaL_checkinteger(L, 3) % h) + h) % h;
+  const lua_Integer rad = luaL_optinteger(L, 4, 3);
   if (rad < 0 || rad > 64) return luaL_error(L, "reaction: a seed's radius is 0 to 64");
-  for (lua_Integer y = cy - rad; y <= cy + rad; y++)
-    for (lua_Integer x = cx - rad; x <= cx + rad; x++) {
-      if ((x - cx) * (x - cx) + (y - cy) * (y - cy) > rad * rad) continue;
-      const int xx = (int)(((x % r->w) + r->w) % r->w), yy = (int)(((y % r->h) + r->h) % r->h);
+  for (long long y = cy - rad; y <= cy + rad; y++)
+    for (long long x = cx - rad; x <= cx + rad; x++) {
+      if ((x - cx) * (x - cx) + (y - cy) * (y - cy) > (long long)rad * rad) continue;
+      const int xx = (int)(((x % w) + w) % w), yy = (int)(((y % h) + h) % h);
       r->b[yy * r->w + xx] = 4096;
       r->a[yy * r->w + xx] = 0;
     }
@@ -254,6 +260,7 @@ static int pxrd_clear(lua_State *L) {
 
 // px.reaction{f, k, da, db} -> R
 static int px_reaction_lua(lua_State *L, int w, int h, PxsCharge charge) {
+  if (!lua_isnoneornil(L, 1)) luaL_checktype(L, 1, LUA_TTABLE);
   const int t = lua_istable(L, 1) ? 1 : 0;
   const size_t cells = (size_t)w * h;
   PxRD *r = (PxRD *)lua_newuserdatauv(L, offsetof(PxRD, data) + 4 * cells * sizeof(int16_t), 0);
