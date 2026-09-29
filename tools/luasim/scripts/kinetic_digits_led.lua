@@ -727,7 +727,7 @@ local function new_body(x, y, vx, vy)
   return { mark = {}, litn = {}, litp = {}, fade = {}, np = 0, nf = 0, frame = 0,
            x = x, y = y, vx = vx, vy = vy, R = 16, Rt = 16, sp = 16, spt = 16,
            ax = 0.3, ay = 0.6, az = 0, wx = 0.3, wy = 0.6, wz = 0.1, wtx = 0.3, wty = 0.6, wtz = 0.1,
-           nextW = 0, nextR = 0, nextS = 0, V = {}, Z = {} }
+           nextW = 0, nextR = 0, nextS = 0, V = {}, Z = {}, lf = {}, lc = {} }
 end
 local CUBE, BALL = new_body(64, 32, 14, 9), new_body(50, 30, -12, 11)
 local function plasma_hue(x, y, i)
@@ -736,18 +736,18 @@ local function plasma_hue(x, y, i)
 end
 local CUBE_E = { { 0, 1 }, { 2, 3 }, { 4, 5 }, { 6, 7 }, { 0, 2 }, { 1, 3 }, { 4, 6 }, { 5, 7 },
                  { 0, 4 }, { 1, 5 }, { 2, 6 }, { 3, 7 } }
--- the ball's wires: six meridians and five parallels, 24 points round each
+-- the ball's wires: five meridians and three parallels, 16 points round each
 local SPH = {}
 do
-  local N = 24
-  for m = 0, 5 do
-    local ph = m * pi / 6
+  local N = 16
+  for m = 0, 4 do
+    local ph = m * pi / 5
     for k = 0, N do
       local th = k * 2 * pi / N
       SPH[#SPH + 1] = { sin(th) * cos(ph), cos(th), sin(th) * sin(ph), k > 0 }
     end
   end
-  for _, yv in ipairs({ -0.87, -0.5, 0, 0.5, 0.87 }) do
+  for _, yv in ipairs({ -0.62, 0, 0.62 }) do
     local rr0 = sqrt(1 - yv * yv)
     for k = 0, N do
       local th = k * 2 * pi / N
@@ -755,6 +755,8 @@ do
     end
   end
 end
+-- the lasers: four emitters on the ball (a tetrahedron), turning with it
+local EMIT = { { 0.577, 0.577, 0.577 }, { -0.577, -0.577, 0.577 }, { -0.577, 0.577, -0.577 }, { 0.577, -0.577, -0.577 } }
 
 -- What drifts: the spin (axis, sense, rate), the size, the speed; then one
 -- step of travel and turning.
@@ -828,13 +830,13 @@ local function walls(c, minX, maxX, minY, maxY, r)
   return px_, py_
 end
 
-local function plasma_tables(c, t)
+local function plasma_tables(c, t, rings)
   c.frame = c.frame + 1
   if c.frame % 2 == 1 then
     for x = 0, W - 1 do TA[x] = sin((x * 2 + 1) / 12 * 0.9 + t) end
     for y = 0, H - 1 do TB[y] = sin((y * 2 + 1) / 12 * 1.1 - t * 0.7) end
     for sxy = 0, W + H - 2 do TC[sxy] = sin((sxy * 2 + 2) / 12 * 0.6 + t * 0.5) end
-    for k = 0, 440 do TR[k] = sin(k / 20 * 1.2 - t * 1.3) end
+    if rings then for k = 0, 440 do TR[k] = sin(k / 20 * 1.2 - t * 1.3) end end
   end
 end
 
@@ -866,6 +868,103 @@ local function wire(c, x0, y0, x1, y1, k, nn)
   return nn
 end
 
+-- The ball's wire: one plasma colour a segment (they are short), kept per
+-- dot for the afterglow; stride 2 leaves the far side dotted.
+local function wire2(c, x0, y0, x1, y1, k, nn, stride)
+  local fr, MARKF, LITN, LF, LC = c.frame, c.mark, c.litn, c.lf, c.lc
+  local dx, dy = x1 - x0, y1 - y0
+  local steps = floor(max(abs(dx), abs(dy))) + 1
+  local mx, my = floor((x0 + x1) * 0.5 + 0.5), floor((y0 + y1) * 0.5 + 0.5)
+  if mx < 0 then mx = 0 elseif mx >= W then mx = W - 1 end
+  if my < 0 then my = 0 elseif my >= H then my = H - 1 end
+  local col = HFACE[floor((TA[mx] + TB[my] + TC[mx + my]) * 45 + T * 30) % 360]
+  local r = min(255, floor(((col >> 16) & 255) * k))
+  local g = min(255, floor(((col >> 8) & 255) * k))
+  local b = min(255, floor((col & 255) * k))
+  local ix, iy = dx / steps * stride, dy / steps * stride
+  local fx, fy = x0 + 0.5, y0 + 0.5
+  for s = 0, steps, stride do
+    local xx, yy = fx // 1, fy // 1
+    fx, fy = fx + ix, fy + iy
+    if xx >= 0 and xx < W and yy >= 0 and yy < H then
+      local i = yy * W + xx
+      local m = MARKF[i]
+      if m ~= fr then
+        local was = m == fr - 1
+        MARKF[i], LF[i], LC[i] = fr, fr, col
+        nn = nn + 1
+        LITN[nn] = i
+        if not was or (s + fr) % 4 == 0 then pixel(xx, yy, r, g, b) end
+      end
+    end
+  end
+  return nn
+end
+
+-- A laser beam: its own colour, not the plasma; remembered with the frame
+-- it was lit so the afterglow dims the beam's colour, not the field's.
+local function laser_px(c, xx, yy, col, k, nn, repaint)
+  if xx < 0 or xx >= W or yy < 0 or yy >= H then return nn end
+  local i = yy * W + xx
+  local fr, MARKF = c.frame, c.mark
+  local m = MARKF[i]
+  if m == fr then return nn end
+  local was = m == fr - 1 and c.lf[i] == fr - 1
+  MARKF[i] = fr
+  c.lf[i], c.lc[i] = fr, col
+  nn = nn + 1
+  c.litn[nn] = i
+  if not was or repaint then
+    pixel(xx, yy, min(255, floor(((col >> 16) & 255) * k)), min(255, floor(((col >> 8) & 255) * k)),
+          min(255, floor((col & 255) * k)))
+  end
+  return nn
+end
+local function beam(c, x0, y0, dx, dy, col, nn)
+  local t = 1e9
+  if dx > 0.01 then t = (W - 1 - x0) / dx elseif dx < -0.01 then t = -x0 / dx end
+  if dy > 0.01 then t = min(t, (H - 1 - y0) / dy) elseif dy < -0.01 then t = min(t, -y0 / dy) end
+  if t <= 0 or t > 400 then return nn end
+  local steps = floor(t) + 1
+  local fr, MARKF, LITN, LF, LC = c.frame, c.mark, c.litn, c.lf, c.lc
+  local R, G, B = (col >> 16) & 255, (col >> 8) & 255, col & 255
+  local band, pr, pg, pb = -1, 0, 0, 0
+  local fx, fy = x0 + 0.5, y0 + 0.5
+  for s = 0, steps do
+    local xx, yy = fx // 1, fy // 1
+    fx, fy = fx + dx, fy + dy
+    if xx >= 0 and xx < W and yy >= 0 and yy < H then
+      local i = yy * W + xx
+      local m = MARKF[i]
+      if m ~= fr then
+        local was = m == fr - 1 and LF[i] == fr - 1
+        MARKF[i], LF[i], LC[i] = fr, fr, col
+        nn = nn + 1
+        LITN[nn] = i
+        if not was or (s + fr) % 4 == 0 then
+          -- dimmer as it goes, in four steps along the beam
+          local bd = (s * 4) // (steps + 1)
+          if bd ~= band then
+            band = bd
+            local k = 1.0 - 0.14 * bd
+            pr, pg, pb = floor(R * k), floor(G * k), floor(B * k)
+          end
+          pixel(xx, yy, pr, pg, pb)
+        end
+      end
+    end
+  end
+  -- where it strikes the wall: a small flare, whiter
+  local ex, ey = floor(x0 + dx * t + 0.5), floor(y0 + dy * t + 0.5)
+  local wc = col | 0x606060
+  nn = laser_px(c, ex, ey, wc, 1.2, nn, true)
+  nn = laser_px(c, ex + 1, ey, col, 0.8, nn, true)
+  nn = laser_px(c, ex - 1, ey, col, 0.8, nn, true)
+  nn = laser_px(c, ex, ey + 1, col, 0.8, nn, true)
+  nn = laser_px(c, ex, ey - 1, col, 0.8, nn, true)
+  return nn
+end
+
 -- The afterglow: last frame's dots left behind glow at a third, then go.
 local function afterglow(c, nn)
   local fr, MARKF, LITN, LITP, FADE = c.frame, c.mark, c.litn, c.litp, c.fade
@@ -878,7 +977,7 @@ local function afterglow(c, nn)
   for j = 1, c.np do
     local i = LITP[j]
     if MARKF[i] ~= fr then
-      local col = HFACE[plasma_hue(i % W, floor(i / W), i)]
+      local col = c.lf[i] == fr - 1 and c.lc[i] or HFACE[plasma_hue(i % W, floor(i / W), i)]
       pixel(i % W, floor(i / W), ((col >> 16) & 255) // 3, ((col >> 8) & 255) // 3, (col & 255) // 3)
       nf = nf + 1
       FADE[nf] = i
@@ -898,7 +997,7 @@ end
 
 function dots_cube(sc, t)
   local c = CUBE
-  plasma_tables(c, t * 0.5)
+  plasma_tables(c, t * 0.5, true)
   drift(c, DT)
   local V, Z = c.V, c.Z
   local minX, maxX, minY, maxY = 1e9, -1e9, 1e9, -1e9
@@ -923,18 +1022,50 @@ end
 -- walls - a circle against them, its radius the contact's lever.
 function dots_ball(sc, t)
   local c = BALL
-  plasma_tables(c, t * 0.5)
+  plasma_tables(c, t * 0.5, false)
   drift(c, DT)
   local S = c.R * 0.75
   local sx, sy = walls(c, c.x - S, c.x + S, c.y - S, c.y + S, S)
+  -- the turn as one matrix (x, then y, then z), once a frame
+  local cx, sx_, cy, sy_, cz, sz = c.cx, c.sx, c.cy, c.sy, c.cz, c.sz
+  local a11, a12, a13 = cy * cz, sx_ * sy_ * cz - cx * sz, cx * sy_ * cz + sx_ * sz
+  local a21, a22, a23 = cy * sz, sx_ * sy_ * sz + cx * cz, cx * sy_ * sz - sx_ * cz
+  local a31, a32, a33 = -sy_, sx_ * cy, cx * cy
+  local X0, Y0 = c.x, c.y
   local nn = 0
+  -- the lasers first, so the ball sits over them where they leave it
+  local hue0 = floor(T * 40)
+  for b = 1, 4 do
+    local q = EMIT[b]
+    local x3 = a11 * q[1] + a12 * q[2] + a13 * q[3]
+    local y3 = a21 * q[1] + a22 * q[2] + a23 * q[3]
+    local z3 = a31 * q[1] + a32 * q[2] + a33 * q[3]
+    local l = sqrt(x3 * x3 + y3 * y3)
+    if l > 0.25 then
+      local dx, dy = x3 / l, y3 / l
+      local col = HFACE[(hue0 + b * 90) % 360]
+      local x0, y0
+      if z3 < 0 then          -- facing us: from the emitter itself, with a spark
+        x0, y0 = X0 + x3 * S, Y0 + y3 * S
+        nn = laser_px(c, floor(x0 + 0.5), floor(y0 + 0.5), col | 0x808080, 1.3, nn, true)
+      else                    -- behind: from the rim
+        x0, y0 = X0 + dx * S, Y0 + dy * S
+      end
+      nn = beam(c, x0, y0, dx, dy, col, nn)
+    end
+  end
   local px0, py0, pz0
   for j = 1, #SPH do
     local q = SPH[j]
-    local x3, y3, z2 = turn(c, q[1], q[2], q[3])
-    local p = 3.2 / (3.2 + z2 * 0.8)
-    local X, Y = c.x + x3 * S * p, c.y + y3 * S * p
-    if q[4] then nn = wire(c, px0, py0, X, Y, depth_k((pz0 + z2) * 1.7), nn) end
+    local x, y, z = q[1], q[2], q[3]
+    local z2 = a31 * x + a32 * y + a33 * z
+    local p = S * 3.2 / (3.2 + z2 * 0.8)
+    local X, Y = X0 + (a11 * x + a12 * y + a13 * z) * p, Y0 + (a21 * x + a22 * y + a23 * z) * p
+    if q[4] then
+      local k = 1.0 - 0.476 * (pz0 + z2)
+      if k > 1.25 then k = 1.25 elseif k < 0.35 then k = 0.35 end
+      nn = wire2(c, px0, py0, X, Y, k, nn, (pz0 + z2) > 0.3 and 2 or 1)
+    end
     px0, py0, pz0 = X, Y, z2
   end
   afterglow(c, nn)
