@@ -15,7 +15,9 @@
 //     "plane"  {horizon = 20, height = 16, fov = 1}
 //                                       a floor below the horizon (mode 7), darker far off
 //     "swirl"  {cx, cy, turn = 3}       the screen itself, twisted round (cx, cy);
-//                                       corners turned off it reflected back in
+//                                       turn in radians at the centre, less
+//                                       farther out; corners turned off it
+//                                       reflected back in
 //   M:set(x, y, u, v [, shade])         any map, a pixel at a time; u, v 0..255
 //                                       wrap round the texture, shade 0..255
 //   px.remap(M, src, du, dv [, pal])    the canvas redrawn: each pixel from the

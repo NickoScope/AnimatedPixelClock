@@ -1244,7 +1244,7 @@ async def effect_api() -> str:
             "px.uvmap(kind[,params]) / px.remap(M,src,du,dv[,pal])": "firmware 2.7.7+. A map "
                                  "(24 KB) built once: 'tunnel' {cx,cy,depth}, 'polar' {cx,cy,scale}, "
                                  "'sphere' {cx,cy,r}, 'plane' {horizon,height,fov}, 'swirl' "
-                                 "{cx,cy,turn}, 'blank' + M:set(x,y,u,v[,shade]). A frame: "
+                                 "{cx,cy,turn radians}, 'blank' + M:set(x,y,u,v[,shade]). A frame: "
                                  "px.remap(M, slot 1..4 or layer, du, dv, pal) - the canvas from the "
                                  "texture at (u+du, v+dv) & 255, times the shade. Slide du/dv to fly "
                                  "down a tunnel, turn a globe, rush over a floor; tunnel/polar/plane "
