@@ -362,6 +362,28 @@ Each screen has its own colour of the RGB laser, and the temperature's colour go
 
 ---
 
+## KINETIC DIGITS LED
+
+![Kinetic Digits Led](preview/kinetic_digits_led.png)
+
+The panel pretends to be a mechanical flip board. Every digit is seven segments built out of LEDs, and a segment that changes does not simply switch, it flips. Its lit face narrows to an edge, a glint passes, and the other face comes round. Changes run across the board as a wave, column after column. In the dot mode every one of the 8,192 LEDs is a flip dot of its own.
+
+**What the board shows** runs as its own program of scenes, on grids from 32 x 9 small digits to 8 x 2 big ones:
+- the time and the date;
+- text in a seven-segment font;
+- plasma and rings;
+- Conway's Life;
+- a turning cube;
+- on the dot board, a wire cube and a wire ball that fly, spin and bounce off the edges by physics, shimmering like the plasma, the ball with four laser beams.
+
+A change of grid goes out as a wave and comes back in, and the scene's name shows for a second before the board fills.
+
+**The button.** The knob's click or the remote's OK on this page picks a scene: one press the next scene, two the one before. A chosen scene stays until three presses hand the board back to the program.
+
+**How it is drawn.** A picture is never drawn in full. Each source is a function evaluated only at the points where a digit samples it: two samples across and two down for the upright segments, three down for the level ones. This sampling is Ksawery Kirklewski's idea, from his Flipdigits Player, and it is what makes the board affordable on this processor. The code was written from scratch. It needs firmware 2.7.3 or later for the button. On the panel it runs at about 15 fps.
+
+---
+
 ## Adding one
 
 The loop, and only the last step needs a panel:

@@ -78,6 +78,14 @@
       "preview": "preview/golf_pestovo.png"
     },
     {
+      "stem": "kinetic_digits_led",
+      "name": "KINETIC_DIGITS_LED",
+      "file": "kinetic_digits_led.lua",
+      "line": "a flip board of seven-segment digits made of the panel's LEDs.",
+      "bytes": 70047,
+      "preview": "preview/kinetic_digits_led.png"
+    },
+    {
       "stem": "la_gioconda",
       "name": "LA_GIOCONDA",
       "file": "la_gioconda.lua",
