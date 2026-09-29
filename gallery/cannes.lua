@@ -10,9 +10,9 @@
 -- it all back. Three things do most of the work:
 --
 --   * the canvas is not cleared between frames on this firmware, so the trails
---     are free: every frame blends the sky a little way towards its own colour
+--     are free: every frame fades the sky a little way towards its own colour
 --     and whatever was drawn last frame becomes this frame's smoke. One
---     px.blend a pixel, not a read and a write.
+--     px.fade for the whole sky (firmware 2.7.4), a px.blend a pixel before.
 --   * gravity and drag on every ember, so a burst opens fast, slows, and falls
 --     - which is what makes a firework read as a firework rather than a circle.
 --   * the bay mirrors the sky, dimmer and jittered, because still water is not
@@ -35,16 +35,12 @@ local SEA_TOP    = HORIZON + 1
 local SKY_R, SKY_G, SKY_B = 2, 3, 9
 -- How far the sky is pulled back towards its own colour each frame.
 --
--- A note for whoever optimises this next, because the obvious move does not
--- work. The 128 x 45 fade is 5,760 px.blend calls and looks like the whole
--- cost; it is not. Halving it to a checkerboard - 2,880 calls, with the
--- constant raised to keep the same decay - was measured on the panel at
--- 8.2 fps and 119 ms a frame, which is what the full pass measured. Not a
--- millisecond. The frame is spent somewhere else: the effect task shares core 0
--- with Wi-Fi, and at ~100,000 VM instructions a frame the bench rate accounts
--- for 40 ms of the 120. The rest is being preempted, not computed.
---
--- So the simple version stays. It draws better and costs the same.
+-- The fade was the frame, after all. An older note here said the 5,760
+-- px.blend calls were not the cost, because halving them changed nothing; what
+-- it missed is that px.blend ran in software double on this FPU, and a
+-- checkerboard is still thousands of those. Measured on the panel, 2026-09-29:
+-- 8.2 fps and 119 ms a frame on 2.7.3; 13.5 fps, 72 ms with 2.7.4's integer
+-- px.blend; 15.2 fps, 24 ms with one px.fade.
 local FADE = 0.14
 
 local floor, sqrt, sin, cos = math.floor, math.sqrt, math.sin, math.cos
@@ -187,15 +183,21 @@ end
 
 -- ------------------------------------------------------------------- draw
 local frame = 0
+local FADE_SKY = rawget(px, "fade")   -- nil before firmware 2.7.4
 
 function draw()
   frame = frame + 1
 
   -- The whole sky pulled a little towards its own colour. This is the trails,
-  -- the smoke and the clearing, all in one pass and one call a pixel.
-  for y = 0, HORIZON - 1 do
-    for x = 0, W - 1 do
-      px.blend(x, y, SKY_R, SKY_G, SKY_B, FADE)
+  -- the smoke and the clearing, all in one pass: one px.fade on firmware
+  -- 2.7.4 and later, a px.blend a pixel before it.
+  if FADE_SKY then
+    FADE_SKY(FADE, SKY_R, SKY_G, SKY_B, 0, 0, W, HORIZON)
+  else
+    for y = 0, HORIZON - 1 do
+      for x = 0, W - 1 do
+        px.blend(x, y, SKY_R, SKY_G, SKY_B, FADE)
+      end
     end
   end
 

@@ -260,26 +260,29 @@ static int l_blend(lua_State *L) {
   return 0;
 }
 
-// glow, fade and blur are charged a quarter of an instruction a pixel they
-// look at, the way px.blit is: our estimate until the panel measures them.
+// glow, fade and blur are charged what they cost against a Lua instruction
+// (410 ns, AGENTS.md), measured on the panel on 2026-09-29 (2.7.4, Wi-Fi on,
+// 30 s each): a full-canvas fade 2.2 ms, about 2/3 of an instruction a pixel;
+// a full-canvas blur 5.0 ms, 3/4 of one a pixel per pass (work counts both
+// passes); a glow of radius 10 0.25 ms over its 441-pixel box, 3/2 a pixel.
 static int l_glow(lua_State *L) {
   const unsigned long work = pxr_glow(canvasOf(L)->rgb, W, H, luaL_checknumber(L, 1),
            luaL_checknumber(L, 2), luaL_checknumber(L, 3), luaL_checknumber(L, 4),
            luaL_checknumber(L, 5), luaL_checknumber(L, 6), luaL_optnumber(L, 7, 1));
-  LuaFx::charge(L, (uint32_t)(work / 4));
+  LuaFx::charge(L, (uint32_t)(work * 3 / 2));
   return 0;
 }
 
 static int l_fade(lua_State *L) {
   unsigned long work = 0;
   px_fade_lua(L, canvasOf(L)->rgb, W, H, &work);
-  LuaFx::charge(L, (uint32_t)(work / 4));
+  LuaFx::charge(L, (uint32_t)(work * 2 / 3));
   return 0;
 }
 static int l_blur(lua_State *L) {
   unsigned long work = 0;
   px_blur_lua(L, canvasOf(L)->rgb, W, H, &work);
-  LuaFx::charge(L, (uint32_t)(work / 4));
+  LuaFx::charge(L, (uint32_t)(work * 3 / 4));
   return 0;
 }
 static int l_mode(lua_State *L) { return px_mode_lua(L, &s_add); }
