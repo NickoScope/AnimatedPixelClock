@@ -228,7 +228,13 @@ def cmd_run(a, extra):
     if (a.flasher_image or a.flasher_version) and not a.web:
         sys.exit("--flasher-image and --flasher-version go with --web (the flasher page is served there)")
     if (a.fresh or a.blank) and os.path.exists(FLASH):
-        os.remove(FLASH)
+        # The old chip is kept, never just deleted: it holds what the firmware stored (Wi-Fi, settings,
+        # the remote's codes, Lua effects, and on the owner's twin the broker credentials).
+        import time
+        keep = os.path.join(STATE, "backup", time.strftime("flash-%Y%m%d-%H%M%S.bin"))
+        os.makedirs(os.path.dirname(keep), exist_ok=True)
+        os.replace(FLASH, keep)
+        print(f"the old flash chip is kept as {keep}", file=sys.stderr)
     # --blank: no image, so the flash file starts erased (0xFF) and the ROM finds nothing to boot
     image = [] if a.blank else ["--flash-image", IMAGE]
     args = [EXE, "--board", "panel", "--boot", "rom", "--rom", ROM, *image,
