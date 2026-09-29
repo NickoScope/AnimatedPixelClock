@@ -121,7 +121,11 @@ static void guardCallbacks(lua_State *L) {
     // 1460 B (the .su said 1392), a __concat level 368 B (as the .su said),
     // an error raised in the deepest leaf with the handler there ~400 B more
     // than the .su said. Three deep, the worst reachable case came to ~11.9 KB
-    // of 12 KB, into the 1 KB kept for interrupts; two deep, ~10.5 KB.
+    // of 12 KB, into the 1 KB kept for interrupts; two deep, ~11.0-11.2 KB
+    // (the counter units two wrapped levels give back buy 13 unwrapped
+    // __concat levels): inside the 11,264 B that leaves the reserve, only just.
+    // One deep would keep ~0.8 KB more but refuse a string.format inside a
+    // gsub replacement, which real scripts do.
     //
     // The second gate audit's list (2026-09-29, from -fstack-usage): gsub,
     // format and sort, and table.concat through __index (720 B a level, 13 KB
