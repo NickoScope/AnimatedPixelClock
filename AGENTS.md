@@ -907,6 +907,11 @@ What follows from that:
   is one `px.field(L, terms)` into a layer and one `px.show` (2.7.5); never
   a Lua loop over 8,192 pixels. `px.noise(x, y, z)` is Perlin noise for
   anything that should wander smoothly. `nebula.lua` does both.
+- Particles - sparks, fireworks, snow, motes on a current - are a
+  `px.particles(n)` system (2.7.5): `P:emit{}`, `P:step{}`, `P:draw{}` a
+  frame, not a Lua table of hundreds of particles. With `px.fade` first for
+  trails and `step{flow = ...}` for a flow field, `flow.lua` draws 700 of
+  them.
 - What the panel knows about outside: `px.weather()` (2.7.4) is the weather
   clock's data - `{temp, min, max, humidity, wind, code, fahrenheit}` in C and
   km/h - or nil while there is none (weather off in the portal, no location,

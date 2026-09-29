@@ -258,6 +258,8 @@ static int l_feedback(lua_State *L) { unsigned long work; return px_feedback_lua
 #include "../../src/lua/px_field.h"    /* px.noise, px.field, shared with the firmware */
 static int l_noise(lua_State *L)   { return px_noise_lua(L); }
 static int l_field(lua_State *L)   { unsigned long work; return px_field_lua(L, W, H, &work, NULL); }
+#include "../../src/lua/px_particles.h" /* px.particles, shared with the firmware */
+static int l_particles(lua_State *L) { return px_particles_lua(L, fb, W, H, NULL); }
 static int l_terrain(lua_State *L) { unsigned long work; return px_terrain_lua(L, fb, W, H, &work); }
 #include "../../src/lua/px_sprite.h"    /* px.grab, px.blit, shared with the firmware */
 static int l_grab(lua_State *L)    { unsigned long work; return px_grab_lua(L, fb, W, H, &work); }
@@ -293,6 +295,7 @@ static const luaL_Reg px_lib[] = {
   {"show", l_show}, {"scroll", l_scroll}, {"mirror", l_mirror},
   {"weather", l_weather}, {"city", l_city}, {"mix", l_mix}, {"forget", l_forget},
   {"feedback", l_feedback}, {"noise", l_noise}, {"field", l_field},
+  {"particles", l_particles},
   {NULL, NULL}
 };
 

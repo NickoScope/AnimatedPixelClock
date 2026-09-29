@@ -41,6 +41,7 @@ extern "C" {
 #include "px_layer.h"              // palette, pal, layer, capture, show, scroll, mirror, shared with luasim
 #include "px_feedback.h"           // px.feedback (after px_raster.h and px_layer.h)
 #include "px_field.h"              // px.noise, px.field (after px_raster.h and px_layer.h)
+#include "px_particles.h"          // px.particles (after px_raster.h, px_layer.h, px_field.h)
 #include "lua_fx.h"                // LuaFx::charge
 
 #define W LUA_PX_W
@@ -415,6 +416,11 @@ static int l_field(lua_State *L) {
   return px_field_lua(L, W, H, &work, fieldCharge);
 }
 
+// px.particles: the system charges itself for each call, per particle
+// (px_particles.h): estimates until the panel measures them.
+static void particlesCharge(lua_State *L, unsigned long n) { LuaFx::charge(L, (uint32_t)n); }
+static int l_particles(lua_State *L) { return px_particles_lua(L, canvasOf(L)->rgb, W, H, particlesCharge); }
+
 static const luaL_Reg kPxLib[] = {
   {"get", l_get}, {"blend", l_blend}, {"glow", l_glow},
   {"size", l_size}, {"t", l_t}, {"now", l_now}, {"clear", l_clear},
@@ -426,6 +432,7 @@ static const luaL_Reg kPxLib[] = {
   {"show", l_show}, {"scroll", l_scroll}, {"mirror", l_mirror},
   {"weather", l_weather}, {"city", l_city}, {"mix", l_mix}, {"forget", l_forget},
   {"feedback", l_feedback}, {"noise", l_noise}, {"field", l_field},
+  {"particles", l_particles},
   {NULL, NULL}
 };
 

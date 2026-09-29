@@ -1217,6 +1217,13 @@ async def effect_api() -> str:
                                  "phase,amp}, {'ray',cx,cy,n,phase,amp}, {'noise',scale,z,amp"
                                  "[,octaves]}; then px.show(L, pal). A whole-screen plasma or "
                                  "nebula in one call (nebula.lua).",
+            "px.particles(max[,seed])": "firmware 2.7.5+. -> P, up to 4096 particles moved "
+                                 "and drawn in C. P:emit{x,y,n,w,h,speed,speedj,angle,spread,"
+                                 "life,lifej, r,g,b | pal,idx,idxj}; P:step{dt,gx,gy,drag,"
+                                 "flow,flowscale,flowz,edge='kill'|'wrap'|'bounce'} (flow = "
+                                 "curl of Perlin noise); P:draw{mode='add'|'set',bri,fade,"
+                                 "size}; P:count(); P:clear(). Pair with px.fade for "
+                                 "trails (flow.lua).",
             "px.weather()": "firmware 2.7.4+. -> {temp,min,max,humidity,wind,code,"
                             "fahrenheit} in C and km/h (the weather clock's data), or "
                             "nil while there is none; asking keeps the fetch going",
