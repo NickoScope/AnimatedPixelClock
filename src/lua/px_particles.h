@@ -20,6 +20,9 @@
 //           fade = true, size = 1 }     --   dimmed toward the end of its life
 //   P:count() -> alive      P:clear()
 //
+// On the panel (2026-09-29): a step of 800 particles in a flow field ~11 ms
+// (34 instructions a particle), without one ~1 ms; drawing 800 ~1.5 ms.
+//
 // Integers only, like the other shared headers (the random numbers are the
 // system's own xorshift, the directions px_layer.h's cosine table, the flow
 // px_field.h's noise), so the panel and luasim move the same particles.
@@ -204,7 +207,7 @@ static int pxp_draw(lua_State *L) {
   const int add = !m || strcmp(m, "set") != 0;
   if (m && strcmp(m, "set") != 0 && strcmp(m, "add") != 0) return luaL_error(L, "particles: mode is \"add\" or \"set\"");
   lua_pop(L, 1);
-  pxp_charge(L, s, (unsigned long)s->n * (unsigned long)(size * size) * (fade ? 2 : 1));
+  pxp_charge(L, s, (unsigned long)s->n * (unsigned long)(size * size) * (fade ? 5 : 3));   // measured: 1.9 us a faded particle
   for (int i = 0; i < s->n; i++) {
     const PxPart *p = &s->p[i];
     int k = bri;
