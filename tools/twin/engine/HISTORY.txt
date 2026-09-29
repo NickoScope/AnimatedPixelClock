@@ -17,3 +17,7 @@ a2dd413 NAT: forward host ports into the guest (--hostfwd)
 cc747af cli: --cpi, uniform cycles per instruction on the JIT path
 c486092 Merge the panel's IR receiver, knob and BOOT into the hub75-panel board
 36dad4c A chip reset leaves the virtual AP and network in place; the page speaks the board's input verbs
+749686a The panel as a camera sees it: a shutter view of the 1/32 scan
+857a06f hub75-panel: the board's SHTC3 on I2C0, with a climate verb
+53bb942 Fractional --cpi: rounds alternate between whole CPIs by error diffusion
+7ffd3be Merge the board's SHTC3 at I2C0 0x70 into the panel, beside the shutter view

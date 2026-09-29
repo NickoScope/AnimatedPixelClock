@@ -34,7 +34,7 @@ index 4e5407f..a06a308 100644
  [workspace.package]
  version = "0.2.0"
 diff --git a/cli/src/lib.rs b/cli/src/lib.rs
-index 86cc6fd..c2b94b1 100644
+index 86cc6fd..21fe360 100644
 --- a/cli/src/lib.rs
 +++ b/cli/src/lib.rs
 @@ -67,9 +67,9 @@ pub struct Opts {
@@ -42,7 +42,7 @@ index 86cc6fd..c2b94b1 100644
      pub chip: String,
      pub rom: Option<PathBuf>, pub bootloader: Option<String>, pub ptable: Option<String>, pub app: Option<String>, pub elfs: Vec<String>,
 -    pub flash_image: Option<String>, pub flash_at: Vec<String>, pub boot: Option<String>, pub flash_mb: Option<usize>, pub psram_mb: Option<usize>,
-+    pub flash_image: Option<String>, pub flash_at: Vec<String>, pub boot: Option<String>, pub flash_mb: Option<usize>, pub psram_mb: Option<usize>, pub flash_id: Option<[u8; 3]>, pub flash_persist: Option<String>, pub cpi: Option<u32>, pub serial_hex: Vec<u8>,
++    pub flash_image: Option<String>, pub flash_at: Vec<String>, pub boot: Option<String>, pub flash_mb: Option<usize>, pub psram_mb: Option<usize>, pub flash_id: Option<[u8; 3]>, pub flash_persist: Option<String>, pub cpi: Option<(u32, u32)>, pub serial_hex: Vec<u8>,
      pub mac: Option<[u8; 6]>, pub strap: Option<u32>, pub reset_cause: Option<u32>, pub efuse_regs: Option<String>, pub regs_init: Option<String>,
 -    pub board: String, pub wifi: Option<String>, pub net: String, pub cam_image: Option<String>, pub cam_fps: f64,
 +    pub board: String, pub wifi: Option<String>, pub net: String, pub hostfwd: Vec<esp_soc::nat::HostFwd>, pub cam_image: Option<String>, pub cam_fps: f64,
@@ -59,7 +59,7 @@ index 86cc6fd..c2b94b1 100644
              "--psram-mb" => o.psram_mb = Some(next().parse().expect("mb")),
              "--mac" => { let v = next(); let b: Vec<u8> = v.split(':').filter_map(|x| u8::from_str_radix(x, 16).ok()).collect(); if b.len() != 6 { eprintln!("--mac wants xx:xx:xx:xx:xx:xx"); std::process::exit(2); } let mut m = [0u8; 6]; m.copy_from_slice(&b); o.mac = Some(m); }
              "--strap" => o.strap = Some(hex(&next(), "strap")),
-@@ -114,12 +117,23 @@ pub fn parse(args: &[String], default_chip: &str) -> Opts {
+@@ -114,12 +117,25 @@ pub fn parse(args: &[String], default_chip: &str) -> Opts {
              "--measured-te" => o.measured_te = true,
              "--wifi" => o.wifi = Some(next()),
              "--net" => o.net = next(),
@@ -79,11 +79,13 @@ index 86cc6fd..c2b94b1 100644
 +            "--flash-persist" => o.flash_persist = Some(next()),
 +            // Uniform cycles per instruction on the JIT path (set_approximate_jit_timing): a rough
 +            // way to bring the emulated CPU's pace toward a chip whose memory stalls it.
-+            "--cpi" => o.cpi = Some(next().parse().unwrap_or_else(|_| usage_error("--cpi: 1..256"))),
++            // A fraction is allowed (2.6): rounds alternate between 2 and 3 cycles an instruction.
++            "--cpi" => { let v: f64 = next().parse().unwrap_or_else(|_| usage_error("--cpi: 1.0..256")); if !(1.0..=256.0).contains(&v) { usage_error("--cpi: 1.0..256"); }
++                         let base = v.floor() as u32; o.cpi = Some((base, ((v - base as f64) * 256.0).round().min(255.0) as u32)); }
              "--console" => o.console = Some(next()),
              "--console-prefix" => o.console_prefix = true,
              "--realtime" => o.realtime = true,
-@@ -172,6 +186,23 @@ fn find_rom(name: &str) -> Option<PathBuf> {
+@@ -172,6 +188,23 @@ fn find_rom(name: &str) -> Option<PathBuf> {
      dirs.into_iter().rev().map(|d| d.join(name)).find(|p| p.exists())
  }
  
@@ -107,7 +109,7 @@ index 86cc6fd..c2b94b1 100644
  pub fn run_cli(default_chip: &str) {
      let args: Vec<String> = std::env::args().collect();
      let mut o = parse(&args, default_chip);
-@@ -219,8 +250,9 @@ fn run_cooja(o: &mut Opts) {
+@@ -219,8 +252,9 @@ fn run_cooja(o: &mut Opts) {
  }
  
  fn setup_s3(o: &Opts) -> esp32s3::Machine {
@@ -118,7 +120,7 @@ index 86cc6fd..c2b94b1 100644
      if o.measured_te {
          assert_eq!(m.bus.board.name(), "waveshare-amoled18-v2", "--measured-te requires the AMOLED V2 board");
          m.bus.board = Box::new(esp32s3::board::WaveshareAmoled18V2::with_measured_te());
-@@ -234,8 +266,9 @@ fn setup_s3(o: &Opts) -> esp32s3::Machine {
+@@ -234,8 +268,9 @@ fn setup_s3(o: &Opts) -> esp32s3::Machine {
          m.bus.periph.wifi.ap = Some(esp32s3::wifi::VirtualAp::new(cfg, m.bus.debug.has("wifi-frames")));
          let mut net = esp32s3::net::VirtualNet::new(m.bus.debug.has("net"));
          if o.net == "nat" || o.net == "user" {
@@ -129,7 +131,7 @@ index 86cc6fd..c2b94b1 100644
              net.nat = Some(nat);
          }
          eprintln!("[emu] virtual network: station {}.{}.{}.{}, gateway {}.{}.{}.{} (DHCP, ARP, ICMP, DNS, NTP)", net.sta_ip[0], net.sta_ip[1], net.sta_ip[2], net.sta_ip[3], net.gw_ip[0], net.gw_ip[1], net.gw_ip[2], net.gw_ip[3]);
-@@ -245,6 +278,7 @@ fn setup_s3(o: &Opts) -> esp32s3::Machine {
+@@ -245,6 +280,7 @@ fn setup_s3(o: &Opts) -> esp32s3::Machine {
      if let Some(p) = &o.cam_image { match esp_soc::picture::load(p) { Ok(pic) => { eprintln!("[emu] camera picture {} ({}x{})", p, pic.w, pic.h); m.bus.board.set_camera_picture(pic); } Err(e) => { eprintln!("[emu] {}", e); std::process::exit(2); } } }
      m.bus.periph.lcd_cam.frame_cycles = (esp32s3::periph::CPU_HZ as f64 / o.cam_fps) as u64;
      if let Some(mb) = o.flash_mb { if mb != 8 { m.bus.set_flash_size(mb << 20); } }
@@ -137,7 +139,7 @@ index 86cc6fd..c2b94b1 100644
      if let Some(mb) = o.psram_mb { if mb != 2 { m.bus.set_psram_size(mb << 20).unwrap(); } }
      if let Some(p) = &o.efuse_regs {
          let txt = std::fs::read_to_string(p).expect("efuse file");
-@@ -275,13 +309,14 @@ fn setup_c3(o: &Opts) -> esp32c3::Machine {
+@@ -275,13 +311,14 @@ fn setup_c3(o: &Opts) -> esp32c3::Machine {
      let mut m = esp32c3::machine(o.mac.unwrap_or([0x60, 0x55, 0xf9, 0x00, 0x11, 0x22]), o.flash_mb.unwrap_or(4) << 20);
      m.bus.set_flash_size(o.flash_mb.unwrap_or(4) << 20);   // the JEDEC capacity follows the size
      if !o.debug.is_empty() { let mut f = esp_soc::DebugFlags::from_env(); for d in &o.debug { f.parse(d); } m.set_debug(&f); }
@@ -153,7 +155,7 @@ index 86cc6fd..c2b94b1 100644
      let mut m = esp32c6::machine(o.mac.unwrap_or([0xdc, 0x1e, 0xd5, 0x6e, 0x8c, 0xdc]), o.flash_mb.unwrap_or(4) << 20);
      m.bus.set_flash_size(o.flash_mb.unwrap_or(4) << 20);   // the JEDEC capacity follows the size
      if !o.debug.is_empty() { let mut f = esp_soc::DebugFlags::from_env(); for d in &o.debug { f.parse(d); } m.set_debug(&f); }
-@@ -292,7 +327,11 @@ fn setup_c6(o: &Opts) -> esp32c6::Machine {
+@@ -292,7 +329,11 @@ fn setup_c6(o: &Opts) -> esp32c6::Machine {
          eprintln!("[emu] virtual AP '{}' bssid {} channel {} ({})", cfg.ssid, esp_soc::wifi::mac_str(&cfg.bssid), cfg.channel, if cfg.psk.is_some() { "WPA2-PSK" } else { "open" });
          m.bus.periph.wifi_mac.ap = Some(esp_soc::wifi::VirtualAp::new(cfg, m.bus.debug.has("wifi-frames")));
          let mut net = esp_soc::net::VirtualNet::new(m.bus.debug.has("net"));
@@ -166,15 +168,19 @@ index 86cc6fd..c2b94b1 100644
          eprintln!("[emu] virtual network: station {}.{}.{}.{}, gateway {}.{}.{}.{} (DHCP, ARP, ICMP, DNS, NTP)", net.sta_ip[0], net.sta_ip[1], net.sta_ip[2], net.sta_ip[3], net.gw_ip[0], net.gw_ip[1], net.gw_ip[2], net.gw_ip[3]);
          m.bus.periph.wifi_mac.net = Some(net);
      }
-@@ -325,6 +364,7 @@ fn run<S: Soc>(mut m: Machine<S>, o: &Opts) {
+@@ -325,6 +366,11 @@ fn run<S: Soc>(mut m: Machine<S>, o: &Opts) {
          m.set_cost_model(cost).unwrap_or_else(|e| usage_error(&format!("--approximate-timing: {e}")));
          eprintln!("[emu] APPROXIMATE timing: {:?}; use --boot rom; accuracy unvalidated", model.config);
      }
-+    if let Some(cpi) = o.cpi { m.set_approximate_jit_timing(cpi, 256).unwrap_or_else(|e| usage_error(&format!("--cpi: {e}"))); eprintln!("[emu] {} cycles per instruction (uniform, JIT)", cpi); }
++    if let Some((cpi, frac)) = o.cpi {
++        m.set_approximate_jit_timing(cpi, 256).unwrap_or_else(|e| usage_error(&format!("--cpi: {e}")));
++        m.set_approximate_cpi_fraction(frac).unwrap_or_else(|e| usage_error(&format!("--cpi: {e}")));
++        eprintln!("[emu] {:.3} cycles per instruction (uniform, JIT)", cpi as f64 + frac as f64 / 256.0);
++    }
      let boot = prepare(&mut m, o);
      let t0 = std::time::Instant::now();
      m.web_restart = !o.no_reboot;
-@@ -389,8 +429,19 @@ fn prepare<S: Soc>(m: &mut Machine<S>, o: &Opts) -> String {
+@@ -389,8 +435,19 @@ fn prepare<S: Soc>(m: &mut Machine<S>, o: &Opts) -> String {
          m.write_flash(off, &data).unwrap_or_else(|e| { eprintln!("--flash-at: {}", e); std::process::exit(2) });
          eprintln!("[emu] flash {:#x}: {} ({} bytes)", off, path, data.len());
      }
@@ -211,7 +217,7 @@ index 685585b..cf36e5a 100644
 +                           esp_soc::nat::HostFwd { udp: true, host_port: 4210, guest_port: 4210 }]);
 +}
 diff --git a/docs/boards.md b/docs/boards.md
-index 44828e5..616b795 100644
+index 44828e5..b85d20e 100644
 --- a/docs/boards.md
 +++ b/docs/boards.md
 @@ -20,6 +20,8 @@ pub trait BoardModel {
@@ -223,7 +229,7 @@ index 44828e5..616b795 100644
      fn named_pin(&self, name: &str) -> Option<u8>           // `btn1`, `sw`... for scripts and the UI
      fn encoder(&self) -> Option<(u8, u8)>                    // rotary encoder CLK/DT, for `knob`
      fn report(&self) -> String                               // end-of-run statistics
-@@ -86,6 +88,34 @@ combination is not selected by this board name. It needs `--flash-mb 16 --psram-
+@@ -86,6 +88,36 @@ combination is not selected by this board name. It needs `--flash-mb 16 --psram-
  Board input edges retain their intended timestamps. The current fast scheduler applies them to
  the SoC at its next existing bus tick.
  
@@ -244,12 +250,14 @@ index 44828e5..616b795 100644
 +| TSOP2138 IR receiver + the owner's NEC remote | GPIO0, open drain, active low | NEC messages from IRremoteESP8266's `ir_NEC.h` (8960/4480 header, 560 marks, 1680/560 spaces, 32 bits MSB first, every message padded to 108,080 us; a held key sends 8960/2240/560 repeats each slot); the ten learned codes by function name, number or raw `0x` code; optional receiver delay and mark stretch (Vishay 82460 bounds 105–263 us, −79..+92 us) |
 +| EC11 knob A / B | IO45 / IO46, active high (idle low, 10 k pull-downs) | quadrature at 3 ms a state, 12 ms between clicks; full-cycle or half-cycle detents |
 +| Knob switch, BOOT | GPIO0, active low | timed or held presses |
++| Sensirion SHTC3 | I2C0 (SDA 47, SCL 48) at 0x70 | `esp32s3/src/i2c/shtc3.rs`, from the datasheet (Version 4, December 2022; each number names its table): wake-up, sleep, soft reset, read ID (0x0807), the eight measurement commands, words with their CRC-8, NACK while asleep (only the wake-up gets in) and while measuring without clock stretching; Table 5's max times on the board's cycle. The air starts at 22.5 °C, 45 %RH |
 +
 +GPIO0 is the wired-AND of the receiver, the switch and BOOT. Script verbs (also the page's
 +`{"t":"input","line":...}` message): `ir <key> [hold <ms>]`, `ir down <key>` / `ir up`,
 +`ir tsop <delay_us> <stretch_us>`, `knob cw|ccw [n]`, `knob detent full|half`,
 +`knob timing <state_ms> <gap_ms>`, `sw [ms]|down|up`, `boot [ms]|down|up`, and `press`/`release`
-+of `sw`, `knob`, `boot`. `press 0` is refused; `gpio 0 <level>` still writes the pin raw until the
++of `sw`, `knob`, `boot`; `climate <°C> <%RH>` sets the air at the SHTC3 from its next measurement
++(-40..125 °C, 0..100 %RH, datasheet Tables 1-2). `press 0` is refused; `gpio 0 <level>` still writes the pin raw until the
 +next device edge. BOOT held through a reset does not select download mode here: the strap
 +register is `--strap`. `tools/panel-inputs-oracle/` replays a run's `--vcd` edges through the
 +firmware's own decoder sources built on the host (IRremoteESP8266 `decode()`, `ir_map.h`,
@@ -456,7 +464,7 @@ index 8bae55f..1387a4c 100644
      fn named_pin(&self, _name: &str) -> Option<u8> { None }
      /// The rotary encoder's (CLK, DT) pins, if there is one.
 diff --git a/esp-soc/src/machine.rs b/esp-soc/src/machine.rs
-index 8606f11..d4f8d9c 100644
+index 8606f11..49788bf 100644
 --- a/esp-soc/src/machine.rs
 +++ b/esp-soc/src/machine.rs
 @@ -14,7 +14,7 @@ mod modeled;
@@ -468,7 +476,63 @@ index 8606f11..d4f8d9c 100644
  
  /// The stop conditions that are not observers.
  pub struct Debug { pub stop_on_unimplemented: bool, pub stop_after_exceptions: u64 }
-@@ -986,6 +986,7 @@ impl<S: Soc> Machine<S> {
+@@ -96,6 +96,10 @@ pub struct Machine<S: Soc> {
+     cost: Option<Box<dyn CostModel>>,
+     model_accesses: Vec<MemoryAccess>,
+     approximate_jit_timing: Option<(u32, u32)>,
++    /// A fractional part for that CPI, in 1/256ths: rounds alternate between CPI and CPI + 1 so
++    /// that the average is CPI + frac/256 (error diffusion), and each round stays whole.
++    approximate_cpi_frac: u32,
++    approximate_cpi_acc: u32,
+     approximate_jit_frontiers: bool,
+     model_ready_at: Vec<u64>,
+     model_stop: Option<Stop>,
+@@ -149,7 +153,7 @@ impl<S: Soc> Machine<S> {
+             console: Console { all: Vec::new(), usb: Vec::new(), uart0: Vec::new(), mask: 3, prefix: false, capture: false },
+             web: None, ws: WebState { last_push_cycles: 0, push_interval: 0, audio_sent: 0, ring_updates: 0, grid_updates: Vec::new(), px_pending: 0, px_sent: 0, px_deferred: false, cam_pushed: u64::MAX, cam_sent: false },
+             rt: Realtime { enabled: false, wall_start: None, last_check: 0, behind: 0.0, resyncs: 0, speed: None, speed_mark: None, log: false, log_last: None, log_insns: (0, 0) },
+-            debug_rom: false, cost: None, model_accesses: Vec::new(), approximate_jit_timing: None, approximate_jit_frontiers: false, model_ready_at: vec![0; S::CORES], model_stop: None, model_attach_error: None,
++            debug_rom: false, cost: None, model_accesses: Vec::new(), approximate_jit_timing: None, approximate_cpi_frac: 0, approximate_cpi_acc: 0, approximate_jit_frontiers: false, model_ready_at: vec![0; S::CORES], model_stop: None, model_attach_error: None,
+         }
+     }
+ 
+@@ -204,6 +208,13 @@ impl<S: Soc> Machine<S> {
+         for core in &mut self.cores { core.set_approximate_cpi(cpi); }
+         Ok(())
+     }
++    /// The fractional part of the uniform CPI, in 1/256ths (0..=255); see `approximate_cpi_frac`.
++    pub fn set_approximate_cpi_fraction(&mut self, frac: u32) -> Result<(), String> {
++        if self.approximate_jit_timing.is_none() { return Err("set the approximate JIT timing first".into()); }
++        if frac > 255 { return Err("the fraction is in 1/256ths: 0..=255".into()); }
++        self.approximate_cpi_frac = frac;
++        Ok(())
++    }
+     pub fn has_observer(&self, name: &str) -> bool { self.observers.iter().any(|o| o.name() == name) }
+     /// Every observer's end-of-run report, in the order they were added (files are written now).
+     pub fn reports(&mut self) -> String {
+@@ -516,7 +527,8 @@ impl<S: Soc> Machine<S> {
+ 
+     fn run_unmodeled<const APPROXIMATE: bool>(&mut self, max_insns: u64) -> Stop {
+         assert!(self.quantum != 0, "scheduling quantum must be nonzero");
+-        let (cpi, max_quantum) = if APPROXIMATE { self.approximate_jit_timing.unwrap() } else { (1, self.quantum as u32) };
++        let (cpi_base, max_quantum) = if APPROXIMATE { self.approximate_jit_timing.unwrap() } else { (1, self.quantum as u32) };
++        let mut cpi = cpi_base;
+         self.stub_bloom = self.stubs.keys().fold(0, |m, &pc| m | pc_bit(pc));
+         self.probe_bloom = self.fn_probes.keys().fold(0, |m, &pc| m | pc_bit(pc));
+         for c in &mut self.cores {
+@@ -635,6 +647,11 @@ impl<S: Soc> Machine<S> {
+                     } else { self.bb_stats[6] += 1; }
+                 }
+             }
++            if APPROXIMATE && self.approximate_cpi_frac != 0 {
++                self.approximate_cpi_acc += self.approximate_cpi_frac;
++                let next = if self.approximate_cpi_acc >= 256 { self.approximate_cpi_acc -= 256; cpi_base + 1 } else { cpi_base };
++                if next != cpi { cpi = next; for core in &mut self.cores { core.set_approximate_cpi(cpi); } }
++            }
+             let quantum = if APPROXIMATE {
+                 // An instruction can overrun the deadline by at most CPI-1 cycles.
+                 self.idle_budget(u64::from(max_quantum) * u64::from(cpi), &on)
+@@ -986,6 +1003,7 @@ impl<S: Soc> Machine<S> {
                  ScriptAction::Stop => { self.max_cycles = 0; stopped = true; }
                  ScriptAction::Touch(x, y, d) => { self.bus.touch_input(x, y, d); }
                  ScriptAction::Poke(a, v) => { let _ = self.bus.write32_unpriced(a, v); }
@@ -476,7 +540,7 @@ index 8606f11..d4f8d9c 100644
              }
          }
          stopped
-@@ -1050,6 +1051,7 @@ impl<S: Soc> Machine<S> {
+@@ -1050,6 +1068,7 @@ impl<S: Soc> Machine<S> {
      /// Parse a script: one action per line, `<seconds> <cmd> [args]`.
      ///   press <pin> [ms]   release <pin>   gpio <pin> <0|1>   serial <text...>   knob <cw|ccw> [detents]   touch <x> <y> <0|1>   poke <addr> <value>   stop
      /// Pins are numbers or the board's names (`btn1`, `sw`, ...); buttons/encoder are active-low with pull-ups (release = 1).
@@ -484,7 +548,7 @@ index 8606f11..d4f8d9c 100644
      pub fn load_script(&mut self, text: &str) -> Result<(), String> {
          let hz = S::CPU_HZ as f64;
          let mut ev: Vec<(u64, ScriptAction)> = Vec::new();
-@@ -1063,6 +1065,11 @@ impl<S: Soc> Machine<S> {
+@@ -1063,6 +1082,11 @@ impl<S: Soc> Machine<S> {
              let board = self.bus.board_ref();
              let pin = |s: &str| -> Result<u8, String> { board.named_pin(s).map(Ok).unwrap_or_else(|| s.parse().map_err(|_| format!("line {}: bad pin {}", ln + 1, s))) };
              let c = (t * hz) as u64;
@@ -1250,10 +1314,10 @@ index 3216221..dc6d0fa 100644
  }
 diff --git a/esp32s3/src/board/panel.rs b/esp32s3/src/board/panel.rs
 new file mode 100644
-index 0000000..1be1222
+index 0000000..2110051
 --- /dev/null
 +++ b/esp32s3/src/board/panel.rs
-@@ -0,0 +1,105 @@
+@@ -0,0 +1,280 @@
 +//! The NickoScope LED panel: a Waveshare ESP32-S3-RGB-Matrix board driving a 128x64 HUB75 panel
 +//! (two 64x64, 1/32 scan) from the LCD_CAM i8080 bus through a looping GDMA ring, the way
 +//! ESP32-HUB75-MatrixPanel-DMA 3.0.14 does it on the S3.
@@ -1262,9 +1326,15 @@ index 0000000..1be1222
 +//! OE-gated light in rows a and a+32), one GDMA descriptor at a time; the descriptor the driver
 +//! marks SUC_EOF closes a refresh. Refreshes are summed into windows of at least 1/60 s, an eye's
 +//! worth, and published as light: an LED's share of the most a 1/32-scan LED can emit.
++//!
++//! The board's I2C bus (SDA GPIO47, SCL GPIO48) carries the Sensirion SHTC3 at 0x70 (`i2c/shtc3.rs`).
++//! The air it senses starts as a plausible room and is set at run time with the `climate` verb.
 +use std::cell::RefCell;
++use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
++use std::sync::{Arc, Mutex};
 +use esp_soc::board::{BoardEdge, BoardModel, VirtualCycle};
 +use super::panel_inputs::PanelInputs;
++use crate::i2c::{check_air, I2cDevice, Shtc3, Shtc3Air, SHTC3_ADDR};
 +use hub75::{Decoder, DecoderConfig, Refresh};
 +use hub75::render::{Optics, Renderer};
 +
@@ -1272,6 +1342,12 @@ index 0000000..1be1222
 +pub const H: usize = 64;
 +const SCAN: u64 = (H / 2) as u64;
 +const PANEL_SCALE: usize = 8;   // px per LED in PNGs and plain UIs
++
++/// The controller the firmware's `Wire` drives: I2C0. AnimatedPixelClock begins `Wire` on 47/48
++/// (`src/board/board_i2c.cpp:17`), and arduino-esp32 2.0.17 defines `TwoWire Wire = TwoWire(0)`
++/// (`libraries/Wire/src/Wire.cpp:697`), port 0 of the IDF driver: the block at 0x6001_3000 that
++/// the SoC model routes to `i2c[0]` (`periph.rs`, "I2C0").
++pub const SHTC3_BUS: u8 = 0;
 +
 +pub struct Panel {
 +    dec: Decoder,
@@ -1290,7 +1366,31 @@ index 0000000..1be1222
 +    gpio_events: u64,
 +    /// The IR receiver on GPIO0, the EC11 knob on IO45/IO46 and BOOT (panel_inputs.rs)
 +    pub inputs: PanelInputs,
++    /// A camera instead of an eye: None integrates whole refreshes (an eye, 1/60 s); Some(s)
++    /// shows what an exposure of s seconds catches of the scan, the bands a phone films.
++    pub shutter_s: Option<f64>,
++    ring: Vec<u16>,              // the last RING words the bus clocked out, for the shutter
++    ring_at: usize,
++    ring_len: usize,
++    shutter_dec: Decoder,
++    shutter_phase: f64,          // where in the ring the next exposure starts, 0..1 of a refresh
++    /// The air at the SHTC3 (the `climate` verb) and its counters, shared with the device
++    pub climate: Arc<Mutex<Shtc3Air>>,
++    /// The board's cycle, for the SHTC3's wake-up, reset and measurement times
++    climate_clock: Arc<AtomicU64>,
 +}
++
++/// `climate <°C> <%RH>`: the air at the SHTC3 from the next measurement on.
++fn parse_climate(args: &str) -> Result<(f64, f64), String> {
++    let usage = || format!("climate <temperature °C> <humidity %RH>, got `{args}`");
++    let v: Vec<f64> = args.split_whitespace().map(str::parse).collect::<Result<_, _>>().map_err(|_| usage())?;
++    let [t, rh] = v[..] else { return Err(usage()) };
++    check_air(t, rh)?;
++    Ok((t, rh))
++}
++
++/// Words kept for the shutter: two refreshes of the library's 128x64 chain (94,208 words each).
++const RING: usize = 2 * 94_208 + 4096;
 +
 +impl Default for Panel { fn default() -> Self { Self::new() } }
 +
@@ -1298,7 +1398,9 @@ index 0000000..1be1222
 +    pub fn new() -> Self {
 +        Panel { dec: Decoder::new(DecoderConfig::default()), words16: Vec::new(), acc: vec![[0; 3]; W * H], acc_clocks: 0, acc_refreshes: 0,
 +                window: 10_000_000 / 60, last: Refresh::blank(W, H), light: vec![0; W * H * 3], frames: 0, refreshes: 0, words: 0, pclk: 0,
-+                renderer: RefCell::new(Renderer::new(Optics::default(), PANEL_SCALE)), gpio_events: 0, inputs: PanelInputs::new() }
++                renderer: RefCell::new(Renderer::new(Optics::default(), PANEL_SCALE)), gpio_events: 0, inputs: PanelInputs::new(),
++                shutter_s: None, ring: vec![0; RING], ring_at: 0, ring_len: 0, shutter_dec: Decoder::new(DecoderConfig::default()), shutter_phase: 0.0,
++                climate: Arc::default(), climate_clock: Arc::default() }
 +    }
 +
 +    fn add_refresh(&mut self, r: Refresh) {
@@ -1307,6 +1409,31 @@ index 0000000..1be1222
 +        self.acc_clocks += r.total_clocks;
 +        self.acc_refreshes += 1;
 +        if self.acc_clocks >= self.window { self.close_window(); }
++    }
++
++    /// One camera exposure of `s` seconds out of the ring: decode a row's worth of words before it
++    /// (to settle the shift register and latch, not counted), then the exposure itself. An LED is
++    /// 1.0 when it was lit for all of the exposure or of its row slot, whichever is shorter.
++    fn shutter_frame(&mut self, s: f64) {
++        let pclk = self.pclk.max(1) as f64;
++        let refresh = (self.last.total_clocks.max(1) / 2).max(1) as usize;   // `last` holds two refreshes, near enough
++        let expo = ((s * pclk) as usize).clamp(1, refresh);
++        let pre = 2 * W;
++        if self.ring_len < expo + pre + refresh { return; }
++        // Not locked to the scan, like a phone: each exposure starts a golden-ratio step further on.
++        self.shutter_phase = (self.shutter_phase + 0.618_034) % 1.0;
++        let back = expo + pre + (self.shutter_phase * refresh as f64) as usize;
++        let start = (self.ring_at + RING - back) % RING;
++        let words: Vec<u16> = (0..expo + pre).map(|k| self.ring[(start + k) % RING]).collect();
++        self.shutter_dec.feed(&words[..pre]);
++        let _ = self.shutter_dec.end_refresh();
++        self.shutter_dec.feed(&words[pre..]);
++        let r = self.shutter_dec.end_refresh();
++        let slot = (refresh as f64 / SCAN as f64).max(1.0);
++        let full = (expo as f64).min(slot);
++        for (i, c) in r.on_clk.iter().enumerate() {
++            for (l, v) in self.light[i * 3..i * 3 + 3].iter_mut().zip(c.iter()) { *l = ((*v as f64 / full).min(1.0) * 65535.0 + 0.5) as u16; }
++        }
 +    }
 +
 +    fn close_window(&mut self) {
@@ -1320,6 +1447,7 @@ index 0000000..1be1222
 +        self.last.index = self.frames;
 +        self.acc_clocks = 0;
 +        self.acc_refreshes = 0;
++        if let Some(sh) = self.shutter_s { self.shutter_frame(sh); }
 +        self.frames += 1;
 +    }
 +}
@@ -1335,6 +1463,16 @@ index 0000000..1be1222
 +        words.clear();
 +        words.extend(data.as_chunks::<2>().0.iter().map(|p| u16::from_le_bytes(*p)));
 +        self.words += words.len() as u64;
++        if self.shutter_s.is_some() {
++            let mut src = &words[words.len().saturating_sub(RING)..];
++            while !src.is_empty() {
++                let n = src.len().min(RING - self.ring_at);
++                self.ring[self.ring_at..self.ring_at + n].copy_from_slice(&src[..n]);
++                self.ring_at = (self.ring_at + n) % RING;
++                src = &src[n..];
++            }
++            self.ring_len = (self.ring_len + words.len()).min(RING);
++        }
 +        if let Some(r) = self.dec.feed_segment(&words, eof) { self.add_refresh(r); }
 +        self.words16 = words;
 +        // A stream that never marks EOF still shows: close on clocks alone after four windows.
@@ -1347,16 +1485,117 @@ index 0000000..1be1222
 +    fn display_light(&self) -> Option<(u32, u32, Vec<u16>, u64)> { Some((W as u32, H as u32, self.light.clone(), self.frames)) }
 +    fn display_version(&self) -> u64 { self.frames }
 +    fn display_frames(&self) -> u64 { self.frames }
++    /// A fresh SHTC3 each attach (boot, chip reset): idle, as after power-up (DS §5.2). A real one on
++    /// the board's 3V3 keeps its state across an ESP32 reset; the firmware's cycle starts with the
++    /// wake-up, which both states take, so it cannot tell.
++    fn i2c_devices(&mut self) -> Vec<(u8, u8, Box<dyn I2cDevice>)> {
++        vec![(SHTC3_BUS, SHTC3_ADDR, Box::new(Shtc3::new(self.climate.clone(), self.climate_clock.clone())))]
++    }
 +    fn input_levels(&self) -> Vec<(u8, bool)> { self.inputs.input_levels() }
 +    fn next_deadline(&self) -> Option<VirtualCycle> { self.inputs.next_deadline() }
-+    fn advance_to(&mut self, cycle: VirtualCycle) { self.inputs.advance_to(cycle) }
++    fn advance_to(&mut self, cycle: VirtualCycle) { self.climate_clock.store(cycle, Relaxed); self.inputs.advance_to(cycle) }
 +    fn take_edges(&mut self) -> Vec<BoardEdge> { self.inputs.take_edges() }
-+    fn check_input(&self, cmd: &str, args: &str) -> Option<Result<(), String>> { self.inputs.check_input(cmd, args) }
-+    fn input_at(&mut self, cycle: VirtualCycle, cmd: &str, args: &str) -> Result<(), String> { self.inputs.input_at(cycle, cmd, args) }
++    fn check_input(&self, cmd: &str, args: &str) -> Option<Result<(), String>> {
++        if cmd == "shutter" { return Some(parse_shutter(args).map(|_| ())); }
++        if cmd == "climate" { return Some(parse_climate(args).map(|_| ())); }
++        self.inputs.check_input(cmd, args)
++    }
++    fn input_at(&mut self, cycle: VirtualCycle, cmd: &str, args: &str) -> Result<(), String> {
++        if cmd == "shutter" {
++            self.shutter_s = parse_shutter(args)?;
++            if self.shutter_s.is_none() { self.ring_len = 0; }
++            return Ok(());
++        }
++        if cmd == "climate" {
++            let (t, rh) = parse_climate(args)?;
++            let mut air = self.climate.lock().expect("SHTC3 air mutex poisoned");
++            (air.temp_c, air.humidity) = (t, rh);
++            return Ok(());
++        }
++        self.inputs.input_at(cycle, cmd, args)
++    }
 +    fn report(&self) -> String {
 +        let mut r = self.inputs.report(); if !r.is_empty() && !r.ends_with('\n') { r.push('\n'); }
++        let a = self.climate.lock().expect("SHTC3 air mutex poisoned").clone();
++        r += &format!("[panel] SHTC3 at I2C{} {:#04x}: air {:.2} °C {:.2} %RH, {} measurements, {} ID reads, {} NACKs\n",
++                      SHTC3_BUS, SHTC3_ADDR, a.temp_c, a.humidity, a.measurements, a.id_reads, a.nacks);
 +        r + &format!("[panel] HUB75: {} bus words at {:.2} MHz PCLK, {} refreshes ({:.1} Hz), {} light windows\n",
 +                self.words, self.pclk as f64 / 1e6, self.refreshes, if self.words > 0 { self.refreshes as f64 * self.pclk as f64 / self.words as f64 } else { 0.0 }, self.frames)
++    }
++}
++
++/// `shutter eye` (whole refreshes) or `shutter N` (an exposure of 1/N s, N = 30..100000).
++fn parse_shutter(args: &str) -> Result<Option<f64>, String> {
++    let a = args.trim();
++    if a.is_empty() || a == "eye" || a == "off" { return Ok(None); }
++    let n: f64 = a.trim_start_matches("1/").parse().map_err(|_| "shutter: `eye` or N for 1/N s".to_string())?;
++    if !(30.0..=100_000.0).contains(&n) { return Err("shutter: N from 30 to 100000 (1/N s)".into()); }
++    Ok(Some(1.0 / n))
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use crate::i2c::{crc8, raw_humidity, raw_temperature, I2c, INT_NACK, INT_TRANS_COMPLETE};
++
++    const RSTART: u32 = 6 << 11;
++    const STOP: u32 = 2 << 11;
++    const fn write(n: u32) -> u32 { 1 << 11 | 1 << 8 | n }   // WRITE n bytes, ACK checked
++    const fn read(n: u32) -> u32 { 3 << 11 | n }
++
++    /// One transaction through the controller model, as the IDF driver lays it out. NACK?
++    fn transact(bus: &mut I2c, tx: &[u8], cmds: &[u32]) -> bool {
++        bus.write(0x18, 3 << 12);                                      // FIFO reset
++        bus.int_raw = 0;
++        for &b in tx { bus.write(0x1c, u32::from(b)); }
++        for (i, &c) in cmds.iter().enumerate() { bus.write(0x58 + 4 * i as u32, c); }
++        bus.write(0x04, 1 << 5);                                       // TRANS_START
++        assert!(bus.int_raw & (INT_NACK | INT_TRANS_COMPLETE) != 0);
++        bus.int_raw & INT_NACK != 0
++    }
++
++    #[test]
++    fn the_shtc3_answers_on_i2c0_and_follows_the_climate_verb() {
++        let mut panel = Panel::new();
++        let devices = panel.i2c_devices();
++        assert_eq!(devices.iter().map(|(b, a, _)| (*b, *a)).collect::<Vec<_>>(), [(0, 0x70)]);
++        let mut bus = I2c::new();
++        for (_, addr, dev) in devices { bus.attach(addr, dev); }
++        let cmd = |bus: &mut I2c, c: u16| { let [h, l] = c.to_be_bytes(); transact(bus, &[0xe0, h, l], &[RSTART, write(3), STOP]) };
++        let get6 = |bus: &mut I2c| {
++            let nack = transact(bus, &[0xe1], &[RSTART, write(1), read(6), STOP]);
++            (nack, (0..6).map(|_| bus.read(0x1c) as u8).collect::<Vec<_>>())
++        };
++
++        assert!(panel.check_input("climate", "19.5 60").is_some_and(|r| r.is_ok()));
++        for bad in ["", "19.5", "19.5 60 1", "warm 60", "130 50", "20 -1"] {
++            assert!(panel.check_input("climate", bad).is_some_and(|r| r.is_err()), "{bad}");
++        }
++        assert!(panel.check_input("knob", "cw 2").is_some_and(|r| r.is_ok()), "the inputs' verbs still reach them");
++        assert!(panel.check_input("warp", "9").is_none());
++
++        let us = crate::periph::CPU_HZ / 1_000_000;
++        panel.advance_to(1_000 * us);
++        assert!(!cmd(&mut bus, 0x3517), "wake-up");
++        panel.advance_to(2_000 * us);
++        assert!(!cmd(&mut bus, 0x7866), "measure: normal mode, T first, no stretching");
++        panel.advance_to(12_000 * us);
++        assert!(get6(&mut bus).0, "a read 10 ms in: NACK, still measuring");
++        panel.advance_to(17_000 * us);
++        let (nack, f) = get6(&mut bus);
++        assert!(!nack);
++        let t = raw_temperature(22.5).to_be_bytes();
++        assert_eq!(f, [t[0], t[1], crc8(&t), f[3], f[4], f[5]]);
++        assert_eq!(u16::from_be_bytes([f[3], f[4]]), raw_humidity(45.0));
++
++        panel.input_at(18_000 * us, "climate", "21.8 52").unwrap();
++        assert!(!cmd(&mut bus, 0x7866));
++        panel.advance_to(31_000 * us);
++        let (_, f) = get6(&mut bus);
++        assert_eq!((u16::from_be_bytes([f[0], f[1]]), u16::from_be_bytes([f[3], f[4]])), (raw_temperature(21.8), raw_humidity(52.0)));
++        assert!(!cmd(&mut bus, 0xb098), "sleep");
++        assert!(cmd(&mut bus, 0x7866), "asleep: refused");
++        assert!(panel.report().contains("SHTC3 at I2C0 0x70: air 21.80 °C 52.00 %RH, 2 measurements"), "{}", panel.report());
 +    }
 +}
 diff --git a/esp32s3/src/board/panel_inputs.rs b/esp32s3/src/board/panel_inputs.rs
@@ -2531,6 +2770,443 @@ index d819590..9d20efa 100644
      /// Gather a finite crypto transaction. Descriptor visits bound both runtime and allocation
      /// (4096 * 4095 bytes maximum); a visited set rejects cycles independently of owner checking.
      fn gather_dma_out(&mut self, ch: usize, limit: usize) -> Result<Vec<u8>, DmaDescriptorFault> {
+diff --git a/esp32s3/src/i2c.rs b/esp32s3/src/i2c.rs
+index 7fd0ffd..9783e19 100644
+--- a/esp32s3/src/i2c.rs
++++ b/esp32s3/src/i2c.rs
+@@ -2,6 +2,9 @@
+ pub use esp_periph::i2c::*;
+ use std::collections::HashMap;
+ 
++mod shtc3;
++pub use shtc3::*;
++
+ pub struct Ch32v003 { pub regs: [u8; 8], ptr: u8, first: bool, pub writes: u64 }
+ impl Default for Ch32v003 { fn default() -> Self { Self::new() } }
+ 
+diff --git a/esp32s3/src/i2c/shtc3.rs b/esp32s3/src/i2c/shtc3.rs
+new file mode 100644
+index 0000000..9015575
+--- /dev/null
++++ b/esp32s3/src/i2c/shtc3.rs
+@@ -0,0 +1,417 @@
++//! Sensirion SHTC3 humidity and temperature sensor, as the master sees it on the I2C bus.
++//!
++//! Source for every number: Sensirion, *Datasheet SHTC3*, Version 4 - December 2022 (DS),
++//! https://sensirion.com/media/documents/643F9C8E/63A5A436/Datasheet_SHTC3.pdf. Each line names its
++//! table or section. What the datasheet leaves open is marked "not verified" and says what we chose.
++//!
++//! States (DS §5.2, §5.4, §5.5, Table 3):
++//! - **idle** after power-up (DS §5.2; Table 3: "after power-up the sensor remains in the idle state
++//!   unless a sleep command is issued"). A fresh model is a sensor just powered: idle.
++//! - **sleep** after 0xB098 (Table 9). Only the wake-up 0x3517 (Table 10) is taken: "when in sleep mode,
++//!   the sensor requires a dedicated wake-up command to enable further I2C communication" (Table 3).
++//!   The write header is ACKed, since the wake-up has to get in; any other command byte and every read
++//!   header are NACKed. Not verified: which byte a sleeping part refuses (the DS does not say); we NACK
++//!   the first byte that cannot be the wake-up.
++//! - **waking / resetting** for tPU / tSR after the wake-up or the soft reset (Table 5, max 240 us;
++//!   Figure 7 points the wake-up time to Table 5). Not verified: the DS gives only the time before the
++//!   sensor "enters the idle state"; we NACK headers until then.
++//! - **measuring** for tMEAS after a measurement command (Table 5, max 12.1 ms normal, 0.8 ms low
++//!   power). "The sensor does not respond to any I2C activity during measurement, i.e. I2C read and
++//!   write headers are not acknowledged (NACK)" (§5.5). With clock stretching (Table 11) a read header
++//!   is ACKed and SCL held low until the result is ready (§5.5). The controller model has no SCL, so a
++//!   stretched read gets its bytes at once, as if the stretch had just ended: firmware using stretching
++//!   sees no delay here (a real master waits up to tMEAS and needs a bus timeout that allows it).
++//! - **result ready**: a read header is ACKed and the six bytes follow, T first or RH first as the
++//!   command said (Table 11, §5.6, Figure 7); each word is two bytes and a CRC (§5.6, §5.10). The
++//!   master may stop after any byte (§5.6). The sensor is then idle (Figure 7, "SHTC3 in idle
++//!   state"). Not verified: what a second read header gets; the DS does not say, we NACK it (the
++//!   result is read once), and past the six bytes the bus reads 0xFF.
++//! - Also not verified: a wake-up sent to an awake sensor (ACKed, nothing happens: every cycle in
++//!   Figure 7 starts with it, and the firmware sends it on its first contact, when the part is idle
++//!   from power-up), an unknown command (NACK at its second byte), a third command byte (NACK).
++//!
++//! The ID (0xEFC8, Table 14) is a 16-bit word and its CRC (§5.9). Table 15 fixes bits 11 and 5:0 to
++//! the SHTC3 code (xxxx'1xxx'xx00'0111); the x bits vary from part to part, ours are 0 (our choice).
++//!
++//! Timing uses the **max** column of Table 5 (measured at -40 °C, §3.1), the worst case a firmware must
++//! survive. The panel firmware does not depend on anything shorter: it waits 1 ms after the wake-up and
++//! the soft reset and 15 ms after its measurement command (0x7866, normal mode, T first, no clock
++//! stretching, `src/climate/shtc3.h:26`), and a NACK on the read makes it retry 5 ms later, three
++//! times (AnimatedPixelClock-twin f2cb9b2, `src/climate/climate_reader.h:51-54, :195-206`).
++//!
++//! Time: the device reads the board's cycle from `clock` (`VirtualCycle`, `periph::CPU_HZ` per
++//! second). The bus flushes device time before every peripheral register write (`bus.rs`
++//! `periph_write_inner`), and the board stores the cycle in `advance_to`, so the write that starts an
++//! I2C transaction sees the exact cycle.
++//!
++//! Not modelled: the reset through the general call (DS §5.8, address 0x00, a bus-wide reset the panel
++//! firmware does not send), and self-heating: the model reads exactly the air it is given.
++use super::I2cDevice;
++use crate::periph::CPU_HZ;
++use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
++use std::sync::{Arc, Mutex};
++
++/// DS §5.1 Table 8.
++pub const SHTC3_ADDR: u8 = 0x70;
++/// DS Table 10.
++pub const CMD_WAKEUP: u16 = 0x3517;
++/// DS Table 9.
++pub const CMD_SLEEP: u16 = 0xB098;
++/// DS §5.7 Table 12.
++pub const CMD_SOFT_RESET: u16 = 0x805D;
++/// DS §5.9 Table 14.
++pub const CMD_READ_ID: u16 = 0xEFC8;
++/// The ID this model returns: Table 15's fixed bits with the free ones at 0 (our choice).
++pub const SHTC3_ID: u16 = 0x0807;
++
++const CYCLES_PER_US: u64 = CPU_HZ / 1_000_000;
++/// DS Table 5, max: tPU and tSR 240 us, tMEAS 12.1 ms normal and 0.8 ms low power.
++pub const T_WAKE_US: u64 = 240;
++pub const T_RESET_US: u64 = 240;
++pub const T_MEAS_NORMAL_US: u64 = 12_100;
++pub const T_MEAS_LOW_POWER_US: u64 = 800;
++
++/// A measurement command of DS Table 11.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub struct Measure { pub low_power: bool, pub stretch: bool, pub rh_first: bool }
++
++/// DS §5.3 Table 11: the eight measurement commands.
++pub fn measure_command(cmd: u16) -> Option<Measure> {
++    let m = |low_power, stretch, rh_first| Some(Measure { low_power, stretch, rh_first });
++    match cmd {
++        0x7CA2 => m(false, true, false),
++        0x5C24 => m(false, true, true),
++        0x7866 => m(false, false, false),
++        0x58E0 => m(false, false, true),
++        0x6458 => m(true, true, false),
++        0x44DE => m(true, true, true),
++        0x609C => m(true, false, false),
++        0x401A => m(true, false, true),
++        _ => None,
++    }
++}
++
++/// DS §5.10 Table 16: CRC-8, polynomial 0x31, init 0xFF, no reflection, final XOR 0x00.
++pub fn crc8(data: &[u8]) -> u8 {
++    let mut crc = 0xffu8;
++    for &b in data {
++        crc ^= b;
++        for _ in 0..8 { crc = if crc & 0x80 != 0 { (crc << 1) ^ 0x31 } else { crc << 1 }; }
++    }
++    crc
++}
++
++/// DS §5.11 inverted: T = -45 + 175 * S_T / 2^16, so S_T = (T + 45) * 2^16 / 175, rounded.
++pub fn raw_temperature(celsius: f64) -> u16 { ((celsius + 45.0) * 65536.0 / 175.0).round().clamp(0.0, 65535.0) as u16 }
++/// DS §5.11 inverted: RH = 100 * S_RH / 2^16, so S_RH = RH * 2^16 / 100, rounded.
++pub fn raw_humidity(percent: f64) -> u16 { (percent * 65536.0 / 100.0).round().clamp(0.0, 65535.0) as u16 }
++
++/// DS §5.11.
++pub fn temperature_of(raw: u16) -> f64 { -45.0 + 175.0 * f64::from(raw) / 65536.0 }
++/// DS §5.11.
++pub fn humidity_of(raw: u16) -> f64 { 100.0 * f64::from(raw) / 65536.0 }
++
++/// One word as the sensor sends it: MSB, LSB, CRC (DS §5.6).
++fn word(v: u16) -> [u8; 3] { let b = v.to_be_bytes(); [b[0], b[1], crc8(&b)] }
++
++/// The air at the sensor and what the sensor did: shared between the device, the board's
++/// `climate` verb and its report.
++#[derive(Clone, Debug, PartialEq)]
++pub struct Shtc3Air {
++    pub temp_c: f64,
++    pub humidity: f64,
++    /// Measurement commands taken, ID reads answered, bytes or headers refused with a NACK.
++    pub measurements: u64,
++    pub id_reads: u64,
++    pub nacks: u64,
++}
++
++/// A plausible room (our choice): 22.5 °C, 45 %RH.
++impl Default for Shtc3Air {
++    fn default() -> Self { Shtc3Air { temp_c: 22.5, humidity: 45.0, measurements: 0, id_reads: 0, nacks: 0 } }
++}
++
++/// The range a `climate` verb may set: DS Table 2 (T, -40 to 125 °C) and Table 1 (RH, 0 to 100 %RH).
++pub fn check_air(temp_c: f64, humidity: f64) -> Result<(), String> {
++    if !(-40.0..=125.0).contains(&temp_c) { return Err(format!("temperature {temp_c} outside the SHTC3's -40..125 °C")); }
++    if !(0.0..=100.0).contains(&humidity) { return Err(format!("humidity {humidity} outside 0..100 %RH")); }
++    Ok(())
++}
++
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++enum State {
++    Sleep,
++    Idle,
++    /// Waking up or soft-resetting: idle from `until` on.
++    Starting { until: u64 },
++    /// Measuring until `until`, then the result waits in `frame`.
++    Measuring { until: u64, stretch: bool, frame: [u8; 6] },
++}
++
++pub struct Shtc3 {
++    air: Arc<Mutex<Shtc3Air>>,
++    clock: Arc<AtomicU64>,
++    state: State,
++    /// Command bytes received in this write transaction (a command is two, DS §5).
++    cmd: [u8; 2],
++    cmd_len: u8,
++    /// What a read header gets: the ID or a finished measurement, and how much has gone out.
++    out: [u8; 6],
++    out_len: u8,
++    out_pos: u8,
++    reading: bool,
++}
++
++impl Shtc3 {
++    pub fn new(air: Arc<Mutex<Shtc3Air>>, clock: Arc<AtomicU64>) -> Self {
++        Shtc3 { air, clock, state: State::Idle, cmd: [0; 2], cmd_len: 0, out: [0; 6], out_len: 0, out_pos: 0, reading: false }
++    }
++
++    fn air(&self) -> std::sync::MutexGuard<'_, Shtc3Air> { self.air.lock().expect("SHTC3 air mutex poisoned") }
++
++    fn nack(&self) -> bool { self.air().nacks += 1; false }
++
++    /// Let the clock finish what was running.
++    fn settle(&mut self) -> u64 {
++        let now = self.clock.load(Relaxed);
++        match self.state {
++            State::Starting { until } if now >= until => self.state = State::Idle,
++            State::Measuring { until, frame, .. } if now >= until => self.ready(frame),
++            _ => {}
++        }
++        now
++    }
++
++    fn ready(&mut self, frame: [u8; 6]) {
++        self.state = State::Idle;
++        self.out = frame;
++        self.out_len = 6;
++    }
++
++    /// A complete two-byte command, taken at the ACK of its last byte (DS §5.7: tSR runs from that ACK).
++    fn execute(&mut self, cmd: u16, now: u64) -> bool {
++        if self.state == State::Sleep {
++            if cmd != CMD_WAKEUP { return self.nack(); }
++            self.state = State::Starting { until: now + T_WAKE_US * CYCLES_PER_US };
++            return true;
++        }
++        // Headers are refused while busy (start()), so the sensor is idle here.
++        match cmd {
++            CMD_WAKEUP => {}                                   // already awake: nothing to do (not verified; the DS starts every cycle with it, Figure 7)
++            CMD_SLEEP => { self.state = State::Sleep; self.out_len = 0; }
++            CMD_SOFT_RESET => { self.state = State::Starting { until: now + T_RESET_US * CYCLES_PER_US }; self.out_len = 0; }
++            CMD_READ_ID => {
++                let id = word(SHTC3_ID);
++                self.out[..3].copy_from_slice(&id);
++                self.out_len = 3;
++                self.air().id_reads += 1;
++            }
++            _ => {
++                let Some(m) = measure_command(cmd) else { return self.nack(); };   // an unknown command: NACK (not verified)
++                let (t, rh) = {
++                    let mut air = self.air();
++                    air.measurements += 1;
++                    (word(raw_temperature(air.temp_c)), word(raw_humidity(air.humidity)))
++                };
++                let (first, second) = if m.rh_first { (rh, t) } else { (t, rh) };
++                let mut frame = [0; 6];
++                frame[..3].copy_from_slice(&first);
++                frame[3..].copy_from_slice(&second);
++                let us = if m.low_power { T_MEAS_LOW_POWER_US } else { T_MEAS_NORMAL_US };
++                self.state = State::Measuring { until: now + us * CYCLES_PER_US, stretch: m.stretch, frame };
++                self.out_len = 0;
++            }
++        }
++        true
++    }
++}
++
++impl I2cDevice for Shtc3 {
++    fn start(&mut self, read: bool) -> bool {
++        self.settle();
++        self.cmd_len = 0;
++        self.reading = read;
++        self.out_pos = 0;
++        let ack = match self.state {
++            State::Sleep => !read,                                      // only the wake-up gets in
++            State::Starting { .. } => false,
++            State::Measuring { stretch: true, frame, .. } if read => { self.ready(frame); true }   // SCL held until done (§5.5)
++            State::Measuring { .. } => false,                           // §5.5
++            State::Idle => !read || self.out_len > 0,                   // nothing to send: NACK (not verified)
++        };
++        if ack { true } else { self.nack() }
++    }
++
++    fn write(&mut self, b: u8) -> bool {
++        if self.reading || self.cmd_len >= 2 { return self.nack(); }   // a third command byte: NACK (not verified)
++        self.cmd[self.cmd_len as usize] = b;
++        self.cmd_len += 1;
++        if self.cmd_len == 1 {
++            if self.state == State::Sleep && b != (CMD_WAKEUP >> 8) as u8 { return self.nack(); }
++            return true;
++        }
++        let now = self.settle();
++        self.execute(u16::from_be_bytes(self.cmd), now)
++    }
++
++    /// Past the result the sensor drives nothing and the pull-ups read 0xFF (not verified).
++    fn read(&mut self) -> u8 {
++        if self.out_pos >= self.out_len { return 0xff; }
++        let v = self.out[self.out_pos as usize];
++        self.out_pos += 1;
++        v
++    }
++
++    fn stop(&mut self) {
++        // The master may stop after any byte (§5.6); what it did not take is gone.
++        if self.reading && self.out_pos > 0 { self.out_len = 0; }
++        self.reading = false;
++        self.cmd_len = 0;
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    const US: u64 = CYCLES_PER_US;
++
++    struct Bench { dev: Shtc3, air: Arc<Mutex<Shtc3Air>>, clock: Arc<AtomicU64> }
++    impl Bench {
++        fn new() -> Self {
++            let (air, clock) = (Arc::new(Mutex::new(Shtc3Air::default())), Arc::new(AtomicU64::new(1_000)));
++            Bench { dev: Shtc3::new(air.clone(), clock.clone()), air, clock }
++        }
++        fn at_us(&self, us: u64) { self.clock.store(1_000 + us * US, Relaxed); }
++        /// One write transaction as the IDF driver sends it: header, bytes, stop. The ACKs.
++        fn command(&mut self, cmd: u16) -> Vec<bool> {
++            let mut acks = vec![self.dev.start(false)];
++            for b in cmd.to_be_bytes() {
++                if !acks.last().unwrap() { break; }
++                acks.push(self.dev.write(b));
++            }
++            if acks.iter().all(|a| *a) { self.dev.stop(); }
++            acks
++        }
++        /// One read transaction: None if the header is refused.
++        fn read(&mut self, n: usize) -> Option<Vec<u8>> {
++            if !self.dev.start(true) { return None; }
++            let v = (0..n).map(|_| self.dev.read()).collect();
++            self.dev.stop();
++            Some(v)
++        }
++    }
++
++    #[test]
++    fn crc_and_conversions_match_the_datasheet_examples() {
++        // Table 16.
++        assert_eq!(crc8(&[0x00]), 0xac);
++        assert_eq!(crc8(&[0xbe, 0xef]), 0x92);
++        // Figure 7: humidity A1 33 CRC 1C, temperature 64 8B CRC C7: "63 %RH and 23.7 °C".
++        assert_eq!(crc8(&[0xa1, 0x33]), 0x1c);
++        assert_eq!(crc8(&[0x64, 0x8b]), 0xc7);
++        assert_eq!(format!("{:.0} {:.1}", humidity_of(0xa133), temperature_of(0x648b)), "63 23.7");
++        // The inverse lands on the nearest word, and the ends clamp.
++        for t in [-40.0, -12.3, 0.0, 19.5, 21.8, 22.5, 60.0, 125.0] { assert!((temperature_of(raw_temperature(t)) - t).abs() <= 175.0 / 65536.0 / 2.0 + 1e-12, "{t}"); }
++        for rh in [0.0, 45.0, 52.0, 60.0, 99.99] { assert!((humidity_of(raw_humidity(rh)) - rh).abs() <= 100.0 / 65536.0 / 2.0 + 1e-12, "{rh}"); }
++        assert_eq!((raw_humidity(100.0), raw_temperature(-50.0)), (65535, 0));
++    }
++
++    #[test]
++    fn id_read_is_the_word_and_its_crc() {
++        let mut b = Bench::new();
++        assert_eq!(b.command(CMD_READ_ID), [true, true, true]);
++        let id = b.read(3).unwrap();
++        assert_eq!(id, [0x08, 0x07, crc8(&[0x08, 0x07])]);
++        assert_eq!(u16::from_be_bytes([id[0], id[1]]) & 0x083f, 0x0807, "Table 15's product code");
++        assert_eq!(b.read(3), None, "read once; nothing left to send");
++        assert_eq!(b.air.lock().unwrap().id_reads, 1);
++    }
++
++    #[test]
++    fn the_firmware_cycle_reads_the_room_after_the_measurement_time() {
++        let mut b = Bench::new();
++        // climate_reader.h: wake-up, 1 ms, 0x7866, 15 ms, read 6, sleep.
++        assert_eq!(b.command(CMD_WAKEUP), [true; 3]);
++        b.at_us(1_000);
++        assert_eq!(b.command(0x7866), [true; 3]);
++        b.at_us(1_000 + T_MEAS_NORMAL_US - 1);
++        assert_eq!(b.read(6), None, "still measuring: the read header is refused (§5.5)");
++        assert_eq!(b.command(CMD_SLEEP), [false], "and so is a write header");
++        b.at_us(1_000 + T_MEAS_NORMAL_US);
++        let f = b.read(6).unwrap();
++        assert_eq!(f[..3], word(raw_temperature(22.5)), "temperature first");
++        assert_eq!(f[3..], word(raw_humidity(45.0)));
++        assert_eq!(crc8(&f[..2]), f[2]);
++        assert_eq!(crc8(&f[3..5]), f[5]);
++        // The firmware's own arithmetic (shtc3.h centiDegrees/centiPercent) gives the room back.
++        let (st, srh) = (i64::from(u16::from_be_bytes([f[0], f[1]])), i64::from(u16::from_be_bytes([f[3], f[4]])));
++        assert_eq!((-4500 + ((17500 * st + 32768) >> 16), (10000 * srh + 32768) >> 16), (2250, 4500));
++        assert_eq!(b.read(6), None, "the result is read once");
++        assert_eq!(b.command(CMD_SLEEP), [true; 3]);
++        let air = b.air.lock().unwrap();
++        assert_eq!((air.measurements, air.nacks), (1, 3));
++    }
++
++    #[test]
++    fn asleep_it_takes_only_the_wake_up() {
++        let mut b = Bench::new();
++        assert_eq!(b.command(CMD_SLEEP), [true; 3]);
++        assert_eq!(b.command(CMD_READ_ID), [true, false], "header ACKed so the wake-up can get in; 0xEF refused");
++        assert_eq!(b.command(0x7866), [true, false]);
++        assert_eq!(b.command(0x3500), [true, true, false], "the wake-up's first byte, then not its second");
++        assert_eq!(b.read(1), None);
++        assert_eq!(b.command(CMD_WAKEUP), [true; 3]);
++        b.at_us(T_WAKE_US - 1);
++        assert_eq!(b.command(CMD_READ_ID), [false], "still waking up (tPU, Table 5)");
++        b.at_us(T_WAKE_US);
++        assert_eq!(b.command(CMD_READ_ID), [true; 3]);
++        assert!(b.read(3).is_some());
++    }
++
++    #[test]
++    fn soft_reset_clears_and_takes_t_sr() {
++        let mut b = Bench::new();
++        assert_eq!(b.command(CMD_READ_ID), [true; 3]);
++        assert_eq!(b.command(CMD_SOFT_RESET), [true; 3]);
++        b.at_us(T_RESET_US - 1);
++        assert_eq!(b.read(3), None);
++        b.at_us(T_RESET_US);
++        assert_eq!(b.read(3), None, "the ID asked for before the reset is gone");
++        assert_eq!(b.command(0x1234), [true, true, false], "an unknown command");
++    }
++
++    #[test]
++    fn rh_first_low_power_and_clock_stretching() {
++        let mut b = Bench::new();
++        b.air.lock().unwrap().temp_c = 19.5;
++        b.air.lock().unwrap().humidity = 60.0;
++        // Low power, RH first, no stretching: 0.8 ms (Table 5).
++        assert_eq!(b.command(0x401A), [true; 3]);
++        b.at_us(T_MEAS_LOW_POWER_US - 1);
++        assert_eq!(b.read(6), None);
++        b.at_us(T_MEAS_LOW_POWER_US);
++        let f = b.read(6).unwrap();
++        assert_eq!(f[..3], word(raw_humidity(60.0)), "RH first");
++        assert_eq!(f[3..], word(raw_temperature(19.5)));
++        // Normal mode, T first, stretching: the read header is ACKed at once and the result follows.
++        b.at_us(2_000);
++        assert_eq!(b.command(0x7CA2), [true; 3]);
++        let f = b.read(6).unwrap();
++        assert_eq!(f[..3], word(raw_temperature(19.5)));
++        // The master may stop early (§5.6); past the six bytes the bus reads 0xFF.
++        assert_eq!(b.command(0x5C24), [true; 3]);
++        assert_eq!(b.read(8).unwrap()[..], [&word(raw_humidity(60.0))[..], &word(raw_temperature(19.5))[..], &[0xff, 0xff]].concat()[..]);
++        assert_eq!(b.command(0x5C24), [true; 3]);
++        assert_eq!(b.read(2).unwrap(), word(raw_humidity(60.0))[..2]);
++        assert_eq!(b.read(1), None);
++        assert!(measure_command(0x7866).is_some() && measure_command(0x7867).is_none());
++    }
++
++    #[test]
++    fn verb_bounds_follow_the_specified_ranges() {
++        assert!(check_air(21.8, 52.0).is_ok());
++        assert!(check_air(-40.0, 0.0).is_ok() && check_air(125.0, 100.0).is_ok());
++        assert!(check_air(-40.1, 50.0).is_err() && check_air(20.0, 100.1).is_err() && check_air(f64::NAN, 50.0).is_err());
++    }
++}
 diff --git a/esp32s3/src/periph.rs b/esp32s3/src/periph.rs
 index 29f538d..0051ac5 100644
 --- a/esp32s3/src/periph.rs
@@ -5702,10 +6378,10 @@ index 0000000..3fc9a52
 +14.0 stop
 diff --git a/web/panel.html b/web/panel.html
 new file mode 100644
-index 0000000..b58b37e
+index 0000000..85a63fa
 --- /dev/null
 +++ b/web/panel.html
-@@ -0,0 +1,271 @@
+@@ -0,0 +1,281 @@
 +<!doctype html>
 +<html lang="en">
 +<head>
@@ -5745,6 +6421,7 @@ index 0000000..b58b37e
 +  .look { display: flex; gap: 18px; flex-wrap: wrap; align-items: center; font-size: 12px; color: var(--muted); }
 +  .look label { display: inline-flex; gap: 8px; align-items: center; }
 +  .look input[type=range] { width: 110px; accent-color: var(--amber); }
++  .look select { font: 12px var(--sans); color: var(--ink); background: #1c1f23; border: 1px solid var(--rule); border-radius: 6px; padding: 4px 6px; }
 +  .note { font-size: 12px; color: var(--muted); max-width: 70ch; }
 +  aside { display: flex; flex-direction: column; gap: 16px; }
 +  section.card { background: var(--bench); border: 1px solid var(--rule); border-radius: 10px; padding: 14px; }
@@ -5793,6 +6470,13 @@ index 0000000..b58b37e
 +      <label>Exposure <input id="exposure" type="range" min="0.25" max="4" step="0.05" value="1"></label>
 +      <label>GOB glow <input id="glow" type="range" min="0" max="1" step="0.05" value="0.55"></label>
 +      <label><input id="dots" type="checkbox" checked> LED dots</label>
++      <label>Seen by <select id="shutter">
++        <option value="eye">an eye (1/60 s)</option>
++        <option value="250">a camera, 1/250 s</option>
++        <option value="1000">a camera, 1/1000 s</option>
++        <option value="4000">a camera, 1/4000 s</option>
++        <option value="16000">a camera, 1/16000 s</option>
++      </select></label>
 +      <button id="snap" type="button">Save PNG</button>
 +    </div>
 +    <p class="note">Light is counted per LED from the HUB75 bitstream the firmware clocks out of LCD_CAM, over whole refreshes: 1.0 is an LED lit for its entire row slot of the 1/32 scan. Glow, dot size and exposure are a look, not yet calibrated against photos of the panel.</p>
@@ -5894,6 +6578,8 @@ index 0000000..b58b37e
 +  }
 +  requestAnimationFrame(draw);
 +  for (const id of ['exposure', 'glow', 'dots']) $(id).addEventListener('input', () => dirty = true);
++  // A short exposure catches only the rows the 1/32 scan lights meanwhile: the bands a phone films.
++  $('shutter').addEventListener('change', (e) => send({ t: 'input', line: 'shutter ' + e.target.value }));
 +  $('snap').addEventListener('click', () => { const a = document.createElement('a'); a.download = 'twin-panel.png'; a.href = canvas.toDataURL('image/png'); a.click(); });
 +
 +  // ---- the emulator's WebSocket
