@@ -125,7 +125,7 @@ static int px_palette_lua(lua_State *L) {
   } else {
     const int n = (int)lua_rawlen(L, 1);
     if (n < 1 || n > 256) return luaL_error(L, "px.palette: 1 to 256 stops {pos, r, g, b}");
-    int pos[256], col[256][3];
+    unsigned char pos[256], col[256][3];   // bytes: the effect task's stack is small
     for (int k = 0; k < n; k++) {
       lua_rawgeti(L, 1, k + 1);
       if (!lua_istable(L, -1)) return luaL_error(L, "px.palette: stop %d is not {pos, r, g, b}", k + 1);
@@ -133,8 +133,8 @@ static int px_palette_lua(lua_State *L) {
       for (int j = 0; j < 4; j++)
         if (!pxl_rawnum(L, -1, j + 1, &v[j])) return luaL_error(L, "px.palette: stop %d is not {pos, r, g, b}", k + 1);
       lua_pop(L, 1);
-      pos[k] = pxl_num255(v[0]);
-      for (int c = 0; c < 3; c++) col[k][c] = pxl_num255(v[c + 1]);
+      pos[k] = (unsigned char)pxl_num255(v[0]);
+      for (int c = 0; c < 3; c++) col[k][c] = (unsigned char)pxl_num255(v[c + 1]);
       if (k > 0 && pos[k] < pos[k - 1]) return luaL_error(L, "px.palette: stop %d comes before the one above it", k + 1);
     }
     int k = 0;
