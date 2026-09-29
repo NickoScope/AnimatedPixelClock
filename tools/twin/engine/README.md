@@ -4,7 +4,7 @@ The emulator is our fork of esp32sim (Joakim Eriksson, MIT):
 **https://github.com/NickoScope/TWIN-NickoScopeMatrix-64x128**, branch `nickoscope/twin` (the fork's default branch).
 `main` there follows upstream; `NICKOSCOPE.md` there lists what the branch adds.
 
-The twin was last checked with commit `ed87818` of that branch. To get it:
+The twin was last checked with commit `e01c301` of that branch (2026-09-29: `check_flasher.py` 25/25, the engine's tests pass except the wasm-jit ones that need Node). To get it:
 
 ```
 git clone -b nickoscope/twin https://github.com/NickoScope/TWIN-NickoScopeMatrix-64x128 ~/twin/esp32sim
