@@ -60,6 +60,77 @@ Verified with the real v2.7.3 image, unmodified (2026-09-29):
 - **Knob:** turning it does the same, counted in `/api/knob`.
 - **OTA:** the release OTA image went through `/update` (tools/agent/update.py). The twin rebooted into app1, and its health check confirmed the image after 61 s and 200 frames.
 
+## Веб-прошивальщик
+
+Двойника прошивает та же страница, что и панель: ESP Web Tools 10.4.0 с esptool-js 0.6.0 внутри.
+Сброс в режим загрузки по DTR/RTS, stub, стирание, запись, сброс в прошивку и Improv Wi-Fi идут
+через настоящий ROM двойника и его USB-Serial/JTAG.
+
+- **Как устроено.** `twin.py run --web PORT` при каждом запуске собирает `state/web/`: страницы
+  движка и `flasher/`. `flasher/` — копия `docs/` (index.html, flasher.js, styles.css, img/,
+  образ из `docs/firmware/latest`). В `index.html` четыре правки, каждая по якорю, который обязан
+  найтись ровно один раз:
+  - первым в `<head>` подключается шим `flasher/twin-serial.js`;
+  - ESP Web Tools закреплён на 10.4.0 (в `docs/` стоит `@10`);
+  - к заголовку добавлено «Двойник · »;
+  - сверху строка о том, чья это страница.
+
+  Сама `docs/` не меняется.
+- **Шим.** Это `navigator.serial` с одним портом 303A:1001 поверх `ws://…/usj`, протокол движка.
+  Открытие и закрытие порта линии DTR/RTS не трогают. Каждый `setSignals` передаёт пару линий,
+  DTR раньше RTS. По кнопке Install появляется выбор:
+  - «Двойник»;
+  - «Плата по USB…» — родной выбор порта в Chrome, так что настоящую плату с этой страницы тоже можно прошить;
+  - «Отмена».
+- **Движок нужен с `/usj`** (ветка `nickoscope/usj`, в `engine/esp32sim-twin.patch` её ещё нет).
+  До слияния запускайте с `TWIN_ENGINE=~/twin/wt-usj`. Со старым движком страница откроется,
+  но порт — нет: `/usj` там отвечает 404, и ESP Web Tools покажет «Failed to open serial port».
+
+```
+tools/twin/twin.py wifi NickoTwin twin-demo-2026   # виртуальная точка: её предложит Improv
+tools/twin/twin.py run --blank --web 8790          # новый чип, пустой (ROM: invalid header); старый flash.bin уходит в state/backup/
+#   http://127.0.0.1:8790/flasher/index.html → Connect → «Двойник» → Install AnimatedPixelClock
+#   → Erase device → Install; затем Configure Wi-Fi: NickoTwin и пароль из `twin.py wifi`
+tools/twin/twin.py verify                          # flash двойника = образ вне data-разделов?
+python3 tools/twin/flasher/check_flasher.py --port 8790   # без человека: headless Chrome
+```
+
+`check_flasher.py` проверяет страницу, затем открывает `flasher/selftest.html`. Самотест сверяет
+шим со спецификацией Web Serial и прогоняет esptool-js: сброс, stub, flash ID, сброс в прошивку.
+Flash он не пишет. Самотест можно открыть и руками, кнопка «Запустить».
+`--flasher-image FILE --flasher-version VER` предлагает на странице другой merged-образ.
+
+Проверено 2026-09-29 во встроенном браузере приложения (Chromium 152), движок `nickoscope/usj`,
+`--cpi 2.45`:
+- **A. Пустой чип, со стиранием.** События: сброс 0x15 с флагом, страп 0x3 (download), stub.
+  Стирание и запись 2 361 936 байт заняли 3,8 с времени двойника. Затем сброс 0x15 без флага,
+  страп 0xf, `SPI_FAST_FLASH_BOOT`, прошивка. Improv ответил «AnimatedPixelClock 2.7.3», в списке
+  сетей была NickoTwin, итог «Device connected to the network!». В консоли прошивки:
+  `WiFi Connected!`, IP 10.0.2.15, NTP. Портал ответил через проброс `--http`.
+  `verify`: вне data-разделов flash совпадает с образом.
+- **B. Поверх прошивки, без стирания.** Запись и `verify` прошли. Но Wi-Fi пришлось вводить
+  заново: Full.bin закрывает NVS (0x9000–0xDFFF) байтами 0xFF, а stub пишет все байты образа.
+  LittleFS (с 0x910000) и app1 лежат вне образа и сохраняются. На плате должно быть так же:
+  это вывод из байтов образа, на плате не проверено.
+- **C. «Logs & Console» → «Reset Device».** Сброс 0x15 без флага, прошивка стартует.
+- **Чужая вкладка.** Пока порт открыт, вторая вкладка получает NetworkError, первая работает
+  дальше. `panel.html` показывает «USB занят прошивальщиком».
+- **Вкладка закрыта при удержании в сбросе** (RTS=1, DTR=0). Движок отпускает чип, прошивка
+  загружается.
+- **После перезапуска без `--blank`** двойник грузится со своего flash и подключается к точке.
+- **Монитор порта (раздел 04).** Читает консоль двойника.
+
+Ограничения:
+- **Адрес с `index.html` на конце.** Каталоги движок не отдаёт, `/flasher/` ответит 404.
+- **Нужен интернет.** ESP Web Tools и esptool-js грузятся с unpkg.com.
+- **Пустой чип шумит.** Он без конца печатает `invalid header`: ROM без прошивки ведёт себя так же,
+  но stdout растёт быстро.
+- **Не всё видно странице.** После сброса по окончании прошивки ESP Web Tools сразу закрывает порт.
+  Событие `release` этого сброса остаётся только в журнале движка, на страницу не приходит.
+- **Метка «USB занят прошивальщиком» ставится только при смене владельца порта.** Движок сообщает
+  её в `/ws` в момент, когда порт берут или отпускают. Поэтому `panel.html`, открытая уже во
+  время прошивки, метку не покажет.
+
 ## Known differences from the panel
 
 - **Timing.** By default an instruction takes one cycle. The panel's PSRAM and cache latency are not
