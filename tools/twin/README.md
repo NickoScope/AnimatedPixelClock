@@ -8,7 +8,7 @@ base `docs/40-virtual-twin.md` (ADR-TWIN-01).
 ## What runs
 
 - **Engine:** our fork of [esp32sim](https://github.com/joakimeriksson/esp32sim) (Rust, MIT):
-  https://github.com/NickoScope/esp32sim, branch `nickoscope/twin` (see `engine/README.md`).
+  https://github.com/NickoScope/TWIN-NickoScopeMatrix-64x128, branch `nickoscope/twin` (see `engine/README.md`).
 - **The fork adds:**
   - the octal flash our module has (a Macronix ID, `--flash-id`), and 4-byte and octal command bytes;
   - LCD_CAM in i8080 mode, streaming its GDMA ring word by word to the board at the programmed PCLK;
@@ -28,7 +28,7 @@ base `docs/40-virtual-twin.md` (ADR-TWIN-01).
 
 ```
 brew install rustup && rustup default stable
-git clone -b nickoscope/twin https://github.com/NickoScope/esp32sim ~/twin/esp32sim
+git clone -b nickoscope/twin https://github.com/NickoScope/TWIN-NickoScopeMatrix-64x128 ~/twin/esp32sim
 cd ~/twin/esp32sim && cargo build --release
 ```
 
@@ -79,7 +79,7 @@ Verified with the real v2.7.3 image, unmodified (2026-09-29):
   - «Двойник»;
   - «Плата по USB…» — родной выбор порта в Chrome, так что настоящую плату с этой страницы тоже можно прошить;
   - «Отмена».
-- **Движок** — форк NickoScope/esp32sim, ветка `nickoscope/twin`: канал `/usj` в нём есть.
+- **Движок** — форк NickoScope/TWIN-NickoScopeMatrix-64x128, ветка `nickoscope/twin`: канал `/usj` в нём есть.
   Со старым движком без `/usj` страница откроется, но порт — нет: ESP Web Tools покажет
   «Failed to open serial port».
 
