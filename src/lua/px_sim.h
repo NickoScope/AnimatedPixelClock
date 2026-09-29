@@ -96,7 +96,7 @@ static int px_step_lua(lua_State *L, PxsCharge charge) {
     const int cool = (int)(pxsim_num(L, t, "cool", 0.3, 0, 1) * 256);     // up to 16 levels a row
     const int heat = pxr_q8(pxsim_num(L, t, "heat", 1, 0, 1));
     uint32_t seed = (uint32_t)(int64_t)pxsim_num(L, t, "seed", 1, -2147483647.0, 2147483647.0) * 2654435761u | 1u;
-    if (charge) charge(L, (unsigned long)w * h);
+    if (charge) charge(L, (unsigned long)w * h * 2 / 5);   // 1.4 ms a step on the panel
     // the bottom row: hot at random
     for (int x = 0; x < w; x++) {
       seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5;
@@ -116,7 +116,7 @@ static int px_step_lua(lua_State *L, PxsCharge charge) {
   } else if (kind == 1) {                            // life
     const int decay = pxr_q8(pxsim_num(L, t, "decay", 0.1, 0, 1));
     const int born = pxsim_rule(L, t, "born", "3"), survive = pxsim_rule(L, t, "survive", "23");
-    if (charge) charge(L, (unsigned long)w * h * 2);
+    if (charge) charge(L, (unsigned long)w * h);           // 2.8 ms a step on the panel
     unsigned char *old = pxsim_scratch(L, (size_t)w * h);
     memcpy(old, v, (size_t)w * h);
     for (int y = 0; y < h; y++) {
@@ -143,7 +143,7 @@ static int px_step_lua(lua_State *L, PxsCharge charge) {
     if (!p || p == l || p->w != w || p->h != h) return luaL_error(L, "px.step: prev is another layer of the same size");
     lua_pop(L, 1);
     const int damp = pxr_q8(pxsim_num(L, t, "damp", 0.02, 0, 1));
-    if (charge) charge(L, (unsigned long)w * h);
+    if (charge) charge(L, (unsigned long)w * h * 7 / 10);  // 2 ms a step on the panel
     unsigned char *q = p->v;
     for (int y = 0; y < h; y++)
       for (int x = 0; x < w; x++) {
@@ -196,6 +196,7 @@ static int pxrd_seed(lua_State *L) {
   const long long cy = (((long long)luaL_checkinteger(L, 3) % h) + h) % h;
   const lua_Integer rad = luaL_optinteger(L, 4, 3);
   if (rad < 0 || rad > 64) return luaL_error(L, "reaction: a seed's radius is 0 to 64");
+  if (r->charge) r->charge(L, (unsigned long)((2 * rad + 1) * (2 * rad + 1)) / 2);
   for (long long y = cy - rad; y <= cy + rad; y++)
     for (long long x = cx - rad; x <= cx + rad; x++) {
       if ((x - cx) * (x - cx) + (y - cy) * (y - cy) > (long long)rad * rad) continue;
@@ -212,7 +213,7 @@ static int pxrd_step(lua_State *L) {
   const lua_Integer n = luaL_optinteger(L, 2, 1);
   if (n < 1 || n > 32) return luaL_error(L, "reaction: 1 to 32 steps a call");
   const int w = r->w, h = r->h;
-  if (r->charge) r->charge(L, (unsigned long)w * h * 4 * (unsigned long)n);   // an estimate until measured
+  if (r->charge) r->charge(L, (unsigned long)w * h * 3 * (unsigned long)n);   // 9.9 ms a step on the panel, 2026-09-29
   for (lua_Integer s = 0; s < n; s++) {
     for (int y = 0; y < h; y++) {
       // rows above and below, wrapping; columns wrap only at the two ends

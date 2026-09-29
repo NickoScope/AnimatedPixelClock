@@ -877,6 +877,8 @@ includes the Lua loop around the call):
 | `px.field` (2.7.5) | | a sin term 3.7 ms, a ring or ray 11 ms, 3 octaves of noise 18 ms (sampled on a grid and interpolated); charged before it starts |
 | `px.noise` (2.7.5) | 12.6 us | |
 | `px.particles` (2.7.5) | | 800 particles: a step ~1 ms, ~11 ms in a flow field; a draw ~1.5 ms |
+| `px.step` (2.7.6) | | fire 1.4 ms, life 2.8 ms, wave 2 ms a step |
+| `px.reaction` (2.7.6) | | 9.9 ms a step over the canvas: 2-3 steps a frame |
 | `px.mode("add")` (2.7.4) | a flag | pixel, rect, line, circle and text add light, each pixel of a shape once |
 | CANNES, the whole effect | | 2.7.3: 8.2 fps, 119 ms; 2.7.4 integer blend: 13.5 fps, 72 ms; with `px.fade`: 15.2 fps, 24 ms |
 | `px.terrain` (2.6.3, native) | not measured on the panel yet | a whole 3D view in one call; each ground sample is charged to the frame's budget as one instruction |

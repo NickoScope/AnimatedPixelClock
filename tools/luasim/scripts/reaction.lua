@@ -14,8 +14,8 @@
 -- The colours come from a gradient that drifts too. The button moves to the
 -- next regime at once and drops new seeds.
 --
--- The model runs in the firmware (px.reaction): 8,192 cells, six steps a
--- frame, in integers so the panel and luasim grow the same patterns.
+-- The model runs in the firmware (px.reaction): 8,192 cells, three steps a
+-- frame (about 10 ms each on the panel), in integers so the panel and luasim grow the same patterns.
 --
 -- Needs firmware 2.7.6 or later (px.reaction; px.palette, px.show 2.7.4).
 -- ============================================================
@@ -98,7 +98,7 @@ function draw()
   u = u * u * (3 - 2 * u)
   PARAMS.f, PARAMS.k = a.f + (b.f - a.f) * u, a.k + (b.k - a.k) * u
   R:params(PARAMS)
-  R:step(6)
+  R:step(3)
   R:show(L)
   px.show(L, palette_at(T))
 end
