@@ -10,6 +10,7 @@
 //   px.feedback{ zoom = 1.03, rot = 0.02, dx = 0, dy = 0, cx = 63.5, cy = 31.5,
 //                decay = 0.05, edge = "black" }
 //     zoom   > 1 pulls the picture toward you (it grows), < 1 sends it away
+//            (clamped to 0.25 .. 20)
 //     rot    radians a call, turning about (cx, cy); positive turns clockwise
 //            on the panel (y grows downwards)
 //     dx, dy pixels the picture moves
@@ -29,6 +30,7 @@
 #define PX_FEEDBACK_H
 
 #include <string.h>
+#include <stdint.h>
 
 static char pxf_key;   // the registry key of the copy (include in one file only)
 
@@ -63,7 +65,9 @@ static const char *const pxf_edges[] = {"black", "clamp", "wrap", NULL};
 static int px_feedback_lua(lua_State *L, unsigned char *fb, int w, int h, unsigned long *work) {
   luaL_checktype(L, 1, LUA_TTABLE);
   *work = 0;
-  const lua_Number zoom = pxf_num(L, "zoom", 1, (lua_Number)0.05, 20);
+  // zoom no smaller than 1/4: then a source coordinate stays within +-9000 px,
+  // which keeps the per-pixel arithmetic in 32 bits (see below)
+  const lua_Number zoom = pxf_num(L, "zoom", 1, (lua_Number)0.25, 20);
   const lua_Number rot = pxf_num(L, "rot", 0, -1000, 1000);
   const lua_Number dx = pxf_num(L, "dx", 0, -1024, 1024), dy = pxf_num(L, "dy", 0, -1024, 1024);
   const lua_Number cx = pxf_num(L, "cx", (lua_Number)(w - 1) / 2, -1024, 1024);
@@ -95,32 +99,47 @@ static int px_feedback_lua(lua_State *L, unsigned char *fb, int w, int h, unsign
   unsigned char *src = pxf_copy(L, (size_t)w * h * 3);
   memcpy(src, fb, (size_t)w * h * 3);
   const int ia = 256 - decay;
+  // Per pixel in 32 bits: the panel's core is 32-bit, and 64-bit arithmetic a
+  // pixel cost 18.8 ms a call (2026-09-29). |A|, |B| <= 4 * 65536 (zoom >= 1/4),
+  // and a source coordinate stays within +-(1024 + 1024 + 128 * 4) px, Q16 in 31 bits.
+  const int32_t a32 = (int32_t)A, b32 = (int32_t)B;
+  const int wmask = w - 1, hmask = h - 1, row = w * 3;
   for (int y = 0; y < h; y++) {
     const long long v = ((long long)y << 16) - CY - DY;
-    long long u = -CX - DX;                                            // x = 0
+    const long long u = -CX - DX;                                      // x = 0
     // R(-rot) * (u, v) / zoom, with y downwards: [cos sin; -sin cos]
-    long long sx = CX + ((A * u + B * v) >> 16);
-    long long sy = CY + ((A * v - B * u) >> 16);
-    unsigned char *p = &fb[y * w * 3];
-    for (int x = 0; x < w; x++, p += 3, sx += A, sy -= B) {
-      // the four neighbours and the fractions, Q8
-      long long ix = sx >> 16, iy = sy >> 16;
-      const int fx = (int)((sx >> 8) & 255), fy = (int)((sy >> 8) & 255);
-      int c[3] = {0, 0, 0};
-      for (int k = 0; k < 4; k++) {
-        long long qx = ix + (k & 1), qy = iy + (k >> 1);
-        if (edge == 2) { qx &= (w - 1); qy &= (h - 1); }
-        else if (edge == 1) {
-          qx = qx < 0 ? 0 : qx >= w ? w - 1 : qx;
-          qy = qy < 0 ? 0 : qy >= h ? h - 1 : qy;
-        } else if (qx < 0 || qx >= w || qy < 0 || qy >= h) continue;
-        const int wgt = ((k & 1) ? fx : 256 - fx) * ((k >> 1) ? fy : 256 - fy);   // Q16
-        const unsigned char *q = &src[(qy * w + qx) * 3];
-        c[0] += q[0] * wgt; c[1] += q[1] * wgt; c[2] += q[2] * wgt;
+    int32_t sx = (int32_t)(CX + ((A * u + B * v) >> 16));
+    int32_t sy = (int32_t)(CY + ((A * v - B * u) >> 16));
+    unsigned char *p = &fb[y * row];
+    for (int x = 0; x < w; x++, p += 3, sx += a32, sy -= b32) {
+      const int ix = sx >> 16, iy = sy >> 16;
+      const int fx = (sx >> 8) & 255, fy = (sy >> 8) & 255;
+      const int w00 = (256 - fx) * (256 - fy), w10 = fx * (256 - fy), w01 = (256 - fx) * fy, w11 = fx * fy;
+      int c0, c1, c2;
+      if (ix >= 0 && iy >= 0 && ix < wmask && iy < hmask) {
+        // all four inside: no checks
+        const unsigned char *q = &src[iy * row + ix * 3];
+        const unsigned char *r = q + row;
+        c0 = q[0] * w00 + q[3] * w10 + r[0] * w01 + r[3] * w11;
+        c1 = q[1] * w00 + q[4] * w10 + r[1] * w01 + r[4] * w11;
+        c2 = q[2] * w00 + q[5] * w10 + r[2] * w01 + r[5] * w11;
+      } else {
+        c0 = c1 = c2 = 0;
+        for (int k = 0; k < 4; k++) {
+          int qx = ix + (k & 1), qy = iy + (k >> 1);
+          if (edge == 2) { qx &= wmask; qy &= hmask; }
+          else if (edge == 1) {
+            qx = qx < 0 ? 0 : qx >= w ? w - 1 : qx;
+            qy = qy < 0 ? 0 : qy >= h ? h - 1 : qy;
+          } else if (qx < 0 || qx >= w || qy < 0 || qy >= h) continue;
+          const int wgt = k == 0 ? w00 : k == 1 ? w10 : k == 2 ? w01 : w11;   // Q16
+          const unsigned char *q = &src[qy * row + qx * 3];
+          c0 += q[0] * wgt; c1 += q[1] * wgt; c2 += q[2] * wgt;
+        }
       }
-      p[0] = (unsigned char)(((c[0] >> 16) * ia) >> 8);
-      p[1] = (unsigned char)(((c[1] >> 16) * ia) >> 8);
-      p[2] = (unsigned char)(((c[2] >> 16) * ia) >> 8);
+      p[0] = (unsigned char)(((c0 >> 16) * ia) >> 8);
+      p[1] = (unsigned char)(((c1 >> 16) * ia) >> 8);
+      p[2] = (unsigned char)(((c2 >> 16) * ia) >> 8);
     }
   }
   *work = (unsigned long)w * h;
