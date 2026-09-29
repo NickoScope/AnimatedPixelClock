@@ -26,7 +26,7 @@ The question: at what speed does the twin run the firmware's Lua the way the pan
 | 8x12 text | 13.2 | 7.0 | 1.89 |
 
 - **Geometric mean of the ratios: 2.45.** That becomes `--cpi 2.45`, the default of `twin.py run`.
-- **Spread:** the ratios run from 1.89 to 2.78. Divided by 2.45, a scene's twin time is off from the panel's by −23% to +13%.
+- **Spread:** the ratios run from 1.89 to 2.78. At cpi 2.45 a scene's twin time is off from the panel's by −12% (6x11 rings) to +30% (8x12 text), taking the twin time as cpi 1 × 2.45. The measured cpi 1 → 2 step scaled times by 2.02-2.10, not 2; interpolating between the two runs gives −8% to +38% (8x12 text: 18.2 ms against the panel's 13.2). The twin is too slow on the text scenes and a little fast on 6x11 rings. (This line said −23% to +13% until the review of 2026-09-29: that was panel / twin, the inverse.)
 - **The two text scenes are the fastest on the panel relative to the twin.** A likely reason: their time goes into the firmware's C text routines more than into the Lua VM, whose heap lives in PSRAM. This is not verified.
 
 ## Held out: not used for the fit, cpi 2.45

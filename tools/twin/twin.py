@@ -229,8 +229,9 @@ def main():
     r.add_argument("--png")
     r.add_argument("--open", action="store_true", help="with --web, open the panel page in the browser")
     r.add_argument("--mac", default=MAC, help=f"the twin's station MAC (default {MAC})")
-    r.add_argument("--cpi", default="2.45", help="cycles per instruction; 2.45 matches the panel's Lua draw times "
-                   "(calibrate.py: 10 scenes, validate.py: 3 held out, within about 16%%); 1 = the engine's full speed")
+    r.add_argument("--cpi", default="2.45", help="cycles per instruction; 2.45 fits the panel's Lua draw times "
+                   "(calibrate.py: the 10 fitted scenes then run -12%% to +30%% against the panel's times, "
+                   "slowest on text; validate.py: 3 held-out effects within about 16%%); 1 = the engine's full speed")
     r.add_argument("--fresh", action="store_true")
     r.add_argument("--provision", action="store_true", help="send the Wi-Fi pair over Improv at boot")
     r.add_argument("--http", type=int, default=8080, help="the twin's port 80 on 127.0.0.1 (default 8080)")
