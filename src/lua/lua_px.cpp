@@ -10,8 +10,8 @@
 // The only departures are bounds on work the reference would do off-canvas,
 // because a C loop never reaches the instruction hook and a stuck one would
 // freeze the effect task:
-//   - spans, rect rows and glow's box are clipped to the canvas first. That
-//     cannot change a pixel: put() and blend_px() drop off-canvas writes.
+//   - spans and rect rows are clipped to the canvas first. That cannot
+//     change a pixel: put() drops off-canvas writes.
 //   - text stops at the right edge. Exact for Picopixel: every xOffset is 0
 //     and every advance is positive, so no later glyph can come back.
 //   - a circle whose bounding box misses the canvas draws nothing (exact);
@@ -117,14 +117,17 @@ static int l_rect(lua_State *L) {
   // Only the rows j in [0, h) that land on the canvas.
   const int64_t j0 = y < 0 ? -y : 0;
   const int64_t j1 = (h - 1 < (H - 1) - y) ? h - 1 : (H - 1) - y;
+  // Every pixel once, so that px.mode("add") lights it once: the bottom row
+  // only when it is not the top one, the sides only between them, the right
+  // side only when it is not the left one. In "set" the pixels are the same.
   if (fill) {
     for (int64_t j = j0; j <= j1; j++) hline(fb, xa, xb, (int)(y + j), r, g, b);
   } else {
     hline(fb, xa, xb, clampInt(y, -1, H), r, g, b);
-    hline(fb, xa, xb, clampInt(y + h - 1, -1, H), r, g, b);
-    for (int64_t j = j0; j <= j1; j++) {
+    if (h != 1) hline(fb, xa, xb, clampInt(y + h - 1, -1, H), r, g, b);
+    for (int64_t j = j0 > 1 ? j0 : 1; j <= j1 && j <= h - 2; j++) {
       put(fb, xa, (int)(y + j), r, g, b);
-      put(fb, xb, (int)(y + j), r, g, b);
+      if (w != 1) put(fb, xb, (int)(y + j), r, g, b);
     }
   }
   return 0;
@@ -155,8 +158,11 @@ static int l_line(lua_State *L) {
   const int r = (int)luaL_checkinteger(L, 5), g = (int)luaL_checkinteger(L, 6),
             b = (int)luaL_checkinteger(L, 7);
   uint8_t *fb = canvasOf(L)->rgb;
-  const int LIM = 4096;
-  if (abs(x0) > LIM || abs(y0) > LIM || abs(x1) > LIM || abs(y1) > LIM) {
+  const long long LIM = 4096;
+  // In 64 bits: abs(INT_MIN) is undefined, and on the panel it stays negative,
+  // which skipped the clip and left ~2^31 steps for the loop below.
+  if (llabs((long long)x0) > LIM || llabs((long long)y0) > LIM ||
+      llabs((long long)x1) > LIM || llabs((long long)y1) > LIM) {
     double fx0 = x0, fy0 = y0, fx1 = x1, fy1 = y1;
     if (!clipLine(fx0, fy0, fx1, fy1)) return 0;
     x0 = (int)lround(fx0); y0 = (int)lround(fy0);
@@ -185,22 +191,9 @@ static int l_circle(lua_State *L) {
   if (cx + rad < 0 || cx - rad >= W || cy + rad < 0 || cy - rad >= H) return 0;
   uint8_t *fb = canvasOf(L)->rgb;
   const int icx = (int)cx, icy = (int)cy;   // within 16384 of the canvas here
-  int x = (int)rad, y = 0, d = 1 - (int)rad;
-  while (x >= y) {
-    if (fill) {
-      hline(fb, clampInt(icx - x, -1, W), clampInt(icx + x, -1, W), icy + y, r, g, b);
-      hline(fb, clampInt(icx - x, -1, W), clampInt(icx + x, -1, W), icy - y, r, g, b);
-      hline(fb, clampInt(icx - y, -1, W), clampInt(icx + y, -1, W), icy + x, r, g, b);
-      hline(fb, clampInt(icx - y, -1, W), clampInt(icx + y, -1, W), icy - x, r, g, b);
-    } else {
-      put(fb, icx+x, icy+y, r, g, b); put(fb, icx+y, icy+x, r, g, b);
-      put(fb, icx-x, icy+y, r, g, b); put(fb, icx-y, icy+x, r, g, b);
-      put(fb, icx+x, icy-y, r, g, b); put(fb, icx+y, icy-x, r, g, b);
-      put(fb, icx-x, icy-y, r, g, b); put(fb, icx-y, icy-x, r, g, b);
-    }
-    y++;
-    if (d < 0) d += 2 * y + 1; else { x--; d += 2 * (y - x) + 1; }
-  }
+  // Every pixel once, so that px.mode("add") lights it once (pxr_circle_*).
+  if (fill) pxr_circle_fill(fb, W, H, icx, icy, (int)rad, r, g, b, s_add);
+  else      pxr_circle_ring(fb, W, H, icx, icy, (int)rad, r, g, b, s_add);
   return 0;
 }
 
@@ -266,15 +259,16 @@ static int l_blend(lua_State *L) {
   return 0;
 }
 
+// glow, fade and blur are charged a quarter of an instruction a pixel they
+// look at, the way px.blit is: our estimate until the panel measures them.
 static int l_glow(lua_State *L) {
-  pxr_glow(canvasOf(L)->rgb, W, H, luaL_checknumber(L, 1), luaL_checknumber(L, 2),
-           luaL_checknumber(L, 3), luaL_checknumber(L, 4), luaL_checknumber(L, 5),
-           luaL_checknumber(L, 6), luaL_optnumber(L, 7, 1));
+  const unsigned long work = pxr_glow(canvasOf(L)->rgb, W, H, luaL_checknumber(L, 1),
+           luaL_checknumber(L, 2), luaL_checknumber(L, 3), luaL_checknumber(L, 4),
+           luaL_checknumber(L, 5), luaL_checknumber(L, 6), luaL_optnumber(L, 7, 1));
+  LuaFx::charge(L, (uint32_t)(work / 4));
   return 0;
 }
 
-// fade and blur are charged a quarter and a half of an instruction a pixel,
-// the way px.blit is: our estimate until the panel measures them.
 static int l_fade(lua_State *L) {
   unsigned long work = 0;
   px_fade_lua(L, canvasOf(L)->rgb, W, H, &work);

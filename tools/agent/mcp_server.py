@@ -1168,7 +1168,7 @@ async def effect_api() -> str:
             "px.width(s[,font])": "-> pixel advance of that string in that font",
             "px.get(x,y)": "-> r,g,b (0,0,0 off-canvas)",
             "px.blend(x,y,r,g,b,a)": "a is alpha, a number. Integer (Q8) since "
-                                     "firmware 2.7.4, about the cost of px.pixel",
+                                     "firmware 2.7.4",
             "px.glow(cx,cy,rad,r,g,b[,amp])": "amp defaults to 1.0. Integer since "
                                               "firmware 2.7.4; rad over 4096 draws nothing",
             "px.fade(a[,r,g,b[,x,y,w,h]])": "firmware 2.7.4+. Every pixel of the box "

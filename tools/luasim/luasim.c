@@ -85,11 +85,12 @@ static int l_rect(lua_State *L) {
   int r = (int)luaL_checkinteger(L, 5), g = (int)luaL_checkinteger(L, 6),
       b = (int)luaL_checkinteger(L, 7);
   int fill = lua_toboolean(L, 8);
+  /* every pixel once, so px.mode("add") lights it once; the same pixels in "set" */
   if (fill) { for (int j = 0; j < h; j++) hline(x, x + w - 1, y + j, r, g, b); }
   else {
     hline(x, x + w - 1, y, r, g, b);
-    hline(x, x + w - 1, y + h - 1, r, g, b);
-    for (int j = 0; j < h; j++) { put(x, y + j, r, g, b); put(x + w - 1, y + j, r, g, b); }
+    if (h != 1) hline(x, x + w - 1, y + h - 1, r, g, b);
+    for (int j = 1; j <= h - 2; j++) { put(x, y + j, r, g, b); if (w != 1) put(x + w - 1, y + j, r, g, b); }
   }
   return 0;
 }
@@ -117,18 +118,8 @@ static int l_circle(lua_State *L) {
   int r = (int)luaL_checkinteger(L, 4), g = (int)luaL_checkinteger(L, 5),
       b = (int)luaL_checkinteger(L, 6);
   int fill = lua_toboolean(L, 7);
-  int x = rad, y = 0, d = 1 - rad;
-  while (x >= y) {
-    if (fill) {
-      hline(cx - x, cx + x, cy + y, r, g, b); hline(cx - x, cx + x, cy - y, r, g, b);
-      hline(cx - y, cx + y, cy + x, r, g, b); hline(cx - y, cx + y, cy - x, r, g, b);
-    } else {
-      put(cx+x,cy+y,r,g,b); put(cx+y,cy+x,r,g,b); put(cx-x,cy+y,r,g,b); put(cx-y,cy+x,r,g,b);
-      put(cx+x,cy-y,r,g,b); put(cx+y,cy-x,r,g,b); put(cx-x,cy-y,r,g,b); put(cx-y,cy-x,r,g,b);
-    }
-    y++;
-    if (d < 0) d += 2 * y + 1; else { x--; d += 2 * (y - x) + 1; }
-  }
+  if (fill) pxr_circle_fill(fb, W, H, cx, cy, rad, r, g, b, g_add);
+  else      pxr_circle_ring(fb, W, H, cx, cy, rad, r, g, b, g_add);
   return 0;
 }
 
@@ -235,7 +226,7 @@ static int l_blend(lua_State *L) {
 /* A radial light: one call instead of a Lua loop over a few hundred pixels.
    Falls off as (1 - d/rad)^2, which reads as a lamp rather than a disc. */
 static int l_glow(lua_State *L) {
-  pxr_glow(fb, W, H, luaL_checknumber(L,1), luaL_checknumber(L,2), luaL_checknumber(L,3),
+  (void)pxr_glow(fb, W, H, luaL_checknumber(L,1), luaL_checknumber(L,2), luaL_checknumber(L,3),
            luaL_checknumber(L,4), luaL_checknumber(L,5), luaL_checknumber(L,6),
            luaL_optnumber(L,7, 1));
   return 0;
