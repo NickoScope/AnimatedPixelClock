@@ -76,7 +76,9 @@ static void handleFirmwareImage();   // GET|HEAD /api/firmware/image
 // code and handleFirmwareImage is never emitted (checked 2026-09-30: a build
 // with -DHARDCODED_WIFI_SSID and -DHARDCODED_WIFI_PASSWORD has the password in
 // its image and neither "/api/firmware/image" nor the handler's symbol).
-static constexpr bool kFirmwareImageRoute = sizeof(HARDCODED_WIFI_PASSWORD) == 1;
+// The setup access point's AP_PASSWORD (user_config.h:26) sits in the image as plain text too,
+// when one is set; it is empty today (the integration session's note, 2026-09-30).
+static constexpr bool kFirmwareImageRoute = sizeof(HARDCODED_WIFI_PASSWORD) == 1 && sizeof(AP_PASSWORD) == 1;
 
 // Set when an OTA file part starts; the done handler restarts only after one.
 static bool s_otaSeen = false;
