@@ -1118,7 +1118,9 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNav
 let app = NSApplication.shared
 let controller = Controller()
 app.delegate = controller
-app.setActivationPolicy(.regular)
+// A test build (another bundle identifier) stays out of the Dock and the app switcher, so the owner never
+// mistakes it for his twin and quits the wrong one; build.sh also marks it LSUIElement.
+app.setActivationPolicy(Bundle.main.bundleIdentifier == STANDARD_BUNDLE_ID ? .regular : .accessory)
 // SIGTERM (kill, a logout) quits as the menu does, so the twin's engine is stopped, not orphaned. An open
 // question is closed first - AppKit does not quit under a modal window - and a closed question is never a
 // yes: "Update the panel too?" answers Not now, the others Cancel.
