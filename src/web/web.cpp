@@ -141,7 +141,8 @@ static void sendIrTable() {
   sendDocFromPsram(doc);
 }
 static void irBad(const char *why) {
-  server.send(400, "application/json", String("{\"success\":false,\"error\":\"") + why + "\"}");
+  server.send(strncmp(why, "refused", 7) == 0 ? 403 : 400, "application/json",
+              String("{\"success\":false,\"error\":\"") + why + "\"}");
 }
 #endif
 
@@ -285,6 +286,9 @@ void setupWebServer() {
  server.on("/api/ir/press", HTTP_GET, []() {
    uint8_t slot = 0;
    if (!ir::slotByNumber(server.arg("btn").c_str(), &slot)) { irBad("btn must be 1..10"); return; }
+#if defined(SYNC_EVENTS_ENABLED)
+   syncNoteSimulated(syncHttpBy());
+#endif
    irSimulate(slot, (uint32_t)server.arg("hold").toInt());
    sendIrTable();
  });
@@ -1021,7 +1025,7 @@ void handleAnimUploadDone() {
  if (animUpError) {
    lastAnimationError = animUpError;
    String msg = String("{\"success\":false,\"error\":\"") + animUpError + "\"}";
-   server.send(400, "application/json", msg);
+   server.send(strncmp(animUpError, "refused", 7) == 0 ? 403 : 400, "application/json", msg);
  } else {
    lastAnimationError = "";
    String msg = String("{\"success\":true,\"name\":\"") + animUpName + "\"}";
@@ -2528,7 +2532,7 @@ static bool hostIsPanels(const String &hostPort) {
   const int colon = hostPort.lastIndexOf(':');
   const String h = colon > 0 ? hostPort.substring(0, colon) : hostPort;
   if (!h.length()) return false;
-  if (h.endsWith(".local")) return true;
+  if (h.endsWith(".local") || h == "localhost") return true;   // the browser resolves localhost itself: no rebinding
   for (size_t i = 0; i < h.length(); i++)
     if (!(isdigit((unsigned char)h[i]) || h[i] == '.')) return false;
   return true;                          // an IPv4 literal

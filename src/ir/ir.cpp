@@ -472,17 +472,19 @@ void irClearAll() {
   for (uint8_t i = 0; i < ir::kSlotCount; i++) irClearSlot(i);   // codes only: the functions stay
 }
 
-bool irSimulate(uint8_t slot, uint32_t holdMs) {
-  if (slot >= ir::kSlotCount) return false;
-  apply(millis(), nullptr, (int16_t)slot, holdMs);
-  return true;
-}
-
-// Until when the remote's events come from /api/ir/do rather than a remote:
+// Until when the remote's events come from /api/ir/do or /api/ir/press rather than a remote:
 // the knob's queue marks them so (control.cpp), and the twin's sync reads who
 // made a change from that (src/sync/sync_events.h).
 static volatile uint32_t s_simUntilMs = 0;
 bool irSimulatedNow(uint32_t nowMs) { return s_simUntilMs && (int32_t)(s_simUntilMs - nowMs) > 0; }
+
+bool irSimulate(uint8_t slot, uint32_t holdMs) {
+  if (slot >= ir::kSlotCount) return false;
+  s_simUntilMs = (millis() + holdMs + 400) | 1;   // /api/ir/press: a request's doing, as /api/ir/do
+  apply(millis(), nullptr, (int16_t)slot, holdMs);
+  return true;
+}
+
 
 bool irSimulateFn(uint8_t fn, uint8_t arg, uint32_t holdMs) {
   if (fn >= ir::kFnCount) return false;

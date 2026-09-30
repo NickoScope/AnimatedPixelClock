@@ -1626,7 +1626,7 @@ static void handleClipUploadDone() {
   doc["success"] = clipUpError == nullptr;
   if (clipUpError) doc["error"] = clipUpError;
   else doc["name"] = clipUpName;
-  sendDoc(doc, clipUpError ? 400 : 200);
+  sendDoc(doc, clipUpError ? (strncmp(clipUpError, "refused", 7) == 0 ? 403 : 400) : 200);
   clipUpError = "no file in the request";  // until the next upload starts
 }
 
