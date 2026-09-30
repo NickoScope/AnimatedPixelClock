@@ -36,6 +36,12 @@ void handleReset();
 // neither), and an Origin of "null" (a browser hiding the page it came from).
 // No Origin at all (curl, the agent tools, the twin app) is not foreign. POST /reset and the Panel group's writes (web_panel.cpp) use it.
 bool webOriginForeign();
+// True when the request names a Host that is not this panel's own (an IPv4
+// address or a .local name): a page whose domain was pointed at the panel (DNS
+// rebinding) reads as if it were ours, and no CORS header stops it. The reads
+// that carry a secret or private data refuse it: the export, the portal's
+// values (the weather API key), the market (the owner's portfolio).
+bool webHostForeign();
 void handleMetricsAPI();
 void handleDeviceInfo();
 void handleRename();

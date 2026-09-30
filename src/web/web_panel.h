@@ -12,7 +12,9 @@
 
 // web.cpp's guarded JSON sender, for a body that is not an Arduino String
 // (bounded blocking, watchdog fed, a stalled client dropped). Every build.
-void sendJsonBytesGuarded(int code, const char *data, size_t len);
+// cors: Access-Control-Allow-Origin: * - off for an answer that carries the
+// owner's private data (the market's portfolio), which no other site may read.
+void sendJsonBytesGuarded(int code, const char *data, size_t len, bool cors = true);
 
 // web.cpp's guarded sender for a body too large to hold in memory: `read` fills
 // each piece from wherever the body lives (a flash partition, a LittleFS file),

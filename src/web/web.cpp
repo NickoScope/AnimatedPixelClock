@@ -1141,6 +1141,7 @@ static void failPortalOom() {
 // it carries the static IP setup and the weather key, which only the page itself
 // showed before. Built and serialized in PSRAM.
 void handlePortalValues() {
+  if (webHostForeign()) { sendBytesGuarded(403, "text/plain", "wrong host\n", 11); return; }
   // Measured at 1,740 ms and then 4,239 ms while the radio was starving
   // (2026-09-20). It was exempted as "a small JSON route" and it is not one; and
   // if the page itself is being refused, its values are of no use anyway.
@@ -1454,9 +1455,9 @@ static void sendJsonGuarded(int code, const String& json) {
   sendJsonBytesGuarded(code, json.c_str(), json.length());
 }
 
-void sendJsonBytesGuarded(int code, const char* data, size_t len) {
+void sendJsonBytesGuarded(int code, const char* data, size_t len, bool cors) {
   netMarkHttp();
-  server.sendHeader("Access-Control-Allow-Origin", "*");
+  if (cors) server.sendHeader("Access-Control-Allow-Origin", "*");
   sendBytesGuarded(code, "application/json", data, len);
 }
 
@@ -2517,6 +2518,11 @@ static bool hostIsPanels(const String &hostPort) {
   return true;                          // an IPv4 literal
 }
 
+bool webHostForeign() {
+  const String host = server.hostHeader();
+  return host.length() && !hostIsPanels(host);
+}
+
 bool webOriginForeign() {
   if (!server.hasHeader("Origin")) return false;   // not a browser: curl, tools/agent, the twin app
   const String o = server.header("Origin");
@@ -2575,6 +2581,7 @@ void handleReset() {
 // Export configuration as JSON
 void handleExportConfig() {
  netMarkHttp();
+ if (webHostForeign()) { sendBytesGuarded(403, "text/plain", "wrong host\n", 11); return; }
  String json = "{";
 
  // Clock settings

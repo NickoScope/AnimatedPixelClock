@@ -147,14 +147,14 @@ static void failOom() {
   server.send(503, "application/json", "{\"success\":false,\"error\":\"out of memory\"}");
 }
 
-static void sendDoc(JsonDocument &doc, int code = 200) {
+static void sendDoc(JsonDocument &doc, int code = 200, bool cors = true) {
   if (doc.overflowed()) { failOom(); return; }
   const size_t n = measureJson(doc);
   char *buf = (char *)heap_caps_malloc(n + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
   if (!buf) buf = (char *)heap_caps_malloc(n + 1, MALLOC_CAP_8BIT);
   if (!buf) { failOom(); return; }
   serializeJson(doc, buf, n + 1);
-  sendJsonBytesGuarded(code, buf, n);
+  sendJsonBytesGuarded(code, buf, n, cors);
   heap_caps_free(buf);
 }
 
@@ -850,6 +850,7 @@ static void handleMedia() {
 // A config with sixteen positions and every row runs to a few KB, so the body
 // limit is wider here.
 static void handleMarket() {
+  if (webHostForeign()) REJECT(403, "refused: this request names another host");   // DNS rebinding: the portfolio is private
   if (isPost()) {
     JsonDocument in(&s_alloc);
     if (!readBody(in, 8192)) return;
@@ -867,7 +868,9 @@ static void handleMarket() {
   pageInfo(doc, PANEL_KEY_MARKET);
   marketWebJson(doc.as<JsonObject>());
   mqttJson(doc["mqtt"].to<JsonObject>(), mqttBusStatus());
-  sendDoc(doc);
+  // The owner's portfolio - weights, entry dates, holdings, contributions: no
+  // CORS header, so no other site's page can read it (2026-09-30 audit).
+  sendDoc(doc, 200, false);
 }
 #endif
 
