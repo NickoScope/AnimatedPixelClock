@@ -58,6 +58,21 @@ Verified with the real v2.7.3 image, unmodified (2026-09-29):
 - **Knob:** turning it does the same, counted in `/api/knob`.
 - **OTA:** the release OTA image went through `/update` (tools/agent/update.py). The twin rebooted into app1, and its health check confirmed the image after 61 s and 200 frames.
 
+## Приложение для Мака
+
+`tools/twin/app/` — приложение «TWIN — панель» (`TWIN Panel.app`): окно со страницей панели и кнопками «Портал», «Прошивальщик», «Перезапустить».
+- Открыли приложение — двойник запускается: `twin.py run --lan --web 8790`.
+- Закрыли окно или вышли (⌘Q) — двойник останавливается. Так двойник работает, только пока с ним работают (решение владельца, 29.09).
+- Если двойник уже запущен из терминала, приложение показывает его, а при выходе оставляет работать.
+
+```
+tools/twin/app/build.sh                 # собрать и положить в ~/Applications (нужен только swiftc из Xcode)
+defaults write com.nickoscope.twinpanel lan -bool NO     # без домашней сети (NAT, портал на 127.0.0.1:8080)
+defaults write com.nickoscope.twinpanel port -int 8791   # другой порт страницы
+```
+
+Приложение запускает `twin.py` этой копии репозитория: путь записывается в приложение при сборке. Если копия переедет, соберите заново. Движок, `twin.py` и страница те же, приложение их только запускает и показывает.
+
 ## Веб-прошивальщик
 
 Двойника прошивает та же страница, что и панель: ESP Web Tools 10.4.0 с esptool-js 0.6.0 внутри.
