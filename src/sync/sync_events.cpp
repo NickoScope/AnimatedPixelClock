@@ -85,6 +85,11 @@ struct Screen {
 Screen   s_last = {};
 bool     s_haveLast = false;
 uint8_t  s_screenBy = SYNC_BY_AUTO;         // why the unsent change happened
+// The seq a screen state goes out under, given when it is first sent rather
+// than when it changes: changes coalesced into one datagram would otherwise
+// use up numbers that never went out, and a listener reads a gap as a loss.
+// 0 = the current state has no number yet.
+uint32_t s_screenSeq = 0;
 
 uint64_t epochMs() {
   struct timeval tv;
@@ -93,7 +98,10 @@ uint64_t epochMs() {
 }
 
 uint8_t causeNow(uint32_t nowMs) {
-  return (s_causeAt && nowMs - s_causeAt <= kCauseMs) ? s_cause : (uint8_t)SYNC_BY_AUTO;
+  // Signed: s_causeAt is millis() | 1 (0 means none), so it can be 1 ms ahead
+  // of a nowMs read just after, and unsigned that is 49 days old - every cause
+  // read as "auto" on the panel (2026-09-30).
+  return (s_causeAt && (int32_t)(nowMs - s_causeAt) <= (int32_t)kCauseMs) ? s_cause : (uint8_t)SYNC_BY_AUTO;
 }
 
 Screen snapshot() {
@@ -142,7 +150,7 @@ size_t buildScreen(char *buf, size_t cap, const Screen &s, uint8_t by) {
   char name[48];
   snprintf(name, sizeof(name), "%s", panelPageName(s.page));
   int n = snprintf(buf, cap, "{\"seq\":%u,\"t\":\"screen\",\"page\":%u,\"key\":\"%s\",\"name\":",
-                   (unsigned)s_seq, (unsigned)s.page, panelPageKeyName(s.page));
+                   (unsigned)s_screenSeq, (unsigned)s.page, panelPageKeyName(s.page));
   if (n < 0 || (size_t)n >= cap) return 0;
   n += (int)putStr(buf + n, cap - n, name);
   const int m = snprintf(buf + n, cap - n,
@@ -222,7 +230,7 @@ void syncEventsLoop() {
     if (by == SYNC_BY_AUTO && onlySched) by = SYNC_BY_SCHEDULE;
     s_screenBy = by;
     s_last = s;
-    s_seq++;
+    s_screenSeq = 0;
     for (uint8_t i = 0; i < kListeners; i++)
       if (live(s_lis[i], nowMs)) s_lis[i].screenDue = true;
   }
@@ -231,6 +239,7 @@ void syncEventsLoop() {
     if (!l.ip) continue;
     if (!live(l, nowMs)) { l.ip = 0; continue; }
     if (!l.screenDue || nowMs - l.lastScreenMs < kCoalesceMs) continue;
+    if (!s_screenSeq) s_screenSeq = ++s_seq;   // one number for this state, whichever listener gets it first
     char buf[320];
     const size_t n = buildScreen(buf, sizeof(buf), s_last, s_screenBy);
     if (n) sendTo(l, buf, n);
