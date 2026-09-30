@@ -4,18 +4,22 @@
 -- @name.ru Футбольные часы
 -- @about.en A football match that plays itself: Atlético against Real Madrid, told apart by kit colour.
 -- @about.en A TV-style score bar on top shows the score and the match minute; the real time sits in the
--- @about.en corner. One match minute is 3 s, so a whole match with half-time takes about five minutes.
+-- @about.en corner. One match minute is 3 s: a match with half-time kicks off every five minutes on the
+-- @about.en clock, the same match on every panel.
 -- @about.ru Футбольный матч, который играет сам: «Атлетико» против «Реала», команды различаются цветом
 -- @about.ru формы. Сверху плашка как в трансляции: счёт и минута матча; настоящее время в углу. Минута
--- @about.ru матча идёт 3 с, весь матч с перерывом занимает около пяти минут.
+-- @about.ru матча идёт 3 с: матч с перерывом начинается каждые пять минут по часам, на всех панелях один
+-- @about.ru и тот же.
 -- @control.en knob press: Nothing: this effect does not use the button.
 -- @control.ru knob press: Ничего: этот эффект кнопку не использует.
 -- @function.en Real time in the corner
 -- @function.en Score and match minute
--- @function.en Every match is new: the clock seeds it
+-- @function.en Every match is new and starts on the clock, every five minutes
+-- @function.en Opened mid-match, it catches up first (up to about 20 s)
 -- @function.ru Настоящее время в углу
 -- @function.ru Счёт и минута матча
--- @function.ru Каждый матч новый: его задаёт время на часах
+-- @function.ru Каждый матч новый и начинается по часам, каждые пять минут
+-- @function.ru Если открыть посреди матча, сначала догоняет его (до 20 с)
 --
 -- football_clock.lua - a football match that plays itself: Atletico Madrid
 -- against Real Madrid, told apart by their kit colours only, with a
@@ -48,8 +52,8 @@ local function sy(y) return GY0 + y * SY end
 
 -- ---------------------------------------------------------------- dice
 -- xorshift32 on Lua's 32-bit integers. The crowd is drawn from a fixed seed;
--- the match reseeds from the clock the page opened at, so luasim with the
--- same --start plays the same match.
+-- each match reseeds from its five-minute slot of the clock, so every panel,
+-- and luasim with the same --start, plays the same match.
 local seed = 12345
 local function rand()
   seed = seed ~ (seed << 13)
@@ -238,19 +242,21 @@ local F442 = {{4, 34}, {18, 8}, {16, 26}, {16, 42}, {18, 60}, {34, 10}, {31, 27}
 local F433 = {{4, 34}, {18, 8}, {16, 26}, {16, 42}, {18, 60}, {30, 20}, {28, 34}, {30, 48}, {44, 12}, {47, 34}, {44, 56}}
 
 -- ---------------------------------------------------------------- time
--- Play runs at real speed, from px.t(); a long gap is capped at 0.1 s so the
--- match slows rather than jumps. The match clock runs 20 times faster: a
--- match minute is three real seconds, a half 2 min 15 s, and a whole match
--- with half-time and full-time fits in about five minutes on the wall.
+-- The match clock runs 20 times faster than the wall: a match minute is three
+-- real seconds, a half 2 min 15 s, and a whole match with half-time and
+-- full-time 4 min 35 s.
+--
+-- The match is the wall clock's, not the page's: one kicks off on every five
+-- minutes of the clock (PERIOD = 300, px.t() the phase within them), seeded by
+-- the number of that five-minute slot since 1970, and plays in fixed steps of
+-- 1/15 s - so every panel with NTP plays the same match, move for move, at
+-- the same moment, whatever its frame rate. A page opened in the middle plays
+-- the steps it missed first, as fast as a frame allows. Full time stays up
+-- until the next five minutes begin.
+PERIOD = 300
 local RATIO = 20
-local last_t
-local function frame_dt()
-  local t = px.t()
-  local dt = last_t and (t - last_t) or 0.05
-  if dt < 0 then dt = dt + 1 end
-  last_t = t
-  return min(0.1, dt * 60)
-end
+local STEP = 1 / 15                         -- s of play a step
+local STEPS = PERIOD * 15                   -- steps in a slot
 
 -- ---------------------------------------------------------------- the match
 local G, ROLL, BOUNCE = 9.8, 3.0, 0.45     -- gravity, rolling deceleration m/s^2, bounce
@@ -258,6 +264,7 @@ local players, ball = {}, {}
 local match = {score = {0, 0}, half = 1, clock = 0, phase = "setup", timer = 0,
                dir = {1, -1}, kickoff = 1, first_kickoff = 1, possession = nil,
                last_team = 1, restart = nil, scorer = nil, jump = nil, msg = nil}
+local slot_now = 0                          -- the five-minute slot being played
 
 local function new_players()
   players = {}
@@ -274,24 +281,36 @@ local function new_players()
   end
 end
 
+-- The hot paths of a step (shape_target, steer, play_update: four fifths of
+-- it) clamp with comparisons rather than math.min and math.max, and read a
+-- field once: the same arithmetic in the same order, so the same numbers to
+-- the last bit - only fewer instructions and C calls, which is what a page
+-- opened mid-match waits for while it catches up.
+local PW2, HALF_M2, PL4, PW_2, PL3, PW2P = PW / 2, PL / 2 - 2, PL - 4, PW - 2, PL + 3, PW + 2
+
 -- The formation spot for p, shifted with the ball: up the pitch when his team
 -- has it, back when it does not, and across towards the ball's side.
 local function shape_target(p, press_back)
   local dir = match.dir[p.team]
   local bx = dir > 0 and ball.x or PL - ball.x
   local by = dir > 0 and ball.y or PW - ball.y
-  local f = p.form
   local ux, uy
   if p.role == 1 then
-    ux = 2.5 + max(0, min(8, (bx - 20) * 0.08))
-    uy = PW / 2 + (by - PW / 2) * 0.15
+    local v = (bx - 20) * 0.08                       -- max(0, min(8, v))
+    if not (v < 8) then v = 8 end
+    if not (0 < v) then v = 0 end
+    ux = 2.5 + v
+    uy = PW2 + (by - PW2) * 0.15
   else
+    local f = p.form
     local have = match.possession == p.team
     ux = f[1] * 0.85 + (bx - 40) * 0.5 + (have and 12 or -6)
-    uy = f[2] + (by - PW / 2) * 0.3
-    if press_back then ux = min(ux, PL / 2 - 2) end
-    ux = max(6, min(PL - 4, ux))
-    uy = max(2, min(PW - 2, uy))
+    uy = f[2] + (by - PW2) * 0.3
+    if press_back and HALF_M2 < ux then ux = HALF_M2 end      -- min(ux, PL / 2 - 2)
+    if not (ux < PL4) then ux = PL4 end                       -- max(6, min(PL - 4, ux))
+    if not (6 < ux) then ux = 6 end
+    if not (uy < PW_2) then uy = PW_2 end                     -- max(2, min(PW - 2, uy))
+    if not (2 < uy) then uy = 2 end
   end
   if dir > 0 then return ux, uy else return PL - ux, PW - uy end
 end
@@ -430,18 +449,28 @@ local function lane_margin(team, x0, y0, x1, y1, v)
 end
 
 local function steer(p, tx, ty, speed, dt)
-  local dx, dy = tx - p.x, ty - p.y
+  local x, y, vx, vy = p.x, p.y, p.vx, p.vy
+  local dx, dy = tx - x, ty - y
   local d = sqrt(dx * dx + dy * dy)
   local wx, wy = 0, 0
   if d > 0.15 then
-    local s = speed * min(1, d / 2.5)
+    local m = d / 2.5                                -- min(1, d / 2.5)
+    if not (m < 1) then m = 1 end
+    local s = speed * m
     wx, wy = dx / d * s, dy / d * s
   end
-  local k = min(1, dt * 5)
-  p.vx, p.vy = p.vx + (wx - p.vx) * k, p.vy + (wy - p.vy) * k
-  p.x, p.y = p.x + p.vx * dt, p.y + p.vy * dt
-  p.x, p.y = max(-3, min(PL + 3, p.x)), max(-2, min(PW + 2, p.y))
-  local s = abs(p.vx) + abs(p.vy)
+  local k = dt * 5                                   -- min(1, dt * 5)
+  if not (k < 1) then k = 1 end
+  vx, vy = vx + (wx - vx) * k, vy + (wy - vy) * k
+  x, y = x + vx * dt, y + vy * dt
+  if not (x < PL3) then x = PL3 end                  -- max(-3, min(PL + 3, x))
+  if not (-3 < x) then x = -3 end
+  if not (y < PW2P) then y = PW2P end                -- max(-2, min(PW + 2, y))
+  if not (-2 < y) then y = -2 end
+  p.x, p.y, p.vx, p.vy = x, y, vx, vy
+  if vx < 0 then vx = -vx end                        -- abs(vx) + abs(vy)
+  if vy < 0 then vy = -vy end
+  local s = vx + vy
   if s > 0.6 then p.stride = p.stride + dt * s * 0.9 end
 end
 
@@ -723,10 +752,12 @@ local function try_control(dt)
   end
   if ball.z > 2.3 then return end
   local best, bd
+  local bx_, by_ = ball.x, ball.y
   for _, p in ipairs(players) do
     if p.lock <= 0 and p.stun <= 0 then
       local reach = p.role == 1 and 1.7 or 1.05
-      local d = dist2(p.x, p.y, ball.x, ball.y)
+      local dx, dy = p.x - bx_, p.y - by_              -- dist2
+      local d = dx * dx + dy * dy
       if d < reach * reach and (not bd or d < bd) then best, bd = p, d end
     end
   end
@@ -768,17 +799,19 @@ local function try_control(dt)
   end
 end
 
+local chase = {}
 local function play_update(dt)
   local owner = ball.owner
   if owner then match.possession = owner.team end
-  local chase = {}
+  chase[1], chase[2] = nil, nil
   local ax_, ay_ = ball.x + ball.vx * 0.35, ball.y + ball.vy * 0.35
   for team = 1, 2 do
     if not owner or owner.team ~= team then
       local best, bd
       for _, p in ipairs(players) do
         if p.team == team and p.role > 1 and p.stun <= 0 then
-          local d = dist2(p.x, p.y, ax_, ay_)
+          local dx, dy = p.x - ax_, p.y - ay_          -- dist2
+          local d = dx * dx + dy * dy
           if not bd or d < bd then best, bd = p, d end
         end
       end
@@ -786,7 +819,10 @@ local function play_update(dt)
     end
   end
   for _, p in ipairs(players) do
-    p.lock, p.stun = max(0, p.lock - dt), max(0, p.stun - dt)
+    local lock, stun = p.lock - dt, p.stun - dt      -- max(0, ...)
+    if not (0 < lock) then lock = 0 end
+    if not (0 < stun) then stun = 0 end
+    p.lock, p.stun = lock, stun
     local tx, ty, sp
     if p == owner then
       local dir = match.dir[p.team]
@@ -795,9 +831,11 @@ local function play_update(dt)
       else
         local ay = 0
         local near, nd
+        local pt, px_, py_ = p.team, p.x, p.y
         for _, q in ipairs(players) do
-          if q.team ~= p.team then
-            local d = dist2(q.x, q.y, p.x, p.y)
+          if q.team ~= pt then
+            local dx, dy = q.x - px_, q.y - py_        -- dist2
+            local d = dx * dx + dy * dy
             if not nd or d < nd then near, nd = q, d end
           end
         end
@@ -929,7 +967,7 @@ local function draw_clock(t)
   local x, y = x0 + 2, 2
   seg_digit(x, y, n.hour // 10)
   seg_digit(x + 5, y, n.hour % 10)
-  if (t * 60) % 1 < 0.5 then
+  if (t * PERIOD) % 1 < 0.5 then
     px.rect(x + 10, y + 1, 1, 2, 255, 170, 0, true)
     px.rect(x + 10, y + 4, 1, 2, 255, 170, 0, true)
   end
@@ -979,33 +1017,49 @@ local function draw_players()
   end
   for i = 2, #order do                          -- nearly sorted already: cheap
     local v, j = order[i], i - 1
-    while j >= 1 and order[j].y > v.y do order[j + 1] = order[j]; j = j - 1 end
+    while j >= 1 and order[j].ry > v.ry do order[j + 1] = order[j]; j = j - 1 end
     order[j + 1] = v
   end
   for i = 1, #order do
     local p = order[i]
     local step = (abs(p.vx) + abs(p.vy) > 0.6) and (floor(p.stride * 2) % 2 + 1) or 1
-    draw_sprite(SPR[p.kit][p.skin][step], floor(sx(p.x) + 0.5) - 1, floor(sy(p.y) + 0.5) - 3)
+    draw_sprite(SPR[p.kit][p.skin][step], floor(sx(p.rx) + 0.5) - 1, floor(sy(p.ry) + 0.5) - 3)
   end
 end
 
 local function draw_ball()
-  local bx, by = floor(sx(ball.x) + 0.5), floor(sy(ball.y) + 0.5)
-  if ball.z > 0.25 then px.pixel(bx + 1, by, SHADOW[1], SHADOW[2], SHADOW[3]) end
-  px.pixel(bx, by - floor(ball.z * 0.8 + 0.5), 255, 255, 255)
+  local bx, by = floor(sx(ball.rx) + 0.5), floor(sy(ball.ry) + 0.5)
+  if ball.rz > 0.25 then px.pixel(bx + 1, by, SHADOW[1], SHADOW[2], SHADOW[3]) end
+  px.pixel(bx, by - floor(ball.rz * 0.8 + 0.5), 255, 255, 255)
 end
 
-function draw()
-  local dt = frame_dt()
-  if match.phase == "setup" then
-    local n = px.now()
-    seed = (n.hour * 60 + n.min) * 2654435 + n.yday * 97 + 777
-    if seed == 0 then seed = 1 end
-    new_players()
-    ball = {x = PL / 2, y = PW / 2, z = 0, vx = 0, vy = 0, vz = 0}
-    place_for_kickoff(match.first_kickoff)
-    set_kickoff(match.first_kickoff)
-  end
+-- ---------------------------------------------------------------- the wall clock's match
+-- The five-minute slot since 1970 (UTC) the clock is in, from px.now(): the
+-- local date and time less the zone's offset. Every zone's offset is a whole
+-- number of quarter hours, so the slot turns exactly when px.t() wraps.
+local function slot_of(n)
+  local y = n.year or 2026
+  local days = 365 * (y - 1970) + (y - 1969) // 4 - (y - 1901) // 100 + (y - 1601) // 400 + (n.yday or 0)
+  local m = days * 1440 + n.hour * 60 + n.min - floor((n.utc or 0) * 60 + 0.5)
+  return m // 5
+end
+
+-- The half is up at 45 and 90 minutes. The whistle goes in open play, or
+-- while a restart is being set up - the ball is dead then, as a referee
+-- would have it - or after a goal's celebration, not in the middle of it. So a
+-- half is never more than 5 s over, and a match with half-time never takes
+-- more than 285 s: it always ends inside its five minutes.
+local function half_over()
+  return match.clock >= (match.half == 1 and 45 or 90) * 60
+end
+local function whistle()
+  if match.half == 1 then match.phase, match.timer, match.clock = "halftime", 0, 45 * 60
+  else match.phase, match.timer, match.clock = "fulltime", 0, 90 * 60 end
+  match.msg, match.msg_t = nil, nil
+end
+
+-- One step of the match: everything that happens in 1/15 s of play.
+local function step(dt)
   local ph = match.phase
   if ph == "play" or ph == "restart" or ph == "goal" then
     match.clock = match.clock + dt * RATIO
@@ -1020,17 +1074,9 @@ function draw()
     keeper_save()
     try_control(dt)
     check_out()
-    if match.phase == "play" then
-      if match.half == 1 and match.clock >= 45 * 60 then
-        match.phase, match.timer, match.clock = "halftime", 0, 45 * 60
-        match.msg, match.msg_t = nil, nil
-      elseif match.half == 2 and match.clock >= 90 * 60 then
-        match.phase, match.timer, match.clock = "fulltime", 0, 90 * 60
-        match.msg, match.msg_t = nil, nil
-      end
-    end
+    if match.phase == "play" and half_over() then whistle() end
   elseif ph == "restart" then
-    restart_update(dt)
+    if half_over() then whistle() else restart_update(dt) end
   elseif ph == "goal" then
     goal_update(dt)
   elseif ph == "halftime" then
@@ -1041,17 +1087,94 @@ function draw()
       set_kickoff(3 - match.first_kickoff)
     end
   elseif ph == "fulltime" then
+    -- the whistle and the result stay up until the next slot's kick-off
     match.timer = match.timer + dt
     walk_all(dt)
-    if match.timer > 8 then
-      match.score, match.half, match.clock, match.dir = {0, 0}, 1, 0, {1, -1}
-      match.first_kickoff = 3 - match.first_kickoff
-      set_kickoff(match.first_kickoff)
+  end
+end
+
+-- A new match for a slot: the same one on every panel.
+local function kickoff_match(slot)
+  slot_now = slot
+  seed = (slot * 0x9E3779B1) ~ 0x2545F491
+  if seed == 0 then seed = 1 end
+  for _ = 1, 8 do rand() end
+  local first = slot % 2 + 1                 -- the kick-off alternates, match to match
+  match = {score = {0, 0}, half = 1, clock = 0, phase = "setup", timer = 0,
+           dir = {1, -1}, kickoff = 1, first_kickoff = first, possession = nil,
+           last_team = 1, restart = nil, scorer = nil, jump = nil, msg = nil}
+  new_players()
+  ball = {x = PL / 2, y = PW / 2, z = 0, vx = 0, vy = 0, vz = 0}
+  place_for_kickoff(first)
+  set_kickoff(first)
+  for i = #order, 1, -1 do order[i] = nil end
+end
+
+-- Steps played in this slot; at most CATCH a frame, and while more than LAG
+-- are still owed the pitch says so rather than showing a match in fast
+-- forward. A step is about 5,000 instructions, up to 12,600 when a player on
+-- the ball weighs every pass, and 30 in a row came to at most 180 thousand
+-- (fxhost --exact, four matches). On the twin (cpi 2.45, fitted to the
+-- panel's Lua frames) a frame of 30 steps took 90-130 ms against the 500 ms a
+-- draw may take, and a page opened 4 min 25 s into a match was live again
+-- 18 s later.
+local CATCH, LAG = 30, 8
+local done = -1
+-- where everything was before the last step, for drawing between steps
+local PREV_X, PREV_Y, prev_bx, prev_by, prev_bz = {}, {}, 0, 0, 0
+local function keep_prev()
+  for i = 1, #players do local p = players[i]; PREV_X[i], PREV_Y[i] = p.x, p.y end
+  prev_bx, prev_by, prev_bz = ball.x, ball.y, ball.z
+end
+
+local function draw_catching_up()
+  draw_static(nil)
+  draw_bug()
+  draw_clock(px.t())
+  banner("LIVE", {255, 215, 0}, "CATCHING UP")
+end
+
+function draw()
+  local t = px.t()
+  local slot = slot_of(px.now())
+  local target = floor(t * STEPS)            -- steps since the slot began, on the wall clock
+  -- a new slot; or the clock stepped back more than a second: start it again
+  if slot ~= slot_now or done < 0 or target < done - 15 then
+    kickoff_match(slot)
+    done = 0
+    keep_prev()
+  end
+  local k = target - done
+  if k > CATCH then k = CATCH end
+  for i = 1, k do
+    if i == k then keep_prev() end
+    step(STEP)
+  end
+  if k > 0 then done = done + k end
+  if target - done > LAG then draw_catching_up(); return end
+
+  -- drawn a step behind the clock, between the last two steps, so the motion
+  -- is smooth at any frame rate; a jump (a restart placing the ball) is not
+  -- smoothed
+  local a = t * STEPS - done
+  if a < 0 then a = 0 elseif a > 1 then a = 1 end
+  for i = 1, #players do
+    local p, x0, y0 = players[i], PREV_X[i], PREV_Y[i]
+    if x0 and abs(p.x - x0) + abs(p.y - y0) < 3 then
+      p.rx, p.ry = x0 + (p.x - x0) * a, y0 + (p.y - y0) * a
+    else
+      p.rx, p.ry = p.x, p.y
     end
+  end
+  if abs(ball.x - prev_bx) + abs(ball.y - prev_by) < 6 then
+    ball.rx, ball.ry = prev_bx + (ball.x - prev_bx) * a, prev_by + (ball.y - prev_by) * a
+    ball.rz = prev_bz + (ball.z - prev_bz) * a
+  else
+    ball.rx, ball.ry, ball.rz = ball.x, ball.y, ball.z
   end
 
   draw_static(match.phase == "goal" and floor(match.timer * 6) or nil)
   draw_players()
   draw_ball()
-  draw_hud(px.t())
+  draw_hud(t)
 end

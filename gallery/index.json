@@ -49,7 +49,7 @@
       "name": "FOOTBALL_CLOCK",
       "file": "football_clock.lua",
       "line": "a football match that plays itself, with a broadcast score bug and the real time in the corner.",
-      "bytes": 40834,
+      "bytes": 46962,
       "preview": "preview/football_clock.png"
     },
     {
