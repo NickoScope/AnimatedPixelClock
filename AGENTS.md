@@ -703,7 +703,7 @@ The same over HTTP, since 2.5.4 (receiver on GPIO0, ten buttons with a
 function each, src/ir/ir_map.h): `GET /api/ir` is the table and the functions
 this build offers; `/api/ir/do?fn=<name>[&page=N][&hold=ms]` runs a function,
 `/api/ir/press?btn=1..10`, `/api/ir/fn?btn=N&fn=<name>[&page=N]`,
-`/api/ir/learn?btn=N`, `/api/ir/cancel`, `/api/ir/clear?btn=N|all`. Every one
+`/api/ir/learn?btn=N`, `/api/ir/cancel`, `/api/ir/clear?btn=N|all` (POST since 2.7.9). Every one
 answers with the table. `do` and `press` go down the same path a decoded frame
 does, so they drive the knob's state machine and the actions for real.
 

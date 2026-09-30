@@ -1538,6 +1538,7 @@ static void handleClipUploadChunk() {
   if (up.status == UPLOAD_FILE_START) {
     clipUpError = nullptr;
     clipUpWritten = 0;
+    if (originIsForeign()) { clipUpError = "refused: this request came from another origin"; return; }
     clipUpName = server.arg("name");
     if (!clipSdMounted()) { clipUpError = clipSdReason(); return; }
     if (!animValidName(clipUpName.c_str())) { clipUpError = "bad name (use 1-24 of A-z 0-9 _ -)"; return; }

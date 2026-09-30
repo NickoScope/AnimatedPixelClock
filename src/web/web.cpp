@@ -82,6 +82,11 @@ static constexpr bool kFirmwareImageRoute = sizeof(HARDCODED_WIFI_PASSWORD) == 1
 
 // Set when an OTA file part starts; the done handler restarts only after one.
 static bool s_otaSeen = false;
+// Set when that part came from another site's page (webOriginForeign): nothing
+// is written, and the done handler answers 403. multipart/form-data needs no
+// CORS preflight, so without this any page open in a browser on the network
+// could flash the panel (the 2026-09-30 gate audit, from the upstream code).
+static bool s_otaRefused = false;
 
 // JSON documents built for a response come from PSRAM when there is some.
 // Internal SRAM is the scarce heap on this board - the HUB75 buffers and lwip
@@ -304,7 +309,10 @@ void setupWebServer() {
    irLearnCancel();
    sendIrTable();
  });
- server.on("/api/ir/clear", HTTP_GET, []() {
+ // POST: forgetting learned codes needs the physical remote to undo, and a
+ // GET is one <img> away on any page (the 2026-09-30 gate audit).
+ server.on("/api/ir/clear", HTTP_POST, []() {
+   if (webOriginForeign()) { irBad("refused: this request came from another origin"); return; }
    if (server.arg("btn") == "all") { irClearAll(); sendIrTable(); return; }
    uint8_t slot = 0;
    if (!ir::slotByNumber(server.arg("btn").c_str(), &slot)) { irBad("btn must be 1..10 or all"); return; }
@@ -342,7 +350,9 @@ void setupWebServer() {
 
  // Custom animation storage (uploaded .pca files, see tools/gif2pca.py)
  server.on("/api/anim/list", HTTP_GET, handleAnimList);
- server.on("/api/anim/delete", HTTP_GET, handleAnimDelete);
+ // POST: a delete cannot be undone, and a GET is one <img> away on any page
+ // (the 2026-09-30 gate audit). webOriginForeign() in the handler.
+ server.on("/api/anim/delete", HTTP_POST, handleAnimDelete);
  serverOnUpload(server, "/api/anim/upload", handleAnimUploadDone, handleAnimUploadChunk);
 
  // Runtime control API (display power, mode, brightness, clock style, reboot)
@@ -375,6 +385,12 @@ void setupWebServer() {
  // upload behind server.upload(). Without a file there is nothing to answer
  // "OK" to, and no reason to restart.
  serverOnUpload(server, "/update", []() {
+ if (s_otaRefused) {
+   s_otaRefused = false;
+   s_otaSeen = false;
+   server.send(403, "text/plain", "Refused: this upload came from another site's page. Use the panel's own portal.");
+   return;
+ }
  if (!s_otaSeen) {
    server.send(400, "text/plain", "No firmware in the request: send the .bin as a multipart file part.");
    return;
@@ -405,10 +421,14 @@ void setupWebServer() {
  esp_task_wdt_reset();  // a slow OTA otherwise trips the 15s watchdog mid-flash
  if (upload.status == UPLOAD_FILE_START) {
  s_otaSeen = true;
+ s_otaRefused = webOriginForeign();
+ if (s_otaRefused) { Serial.println("Update: refused, from another origin"); return; }
  Serial.printf("Update: %s\n", upload.filename.c_str());
  if (!Update.begin(UPDATE_SIZE_UNKNOWN)) { // Start with max available size
  Update.printError(Serial);
  }
+ } else if (s_otaRefused) {
+ // nothing of a refused upload is written
  } else if (upload.status == UPLOAD_FILE_WRITE) {
  // Write uploaded data
  if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
@@ -709,6 +729,10 @@ void handleReboot() {
 
 void handleRename() {
  server.sendHeader("Access-Control-Allow-Origin", "*");
+ if (webOriginForeign()) {
+   server.send(403, "application/json", "{\"success\":false,\"error\":\"refused: this request came from another origin\"}");
+   return;
+ }
 
  if (!server.hasArg("plain")) {
    server.send(400, "application/json", "{\"error\":\"Missing body\"}");
@@ -880,6 +904,10 @@ void handleAnimPlay() {
 // GET /api/anim/delete?name=<basename>
 void handleAnimDelete() {
  server.sendHeader("Access-Control-Allow-Origin", "*");
+ if (webOriginForeign()) {
+   server.send(403, "application/json", "{\"success\":false,\"error\":\"refused: this request came from another origin\"}");
+   return;
+ }
  String name = server.arg("name");
  if (!animFsUsable() || !animValidName(name.c_str()) ||
      !LittleFS.exists(animPath(name.c_str()))) {
@@ -922,6 +950,7 @@ void handleAnimUploadChunk() {
    animUpSeen = true;
    animUpError = nullptr;
    animUpWritten = 0;
+   if (webOriginForeign()) { animUpError = "refused: this request came from another origin"; return; }
    if (!animFsUsable()) { animUpError = "animation storage unavailable on this board"; return; }
    // Name from ?name= or the uploaded filename (minus extension).
    animUpName = server.arg("name");
@@ -1742,6 +1771,10 @@ static bool parseHHMM(const String &v, uint8_t &hour, uint8_t &minute) {
 }
 
 void handleSave() {
+  if (webOriginForeign()) {   // a urlencoded POST needs no preflight: another site's page could send one
+    server.send(403, "application/json", "{\"success\":false,\"error\":\"refused: this request came from another origin\"}");
+    return;
+  }
   // Writing settings parses a form, touches NVS and answers - heavy, and the
   // owner's panel hung on exactly this (a brightness change) while the rail
   // board was fetching. It waits its turn like everything else.
@@ -2744,6 +2777,10 @@ void handleNtpTest() {
 }
 
 void handleImportConfig() {
+ if (webOriginForeign()) {    // a text/plain POST needs no preflight: another site's page could overwrite every setting
+   server.send(403, "application/json", "{\"success\":false,\"message\":\"refused: this request came from another origin\"}");
+   return;
+ }
  if (server.hasArg("plain")) {
  String body = server.arg("plain");
 

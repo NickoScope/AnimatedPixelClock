@@ -1361,7 +1361,7 @@ function clipRow(host, a, sd, here) {
   b[0].addEventListener('click', function () { playClip(a.name, sd, b[0]); });
   b[1].addEventListener('click', function () {
     armDelete(b[1], function () {
-      (sd ? api('/api/clips', { 'delete': a.name }) : fetch('/api/anim/delete?name=' + encodeURIComponent(a.name)))
+      (sd ? api('/api/clips', { 'delete': a.name }) : fetch('/api/anim/delete?name=' + encodeURIComponent(a.name), { method: 'POST' }))
         .then(function () { clipSig = ''; return pollClips(); }).catch(function (err) { flash(b[1], err.message, true); });
     });
   });

@@ -292,7 +292,7 @@ curl -F "anim=@my.pca" "http://pixelclock.local/api/anim/upload"
 Then pick the animation in the dropdown, **Save**, and **Start now**. Uploaded
 animations survive reboots and normal firmware-only OTA updates; replacing or
 erasing the filesystem removes them. Manage them with
-`GET /api/anim/list` and `GET /api/anim/delete?name=<name>`.
+`GET /api/anim/list` and `POST /api/anim/delete?name=<name>` (a POST since 2.7.9: a delete cannot be undone).
 
 ### Custom clock rotation
 
