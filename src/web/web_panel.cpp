@@ -1368,7 +1368,7 @@ static void handleLuaUploadDone() {
     doc["error"] = "the request carried no file: send the script as a multipart part";
     String out;
     serializeJson(doc, out);
-    server.send(400, "application/json", out);
+    server.send(strncmp(s_luaUpErr, "refused", 7) == 0 ? 403 : 400, "application/json", out);
     return;
   }
   s_luaUpSeen = false;

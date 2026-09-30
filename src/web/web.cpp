@@ -289,7 +289,8 @@ void setupWebServer() {
 #if defined(SYNC_EVENTS_ENABLED)
    syncNoteSimulated(syncHttpBy());
 #endif
-   irSimulate(slot, (uint32_t)server.arg("hold").toInt());
+   const long hold = server.arg("hold").toInt();
+   irSimulate(slot, (uint32_t)(hold < 0 ? 0 : hold > 10000 ? 10000 : hold));   // a press is held seconds, not weeks
    sendIrTable();
  });
  server.on("/api/ir/do", HTTP_GET, []() {
@@ -300,7 +301,8 @@ void setupWebServer() {
 #if defined(SYNC_EVENTS_ENABLED)
    syncNoteSimulated(syncHttpBy());   // what it does next is this request's doing, the twin's own or not
 #endif
-   irSimulateFn(fn, (uint8_t)page, (uint32_t)server.arg("hold").toInt());
+   const long hold = server.arg("hold").toInt();
+   irSimulateFn(fn, (uint8_t)page, (uint32_t)(hold < 0 ? 0 : hold > 10000 ? 10000 : hold));
    sendIrTable();
  });
  server.on("/api/ir/fn", HTTP_GET, []() {
