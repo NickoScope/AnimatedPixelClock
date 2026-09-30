@@ -1,6 +1,18 @@
 -- @upload-only
 -- @by openclaw
 -- AUTUMN - An autumn evening in a park: two maples in full orange crown under a low sun, leaves drift
+-- @name.en Autumn
+-- @name.ru Осень
+-- @about.en An autumn evening in a park: two orange maples under a low sun, leaves drifting down through
+-- @about.en a violet dusk, the last light lying across the ground in long bands. Time in the corner.
+-- @about.ru Осенний вечер в парке: два оранжевых клёна под низким солнцем, листья падают в фиолетовых
+-- @about.ru сумерках, последний свет лежит на земле длинными полосами. Время в углу.
+-- @control.en knob press: Nothing: this effect does not use the button.
+-- @control.ru knob press: Ничего: этот эффект кнопку не использует.
+-- @function.en Time in the corner
+-- @function.en 20 frames a second, 60 s cycle
+-- @function.ru Время в углу
+-- @function.ru 20 кадров в секунду, цикл 60 с
 FPS = 20
 PERIOD = 60.0
 

@@ -1,5 +1,23 @@
 -- @upload-only
 -- AQUARIUM - a planted tank with depth, and fish that notice you slowly.
+-- @name.en Aquarium
+-- @name.ru Аквариум
+-- @about.en A lit freshwater tank: seven kinds of fish, plants, stones and an airstone. Fish swim at
+-- @about.en different depths: nearer ones look bigger and brighter. If the room radar is connected, the
+-- @about.en fish slowly turn toward you and scatter at a sudden move. After 45 s of an empty room the
+-- @about.en tank dims and goes to sleep. The time is in the bottom right corner.
+-- @about.ru Освещённый пресноводный аквариум: семь видов рыб, растения, камни, распылитель. Рыбы плавают
+-- @about.ru на разной глубине: ближние крупнее и ярче. Если подключён радар комнаты, рыбы медленно
+-- @about.ru поворачиваются к вам и разбегаются от резкого движения. Через 45 с пустой комнаты аквариум
+-- @about.ru тускнеет и засыпает. Время внизу справа.
+-- @control.en knob press: Nothing: this effect does not use the button.
+-- @control.ru knob press: Ничего: этот эффект кнопку не использует.
+-- @function.en Time in the corner
+-- @function.en Reacts to the room radar (MTR-1 via Home Assistant)
+-- @function.en 15 frames a second
+-- @function.ru Время в углу
+-- @function.ru Реагирует на радар комнаты (MTR-1 через Home Assistant)
+-- @function.ru 15 кадров в секунду
 --
 -- Seven species: a goldfish and an angelfish, tiger barbs, guppies, a shoal of
 -- neons that keeps formation, a corydoras working the sand and a snail on the

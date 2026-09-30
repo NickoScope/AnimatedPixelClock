@@ -1,4 +1,15 @@
 -- @upload-only
+-- @name.en Snooker clock
+-- @name.ru Снукер-часы
+-- @about.en A snooker table that plays frames by itself by the official rules: the break, the reds, the
+-- @about.en colours in order. The time is in the corner, like in a game.
+-- @about.ru Стол для снукера, на котором партии играются сами по официальным правилам: разбой, красные,
+-- @about.ru цветные по порядку. Время в углу, как в игре.
+-- @control.en knob press: Nothing: this effect does not use the button.
+-- @control.ru knob press: Ничего: этот эффект кнопку не использует.
+-- @function.en Time in the corner
+-- @function.ru Время в углу
+--
 -- snooker_clock.lua - a snooker table that plays frames by itself, with the
 -- time in the corner like a game's HUD.
 --

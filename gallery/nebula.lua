@@ -2,6 +2,21 @@
 -- ============================================================
 -- NEBULA - a cloud of gas and stars that never settles
 -- ============================================================
+-- @name.en Nebula
+-- @name.ru Туманность
+-- @about.en A cloud of gas that slowly boils, with a faint ripple running through it and stars twinkling
+-- @about.en in front. Most of the sky stays dark and the clouds glow.
+-- @about.ru Облако газа, которое медленно клубится, по нему бежит слабая рябь, впереди мерцают звёзды.
+-- @about.ru Большая часть неба тёмная, облака светятся.
+-- @control.en knob press: Next mood: violet and rose, teal and ice, ember, aurora.
+-- @control.ru knob press: Следующее настроение: фиолетово-розовое, бирюзово-ледяное, угли, полярное сияние.
+-- @function.en 4 colour moods
+-- @function.en No clock
+-- @function.en Needs firmware 2.7.5 or later
+-- @function.ru 4 цветовых настроения
+-- @function.ru Часов нет
+-- @function.ru Нужна прошивка 2.7.5 или новее
+--
 -- Perlin noise in three octaves, sliced along time, makes a nebula that boils
 -- slowly; a faint ripple from a wandering centre runs through it; the field
 -- sits low, so most of the sky stays dark and the clouds glow, through a

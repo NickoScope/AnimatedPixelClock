@@ -479,6 +479,62 @@ has no key for GitHub: it publishes into a staging branch on its own machine,
 and a maintainer brings it here with `gallery.py sync`, every entry checked
 again.
 
+### What a screen says about itself
+
+A script's first comment lines say, in English and in Russian, what the screen
+shows, what its button does and what else it can do. The virtual twin's panel
+page shows them under the panel ("This screen"), read back from the script
+on the device (`GET /api/lua/source`), so the text arrives with the upload and
+leaves with the delete. The firmware, luasim and `validate.py` never see them:
+they are Lua comments. Every script here carries them.
+
+```lua
+-- @upload-only
+-- LASER CLOCK - a laser on the pavement writes the time on the wall
+-- @name.en Laser clock
+-- @name.ru Лазерные часы
+-- @about.en Night, a brick wall. A small laser projector on the ground writes text on the
+-- @about.en wall with its beam, then keeps retracing it, so the lines shimmer.
+-- @about.ru Ночь, кирпичная стена. Маленький лазерный проектор на земле пишет лучом текст
+-- @about.ru на стене, а потом всё время обводит его заново, и линии мерцают.
+-- @control.en knob press: Changes the laser colour.
+-- @control.ru knob press: Меняет цвет лазера.
+-- @function.en Time, day of the week, date
+-- @function.ru Время, день недели, дата
+```
+
+- A tag line is `-- @<tag>.<lang> <text>`: the tag is `name`, `about`,
+  `control` or `function`, the language two small letters (`en`, `ru`). The
+  page shows the viewer's language, else English.
+- Only the header counts: the lines from the top of the file down to the first
+  line that is neither blank nor a `--` comment. A tag below that, or inside a
+  `--[[ ]]` block, is never read. Put them right after the title comment.
+- `@name`: one line, what the screen is called in that language. Without it
+  the page uses the effect's name as the panel shows it.
+- `@about`: what it shows, in plain words. Several lines of one language are
+  joined with a space into one paragraph.
+- `@control`: one line an action, `<input>: <what it does>`. The input is the
+  same English words in every language, so the page can label it: `knob press`
+  (one press: the knob's click, the remote's OK or LONG, `POST /api/lua
+  {"click":true}`, all of them `px.button()`), `knob press x2`, `knob press x3`
+  for presses the script counts as a series. Only the button reaches a script;
+  turning the knob always walks the pages. A script that never reads
+  `px.button` says `-- @control.en knob press: Nothing: this effect does not
+  use the button.`
+- `@function`: one line an item - a clock in the corner, the room radar, the
+  firmware it needs.
+- Only what the code does. A number in the text is the script's own (its
+  `FPS`, `PERIOD`, a scene's seconds).
+- `@by`, `@upload-only` and `@photo` keep their meaning; everything else in the
+  header is prose.
+
+A copy in `tools/luasim/scripts/` carries the same lines in the same place
+(`tools/gallery_index.py` refuses copies that drift). The two golf courses'
+lines are in `tools/luasim/golf_courses.py` (`ABOUT`), which writes both
+scripts. `tools/twin/test_twin.py` checks every script here: both languages,
+one `@control` line per action in each, and "Nothing" where the code has no
+`px.button`.
+
 Three things that are not obvious and cost an evening each:
 
 - **`LUA_32BITS`.** `lua_Integer` is int32 and `lua_Number` is a single-precision

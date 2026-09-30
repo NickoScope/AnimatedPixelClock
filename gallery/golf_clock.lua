@@ -1,5 +1,21 @@
 -- @upload-only
 -- GOLF CLOCK - eighteen holes of stroke play in two minutes, a new round every run.
+-- @name.en Golf clock
+-- @name.ru Гольф-часы
+-- @about.en ГЕНА and НИКОША play 18 holes of golf in two minutes, a new round every time. Each hole: a
+-- @about.en close-up of one shot, the hole plan, the last putt and applause. The score is on top, the
+-- @about.en time bottom right, the result at the end.
+-- @about.ru ГЕНА и НИКОША играют 18 лунок гольфа за две минуты, каждый раз новый раунд. На каждой лунке:
+-- @about.ru крупный план удара, план лунки, последний патт и аплодисменты. Счёт сверху, время внизу
+-- @about.ru справа, в конце итог.
+-- @control.en knob press: Nothing: this effect does not use the button.
+-- @control.ru knob press: Ничего: этот эффект кнопку не использует.
+-- @function.en Time bottom right
+-- @function.en A round every 2 minutes
+-- @function.en 15 frames a second
+-- @function.ru Время внизу справа
+-- @function.ru Раунд каждые 2 минуты
+-- @function.ru 15 кадров в секунду
 --
 -- Two players, ГЕНА and НИКОША, play a full round on a par-72 course: the
 -- introduction, eighteen holes of about six seconds each, then the result. The

@@ -1009,6 +1009,20 @@ The file name is not cosmetic: `gen_effects.py:59-60` refuses anything outside
 upper-cased - `football_clock.lua` becomes `FOOTBALL CLOCK`. The generator also
 runs in the pre-commit hook with `--check`, so a stale header blocks a commit.
 
+**The script says what the screen is.** Its first comment lines carry, in
+English and Russian, what the screen shows and what its button does:
+`-- @name.en`, `-- @about.en` (repeat to continue), `-- @control.en knob press:
+<what it does>` (`knob press x2`, `x3` for a series; a script without
+`px.button` says "Nothing: this effect does not use the button."),
+`-- @function.en`, and the same with `.ru`. Only the header counts - the lines
+down to the first that is neither blank nor a `--` comment - so put them right
+after the title comment. They are comments: the firmware and luasim never see
+them. The virtual twin's page reads them back from the device (`GET
+/api/lua/source`) and shows them under the panel, so a description comes and
+goes with its upload. The full format: `gallery/README.md`, "What a screen
+says about itself"; every gallery script has one, and
+`tools/twin/test_twin.py` checks them.
+
 **The compiled-in route is empty since 2.6.0** (`gen_effects.py` finds every
 script marked `@upload-only` and emits LUA_EFFECT_COUNT 0). Scripts arrive over
 `/api/lua/upload` and are validated and tried before they are kept.

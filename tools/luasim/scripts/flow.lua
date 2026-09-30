@@ -2,6 +2,21 @@
 -- ============================================================
 -- FLOW - hundreds of particles on currents that never repeat
 -- ============================================================
+-- @name.en Flow
+-- @name.ru Потоки
+-- @about.en Hundreds of particles on currents that never repeat. Three scenes of 40 s each: glowing
+-- @about.en currents, a fountain of sparks bouncing off the walls, snow blown by the wind.
+-- @about.ru Сотни частиц на течениях, которые не повторяются. Три сцены по 40 с: светящиеся течения,
+-- @about.ru фонтан искр, отскакивающих от стен, снег на ветру.
+-- @control.en knob press: Next scene now: currents, fountain, snow.
+-- @control.ru knob press: Сразу следующая сцена: течения, фонтан, снег.
+-- @function.en 3 scenes, 40 s each
+-- @function.en No clock
+-- @function.en Needs firmware 2.7.5 or later
+-- @function.ru 3 сцены по 40 с
+-- @function.ru Часов нет
+-- @function.ru Нужна прошивка 2.7.5 или новее
+--
 -- A particle system in C (px.particles) does the moving and the drawing;
 -- this script only says where they come from and what pulls them. Three
 -- scenes, 40 s each, the button for the next:

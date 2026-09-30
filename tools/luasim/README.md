@@ -57,6 +57,15 @@ Two optional globals matter only on the panel, and luasim ignores both:
 | `PERIOD` | `60` | seconds `px.t()` spans. The panel takes the phase from the wall clock, so at 60 it is the second hand and a clock's change lands on the minute. `room_radar.lua` sets it to its 24 s story |
 | `FPS` | `20` | the effect's frame cap, 1–30 |
 
+The header's comment lines may say what the screen is, in English and Russian:
+`-- @name.en`, `-- @about.en`, `-- @control.en knob press: <what the button
+does>`, `-- @function.en`, and `.ru` for each. They are comments, so luasim,
+`validate.py` and the panel pass over them; the virtual twin's page shows them
+under the panel ("This screen"). The format, and why only the header is read:
+[`gallery/README.md`](../../gallery/README.md), "What a screen says about
+itself". A copy here of a gallery script carries the same lines as the
+gallery's.
+
 ## On the panel
 
 Every script here except `demo.lua` and `world_clock.lua` (a native page

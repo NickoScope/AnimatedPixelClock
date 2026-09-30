@@ -1,5 +1,18 @@
 -- @upload-only
 -- LA GIOCONDA - the painting drawn in ASCII characters.
+-- @name.en La Gioconda
+-- @name.ru Джоконда
+-- @about.en The Mona Lisa drawn in text characters, each character in its own colour, with a clock
+-- @about.en beside it made of characters too. The painting is drawn once; after that only the clock
+-- @about.en changes.
+-- @about.ru «Мона Лиза», нарисованная буквами и знаками, каждый знак своим цветом, рядом часы тоже из
+-- @about.ru знаков. Картина рисуется один раз, дальше меняются только часы.
+-- @control.en knob press: Nothing: this effect does not use the button.
+-- @control.ru knob press: Ничего: этот эффект кнопку не использует.
+-- @function.en Clock beside the picture
+-- @function.en 4 frames a second
+-- @function.ru Часы рядом с картиной
+-- @function.ru 4 кадра в секунду
 --
 -- Four libraries were read before this, and none of them converts an image.
 -- asciicker is a 3D game whose cells come from rasterising geometry - it never

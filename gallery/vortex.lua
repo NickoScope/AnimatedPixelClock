@@ -2,6 +2,21 @@
 -- ============================================================
 -- VORTEX - light poured into a whirlpool that never ends
 -- ============================================================
+-- @name.en Vortex
+-- @name.ru Водоворот
+-- @about.en Light poured into an endless whirlpool: a bright shape in the middle streams outward in
+-- @about.en spirals and fades at the edges. Every 30 s the shape changes: a ring, a figure of eight, a
+-- @about.en star, spokes, a spiral arm.
+-- @about.ru Свет, закрученный в бесконечный водоворот: яркая фигура в центре уходит спиралями наружу и
+-- @about.ru гаснет у краёв. Каждые 30 с фигура меняется: кольцо, восьмёрка, звезда, спицы, спиральный
+-- @about.ru рукав.
+-- @control.en knob press: Next shape now.
+-- @control.ru knob press: Сразу следующая фигура.
+-- @function.en 5 shapes, 30 s each
+-- @function.en No clock
+-- @function.ru 5 фигур по 30 с
+-- @function.ru Часов нет
+--
 -- A few bright shapes are drawn at the middle each frame, and px.feedback
 -- does the rest: every frame the whole picture is resampled a little larger,
 -- a little turned and a little darker, so what was drawn streams outward in

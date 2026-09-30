@@ -1,6 +1,32 @@
 -- @upload-only
 -- OCEANARIUM - a window into a great public aquarium, a hundred-odd kinds of
 -- sea life living their own lives, lit by the time of day.
+-- @name.en Oceanarium
+-- @name.ru Океанариум
+-- @about.en A window into a huge public aquarium: over a hundred kinds of sea life living their own
+-- @about.en lives. The light follows the time of day: sun shafts at noon, a violet dusk, a moonlit night
+-- @about.en with glowing jellies. With the room radar, curious fish come to where you stand, and a
+-- @about.en sudden move scatters the small ones. At night the tank lights come on when someone is in the
+-- @about.en room. Time shown.
+-- @about.ru Окно в огромный океанариум: больше сотни видов морских обитателей живут своей жизнью. Свет
+-- @about.ru следует времени суток: днём солнечные лучи, вечером фиолетовые сумерки, ночью лунный свет и
+-- @about.ru светящиеся медузы. С радаром комнаты любопытные рыбы подплывают туда, где вы стоите, а от
+-- @about.ru резкого движения мелкие рыбки прячутся. Ночью подсветка включается, когда в комнате кто-то
+-- @about.ru есть. Время на экране.
+-- @control.en knob press: Tank lights on or off by hand, until the next sunrise or sunset (ПОДСВЕТКА ВКЛ / ВЫКЛ).
+-- @control.en knob press x2: Demo: a whole day in 5 minutes; twice again stops it.
+-- @control.en knob press x3: Back to the real time of day (ТЕКУЩЕЕ ВРЕМЯ).
+-- @control.ru knob press: Подсветка аквариума вкл/выкл вручную до ближайшего восхода или заката (ПОДСВЕТКА ВКЛ / ВЫКЛ).
+-- @control.ru knob press x2: Демо: сутки за 5 минут; ещё два нажатия выключают демо.
+-- @control.ru knob press x3: Возврат к настоящему времени суток (ТЕКУЩЕЕ ВРЕМЯ).
+-- @function.en Time of day sets the light
+-- @function.en Reacts to the room radar
+-- @function.en Tank lights by the room at night
+-- @function.en Presses less than 0.45 s apart count together
+-- @function.ru Время суток задаёт свет
+-- @function.ru Реагирует на радар комнаты
+-- @function.ru Ночью подсветка по присутствию в комнате
+-- @function.ru Нажатия с промежутком меньше 0,45 с считаются вместе
 --
 -- The screen is the glass of one big tank, tens of metres deep. What lives in
 -- it is not a scene that plays: every animal is its own agent, arriving and

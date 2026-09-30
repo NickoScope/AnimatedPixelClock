@@ -7,7 +7,7 @@
       "name": "AQUARIUM",
       "file": "aquarium.lua",
       "line": "a planted tank with depth, and fish that notice you slowly.",
-      "bytes": 35489,
+      "bytes": 37053,
       "preview": "preview/aquarium.png"
     },
     {
@@ -15,7 +15,7 @@
       "name": "AUTUMN",
       "file": "autumn.lua",
       "line": "An autumn evening in a park: two maples in full orange crown under a low sun, leaves drift",
-      "bytes": 42312,
+      "bytes": 43247,
       "preview": "preview/autumn.png",
       "by": "openclaw"
     },
@@ -24,7 +24,7 @@
       "name": "CANNES",
       "file": "cannes.lua",
       "line": "the Festival d'Art Pyrotechnique, over the bay.",
-      "bytes": 10412,
+      "bytes": 11396,
       "preview": "preview/cannes.png"
     },
     {
@@ -32,7 +32,7 @@
       "name": "FLIP_DOT_CLOCK",
       "file": "flip_dot_clock.lua",
       "line": "A real flip-disc board, the kind that used to clatter above a railway platform",
-      "bytes": 5840,
+      "bytes": 6958,
       "preview": "preview/flip_dot_clock.png",
       "by": "openclaw"
     },
@@ -41,7 +41,7 @@
       "name": "FLOW",
       "file": "flow.lua",
       "line": "hundreds of particles on currents that never repeat",
-      "bytes": 4047,
+      "bytes": 4987,
       "preview": "preview/flow.png"
     },
     {
@@ -49,7 +49,7 @@
       "name": "FOOTBALL_CLOCK",
       "file": "football_clock.lua",
       "line": "a football match that plays itself, with a broadcast score bug and the real time in the corner.",
-      "bytes": 39445,
+      "bytes": 40834,
       "preview": "preview/football_clock.png"
     },
     {
@@ -57,7 +57,7 @@
       "name": "GOLF_CLOCK",
       "file": "golf_clock.lua",
       "line": "eighteen holes of stroke play in two minutes, a new round every run.",
-      "bytes": 30836,
+      "bytes": 32004,
       "preview": "preview/golf_clock.png"
     },
     {
@@ -65,7 +65,7 @@
       "name": "GOLF_OLD_COURSE",
       "file": "golf_old_course.lua",
       "line": "GOLF CLOCK on Old Course (КАНН-МАНДЕЛЬЕ), eighteen real holes in four minutes.",
-      "bytes": 85694,
+      "bytes": 86983,
       "preview": "preview/golf_old_course.png"
     },
     {
@@ -73,7 +73,7 @@
       "name": "GOLF_PESTOVO",
       "file": "golf_pestovo.lua",
       "line": "GOLF CLOCK on ПЕСТОВО (ГОЛЬФ-КЛУБ), eighteen real holes in four minutes.",
-      "bytes": 85686,
+      "bytes": 86779,
       "preview": "preview/golf_pestovo.png"
     },
     {
@@ -81,7 +81,7 @@
       "name": "KALEIDOSCOPE",
       "file": "kaleidoscope.lua",
       "line": "colour that never plays the same twice",
-      "bytes": 7802,
+      "bytes": 8885,
       "preview": "preview/kaleidoscope.png"
     },
     {
@@ -89,7 +89,7 @@
       "name": "KINETIC_DIGITS_LED",
       "file": "kinetic_digits_led.lua",
       "line": "a flip board of seven-segment digits made of the panel's LEDs.",
-      "bytes": 71801,
+      "bytes": 73834,
       "preview": "preview/kinetic_digits_led.png"
     },
     {
@@ -97,7 +97,7 @@
       "name": "LA_GIOCONDA",
       "file": "la_gioconda.lua",
       "line": "the painting drawn in ASCII characters.",
-      "bytes": 6741,
+      "bytes": 7676,
       "preview": "preview/la_gioconda.png"
     },
     {
@@ -105,7 +105,7 @@
       "name": "LASER_CLOCK",
       "file": "laser_clock.lua",
       "line": "a laser on the pavement writes the time on the wall",
-      "bytes": 25562,
+      "bytes": 27213,
       "preview": "preview/laser_clock.png"
     },
     {
@@ -113,7 +113,7 @@
       "name": "LIVING_OCEAN",
       "file": "living_ocean.lua",
       "line": "The sea at sunset",
-      "bytes": 47120,
+      "bytes": 48107,
       "preview": "preview/living_ocean.png",
       "by": "openclaw"
     },
@@ -122,7 +122,7 @@
       "name": "MINECRAFT",
       "file": "minecraft.lua",
       "line": "a blocky world with a full day and night cycle in one minute.",
-      "bytes": 16283,
+      "bytes": 17258,
       "preview": "preview/minecraft.png"
     },
     {
@@ -130,7 +130,7 @@
       "name": "NEBULA",
       "file": "nebula.lua",
       "line": "a cloud of gas and stars that never settles",
-      "bytes": 3686,
+      "bytes": 4710,
       "preview": "preview/nebula.png"
     },
     {
@@ -138,7 +138,7 @@
       "name": "OCEANARIUM",
       "file": "oceanarium.lua",
       "line": "a window into a great public aquarium, a hundred-odd kinds of",
-      "bytes": 136965,
+      "bytes": 139510,
       "preview": "preview/oceanarium.png"
     },
     {
@@ -146,7 +146,7 @@
       "name": "REACTION",
       "file": "reaction.lua",
       "line": "living patterns that grow, split and never settle",
-      "bytes": 4271,
+      "bytes": 5407,
       "preview": "preview/reaction.png"
     },
     {
@@ -154,7 +154,7 @@
       "name": "ROOM_RADAR",
       "file": "room_radar.lua",
       "line": "who is in the room, as the 24 GHz presence radar sees it.",
-      "bytes": 15484,
+      "bytes": 16583,
       "preview": "preview/room_radar.png"
     },
     {
@@ -162,7 +162,7 @@
       "name": "SNAKE_CLOCK",
       "file": "snake_clock.lua",
       "line": "HH:MM where each digit is a snake that crawls away and back on the minute.",
-      "bytes": 9210,
+      "bytes": 10108,
       "preview": "preview/snake_clock.png"
     },
     {
@@ -170,7 +170,7 @@
       "name": "SNOOKER_CLOCK",
       "file": "snooker_clock.lua",
       "line": "a snooker table that plays frames by itself, with the time in the corner.",
-      "bytes": 41901,
+      "bytes": 42666,
       "preview": "preview/snooker_clock.png"
     },
     {
@@ -178,7 +178,7 @@
       "name": "SOLIDS",
       "file": "solids.lua",
       "line": "the Platonic solids turning among slow stars",
-      "bytes": 10701,
+      "bytes": 11710,
       "preview": "preview/solids.png"
     },
     {
@@ -186,7 +186,7 @@
       "name": "SOTD_0923_EVENING",
       "file": "sotd_0923_evening.lua",
       "line": "Screen of the Day for 23 September 2026, the evening one: a city skyline against a violet-",
-      "bytes": 5624,
+      "bytes": 6471,
       "preview": "preview/sotd_0923_evening.png",
       "by": "openclaw"
     },
@@ -195,7 +195,7 @@
       "name": "SOTD_0924",
       "file": "sotd_0924.lua",
       "line": "Screen of the Day for 24 September 2026",
-      "bytes": 13370,
+      "bytes": 14888,
       "preview": "preview/sotd_0924.png",
       "by": "claude"
     },
@@ -204,7 +204,7 @@
       "name": "STARSHIP",
       "file": "starship.lua",
       "line": "one flight a minute, and the minute is the clock.",
-      "bytes": 18948,
+      "bytes": 20120,
       "preview": "preview/starship.png"
     },
     {
@@ -212,7 +212,7 @@
       "name": "TETRIS_CLOCK",
       "file": "tetris_clock.lua",
       "line": "HH:MM that clears like completed lines and is rebuilt by falling tetrominoes.",
-      "bytes": 9819,
+      "bytes": 10570,
       "preview": "preview/tetris_clock.png"
     },
     {
@@ -220,7 +220,7 @@
       "name": "VORTEX",
       "file": "vortex.lua",
       "line": "light poured into a whirlpool that never ends",
-      "bytes": 4834,
+      "bytes": 5759,
       "preview": "preview/vortex.png"
     },
     {
@@ -228,7 +228,7 @@
       "name": "WARP",
       "file": "warp.lua",
       "line": "a tunnel, a planet, a neon road and a whirlpool",
-      "bytes": 5285,
+      "bytes": 6137,
       "preview": "preview/warp.png"
     }
   ]

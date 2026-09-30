@@ -117,6 +117,17 @@ to 32 KB and measure the internal heap first.
   starts with an empty room for about 2 s, until two messages confirm a person.
   `room_radar` and `aquarium` both read it.
 
+## What a script says about itself
+
+The comment lines at the top of a script may carry `-- @name.<lang>`,
+`-- @about.<lang>`, `-- @control.<lang> knob press: ...` and
+`-- @function.<lang>` (en, ru): what the screen shows and what its button
+(`px.button`) does. The firmware stores and runs them as the comments they
+are - `luaStoreValidate` counts nothing in a comment - and the virtual twin's
+page reads them back from the stored file to describe the effect on screen,
+so the description is uploaded and deleted with the script. Format:
+`gallery/README.md`, "What a screen says about itself".
+
 ## Budgets
 
 Set in `kLuaFxPanelLimits` (`lua_fx.h`). From four scripts, so these are

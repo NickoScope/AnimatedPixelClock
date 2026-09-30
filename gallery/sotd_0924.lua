@@ -1,6 +1,25 @@
 -- @upload-only
 -- @by claude
 -- SOTD 0924 - Screen of the Day for 24 September 2026
+-- @name.en Picture of the day, 24 Sept
+-- @name.ru Картинка дня, 24 сентября
+-- @about.en A lake in golden autumn lit by the real sun over Moscow: dawn mist, a blue day, an orange
+-- @about.en sunset, a starry night with a crescent moon. Leaves drift onto the water, a flock flies
+-- @about.en south by day, a fisherman lights a lantern after dark. Title, today's date in Russian, the
+-- @about.en next sunrise or sunset and the time.
+-- @about.ru Озеро золотой осенью под настоящим солнцем над Москвой: утренний туман, голубой день,
+-- @about.ru оранжевый закат, звёздная ночь с месяцем. Листья падают на воду, днём на юг летит стая,
+-- @about.ru после темноты рыбак зажигает фонарь. Заголовок, сегодняшняя дата по-русски, ближайший восход
+-- @about.ru или закат и время.
+-- @control.en knob press: Nothing: this effect does not use the button.
+-- @control.ru knob press: Ничего: этот эффект кнопку не использует.
+-- @function.en Time and date
+-- @function.en Next sunrise or sunset
+-- @function.en The sun at its true height for Moscow
+-- @function.ru Время и дата
+-- @function.ru Ближайший восход или закат
+-- @function.ru Солнце на настоящей высоте для Москвы
+--
 -- sotd_0924.lua - Screen of the Day for 24 September 2026, "Картинка дня": a lake in golden autumn, lit by the real sun.
 --
 -- The scene follows the sun as it stands over LAT/LON at the panel's own date

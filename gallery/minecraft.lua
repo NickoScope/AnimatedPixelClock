@@ -1,5 +1,19 @@
 -- @upload-only
 -- MINECRAFT - a blocky world with a full day and night cycle in one minute.
+-- @name.en Minecraft
+-- @name.ru Майнкрафт
+-- @about.en A blocky world with a full day and night in one minute. Steve patrols the hills and jumps
+-- @about.en now and then, a creeper paces the ridge, the sky turns black at night and torches light
+-- @about.en whole blocks. Time shown.
+-- @about.ru Мир из кубиков: целые сутки за одну минуту. Стив ходит по холмам и иногда прыгает, крипер
+-- @about.ru бродит по гребню, ночью небо чёрное и факелы освещают целые блоки. Время на экране.
+-- @control.en knob press: Nothing: this effect does not use the button.
+-- @control.ru knob press: Ничего: этот эффект кнопку не использует.
+-- @function.en Time on screen
+-- @function.en Day and night in 60 s
+-- @function.ru Время на экране
+-- @function.ru День и ночь за 60 с
+--
 -- minecraft.lua - a blocky world with a full day/night cycle in one minute.
 --
 -- 128x64 divides into 32 x 16 blocks of 4 px. Everything is filled rects: on a

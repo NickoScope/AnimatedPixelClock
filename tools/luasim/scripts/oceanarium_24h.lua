@@ -1,5 +1,23 @@
 -- @upload-only
 -- OCEANARIUM 24H - the same tank with its day run in five minutes, to watch the light change.
+-- @name.en Oceanarium 24h
+-- @name.ru Океанариум 24 ч
+-- @about.en The same oceanarium, but its day runs in five minutes, so you can watch the light change
+-- @about.en from noon to night.
+-- @about.ru Тот же океанариум, но его сутки проходят за пять минут: видно, как свет меняется от полудня
+-- @about.ru до ночи.
+-- @control.en knob press: Tank lights on or off by hand.
+-- @control.en knob press x2: Stops the fast day; twice again starts it.
+-- @control.en knob press x3: Back to the real time of day.
+-- @control.ru knob press: Подсветка вкл/выкл вручную.
+-- @control.ru knob press x2: Останавливает ускоренные сутки; ещё два нажатия запускают снова.
+-- @control.ru knob press x3: Возврат к настоящему времени суток.
+-- @function.en Starts in fast mode: a day in 5 minutes
+-- @function.en Reacts to the room radar
+-- @function.en Presses less than 0.45 s apart count together
+-- @function.ru Стартует в ускоренном режиме: сутки за 5 минут
+-- @function.ru Реагирует на радар комнаты
+-- @function.ru Нажатия с промежутком меньше 0,45 с считаются вместе
 DEMO_DAY = 300
 -- OCEANARIUM - a window into a great public aquarium, a hundred-odd kinds of
 -- sea life living their own lives, lit by the time of day.

@@ -2,6 +2,21 @@
 -- ============================================================
 -- WARP - a tunnel, a planet, a neon road and a whirlpool
 -- ============================================================
+-- @name.en Warp
+-- @name.ru Варп
+-- @about.en Four scenes of 20 s that flow into each other: flying down a plasma tunnel, a planet turning
+-- @about.en among stars, a neon road under a sunset, a whirlpool.
+-- @about.ru Четыре сцены по 20 с, перетекающие друг в друга: полёт по плазменному туннелю, планета среди
+-- @about.ru звёзд, неоновая дорога под закатом, водоворот.
+-- @control.en knob press: Next scene now.
+-- @control.ru knob press: Сразу следующая сцена.
+-- @function.en 4 scenes, 20 s each
+-- @function.en No clock
+-- @function.en Needs firmware 2.7.7 or later
+-- @function.ru 4 сцены по 20 с
+-- @function.ru Часов нет
+-- @function.ru Нужна прошивка 2.7.7 или новее
+--
 -- Four scenes, 20 s each, flowing into each other (px.mix); the button moves
 -- to the next. Each is a flat picture seen through a map (px.uvmap) and slid
 -- under it a frame at a time (px.remap) - the demoscene's oldest trick:

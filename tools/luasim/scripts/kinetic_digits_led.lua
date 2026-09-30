@@ -1,5 +1,27 @@
 -- @upload-only
 -- KINETIC DIGITS LED - a flip board of seven-segment digits made of the panel's LEDs.
+-- @name.en Kinetic digits
+-- @name.ru Кинетические цифры
+-- @about.en A mechanical flip-digit board made of LEDs: seven-segment digits whose segments flip over in
+-- @about.en waves across the board. It runs a program of 12 scenes: running text, plasma, rings, a large
+-- @about.en clock, the Game of Life, a cube, and a mode where every LED is a flip dot.
+-- @about.ru Механическое табло из перекидных цифр, собранное из светодиодов: сегменты семисегментных
+-- @about.ru цифр переворачиваются волной по табло. Идёт программа из 12 сцен: бегущий текст, плазма,
+-- @about.ru кольца, большие часы, «Жизнь» Конвея, куб и режим, где каждый светодиод — флип-точка.
+-- @control.en knob press: Next scene, and it stays on screen. Its name shows for a second.
+-- @control.en knob press x2: Previous scene, and it stays on screen.
+-- @control.en knob press x3: Back to the automatic program (AUTO).
+-- @control.ru knob press: Следующая сцена, и она остаётся на экране. Её название видно секунду.
+-- @control.ru knob press x2: Предыдущая сцена, и она остаётся на экране.
+-- @control.ru knob press x3: Возврат к автоматической программе (AUTO).
+-- @function.en 12 scenes, 18–30 s each
+-- @function.en A clock scene among them
+-- @function.en Scenes flow into each other (firmware 2.7.5 or later)
+-- @function.en Presses less than 0.45 s apart count together
+-- @function.ru 12 сцен по 18–30 с
+-- @function.ru Среди них сцена с часами
+-- @function.ru Сцены перетекают друг в друга (прошивка 2.7.5 или новее)
+-- @function.ru Нажатия с промежутком меньше 0,45 с считаются вместе
 --
 -- The panel pretends to be a mechanical flip-digit display: every digit is
 -- seven segments built out of LEDs, and a segment that changes does not

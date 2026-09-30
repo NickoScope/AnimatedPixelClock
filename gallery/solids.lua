@@ -2,6 +2,22 @@
 -- ============================================================
 -- SOLIDS - the Platonic solids turning among slow stars
 -- ============================================================
+-- @name.en Solids
+-- @name.ru Многогранники
+-- @about.en The Platonic solids (tetrahedron, cube, octahedron, icosahedron) turning among slowly
+-- @about.en drifting stars, lit, as wireframes or both. Every 20 s the solid on screen reshapes itself
+-- @about.en into the next.
+-- @about.ru Платоновы тела (тетраэдр, куб, октаэдр, икосаэдр) вращаются среди медленно плывущих звёзд:
+-- @about.ru освещённые, каркасом или и так и так. Каждые 20 с фигура на экране перетекает в следующую.
+-- @control.en knob press: Next solid now.
+-- @control.ru knob press: Сразу следующая фигура.
+-- @function.en 4 solids, 20 s each
+-- @function.en No clock
+-- @function.en Needs firmware 2.7.6 or later
+-- @function.ru 4 фигуры по 20 с
+-- @function.ru Часов нет
+-- @function.ru Нужна прошивка 2.7.6 или новее
+--
 -- A tetrahedron, a cube, an octahedron and an icosahedron, one at a time,
 -- turning on a spin that wanders; shown as a lit solid, as a wireframe with
 -- anti-aliased edges, or as both. Every 20 s the one on screen reshapes itself

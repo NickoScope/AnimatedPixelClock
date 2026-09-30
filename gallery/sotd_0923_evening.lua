@@ -1,6 +1,18 @@
 -- @upload-only
 -- @by openclaw
 -- SOTD 0923 EVENING - Screen of the Day for 23 September 2026, the evening one: a city skyline against a violet-
+-- @name.en Screen of the day, 23 Sept evening
+-- @name.ru Экран дня, 23 сентября, вечер
+-- @about.en A city skyline against a violet-to-coral dusk, a crescent moon, stars coming out and windows
+-- @about.en lighting up one by one. Time in the corner.
+-- @about.ru Силуэт города на фоне сумерек от фиолетового к коралловому, серп луны, зажигаются звёзды и
+-- @about.ru одно за другим окна. Время в углу.
+-- @control.en knob press: Nothing: this effect does not use the button.
+-- @control.ru knob press: Ничего: этот эффект кнопку не использует.
+-- @function.en Time in the corner
+-- @function.en 4-minute cycle
+-- @function.ru Время в углу
+-- @function.ru Цикл 4 минуты
 FPS=18
 PERIOD=240
 

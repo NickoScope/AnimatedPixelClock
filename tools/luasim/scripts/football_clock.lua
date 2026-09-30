@@ -1,4 +1,21 @@
 -- @upload-only
+-- @name.en Football clock
+-- @name.ru Футбольные часы
+-- @about.en A football match that plays itself: Atlético against Real Madrid, told apart by kit colour.
+-- @about.en A TV-style score bar on top shows the score and the match minute; the real time sits in the
+-- @about.en corner. One match minute is 3 s, so a whole match with half-time takes about five minutes.
+-- @about.ru Футбольный матч, который играет сам: «Атлетико» против «Реала», команды различаются цветом
+-- @about.ru формы. Сверху плашка как в трансляции: счёт и минута матча; настоящее время в углу. Минута
+-- @about.ru матча идёт 3 с, весь матч с перерывом занимает около пяти минут.
+-- @control.en knob press: Nothing: this effect does not use the button.
+-- @control.ru knob press: Ничего: этот эффект кнопку не использует.
+-- @function.en Real time in the corner
+-- @function.en Score and match minute
+-- @function.en Every match is new: the clock seeds it
+-- @function.ru Настоящее время в углу
+-- @function.ru Счёт и минута матча
+-- @function.ru Каждый матч новый: его задаёт время на часах
+--
 -- football_clock.lua - a football match that plays itself: Atletico Madrid
 -- against Real Madrid, told apart by their kit colours only, with a
 -- broadcast score bug and the real time in the corner.

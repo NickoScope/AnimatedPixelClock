@@ -1,4 +1,15 @@
 -- @upload-only
+-- @name.en Tetris clock
+-- @name.ru Тетрис-часы
+-- @about.en The time as a Tetris well: on the minute the digits clear like completed lines and falling
+-- @about.en pieces build the next time.
+-- @about.ru Время как стакан тетриса: в начале минуты цифры исчезают, как собранные линии, и падающие
+-- @about.ru фигуры строят новое время.
+-- @control.en knob press: Nothing: this effect does not use the button.
+-- @control.ru knob press: Ничего: этот эффект кнопку не использует.
+-- @function.en The time, rebuilt every minute
+-- @function.ru Время, пересобирается каждую минуту
+--
 -- tetris_clock.lua - HH:MM that clears itself like completed lines and is
 -- rebuilt by falling tetrominoes when the minute turns.
 --

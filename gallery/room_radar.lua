@@ -1,5 +1,20 @@
 -- @upload-only
 -- ROOM RADAR - who is in the room, as the 24 GHz presence radar sees it.
+-- @name.en Room radar
+-- @name.ru Радар комнаты
+-- @about.en Who is in the room, as the 24 GHz radar sees it: up to three people as dots in the sensor's
+-- @about.en 6-metre fan, with distance and a short trail. With no live radar it shows made-up people in
+-- @about.en a 24-second scene. Time shown.
+-- @about.ru Кто в комнате, глазами радара 24 ГГц: до трёх человек точками в 6-метровом веере датчика, с
+-- @about.ru расстоянием и коротким следом. Без живого радара показывает выдуманных людей в сцене на 24
+-- @about.ru с. Время на экране.
+-- @control.en knob press: Nothing: this effect does not use the button.
+-- @control.ru knob press: Ничего: этот эффект кнопку не использует.
+-- @function.en Room radar (MTR-1 via Home Assistant)
+-- @function.en Time on screen
+-- @function.ru Радар комнаты (MTR-1 через Home Assistant)
+-- @function.ru Время на экране
+--
 -- room_radar.lua - who is in the room, as a 24 GHz radar sees it.
 --
 -- The HLK-LD2450 reports up to three people, each as X and Y in millimetres

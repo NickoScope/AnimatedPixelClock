@@ -2,6 +2,23 @@
 -- ============================================================
 -- LASER CLOCK - a laser on the pavement writes the time on the wall
 -- ============================================================
+-- @name.en Laser clock
+-- @name.ru Лазерные часы
+-- @about.en Night, a brick wall. A small laser projector on the ground writes text on the wall with its
+-- @about.en beam, then keeps retracing it, so the lines shimmer. Every 5 s the next line: the time, the
+-- @about.en day of the week, the date, the outside temperature (when the panel has weather), КАННЫ.
+-- @about.ru Ночь, кирпичная стена. Маленький лазерный проектор на земле пишет лучом текст на стене, а
+-- @about.ru потом всё время обводит его заново, и линии мерцают. Каждые 5 с следующая надпись: время,
+-- @about.ru день недели, дата, температура на улице (если у панели есть погода), КАННЫ.
+-- @control.en knob press: Changes the laser colour: each line its own colour, then green, red, blue, violet, then a colour for every character, and round again.
+-- @control.ru knob press: Меняет цвет лазера: у каждой надписи свой цвет, затем зелёный, красный, синий, фиолетовый, затем свой цвет у каждого знака, и снова по кругу.
+-- @function.en Time, day of the week, date
+-- @function.en Outside temperature from the panel's weather
+-- @function.en The colon blinks
+-- @function.ru Время, день недели, дата
+-- @function.ru Температура на улице из погоды панели
+-- @function.ru Двоеточие мигает
+--
 -- Night, the back wall of a house. A small laser projector stands on the
 -- ground in the middle, and its beam - a thin line in the haze - carries one
 -- bright dot over the bricks. The dot writes the time: stroke by stroke, with

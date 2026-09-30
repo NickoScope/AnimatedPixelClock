@@ -1,6 +1,20 @@
 -- @upload-only
 -- @by openclaw
 -- FLIP DOT CLOCK - A real flip-disc board, the kind that used to clatter above a railway platform
+-- @name.en Flip-dot clock
+-- @name.ru Часы из флип-точек
+-- @about.en A railway flip-disc board across the whole screen, 25×12 discs. The time is simply the discs
+-- @about.en that are lit. When a digit changes, its discs flip over in a cascade; the colon flips every
+-- @about.en second.
+-- @about.ru Вокзальное табло из переворачивающихся дисков на весь экран, 25×12 дисков. Время
+-- @about.ru складывается из горящих дисков. Когда цифра меняется, её диски переворачиваются каскадом;
+-- @about.ru двоеточие переворачивается каждую секунду.
+-- @control.en knob press: Nothing: this effect does not use the button.
+-- @control.ru knob press: Ничего: этот эффект кнопку не использует.
+-- @function.en Real time from the panel clock
+-- @function.en 24 frames a second
+-- @function.ru Настоящее время по часам панели
+-- @function.ru 24 кадра в секунду
 FPS = 24
 PERIOD = 60
 

@@ -2,6 +2,21 @@
 -- ============================================================
 -- REACTION - living patterns that grow, split and never settle
 -- ============================================================
+-- @name.en Reaction
+-- @name.ru Реакция
+-- @about.en Living chemical patterns: spots that divide like cells, coral, a maze, worms. About once a
+-- @about.en minute the pattern drifts slowly into the next, and new drops fall every 25 s.
+-- @about.ru Живые химические узоры: пятна делятся как клетки, растут кораллы, лабиринт, черви. Примерно
+-- @about.ru раз в минуту узор медленно перетекает в следующий, каждые 25 с падают новые капли.
+-- @control.en knob press: Next pattern now (cells, coral, maze, worms) and fresh drops.
+-- @control.ru knob press: Сразу следующий узор (клетки, кораллы, лабиринт, черви) и новые капли.
+-- @function.en 4 patterns: 45 s each plus 15 s of change
+-- @function.en No clock
+-- @function.en Needs firmware 2.7.6 or later
+-- @function.ru 4 узора: 45 с каждый и 15 с перехода
+-- @function.ru Часов нет
+-- @function.ru Нужна прошивка 2.7.6 или новее
+--
 -- Two chemicals spread over the screen and react, in the Gray-Scott model
 -- (Karl Sims's reaction-diffusion tutorial): where B meets enough A it makes
 -- more B, and both are fed and drained at their own rates. From a few drops

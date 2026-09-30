@@ -1,5 +1,21 @@
 -- @upload-only
 -- STARSHIP - one flight a minute, and the minute is the clock.
+-- @name.en Starship
+-- @name.ru Старшип
+-- @about.en One Starship flight a minute, and the minute is the clock: countdown, launch, staging, the
+-- @about.en booster caught at the tower, two orbits, re-entry and splashdown all land on the real
+-- @about.en seconds. At :00 the engines light.
+-- @about.ru Один полёт Starship в минуту, и эта минута и есть часы: отсчёт, старт, разделение, ловля
+-- @about.ru ускорителя башней, два витка, вход в атмосферу и приводнение приходятся на настоящие
+-- @about.ru секунды. В :00 загораются двигатели.
+-- @control.en knob press: Nothing: this effect does not use the button.
+-- @control.ru knob press: Ничего: этот эффект кнопку не использует.
+-- @function.en The flight is the second hand
+-- @function.en Time shown
+-- @function.en 20 frames a second
+-- @function.ru Полёт работает как секундная стрелка
+-- @function.ru Время на экране
+-- @function.ru 20 кадров в секунду
 --
 -- PERIOD is 60, so px.t() is the second hand: the count, the launch, staging,
 -- the catch, two orbits and the splashdown all happen against the real seconds

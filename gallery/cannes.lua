@@ -1,5 +1,19 @@
 -- @upload-only
 -- CANNES - the Festival d'Art Pyrotechnique, over the bay.
+-- @name.en Cannes
+-- @name.ru Канны
+-- @about.en The fireworks festival over the bay in Cannes. Shells rise from the Croisette, burst in
+-- @about.en colour and fall, leaving smoke trails. The water reflects it all, dimmer and rippled. Time
+-- @about.en in the corner.
+-- @about.ru Фестиваль фейерверков над бухтой Канн. Снаряды взлетают с Круазет, раскрываются цветными
+-- @about.ru шарами и опадают, оставляя дымный след. Вода отражает всё это, тусклее и с рябью. Время в
+-- @about.ru углу.
+-- @control.en knob press: Nothing: this effect does not use the button.
+-- @control.ru knob press: Ничего: этот эффект кнопку не использует.
+-- @function.en Time in the corner
+-- @function.en 15 frames a second
+-- @function.ru Время в углу
+-- @function.ru 15 кадров в секунду
 --
 -- Not compiled into the image: this one is sent to a running panel with
 -- effect_upload (src/lua/lua_store.h), which is what the four uploaded slots

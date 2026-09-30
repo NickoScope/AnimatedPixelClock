@@ -1,6 +1,19 @@
 -- @upload-only
 -- @by openclaw
 -- LIVING OCEAN - The sea at sunset
+-- @name.en Living ocean
+-- @name.ru Живой океан
+-- @about.en The sea at sunset. Over a three-minute cycle the sun moves above the horizon, its path
+-- @about.en breaks into orange ripples on teal water, small sailing boats drift across and gulls fly
+-- @about.en over. Time in the corner.
+-- @about.ru Море на закате. За трёхминутный цикл солнце движется над горизонтом, его дорожка рассыпается
+-- @about.ru оранжевой рябью по бирюзовой воде, проплывают парусные лодки, пролетают чайки. Время в углу.
+-- @control.en knob press: Nothing: this effect does not use the button.
+-- @control.ru knob press: Ничего: этот эффект кнопку не использует.
+-- @function.en Time in the corner
+-- @function.en 3-minute cycle
+-- @function.ru Время в углу
+-- @function.ru Цикл 3 минуты
 FPS=15
 PERIOD=180
 local sin,cos,abs,floor,min,max,sqrt=math.sin,math.cos,math.abs,math.floor,math.min,math.max,math.sqrt

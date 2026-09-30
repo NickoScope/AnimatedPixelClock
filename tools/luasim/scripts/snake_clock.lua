@@ -1,4 +1,15 @@
 -- @upload-only
+-- @name.en Snake clock
+-- @name.ru Часы-змейки
+-- @about.en The time where every digit is a snake. On the minute the four snakes crawl away downward and
+-- @about.en four new ones crawl in from the top to form the next time. At rest it is a clean clock.
+-- @about.ru Время, где каждая цифра — змейка. В начале минуты четыре змейки уползают вниз, а четыре
+-- @about.ru новые вползают сверху и складываются в новое время. В покое это чистые часы.
+-- @control.en knob press: Nothing: this effect does not use the button.
+-- @control.ru knob press: Ничего: этот эффект кнопку не использует.
+-- @function.en The time, rebuilt every minute
+-- @function.ru Время, пересобирается каждую минуту
+--
 -- snake_clock.lua - HH:MM where each digit is a snake.
 --
 -- On the minute the four snakes crawl away downward and four new ones crawl in

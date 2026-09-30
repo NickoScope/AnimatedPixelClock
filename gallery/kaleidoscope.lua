@@ -2,6 +2,23 @@
 -- ============================================================
 -- KALEIDOSCOPE - colour that never plays the same twice
 -- ============================================================
+-- @name.en Kaleidoscope
+-- @name.ru Калейдоскоп
+-- @about.en Colour plasma folded into four mirrors. Colours run through the pattern and never come back
+-- @about.en the same. Every 40 s a new mood and a new pattern flow in over 3 s.
+-- @about.ru Цветная плазма, сложенная в четыре зеркала. Цвета бегут по узору и не повторяются. Каждые 40
+-- @about.ru с за 3 с перетекает новое настроение и новый узор.
+-- @control.en knob press: A new mood now (unless a change is already under way).
+-- @control.ru knob press: Сразу новое настроение (если смена уже не идёт).
+-- @function.en 6 colour moods
+-- @function.en A new scene every 40 s
+-- @function.en No clock
+-- @function.en Needs firmware 2.7.4 or later
+-- @function.ru 6 цветовых настроений
+-- @function.ru Новая сцена каждые 40 с
+-- @function.ru Часов нет
+-- @function.ru Нужна прошивка 2.7.4 или новее
+--
 -- A demoscene plasma folded into four mirrors. Nothing here is drawn a pixel
 -- at a time in a frame; three native calls a frame do the picture:
 --
