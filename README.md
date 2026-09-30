@@ -520,6 +520,14 @@ reboot; brightness and style changes update the in-memory settings and can be
 persisted by a later settings save. No authentication, so keep
 the device on a trusted LAN.
 
+Since 2.7.9 every request that writes - settings, import, rename, uploads,
+firmware, deletes, the keys, factory reset, notifications - is refused (403) when
+a browser sends it from any page other than the panel's own portal, opened by
+its IP address or its `.local` name. Home Assistant, curl and the agent tools
+send no `Origin` header and are not affected. A local `.html` file (Origin
+`null`) cannot write either. Factory reset is `POST /reset` with the JSON body
+`{"confirm":"factory-reset"}`.
+
 | Endpoint | Description |
 |----------|-------------|
 | `/api/status` | Current display/mode state as JSON |

@@ -775,6 +775,10 @@ void handleRename() {
 // Only "text" is required.
 void handleNotify() {
  server.sendHeader("Access-Control-Allow-Origin", "*");
+ if (webOriginForeign()) {    // a text/plain POST needs no preflight; Home Assistant and curl send no Origin
+   server.send(403, "application/json", "{\"success\":false,\"error\":\"refused: this request came from another origin\"}");
+   return;
+ }
 
  if (!settings.notifyEnabled) {
    server.send(403, "application/json", "{\"error\":\"Notifications disabled in settings\"}");
@@ -2514,9 +2518,14 @@ static bool hostIsPanels(const String &hostPort) {
 }
 
 bool webOriginForeign() {
-  if (!server.hasHeader("Origin")) return false;
+  if (!server.hasHeader("Origin")) return false;   // not a browser: curl, tools/agent, the twin app
   const String o = server.header("Origin");
-  if (!o.length() || o == "null") return false;
+  // A browser that hides where a request came from sends "null": the Fetch
+  // standard does for a non-cors request under no-referrer, or from https to
+  // http, and a sandboxed iframe's origin is opaque. The portal never does - it
+  // is served over http and asks its own address - so null is a stranger
+  // (the 2026-09-30 delta audit). A local .html file (file://) cannot write.
+  if (!o.length() || o == "null") return true;
   const String host = server.hostHeader();
   return !(host.length() && hostIsPanels(host) && o == String("http://") + host);
 }
