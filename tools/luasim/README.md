@@ -57,6 +57,14 @@ Two optional globals matter only on the panel, and luasim ignores both:
 | `PERIOD` | `60` | seconds `px.t()` spans. The panel takes the phase from the wall clock, so at 60 it is the second hand and a clock's change lands on the minute. `room_radar.lua` sets it to its 24 s story |
 | `FPS` | `20` | the effect's frame cap, 1–30 |
 
+**Scenes by the wall clock.** A scene, a mode or a palette is
+`floor(px.t() * PERIOD / SCENE)` plus the presses since load (`px.button()`
+less its value at load), so every panel and the twin show the same scene at
+the same moment; a random choice is seeded from the slot's number, not from
+`math.random`. `gallery/flow.lua` is the example, and AGENTS.md, "Scenes by the
+wall clock", has the rules. Here `PERIOD` is ignored and `px.t()` runs from 0
+to 1 over the frames, so a preview walks every scene.
+
 The header's comment lines may say what the screen is, in English and Russian:
 `-- @name.en`, `-- @about.en`, `-- @control.en knob press: <what the button
 does>`, `-- @function.en`, and `.ru` for each. They are comments, so luasim,

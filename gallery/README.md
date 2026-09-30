@@ -469,6 +469,14 @@ on the panel" has the limits and what each drawing call costs there. The panel
 refuses an upload that does not fit; `gallery.py sync` tries every screen on
 the panel before it brings it here.
 
+A screen with scenes shows the same scene on every panel at once, and on the
+twin. A scene, a mode, a palette or a choice is read off the wall clock,
+`px.t()` over `PERIOD`, plus the presses since the page opened (`px.button()`
+less its value at load); it is never counted from the opening and never drawn
+with `math.random`. A press brings the next scene at once, and it lasts until
+the clock's next boundary. `flow.lua` is the smallest example; AGENTS.md,
+"Scenes by the wall clock", has the rules.
+
 Then `python3 tools/agent/gallery.py add <name>` copies it here with a preview.
 
 An agent publishes with `gallery_publish` (MCP) or `gallery.py publish <name>
