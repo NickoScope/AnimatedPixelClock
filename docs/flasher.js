@@ -12,7 +12,7 @@ const BOARDS = {
   waveshare: {
     label: 'Waveshare ESP32-S3-RGB-Matrix (32MB)',
     chipFamily: 'ESP32-S3',
-    firmware: 'waveshare',              // AnimatedPixelClock-waveshare-<ver>-Full.bin
+    firmware: 'waveshare',              // AnimatedPixelClock-waveshare-<ver>-{bootloader,partitions,otadata}.bin + OTA_ONLY
     board: 'Waveshare ESP32-S3-RGB-Matrix (WROOM-2 N32R16V)',
     note: 'The HUB75 driver board with the controller on it: 32MB octal flash and 16MB octal PSRAM, and a HUB75 socket instead of jumper wires. Flashes over its native USB-C port.',
   },
