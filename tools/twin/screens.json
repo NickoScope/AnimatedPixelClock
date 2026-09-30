@@ -1,0 +1,1332 @@
+{
+ "version": 1,
+ "about": "What each built-in screen of the firmware shows and how it is driven, in English and Russian, for the virtual twin's panel page (its \"This screen\" block, under the panel). twin.py build_web puts it next to panel.html. Every line is from the firmware's code: `source` says where. A screen is the first entry whose `match` fits GET /api/panel's `now` (plus `clip`: GET /api/clips `playing`). A control is `on` (words for the input), `remote` (buttons of the page's remote, by function) or both. Lua effects describe themselves in their script's header (gallery/README.md, \"What a screen says about itself\"); `effects` only adds what the firmware itself does for one of them.",
+ "firmware": "AnimatedPixelClock, env matrix-waveshare-rgb",
+ "screens": [
+  {
+   "id": "notify",
+   "match": {
+    "notify": true
+   },
+   "name": {
+    "en": "Home Assistant message",
+    "ru": "Сообщение Home Assistant"
+   },
+   "what": {
+    "en": "A message from Home Assistant that takes over the screen for a few seconds (6 by default) or until you dismiss it.",
+    "ru": "Сообщение от Home Assistant на весь экран — на несколько секунд (по умолчанию 6) или пока его не закроют."
+   },
+   "controls": [
+    {
+     "on": {
+      "en": "Knob press",
+      "ru": "Нажатие ручки"
+     },
+     "remote": [
+      "ok"
+     ],
+     "en": "Closes it — and does nothing else.",
+     "ru": "Закрывает его — и больше ничего не делает.",
+     "source": "src/main.cpp:1096-1102"
+    },
+    {
+     "on": {
+      "en": "Knob turn",
+      "ru": "Поворот ручки"
+     },
+     "en": "Turns the pages underneath.",
+     "ru": "Листает страницы под ним.",
+     "source": "src/main.cpp:1099, 1144-1145"
+    },
+    {
+     "on": {
+      "en": "Home Assistant",
+      "ru": "Home Assistant"
+     },
+     "en": "“hold” keeps it until closed; “duration” sets the seconds.",
+     "ru": "«hold» держит до закрытия; «duration» задаёт секунды.",
+     "source": "src/cards/cards.h:12, 23-24; src/cards/cards.cpp:113-114"
+    }
+   ],
+   "functions": {
+    "en": [],
+    "ru": []
+   },
+   "source": "src/cards/cards.h:10-27; src/cards/cards.cpp:113-114, 151; src/main.cpp:1096-1102, 1555-1557"
+  },
+  {
+   "id": "clip",
+   "match": {
+    "key": "clock",
+    "mode": "ambient",
+    "clip": true
+   },
+   "name": {
+    "en": "Clip or your own animation",
+    "ru": "Клип или своя анимация"
+   },
+   "what": {
+    "en": "An animation you uploaded — into the panel's memory or onto the SD card — playing in a loop on the whole screen.",
+    "ru": "Загруженная вами анимация — в память панели или на карту памяти — крутится по кругу на весь экран."
+   },
+   "controls": [
+    {
+     "on": {
+      "en": "Portal",
+      "ru": "Портал"
+     },
+     "en": "Play, upload or delete a clip; play puts it on screen straight away.",
+     "ru": "Запустить, загрузить или удалить клип; запуск сразу выводит его на экран.",
+     "source": "src/web/web_panel.cpp:64-70, 1235-1255; src/web/web.cpp:309, 318-320, 830-841"
+    },
+    {
+     "on": {
+      "en": "Knob turn",
+      "ru": "Поворот ручки"
+     },
+     "en": "As on the screensaver: the clip stays until the knob moves off the clock.",
+     "ru": "Как на заставке: клип остаётся, пока ручка не уйдёт с часов.",
+     "source": "src/main.cpp:838-849"
+    },
+    {
+     "remote": [
+      "home"
+     ],
+     "en": "Back to the clock; the clip stops.",
+     "ru": "Домой, на часы; клип выключается.",
+     "source": "src/ir/ir_actions.cpp:126-128; src/main.cpp:892"
+    }
+   ],
+   "functions": {
+    "en": [
+     "Long clips live on the SD card (FAT only, not exFAT) and are read ahead, so the picture does not stall."
+    ],
+    "ru": [
+     "Длинные клипы лежат на карте памяти (только FAT, не exFAT) и читаются заранее, чтобы картинка не дёргалась."
+    ]
+   },
+   "source": "src/clips/clip_sd.h:1-21; src/web/web_panel.cpp:1245-1255, 1276-1277; src/ambient/ambient.cpp:63"
+  },
+  {
+   "id": "ambient",
+   "match": {
+    "key": "clock",
+    "mode": "ambient"
+   },
+   "name": {
+    "en": "Screensaver",
+    "ru": "Заставка"
+   },
+   "what": {
+    "en": "A full-screen picture in place of the clock: Space Invaders, a Pac-Man chase, a starfield, an aquarium, the “This is fine” room, or your own animation. A small clock in the corner if you want one.",
+    "ru": "Картинка на весь экран вместо часов: Space Invaders, погоня Пакмана, звёздное небо, аквариум, комната «This is fine» или своя анимация. По желанию — маленькие часы в углу."
+   },
+   "controls": [
+    {
+     "on": {
+      "en": "Knob turn",
+      "ru": "Поворот ручки"
+     },
+     "en": "Changes the clock style underneath; the picture stays until the knob moves off the clock to another page.",
+     "ru": "Меняет стиль часов «под» заставкой; картинка остаётся, пока ручка не уйдёт с часов на другую страницу.",
+     "source": "src/main.cpp:838-849"
+    },
+    {
+     "on": {
+      "en": "Knob press",
+      "ru": "Нажатие ручки"
+     },
+     "en": "Nothing.",
+     "ru": "Ничего.",
+     "source": "src/main.cpp:1138-1142"
+    },
+    {
+     "remote": [
+      "home"
+     ],
+     "en": "Back to the clock. A screensaver turned on by hand goes off; a scheduled one stays until its hours end.",
+     "ru": "Домой, на часы. Включённая вручную заставка выключается; по расписанию — остаётся до конца своего времени.",
+     "source": "src/ir/ir_actions.cpp:126-128; src/main.cpp:883-894; src/ambient/ambient.cpp:16-31"
+    },
+    {
+     "on": {
+      "en": "Remote, a button set to “Screensaver on/off”",
+      "ru": "Пульт, кнопка с делом «Заставка вкл/выкл»"
+     },
+     "en": "Screensaver on, or back to automatic.",
+     "ru": "Включить заставку или вернуть автоматику.",
+     "source": "src/ir/ir_actions.cpp:144-154; src/ir/ir_map.h:71"
+    },
+    {
+     "on": {
+      "en": "Portal / Home Assistant",
+      "ru": "Портал / Home Assistant"
+     },
+     "en": "Turn it on now, or give the screen back to automatic.",
+     "ru": "Включить сейчас или вернуть экран автоматике.",
+     "source": "src/web/web.cpp:327-329"
+    }
+   ],
+   "functions": {
+    "en": [
+     "Runs on a schedule (start and end hour) or when turned on by hand.",
+     "Choice of picture, and a small clock in the corner.",
+     "Your own animations are uploaded in the portal."
+    ],
+    "ru": [
+     "Включается по расписанию (час начала и конца) или вручную.",
+     "Выбор картинки и маленькие часы в углу.",
+     "Свои анимации загружаются в портале."
+    ]
+   },
+   "source": "src/ambient/ambient.h:1-9; src/ambient/ambient.cpp:16-31, 54-68; src/config/config.h:163-170; src/main.cpp:327-329, 1481-1483"
+  },
+  {
+   "id": "viz",
+   "match": {
+    "key": "clock",
+    "mode": "viz"
+   },
+   "name": {
+    "en": "Music visualizer",
+    "ru": "Визуализатор музыки"
+   },
+   "what": {
+    "en": "Sound as pictures: spectrum bars, waves and effects moving with the music. The sound comes from the computer's companion app or from the board's microphones.",
+    "ru": "Звук в картинках: полосы спектра, волны и эффекты в такт музыке. Звук — из программы-компаньона на компьютере или с микрофонов на плате."
+   },
+   "controls": [
+    {
+     "on": {
+      "en": "Portal / Home Assistant",
+      "ru": "Портал / Home Assistant"
+     },
+     "en": "Turned on only from the portal or Home Assistant (“visualizer” mode); “auto” or “clock” turns it off.",
+     "ru": "Включается только из портала или Home Assistant (режим «визуализатор»); «авто» или «часы» выключают.",
+     "source": "src/web/web.cpp:327-330; src/main.cpp:1396-1398"
+    },
+    {
+     "on": {
+      "en": "Knob turn",
+      "ru": "Поворот ручки"
+     },
+     "en": "Changes the clock style underneath; the visualizer goes off when the knob moves to another page.",
+     "ru": "Меняет стиль часов «под» картинкой; визуализатор выключается, когда ручка уходит на другую страницу.",
+     "source": "src/main.cpp:838-849"
+    },
+    {
+     "on": {
+      "en": "Knob press",
+      "ru": "Нажатие ручки"
+     },
+     "en": "Nothing.",
+     "ru": "Ничего.",
+     "source": "src/main.cpp:1138-1142"
+    },
+    {
+     "remote": [
+      "home"
+     ],
+     "en": "Back to the clock; the visualizer goes off.",
+     "ru": "Домой, на часы; визуализатор выключается.",
+     "source": "src/main.cpp:883-894"
+    }
+   ],
+   "functions": {
+    "en": [
+     "14 looks: classic bars, neon mirror, code rain, LED stage, starfield, oscilloscope and eight more.",
+     "Sound source: automatic, computer only or microphones only; microphone gain, noise gate, auto gain, beat reaction.",
+     "Oscilloscope options; a small clock in the corner.",
+     "No sound for 10 s brings the clock back; when sound returns, so does the visualizer."
+    ],
+    "ru": [
+     "14 видов: классические полосы, неоновое зеркало, «код», светодиодная сцена, звёзды, осциллограф и ещё восемь.",
+     "Источник звука: авто, только компьютер или только микрофоны; усиление, шумовой порог, автоусиление, реакция на бит.",
+     "Настройки осциллографа; маленькие часы в углу.",
+     "10 с без звука — возвращаются часы; звук вернулся — вернулся и визуализатор."
+    ]
+   },
+   "source": "src/viz/visualizer.h:1-7, 29-33; src/viz/visualizer.cpp:263-265; src/viz/wow/wow.h:1-4, 29-32; src/config/config.h:172-185"
+  },
+  {
+   "id": "metrics",
+   "match": {
+    "key": "clock",
+    "mode": "metrics"
+   },
+   "name": {
+    "en": "Computer stats",
+    "ru": "Показатели компьютера"
+   },
+   "what": {
+    "en": "Your computer's sensor readings (from LibreHardwareMonitor), sent by the companion app. They replace the clock while the computer is sending.",
+    "ru": "Показатели датчиков вашего компьютера (из LibreHardwareMonitor), которые шлёт программа-компаньон. Показываются вместо часов, пока компьютер их присылает."
+   },
+   "controls": [
+    {
+     "on": {
+      "en": "Portal / Home Assistant",
+      "ru": "Портал / Home Assistant"
+     },
+     "en": "“Clock” mode shows the clock over the stats; “auto” gives them back.",
+     "ru": "Режим «часы» показывает часы поверх показателей; «авто» возвращает их.",
+     "source": "src/web/web.cpp:327-328, 610-614"
+    },
+    {
+     "on": {
+      "en": "Knob turn",
+      "ru": "Поворот ручки"
+     },
+     "en": "Changes the clock style underneath, or moves on to other pages.",
+     "ru": "Меняет стиль часов «под» экраном или уводит на другие страницы.",
+     "source": "src/main.cpp:838-849"
+    },
+    {
+     "on": {
+      "en": "Knob press",
+      "ru": "Нажатие ручки"
+     },
+     "en": "Nothing.",
+     "ru": "Ничего.",
+     "source": "src/main.cpp:1138-1142"
+    }
+   ],
+   "functions": {
+    "en": [
+     "When the computer stops sending, the clock comes back by itself.",
+     "Portal: row layout, RPM in thousands, network in MB/s, clock in the corner."
+    ],
+    "ru": [
+     "Когда компьютер перестаёт слать данные, часы возвращаются сами.",
+     "Портал: раскладка строк, обороты в тысячах, сеть в МБ/с, часы в углу."
+    ]
+   },
+   "source": "src/main.cpp:1327-1330, 1399-1400, 1476-1480; src/metrics/metrics.h:1-15; src/config/config.h:82-88, 103-106, 188-189"
+  },
+  {
+   "id": "weather",
+   "match": {
+    "key": "clock",
+    "style": 14
+   },
+   "name": {
+    "en": "Weather and room climate",
+    "ru": "Погода и климат в комнате"
+   },
+   "what": {
+    "en": "Time on top, a weather icon and the outside temperature; today's low and high, humidity, sunrise and sunset below. Beside it, the room's temperature and humidity from the board's own sensor.",
+    "ru": "Сверху время, в середине значок погоды и температура на улице; внизу минимум и максимум, влажность, восход и закат. Рядом — температура и влажность в комнате с датчика на плате."
+   },
+   "controls": [
+    {
+     "on": {
+      "en": "Knob turn",
+      "ru": "Поворот ручки"
+     },
+     "en": "Next or previous clock style, as on the clock.",
+     "ru": "Соседний стиль часов, как на часах.",
+     "source": "src/control/clock_style.cpp:81-90; src/main.cpp:839"
+    },
+    {
+     "on": {
+      "en": "Knob press",
+      "ru": "Нажатие ручки"
+     },
+     "en": "Nothing.",
+     "ru": "Ничего.",
+     "source": "src/main.cpp:1138-1142"
+    },
+    {
+     "on": {
+      "en": "Portal",
+      "ru": "Портал"
+     },
+     "en": "Location, °C or °F, optional API key; room sensor corrections.",
+     "ru": "Место, °C или °F, ключ API по желанию; поправки датчика в комнате.",
+     "source": "src/config/config.h:135-150"
+    }
+   ],
+   "functions": {
+    "en": [
+     "Weather from Open-Meteo every 10 minutes, fetched only while this style is on screen.",
+     "Without a location the screen says it is not set up.",
+     "Room sensor: temperature and humidity corrections, show the inside/outside split or not, sensors for Home Assistant.",
+     "Custom rotation skips this style until weather is set up."
+    ],
+    "ru": [
+     "Погода с Open-Meteo раз в 10 минут, и только пока этот стиль на экране.",
+     "Если место не задано, экран так и пишет.",
+     "Датчик в комнате: поправки температуры и влажности, показывать ли колонку «улица | дом», датчики для Home Assistant.",
+     "Своя ротация пропускает этот стиль, пока погода не настроена."
+    ]
+   },
+   "source": "src/clocks/clock_weather.cpp:1-12, 47-51; src/weather/weather.h:1-5, 28-34; src/config/config.h:135-150; src/main.cpp:375"
+  },
+  {
+   "id": "clock",
+   "match": {
+    "key": "clock"
+   },
+   "name": {
+    "en": "Clock",
+    "ru": "Часы"
+   },
+   "what": {
+    "en": "The time in one of 14 animated styles: Mario, Pac-Man, Tetris, Snake, TRON and more. This is the home page and cannot be switched off.",
+    "ru": "Время в одном из 14 анимированных стилей: Марио, Пакман, Тетрис, Змейка, TRON и другие. Это домашняя страница, выключить её нельзя."
+   },
+   "controls": [
+    {
+     "on": {
+      "en": "Knob turn",
+      "ru": "Поворот ручки"
+     },
+     "en": "Next or previous style. Past the last style you move on to the next page.",
+     "ru": "Следующий или предыдущий стиль. За последним стилем — следующая страница.",
+     "source": "src/control/clock_style.cpp:81-98; src/main.cpp:838-849"
+    },
+    {
+     "on": {
+      "en": "Knob press",
+      "ru": "Нажатие ручки"
+     },
+     "en": "Nothing: the clock has nothing to go into.",
+     "ru": "Ничего: у часов нет своих настроек на ручке.",
+     "source": "src/main.cpp:675-696, 1138-1142"
+    },
+    {
+     "on": {
+      "en": "Portal",
+      "ru": "Портал"
+     },
+     "en": "Pick any style now, including Custom rotation, which the knob skips.",
+     "ru": "Выбрать любой стиль сразу, в том числе «Свою ротацию» — ручка её пропускает.",
+     "source": "src/web/web_panel.cpp:403-405, 465; src/control/clock_style.cpp:82-86, 100-105"
+    },
+    {
+     "on": {
+      "en": "Carousel",
+      "ru": "Карусель"
+     },
+     "en": "With “every style” on, each style gets its own turn before the next page.",
+     "ru": "Если включено «все стили», карусель показывает каждый стиль по очереди, потом идёт дальше.",
+     "source": "src/main.cpp:1173-1180; src/control/clock_style.cpp:64-79"
+    },
+    {
+     "on": {
+      "en": "Remote, a button set to “Next clock style”",
+      "ru": "Пульт, кнопка с делом «Следующий стиль часов»"
+     },
+     "en": "Next style; holding the button repeats it.",
+     "ru": "Следующий стиль; если держать кнопку — повторяет.",
+     "source": "src/ir/ir_actions.cpp:129-131; src/ir/ir_map.h:69, 144-149"
+    }
+   ],
+   "functions": {
+    "en": [
+     "The chosen style is remembered 2.5 s after the knob stops.",
+     "Portal: 12/24 h, date format, colon blink, position, colours and each style's own options (speed, date row, look).",
+     "Custom rotation: your own list of styles with seconds for each.",
+     "Night dimming and a night-off window."
+    ],
+    "ru": [
+     "Выбранный стиль запоминается через 2,5 с после остановки ручки.",
+     "Портал: 12/24 ч, формат даты, мигание двоеточия, положение, цвета и настройки каждого стиля (скорость, строка даты, вид).",
+     "Своя ротация: свой список стилей и секунд для каждого.",
+     "Ночное приглушение и ночное выключение по расписанию."
+    ]
+   },
+   "source": "src/main.cpp:94-95, 359-398, 1485-1535; src/control/clock_styles.h:14-30; src/control/clock_style.cpp:18-25, 136-143; src/config/config.h:92-129, 203-275"
+  },
+  {
+   "id": "world",
+   "match": {
+    "key": "world"
+   },
+   "name": {
+    "en": "World clock",
+    "ru": "Мировое время"
+   },
+   "what": {
+    "en": "A dotted world map: daylight is lit, night is dim, and the twilight line creeps across. The big time is your home city's; its name pulses when home changes.",
+    "ru": "Карта мира из точек: где день — светло, где ночь — тускло, граница сумерек ползёт по карте. Крупно — время домашнего города; его название мигает, когда дом меняется."
+   },
+   "controls": [
+    {
+     "on": {
+      "en": "Knob press",
+      "ru": "Нажатие ручки"
+     },
+     "en": "Go in / come out. Inside, turning chooses the city.",
+     "ru": "Войти / выйти. Внутри поворот выбирает город.",
+     "source": "src/main.cpp:688-689, 768-769, 1138-1141"
+    },
+    {
+     "on": {
+      "en": "Knob turn, inside",
+      "ru": "Поворот ручки внутри"
+     },
+     "en": "Next or previous home city — the built-in ones, then yours. Remembered after a restart.",
+     "ru": "Следующий или предыдущий домашний город — сначала встроенные, потом ваши. Запоминается и после перезапуска.",
+     "source": "src/main.cpp:651-672, 1164-1165; src/panel/panel.cpp:615-630"
+    },
+    {
+     "on": {
+      "en": "Knob turn, outside",
+      "ru": "Поворот ручки снаружи"
+     },
+     "en": "Other pages.",
+     "ru": "Другие страницы.",
+     "source": "src/main.cpp:1145"
+    },
+    {
+     "on": {
+      "en": "Portal",
+      "ru": "Портал"
+     },
+     "en": "Choose home, add up to 6 of your own cities (name, place, time zone), delete them, or let home follow where the panel is. Changing home shows this page.",
+     "ru": "Выбрать дом, добавить до 6 своих городов (название, место, часовой пояс), удалить их или отдать выбор месту, где стоит панель. Смена дома выводит эту страницу.",
+     "source": "src/web/web_panel.cpp:31-39; src/worldclock/worldclock.h:28"
+    }
+   ],
+   "functions": {
+    "en": [
+     "If you never chose a home: it is taken from the weather location, then from the internet address, then from the time zone.",
+     "30 s without the knob and you are out of the city choice."
+    ],
+    "ru": [
+     "Если дом не выбран: берётся из места для погоды, потом по интернет-адресу, потом по часовому поясу.",
+     "30 с без ручки — выбор города закрывается."
+    ]
+   },
+   "source": "src/worldclock/worldclock.h:1-12; src/worldclock/wc_home.h:1-13; src/main.cpp:649, 651-672, 1085, 1435-1438"
+  },
+  {
+   "id": "flights",
+   "match": {
+    "key": "flights"
+   },
+   "name": {
+    "en": "Flight board",
+    "ru": "Табло рейсов"
+   },
+   "what": {
+    "en": "An airport board: flight, time, status and city. By default arrivals and departures take turns every 10 s; flights you track get their own pinned line.",
+    "ru": "Табло аэропорта: рейс, время, статус и город. По умолчанию прилёты и вылеты сменяются каждые 10 с; отслеживаемые рейсы — отдельной закреплённой строкой."
+   },
+   "controls": [
+    {
+     "on": {
+      "en": "Knob press",
+      "ru": "Нажатие ручки"
+     },
+     "en": "Go in / come out. Inside, turning changes the airport.",
+     "ru": "Войти / выйти. Внутри поворот меняет аэропорт.",
+     "source": "src/main.cpp:676-678, 759-760, 1138-1141"
+    },
+    {
+     "on": {
+      "en": "Knob turn, inside",
+      "ru": "Поворот ручки внутри"
+     },
+     "en": "Next or previous airport — the built-in ones, then yours. Remembered after a restart.",
+     "ru": "Следующий или предыдущий аэропорт — встроенные, потом ваши. Запоминается и после перезапуска.",
+     "source": "src/main.cpp:851-863, 1150-1151"
+    },
+    {
+     "on": {
+      "en": "Portal",
+      "ru": "Портал"
+     },
+     "en": "Airport; arrivals, departures or both in turn; up to 6 of your own airports; track up to 3 flights; the paid-data budget.",
+     "ru": "Аэропорт; прилёты, вылеты или по очереди; до 6 своих аэропортов; отслеживание до 3 рейсов; лимит платных запросов.",
+     "source": "src/web/web_panel.cpp:13-24; src/flightboard/fb_model.h:25, 42; src/panel/panel.h:24"
+    }
+   ],
+   "functions": {
+    "en": [
+     "Data straight from FlightAware when a key is stored, otherwise from Home Assistant.",
+     "Fetched only while the page is on screen."
+    ],
+    "ru": [
+     "Данные прямо из FlightAware, если ключ сохранён, иначе — из Home Assistant.",
+     "Запрашиваются, только пока страница на экране."
+    ]
+   },
+   "source": "src/flightboard/flightboard.h:1-17, 43-51, 75-85; src/main.cpp:851-863, 1223-1226"
+  },
+  {
+   "id": "trains",
+   "match": {
+    "key": "trains"
+   },
+   "name": {
+    "en": "Train board",
+    "ru": "Табло поездов"
+   },
+   "what": {
+    "en": "A UK station board: departures or arrivals, switching every 10 s, with a big clock at the foot.",
+    "ru": "Табло британской станции: отправления или прибытия, смена каждые 10 с, внизу крупные часы."
+   },
+   "controls": [
+    {
+     "on": {
+      "en": "Knob press, 1st",
+      "ru": "Нажатие ручки, 1-е"
+     },
+     "en": "LISTS: turning steps departures → arrivals → diagnostics; your choice holds for 60 s.",
+     "ru": "СПИСКИ: поворот — отправления → прибытия → диагностика; выбор держится 60 с.",
+     "source": "src/railboard/railboard.cpp:660-661, 691-706; src/railboard/railboard.h:65-66"
+    },
+    {
+     "on": {
+      "en": "Knob press, 2nd",
+      "ru": "Нажатие ручки, 2-е"
+     },
+     "en": "STATION (only if a list of stations is set): turning changes the station at once.",
+     "ru": "СТАНЦИЯ (только если задан список станций): поворот сразу меняет станцию.",
+     "source": "src/railboard/railboard.cpp:664, 675-689"
+    },
+    {
+     "on": {
+      "en": "Knob press, 3rd",
+      "ru": "Нажатие ручки, 3-е"
+     },
+     "en": "Out: turning walks the pages again.",
+     "ru": "Выход: поворот снова листает страницы.",
+     "source": "src/railboard/railboard.cpp:665-666; src/main.cpp:1132-1136"
+    },
+    {
+     "on": {
+      "en": "Home Assistant / API",
+      "ru": "Home Assistant / API"
+     },
+     "en": "The list of stations for the knob, up to 8, is set over the API — there are no portal controls for it.",
+     "ru": "Список станций для ручки, до 8, задаётся через API — в портале для него кнопок нет.",
+     "source": "src/railboard/railboard.h:87-94"
+    },
+    {
+     "on": {
+      "en": "Portal / API",
+      "ru": "Портал / API"
+     },
+     "en": "Station; rows, seconds per list, brightness, colours, diagnostics.",
+     "ru": "Станция; число строк, секунды на список, яркость, цвета, диагностика.",
+     "source": "src/web/web_panel.cpp:25-30"
+    }
+   ],
+   "functions": {
+    "en": [
+     "Data from Realtime Trains directly, or from Home Assistant.",
+     "30 s without the knob and you are back to turning pages."
+    ],
+    "ru": [
+     "Данные прямо из Realtime Trains или из Home Assistant.",
+     "30 с без ручки — снова листание страниц."
+    ]
+   },
+   "source": "src/railboard/railboard.h:1-21, 50-94; src/railboard/railboard.cpp:660-706; src/main.cpp:1128-1136, 1156-1159"
+  },
+  {
+   "id": "markets",
+   "match": {
+    "key": "market",
+    "name": "MARKETS"
+   },
+   "name": {
+    "en": "Markets",
+    "ru": "Рынки"
+   },
+   "what": {
+    "en": "Stock indices: the main one large with its change, price and a small chart, three more below. The exchanges' tape runs along the top.",
+    "ru": "Биржевые индексы: главный крупно — изменение, значение и маленький график, ещё три ниже. Сверху бежит строка бирж."
+   },
+   "controls": [
+    {
+     "on": {
+      "en": "Knob press, 1st",
+      "ru": "Нажатие ручки, 1-е"
+     },
+     "en": "WINDOW: turning changes the time span (only those with data); it shows for 1.5 s.",
+     "ru": "ПЕРИОД: поворот меняет отрезок времени (только те, где есть данные); подпись видна 1,5 с.",
+     "source": "src/market/market_page.cpp:67-73, 120-128; src/market/market_layout.h:78"
+    },
+    {
+     "on": {
+      "en": "Knob press, 2nd",
+      "ru": "Нажатие ручки, 2-е"
+     },
+     "en": "INDEX: turning picks the main index.",
+     "ru": "ИНДЕКС: поворот выбирает главный индекс.",
+     "source": "src/market/market_page.cpp:74-77, 103-107"
+    },
+    {
+     "on": {
+      "en": "Knob press, 3rd",
+      "ru": "Нажатие ручки, 3-е"
+     },
+     "en": "Out. 10 s without the knob also leaves.",
+     "ru": "Выход. 10 с без ручки — тоже выход.",
+     "source": "src/market/market_page.cpp:79-81; src/market/market.h:49"
+    }
+   ],
+   "functions": {
+    "en": [
+     "Numbers computed by Home Assistant and sent to the panel; kept, so they show after a restart.",
+     "Portal: 66 settings — indices and stocks, time spans, colours, which of the four market pages to show, seconds per page."
+    ],
+    "ru": [
+     "Цифры считает Home Assistant и присылает панели; они сохраняются и видны после перезапуска.",
+     "Портал: 66 настроек — индексы и акции, периоды, цвета, какие из четырёх страниц рынка показывать, секунды на страницу."
+    ]
+   },
+   "source": "src/market/market.h:1-23, 49, 64-83; src/market/market_layout.cpp:292-294; src/market/README.md:3-6; src/main.cpp:590"
+  },
+  {
+   "id": "ticker",
+   "match": {
+    "key": "market",
+    "name": "TICKER"
+   },
+   "name": {
+    "en": "Stock",
+    "ru": "Акция"
+   },
+   "what": {
+    "en": "One stock: price, change, open or closed, a chart for the chosen span, today's session, high and low.",
+    "ru": "Одна акция: цена, изменение, открыта ли биржа, график за выбранный период, сегодняшняя сессия, максимум и минимум."
+   },
+   "controls": [
+    {
+     "on": {
+      "en": "Knob press, 1st",
+      "ru": "Нажатие ручки, 1-е"
+     },
+     "en": "WINDOW: turning changes the time span.",
+     "ru": "ПЕРИОД: поворот меняет отрезок времени.",
+     "source": "src/market/market_page.cpp:67-73, 120-128"
+    },
+    {
+     "on": {
+      "en": "Knob press, 2nd",
+      "ru": "Нажатие ручки, 2-е"
+     },
+     "en": "TICKER: turning picks the stock; the choice is remembered.",
+     "ru": "АКЦИЯ: поворот выбирает акцию; выбор запоминается.",
+     "source": "src/market/market_page.cpp:12-17, 108-110"
+    },
+    {
+     "on": {
+      "en": "Knob press, 3rd",
+      "ru": "Нажатие ручки, 3-е"
+     },
+     "en": "Out. 10 s without the knob also leaves.",
+     "ru": "Выход. 10 с без ручки — тоже выход.",
+     "source": "src/market/market_page.cpp:79-81; src/market/market.h:49"
+    }
+   ],
+   "functions": {
+    "en": [
+     "Same data and settings as Markets."
+    ],
+    "ru": [
+     "Те же данные и настройки, что у «Рынков»."
+    ]
+   },
+   "source": "src/market/market_layout.cpp:340-343; src/market/market_page.cpp:67-128"
+  },
+  {
+   "id": "portfolio",
+   "match": {
+    "key": "market",
+    "name": "PORTFOLIO"
+   },
+   "name": {
+    "en": "Portfolio",
+    "ru": "Портфель"
+   },
+   "what": {
+    "en": "Your portfolio's value and change, its curve with and without dividends against a benchmark; dividends, costs and cash at the foot.",
+    "ru": "Стоимость портфеля и изменение, его кривая с дивидендами и без на фоне ориентира; внизу дивиденды, расходы и наличные."
+   },
+   "controls": [
+    {
+     "on": {
+      "en": "Knob press, 1st",
+      "ru": "Нажатие ручки, 1-е"
+     },
+     "en": "WINDOW: turning changes the time span.",
+     "ru": "ПЕРИОД: поворот меняет отрезок времени.",
+     "source": "src/market/market_page.cpp:67-73, 120-128"
+    },
+    {
+     "on": {
+      "en": "Knob press, 2nd",
+      "ru": "Нажатие ручки, 2-е"
+     },
+     "en": "DRAWDOWN: the foot shows the biggest drop; turning still changes the span.",
+     "ru": "ПРОСАДКА: внизу — наибольшее падение; поворот по-прежнему меняет период.",
+     "source": "src/market/market_page.cpp:13-15, 74, 91, 102, 128; src/market/README.md:361"
+    },
+    {
+     "on": {
+      "en": "Knob press, 3rd",
+      "ru": "Нажатие ручки, 3-е"
+     },
+     "en": "Out. 10 s without the knob also leaves.",
+     "ru": "Выход. 10 с без ручки — тоже выход.",
+     "source": "src/market/market_page.cpp:79-81; src/market/market.h:49"
+    }
+   ],
+   "functions": {
+    "en": [
+     "Same data and settings as Markets."
+    ],
+    "ru": [
+     "Те же данные и настройки, что у «Рынков»."
+    ]
+   },
+   "source": "src/market/market_layout.cpp:378-381; src/market/market_page.cpp:67-128"
+  },
+  {
+   "id": "holdings",
+   "match": {
+    "key": "market",
+    "name": "HOLDINGS"
+   },
+   "name": {
+    "en": "Holdings",
+    "ru": "Состав портфеля"
+   },
+   "what": {
+    "en": "A table of holdings: each stock's target share against today's, and its return since you bought it; cash last.",
+    "ru": "Таблица бумаг: целевая доля каждой против нынешней и доходность с момента покупки; наличные — последней строкой."
+   },
+   "controls": [
+    {
+     "on": {
+      "en": "Knob press, 1st",
+      "ru": "Нажатие ручки, 1-е"
+     },
+     "en": "WINDOW: turning changes the time span.",
+     "ru": "ПЕРИОД: поворот меняет отрезок времени.",
+     "source": "src/market/market_page.cpp:67-73, 120-128"
+    },
+    {
+     "on": {
+      "en": "Knob press, 2nd",
+      "ru": "Нажатие ручки, 2-е"
+     },
+     "en": "ROWS: turning pages through the table.",
+     "ru": "СТРОКИ: поворот листает таблицу.",
+     "source": "src/market/market_page.cpp:90, 111-115"
+    },
+    {
+     "on": {
+      "en": "Knob press, 3rd",
+      "ru": "Нажатие ручки, 3-е"
+     },
+     "en": "Out. 10 s without the knob also leaves.",
+     "ru": "Выход. 10 с без ручки — тоже выход.",
+     "source": "src/market/market_page.cpp:79-81; src/market/market.h:49"
+    }
+   ],
+   "functions": {
+    "en": [
+     "Same data and settings as Markets."
+    ],
+    "ru": [
+     "Те же данные и настройки, что у «Рынков»."
+    ]
+   },
+   "source": "src/market/market_layout.cpp:487-490; src/market/market_page.cpp:67-128"
+  },
+  {
+   "id": "yachts",
+   "match": {
+    "key": "yachts"
+   },
+   "name": {
+    "en": "Yacht radar",
+    "ru": "Яхт-радар"
+   },
+   "what": {
+    "en": "Live ships in the Bay of Cannes: a radar on the left, a list on the right. Colour tells anchored, manoeuvring or under way; a long list scrolls by itself.",
+    "ru": "Суда в бухте Канн в реальном времени: слева радар, справа список. Цвет — стоит на якоре, маневрирует или идёт; длинный список листается сам."
+   },
+   "controls": [
+    {
+     "on": {
+      "en": "Knob press",
+      "ru": "Нажатие ручки"
+     },
+     "en": "Go in / come out. Inside, turning scrolls the list.",
+     "ru": "Войти / выйти. Внутри поворот листает список.",
+     "source": "src/main.cpp:679-681, 762-763, 1138-1141"
+    },
+    {
+     "on": {
+      "en": "Knob turn, inside",
+      "ru": "Поворот ручки внутри"
+     },
+     "en": "Scroll the list by hand; it scrolls by itself again 3 s later.",
+     "ru": "Листать список вручную; через 3 с он снова листается сам.",
+     "source": "src/yachtradar/yachtradar.cpp:493-512; src/main.cpp:1153-1154"
+    },
+    {
+     "on": {
+      "en": "Portal",
+      "ru": "Портал"
+     },
+     "en": "Sort by nearest or by biggest. (Pressing the knob does not change the sort — only the portal does.)",
+     "ru": "Сортировка: ближайшие или самые большие. (Нажатие ручки сортировку не меняет — только портал.)",
+     "source": "src/web/web_panel.cpp:927-934; src/yachtradar/yachtradar.h:41-44 (the comment there is stale: the knob never calls yachtRadarToggleSort)"
+    }
+   ],
+   "functions": {
+    "en": [
+     "Ship data streams in only while the page is on screen.",
+     "Without a ship-data key (it is set when the panel is prepared) the page says so."
+    ],
+    "ru": [
+     "Данные о судах идут, только пока страница на экране.",
+     "Без ключа к данным о судах (его ставят при подготовке панели) страница так и пишет."
+    ]
+   },
+   "source": "src/yachtradar/yachtradar.h:1-27; src/yachtradar/yachtradar.cpp:373-386; src/main.cpp:1268-1280"
+  },
+  {
+   "id": "media",
+   "match": {
+    "key": "media"
+   },
+   "name": {
+    "en": "Now playing",
+    "ru": "Сейчас играет"
+   },
+   "what": {
+    "en": "What is playing on a Home Assistant or Music Assistant player: artist, title, album, progress and volume. The panel itself makes no sound.",
+    "ru": "Что играет на плеере Home Assistant или Music Assistant: исполнитель, название, альбом, прогресс и громкость. Сама панель звука не издаёт."
+   },
+   "controls": [
+    {
+     "on": {
+      "en": "Knob press, 1st",
+      "ru": "Нажатие ручки, 1-е"
+     },
+     "en": "TUNE: turning walks your radio favourites; the one you stop on starts after 1.2 s. With no favourites, turning skips tracks.",
+     "ru": "ВЫБОР: поворот листает избранные радиостанции; та, на которой остановились, включится через 1,2 с. Без избранного поворот листает треки.",
+     "source": "src/media/media_page.cpp:20-24, 187-192, 212-233; src/media/media.h:47-48"
+    },
+    {
+     "on": {
+      "en": "Knob press, 2nd",
+      "ru": "Нажатие ручки, 2-е"
+     },
+     "en": "VOLUME: each click of the turn is ±2 %.",
+     "ru": "ГРОМКОСТЬ: каждый щелчок поворота — ±2 %.",
+     "source": "src/media/media_page.cpp:193-198, 215-218; src/media/media.h:50-51"
+    },
+    {
+     "on": {
+      "en": "Knob press, 3rd",
+      "ru": "Нажатие ручки, 3-е"
+     },
+     "en": "Out: turning walks the pages again.",
+     "ru": "Выход: поворот снова листает страницы.",
+     "source": "src/media/media_page.cpp:199-201"
+    },
+    {
+     "remote": [
+      "media_toggle"
+     ],
+     "en": "Play / pause — works from any page.",
+     "ru": "Пуск / пауза — работает с любой страницы.",
+     "source": "src/ir/ir_actions.cpp:156"
+    },
+    {
+     "on": {
+      "en": "Portal",
+      "ru": "Портал"
+     },
+     "en": "Choose the player; play, pause, next, previous, volume, mute, start a favourite.",
+     "ru": "Выбрать плеер; пуск, пауза, следующий, предыдущий, громкость, без звука, включить избранное.",
+     "source": "src/web/web_panel.cpp:40-45"
+    }
+   ],
+   "functions": {
+    "en": [
+     "Other screens: OFFLINE, WAITING, NO PLAYER, and a dimmed STALE when Home Assistant goes quiet.",
+     "30 s without the knob leaves; a station you were choosing starts."
+    ],
+    "ru": [
+     "Другие состояния: НЕТ СВЯЗИ, ОЖИДАНИЕ, НЕТ ПЛЕЕРА и приглушённое «УСТАРЕЛО», когда Home Assistant замолчал.",
+     "30 с без ручки — выход; выбранная станция включается."
+    ]
+   },
+   "source": "src/media/media.h:1-58; src/media/media_page.cpp:1-24, 187-245; src/main.cpp:1112-1118, 1161-1162"
+  },
+  {
+   "id": "cards",
+   "match": {
+    "key": "cards"
+   },
+   "name": {
+    "en": "Home Assistant card",
+    "ru": "Карточка Home Assistant"
+   },
+   "what": {
+    "en": "A page Home Assistant made: a title, a line of text, a colour, and an optional icon and progress bar.",
+    "ru": "Страница, которую сделал Home Assistant: заголовок, строка текста, цвет, по желанию значок и полоска прогресса."
+   },
+   "controls": [
+    {
+     "on": {
+      "en": "Knob turn",
+      "ru": "Поворот ручки"
+     },
+     "en": "Other pages.",
+     "ru": "Другие страницы.",
+     "source": "src/main.cpp:1145"
+    },
+    {
+     "on": {
+      "en": "Knob press",
+      "ru": "Нажатие ручки"
+     },
+     "en": "Nothing.",
+     "ru": "Ничего.",
+     "source": "src/main.cpp:1138-1142"
+    },
+    {
+     "on": {
+      "en": "Home Assistant",
+      "ru": "Home Assistant"
+     },
+     "en": "Sending a card creates or updates it; an empty message removes it; a card not refreshed in time removes itself.",
+     "ru": "Отправка карточки создаёт или обновляет её; пустое сообщение удаляет; карточка, которую вовремя не обновили, исчезает сама.",
+     "source": "src/cards/cards.h:4-27"
+    }
+   ],
+   "functions": {
+    "en": [
+     "Up to 6 cards; each can ask for its own seconds in the carousel.",
+     "One portal switch for all cards.",
+     "If the card disappears while shown, the clock comes back."
+    ],
+    "ru": [
+     "До 6 карточек; каждая может задать свои секунды в карусели.",
+     "Один переключатель в портале на все карточки.",
+     "Если карточка исчезла, пока на экране, — возвращаются часы."
+    ]
+   },
+   "source": "src/cards/cards.h:1-50; src/main.cpp:189-196, 214-225, 1103, 1427-1433; src/web/web_panel.cpp:364-371"
+  },
+  {
+   "id": "lua",
+   "match": {
+    "key": "lua"
+   },
+   "name": {
+    "en": "Lua effect",
+    "ru": "Lua-эффект"
+   },
+   "what": {
+    "en": "A screen drawn by a Lua script uploaded to the panel. What it shows and what its button does, the script says itself.",
+    "ru": "Экран, который рисует загруженный в панель Lua-скрипт. Что он показывает и что делает его кнопка — говорит сам скрипт."
+   },
+   "controls": [
+    {
+     "on": {
+      "en": "Knob turn",
+      "ru": "Поворот ручки"
+     },
+     "en": "Other pages. Effects switched off in the portal are skipped.",
+     "ru": "Другие страницы. Эффекты, выключенные в портале, пропускаются.",
+     "source": "src/main.cpp:809-848, 1143-1145"
+    },
+    {
+     "on": {
+      "en": "Knob press",
+      "ru": "Нажатие ручки"
+     },
+     "remote": [
+      "ok",
+      "long"
+     ],
+     "button": true,
+     "en": "Goes to the script as its button; what happens is up to the script.",
+     "ru": "Передаётся скрипту как нажатие его кнопки; что будет — решает скрипт.",
+     "source": "src/main.cpp:1094-1095, 1106-1110; src/lua/lua_px.cpp:407-410"
+    },
+    {
+     "on": {
+      "en": "Portal",
+      "ru": "Портал"
+     },
+     "en": "Show now; press its button; leave it out of the knob's walk; upload or delete the script.",
+     "ru": "Показать сразу; нажать его кнопку; убрать из обхода ручкой; загрузить или удалить скрипт.",
+     "source": "src/web/web_panel.cpp:58-59, 410-420, 1015-1017, 1424; src/panel/panel.h:85-88"
+    }
+   ],
+   "functions": {
+    "en": [
+     "Each script can be left out of the walk on its own; “Show” in the portal still shows it.",
+     "Leaving the page and coming back starts the effect afresh: what its button changed is forgotten.",
+     "A script error shows LUA ERROR and the effect's name; choosing the page again tries again."
+    ],
+    "ru": [
+     "Каждый скрипт можно убрать из обхода отдельно; «Показать» в портале всё равно его покажет.",
+     "Уход со страницы и возврат запускают эффект заново: всё, что меняли его кнопкой, забывается.",
+     "Ошибка в скрипте — на экране LUA ERROR и имя эффекта; если снова выбрать страницу, он запустится заново."
+    ]
+   },
+   "source": "src/main.cpp:96-108, 137-139, 708-724, 809-822, 1106-1110, 1183-1199; src/web/web_panel.cpp:1019-1058; src/lua/lua_effects.cpp:642-648, 738; src/lua/README.md:72-76, 131-133"
+  }
+ ],
+ "effects": {
+  "ROOM RADAR": {
+   "controls": [
+    {
+     "on": {
+      "en": "Portal",
+      "ru": "Портал"
+     },
+     "en": "Range 2, 4 or 6 m; flip left-right; the real radar or a made-up demo.",
+     "ru": "Дальность 2, 4 или 6 м; зеркально слева направо; настоящий радар или выдуманная сценка.",
+     "source": "src/config/config.h:152-157; src/web/web.cpp:234, 290"
+    }
+   ],
+   "functions": {
+    "en": [
+     "The panel listens to the radar only while this page is on screen."
+    ],
+    "ru": [
+     "Панель слушает радар, только пока эта страница на экране."
+    ]
+   },
+   "source": "src/presence/presence.h:1-5, 35-38; platformio.ini:180-181"
+  }
+ },
+ "global_controls": [
+  {
+   "on": {
+    "en": "Knob turn",
+    "ru": "Поворот ручки"
+   },
+   "en": "Walks everything in one line: each clock style, then each page, then Home Assistant cards. Pages switched off in the portal are skipped.",
+   "ru": "Листает всё подряд: стили часов, потом страницы, потом карточки Home Assistant. Выключенные в портале страницы пропускаются.",
+   "source": "src/main.cpp:642-646, 827-849"
+  },
+  {
+   "on": {
+    "en": "Knob press",
+    "ru": "Нажатие ручки"
+   },
+   "en": "On a page with its own controls (world clock, flights, trains, markets, yachts, media): go in, and turning then works inside; press again to come out. On a Lua page: the script's button. Elsewhere: nothing.",
+   "ru": "На странице со своим управлением (мировое время, рейсы, поезда, рынки, яхты, медиа): войти — поворот работает внутри; ещё нажатие — выйти. На Lua-странице — кнопка скрипта. На остальных — ничего.",
+   "source": "src/main.cpp:675-696, 1105-1142"
+  },
+  {
+   "on": {
+    "en": "Knob hold",
+    "ru": "Удержание ручки"
+   },
+   "en": "Held for a second or more: the same as a press. There is no separate long press.",
+   "ru": "Удержание секунду и дольше — то же, что нажатие. Отдельного долгого нажатия нет.",
+   "source": "src/main.cpp:1094-1095; src/control/control.cpp:75-76, 266-269"
+  },
+  {
+   "on": {
+    "en": "Knob held 0.5–1 s",
+    "ru": "Ручка нажата 0,5–1 с"
+   },
+   "en": "A press released between half a second and a second does nothing.",
+   "ru": "Нажатие, отпущенное между полсекундой и секундой, ничего не делает.",
+   "source": "src/control/control.cpp:75-76, 261-264"
+  },
+  {
+   "on": {
+    "en": "Double press",
+    "ru": "Двойное нажатие"
+   },
+   "en": "No double press: two presses are simply two presses.",
+   "ru": "Двойного нажатия нет: два нажатия — это просто два нажатия.",
+   "source": "src/control/control.h:39-45"
+  },
+  {
+   "on": {
+    "en": "Knob left alone",
+    "ru": "Ручку не трогают"
+   },
+   "en": "30 s without the knob leaves an entered page (markets: 10 s).",
+   "ru": "30 с без ручки — выход из страницы, в которую вошли (на рынках — 10 с).",
+   "source": "src/main.cpp:649, 700-706, 1085"
+  },
+  {
+   "on": {
+    "en": "Carousel",
+    "ru": "Карусель"
+   },
+   "en": "Any turn or press pauses the automatic page walk; it picks up again after a quiet minute (adjustable).",
+   "ru": "Любой поворот или нажатие ставит автолистание на паузу; оно продолжится после минуты тишины (настраивается).",
+   "source": "src/main.cpp:1086-1089, 1170-1180; src/control/carousel.h:21-22; src/panel/panel.h:58-59"
+  },
+  {
+   "on": {
+    "en": "Page name",
+    "ru": "Название страницы"
+   },
+   "en": "The page or style name shows along the bottom for 1.6 s.",
+   "ru": "Название страницы или стиля видно внизу 1,6 с.",
+   "source": "src/control/clock_style.cpp:18, 145-167; src/main.cpp:848"
+  },
+  {
+   "on": {
+    "en": "Corner marks",
+    "ru": "Значки в углах"
+   },
+   "en": "Top left: A (carousel on) or M (off), an amber arrow while inside a page; top right: Wi-Fi. They show only for 5 s after the remote is used.",
+   "ru": "Слева вверху: A (карусель включена) или M (выключена), жёлтая стрелка — когда вошли в страницу; справа вверху — Wi-Fi. Видны только 5 с после нажатия на пульте.",
+   "source": "src/display/sys_corners.h:3-13"
+  },
+  {
+   "remote": [
+    "ccw",
+    "cw"
+   ],
+   "en": "Same as turning the knob, one step per press; holding does not repeat.",
+   "ru": "Как поворот ручки, один шаг на нажатие; удержание не повторяет.",
+   "source": "src/ir/ir_map.h:391-401; src/control/control.cpp:236"
+  },
+  {
+   "remote": [
+    "ok"
+   ],
+   "en": "Same as pressing the knob; holding it is like holding the knob.",
+   "ru": "Как нажатие ручки; удержание — как удержание ручки.",
+   "source": "src/ir/ir_map.h:402-408; src/control/control.cpp:252-256"
+  },
+  {
+   "remote": [
+    "long"
+   ],
+   "en": "Holds the knob down for 1.3 s, which the panel counts as a normal press.",
+   "ru": "Держит ручку нажатой 1,3 с — панель считает это обычным нажатием.",
+   "source": "src/ir/ir_map.h:140-143, 409-413; src/main.cpp:1095"
+  },
+  {
+   "remote": [
+    "power"
+   ],
+   "en": "Screen off / on.",
+   "ru": "Экран выкл / вкл.",
+   "source": "src/ir/ir_actions.cpp:110-112"
+  },
+  {
+   "remote": [
+    "bright_up",
+    "bright_down"
+   ],
+   "en": "Brightness ±10 %, never below 1 %; remembered 3 s after the last press.",
+   "ru": "Яркость ±10 %, не ниже 1 %; запоминается через 3 с после последнего нажатия.",
+   "source": "src/ir/ir_actions.cpp:42-47, 93-124"
+  },
+  {
+   "remote": [
+    "carousel"
+   ],
+   "en": "Automatic page walk on / off.",
+   "ru": "Автолистание страниц вкл / выкл.",
+   "source": "src/ir/ir_actions.cpp:136-141"
+  },
+  {
+   "remote": [
+    "home"
+   ],
+   "en": "The clock, in its current style; a screensaver or visualizer turned on by hand goes off.",
+   "ru": "Часы в текущем стиле; включённые вручную заставка или визуализатор выключаются.",
+   "source": "src/ir/ir_actions.cpp:126-128; src/main.cpp:883-894"
+  },
+  {
+   "remote": [
+    "media_toggle"
+   ],
+   "en": "Play / pause on the Home Assistant player, from any page.",
+   "ru": "Пуск / пауза на плеере Home Assistant, с любой страницы.",
+   "source": "src/ir/ir_actions.cpp:156"
+  },
+  {
+   "on": {
+    "en": "Portal: remote buttons",
+    "ru": "Портал: кнопки пульта"
+   },
+   "en": "Any button can be given another job: next clock style, screensaver, go to a chosen page, next or previous track, volume ±, close the banner. The numbers are as learned on this twin (GET /api/ir); the firmware default swaps 7 and 9.",
+   "ru": "Любой кнопке можно дать другое дело: следующий стиль часов, заставка, переход на выбранную страницу, следующий или предыдущий трек, громкость ±, закрыть бегущую строку. Номера — как обучены у этого двойника (GET /api/ir); по умолчанию в прошивке 7 и 9 наоборот.",
+   "source": "src/ir/ir_map.h:59-80, 101-106; src/ir/ir.h:78-79"
+  },
+  {
+   "on": {
+    "en": "BOOT",
+    "ru": "BOOT"
+   },
+   "en": "The same wire as the knob's button: a short press is a knob press. Held while RESET is pressed, the chip starts in flashing mode.",
+   "ru": "Тот же провод, что у кнопки ручки: короткое нажатие — нажатие ручки. Если держать при нажатии RESET, чип стартует в режиме прошивки.",
+   "source": "src/control/control.cpp:29-36"
+  },
+  {
+   "on": {
+    "en": "RESET",
+    "ru": "RESET"
+   },
+   "en": "Restarts the panel; settings and uploaded effects stay.",
+   "ru": "Перезапуск панели; настройки и загруженные эффекты сохраняются.",
+   "source": "esp32sim web/panel.html:129; src/panel/panel.h:9-11; src/lua/lua_store.h:113"
+  },
+  {
+   "on": {
+    "en": "Portal",
+    "ru": "Портал"
+   },
+   "en": "Show any page or style now; switch pages in or out of the walk (the clock always stays); carousel on/off, quiet time, seconds per page, every clock style.",
+   "ru": "Показать любую страницу или стиль сразу; включить или убрать страницы из обхода (часы остаются всегда); карусель: вкл/выкл, пауза, секунды на страницу, все стили часов.",
+   "source": "src/web/web_panel.cpp:9-12, 381-467"
+  },
+  {
+   "on": {
+    "en": "Portal",
+    "ru": "Портал"
+   },
+   "en": "Knob feel: direction, step lockout, button debounce, detent type.",
+   "ru": "Характер ручки: направление, защита от лишних шагов, дребезг кнопки, тип щелчков.",
+   "source": "src/web/web_panel.cpp:53-55; src/panel/panel.h:29-32"
+  },
+  {
+   "on": {
+    "en": "Portal / Home Assistant",
+    "ru": "Портал / Home Assistant"
+   },
+   "en": "Screen on/off and brightness in %; modes clock, auto, screensaver, visualizer.",
+   "ru": "Экран вкл/выкл и яркость в %; режимы: часы, авто, заставка, визуализатор.",
+   "source": "src/web/web.cpp:324-330, 581-608; src/config/config.h:122-124"
+  },
+  {
+   "on": {
+    "en": "Portal",
+    "ru": "Портал"
+   },
+   "en": "Night dimming and night off by the clock.",
+   "ru": "Ночное приглушение и ночное выключение по времени.",
+   "source": "src/config/config.h:114-129"
+  },
+  {
+   "on": {
+    "en": "Scrolling banner",
+    "ru": "Бегущая строка"
+   },
+   "en": "Home Assistant can scroll a line of text over any screen, at the top or the bottom. A “dismiss” request or the remote button set to “Dismiss the notification” removes it; the knob does not.",
+   "ru": "Home Assistant может пустить строку текста поверх любого экрана, сверху или снизу. Убирает её запрос «закрыть» или кнопка пульта с делом «Закрыть уведомление»; ручка — нет.",
+   "source": "src/notify/notify.h:1-30; src/web/web.cpp:713-715, 784-788; src/ir/ir_actions.cpp:163-165; src/main.cpp:1100"
+  }
+ ]
+}

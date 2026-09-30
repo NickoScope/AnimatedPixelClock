@@ -12,6 +12,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import sys
 import tempfile
 import unittest
@@ -346,6 +347,7 @@ class TwinFlasherPage(unittest.TestCase):
                              get(os.path.join(T.DOCS, "firmware", "latest", bin_name)))
             self.assertEqual(get(os.path.join(fl, "firmware", "latest", "VERSION")).decode().strip(), version)
             self.assertEqual(get(os.path.join(fl, "index.html")).decode("utf-8"), T.flasher_index(get(DOCS_INDEX).decode("utf-8")))
+            self.assertEqual(get(os.path.join(dest, "screens.json")), get(T.SCREENS))   # beside panel.html
 
     def test_build_web_never_removes_a_directory_it_did_not_make(self):
         with tempfile.TemporaryDirectory() as d:
@@ -367,6 +369,7 @@ class TwinFlasherPage(unittest.TestCase):
             dest = os.path.join(d, "web")
             with mock.patch.object(T, "ENGINE", self.make_engine(d)):
                 T.build_web(dest, good, "v9.9.9-test")
+            self.assertEqual(get(os.path.join(dest, "screens.json")), get(T.SCREENS))
             latest = os.path.join(dest, "flasher", "firmware", "latest")
             self.assertEqual(get(os.path.join(latest, "AnimatedPixelClock-waveshare-v9.9.9-test-Full.bin")), bytes(img))
             self.assertEqual(get(os.path.join(latest, "VERSION")), b"v9.9.9-test\n")
@@ -466,6 +469,134 @@ class TwinFlasherPage(unittest.TestCase):
         b[9999] = 1
         self.assertEqual(T.differing(a, bytes(b)), [(5, 7), (4096, 4097), (9999, 10000)])
         self.assertEqual(T.differing(a, a), [])
+
+
+REPO = os.path.dirname(os.path.dirname(HERE))
+# The header of a script, as the panel page reads it (gallery/README.md, "What a screen says about
+# itself"): the lines from the top up to the first one that is neither blank nor a `--` comment, and in
+# them `-- @<tag>.<lang> <text>`.
+HEADER_TAG = re.compile(r"^--\s*@(name|about|control|function)\.([a-z]{2})\s+(.*\S)\s*$")
+CONTROL = re.compile(r"^(knob press(?: x[2-9])?): (.+)$")
+
+
+def header_tags(text):
+    tags = []
+    for line in text.splitlines():
+        s = line.strip()
+        if s and not s.startswith("--"):
+            break
+        m = HEADER_TAG.match(s)
+        if m:
+            tags.append(m.groups())
+    return tags
+
+
+class TwinScreenHelp(unittest.TestCase):
+    """tools/twin/screens.json (the built-in screens) and the gallery scripts' own headers (the Lua
+    effects): what the panel page's "This screen" block shows."""
+
+    # the functions of the ten buttons on the page's remote (panel.html BUTTONS, the owner's learned remote)
+    REMOTE_FNS = {"power", "home", "carousel", "ccw", "ok", "cw", "bright_down", "long", "bright_up", "media_toggle"}
+
+    @classmethod
+    def setUpClass(cls):
+        with open(T.SCREENS, encoding="utf-8") as f:
+            cls.doc = json.load(f)
+
+    def check_control(self, c, where):
+        self.assertTrue(c.get("on") or c.get("remote"), where)
+        if "on" in c:
+            self.assertEqual(set(c["on"]), {"en", "ru"}, where)
+            self.assertTrue(all(c["on"].values()), where)
+        for lang in ("en", "ru"):
+            self.assertTrue(c[lang].strip(), where)
+        self.assertTrue(c["source"].strip(), where)          # every line from the firmware's code
+        for fn in c.get("remote", []):
+            self.assertIn(fn, self.REMOTE_FNS, where)
+
+    def test_every_screen_in_both_languages_with_its_source(self):
+        ids = [s["id"] for s in self.doc["screens"]]
+        self.assertEqual(len(ids), len(set(ids)))
+        for s in self.doc["screens"]:
+            for field in ("name", "what"):
+                self.assertEqual(set(s[field]), {"en", "ru"}, s["id"])
+                self.assertTrue(all(s[field].values()), s["id"])
+            self.assertEqual(len(s["functions"]["en"]), len(s["functions"]["ru"]), s["id"])
+            self.assertTrue(s["source"].strip(), s["id"])
+            self.assertIsInstance(s["match"], dict, s["id"])
+            for c in s["controls"]:
+                self.check_control(c, s["id"])
+        for c in self.doc["global_controls"]:
+            self.check_control(c, "global")
+        for name, e in self.doc["effects"].items():
+            self.assertEqual(name, name.upper())                 # as the panel names an effect
+            for c in e["controls"]:
+                self.check_control(c, name)
+            self.assertEqual(len(e["functions"]["en"]), len(e["functions"]["ru"]), name)
+
+    def test_the_first_match_is_the_right_one(self):
+        # the page takes the first screen whose match fits now: a catch-all never hides a narrower one
+        def first(now):
+            for s in self.doc["screens"]:
+                if all(now.get(k) == v for k, v in s["match"].items()):
+                    return s["id"]
+        clock = {"key": "clock", "mode": "clock", "style": 0}
+        self.assertEqual(first(clock), "clock")
+        self.assertEqual(first(dict(clock, style=14)), "weather")
+        self.assertEqual(first(dict(clock, mode="ambient", style=14)), "ambient")
+        self.assertEqual(first(dict(clock, mode="ambient", clip=True)), "clip")
+        self.assertEqual(first(dict(clock, mode="viz")), "viz")
+        self.assertEqual(first(dict(clock, mode="metrics")), "metrics")
+        self.assertEqual(first(dict(clock, notify=True)), "notify")
+        self.assertEqual(first({"key": "market", "name": "PORTFOLIO"}), "portfolio")
+        self.assertEqual(first({"key": "lua", "name": "LASER CLOCK"}), "lua")
+        for key in ("world", "flights", "trains", "yachts", "media", "cards"):
+            self.assertEqual(first({"key": key}), key)
+        # a Lua page's button line is the one a script's own "knob press" replaces
+        lua = next(s for s in self.doc["screens"] if s["id"] == "lua")
+        self.assertEqual([c.get("button", False) for c in lua["controls"]].count(True), 1)
+
+    @unittest.skipUnless(os.path.exists(os.path.join(T.ENGINE, "web", "panel.html")), "no engine")
+    def test_the_remote_is_the_pages(self):
+        with open(os.path.join(T.ENGINE, "web", "panel.html"), encoding="utf-8") as f:
+            page = f.read()
+        self.assertEqual(set(re.findall(r"fn: '([a-z_]+)'", page)), self.REMOTE_FNS)
+
+    def test_every_gallery_script_says_what_it_is(self):
+        gallery = os.path.join(REPO, "gallery")
+        luasim = os.path.join(REPO, "tools", "luasim", "scripts")
+        scripts = [os.path.join(gallery, n) for n in sorted(os.listdir(gallery)) if n.endswith(".lua")]
+        self.assertGreater(len(scripts), 20)
+        scripts += [os.path.join(luasim, n) for n in sorted(os.listdir(luasim)) if n.endswith(".lua")]
+        tagged = 0
+        for path in scripts:
+            with open(path, encoding="utf-8") as f:
+                text = f.read()
+            tags = header_tags(text)
+            # a tag anywhere else is a mistake: the page would never read it
+            self.assertEqual(len(tags), len(re.findall(r"(?m)^--\s*@(?:name|about|control|function)\.", text)), path)
+            if not tags and not path.startswith(gallery):
+                continue                                      # luasim's test and demo scripts
+            tagged += 1
+            by = {}
+            for tag, lang, value in tags:
+                by.setdefault((tag, lang), []).append(value)
+            for tag in ("name", "about"):
+                for lang in ("en", "ru"):
+                    self.assertIn((tag, lang), by, f"{path}: no @{tag}.{lang}")
+            self.assertEqual(len(by[("name", "en")]), 1, path)
+            controls = {lang: [CONTROL.match(v) for v in by.get(("control", lang), [])] for lang in ("en", "ru")}
+            for lang, ms in controls.items():
+                self.assertTrue(all(ms), f"{path}: @control.{lang} is '<knob press[ xN]>: <text>'")
+            # the same actions in both languages, in the same order
+            self.assertEqual([m.group(1) for m in controls["en"]], [m.group(1) for m in controls["ru"]], path)
+            self.assertTrue(controls["en"], f"{path}: say what the knob press does, even if nothing")
+            # a script that never reads its button says so
+            if 'rawget(px, "button")' not in text and "px.button(" not in text:
+                self.assertEqual([m.group(2) for m in controls["en"]],
+                                 ["Nothing: this effect does not use the button."], path)
+            self.assertEqual(len(by.get(("function", "en"), [])), len(by.get(("function", "ru"), [])), path)
+        self.assertGreater(tagged, 25)
 
 
 class Calibrate(unittest.TestCase):

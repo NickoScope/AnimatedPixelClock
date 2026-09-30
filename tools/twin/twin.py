@@ -322,6 +322,10 @@ FIRMWARE_ID = "waveshare"
 GENERATED = ".twin-generated"
 # The twin's own files beside the public page, from tools/twin/flasher/
 FLASHER_FILES = ("twin-serial.js", "twin-lang.js", "selftest.html")
+# What each built-in screen of this firmware shows and how it is driven, in English and Russian: the
+# panel page's "This screen" block under the panel reads it (a page served without it hides the block).
+# Lua effects are not in it: each describes itself in its script's header (gallery/README.md).
+SCREENS = os.path.join(HERE, "screens.json")
 # The twin's note over the public page, in the language of the twin's pages (flasher/twin-lang.js:
 # ?lang=, then localStorage['twin-lang'], then English), with the EN · RU switch and the link back to
 # the panel, which carries ?lang= of the language in force. The public page is English and stays so:
@@ -435,9 +439,10 @@ def flasher_firmware(image=None, version=None):
 
 
 def build_web(dest, image=None, version=None):
-    """Make DEST: the engine's web/ (panel.html and the rest), and flasher/ with the page from docs/
-    (flasher_index), flasher.js, styles.css, img/, the twin's own files (FLASHER_FILES: the shim, the
-    language, the self-test page) and the firmware in firmware/latest/. Made again on every run; DEST must be absent or made by this function.
+    """Make DEST: the engine's web/ (panel.html and the rest), screens.json beside panel.html (SCREENS),
+    and flasher/ with the page from docs/ (flasher_index), flasher.js, styles.css, img/, the twin's own
+    files (FLASHER_FILES: the shim, the language, the self-test page) and the firmware in
+    firmware/latest/. Made again on every run; DEST must be absent or made by this function.
     Returns the firmware version offered."""
     image, version = flasher_firmware(image, version)
     if os.path.lexists(dest):
@@ -447,6 +452,7 @@ def build_web(dest, image=None, version=None):
     shutil.copytree(os.path.join(ENGINE, "web"), dest)
     with open(os.path.join(dest, GENERATED), "w") as f:
         f.write("made by tools/twin/twin.py on every run with --web; edits here are lost\n")
+    shutil.copy2(SCREENS, dest)
     fl = os.path.join(dest, "flasher")
     fw = os.path.join(fl, "firmware", "latest")
     os.makedirs(fw)
