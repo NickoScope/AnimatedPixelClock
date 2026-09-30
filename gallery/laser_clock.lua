@@ -5,10 +5,10 @@
 -- @name.en Laser clock
 -- @name.ru Лазерные часы
 -- @about.en Night, a brick wall. A small laser projector on the ground writes text on the wall with its
--- @about.en beam, then keeps retracing it, so the lines shimmer. Every 5 s the next line: the time, the
+-- @about.en beam, then keeps retracing it, so the lines shimmer. Every 5 s by the clock the next line: the time, the
 -- @about.en day of the week, the date, the outside temperature (when the panel has weather), КАННЫ.
 -- @about.ru Ночь, кирпичная стена. Маленький лазерный проектор на земле пишет лучом текст на стене, а
--- @about.ru потом всё время обводит его заново, и линии мерцают. Каждые 5 с следующая надпись: время,
+-- @about.ru потом всё время обводит его заново, и линии мерцают. Каждые 5 с по часам следующая надпись: время,
 -- @about.ru день недели, дата, температура на улице (если у панели есть погода), КАННЫ.
 -- @control.en knob press: Changes the laser colour: each line its own colour, then green, red, blue, violet, then a colour for every character, and round again.
 -- @control.ru knob press: Меняет цвет лазера: у каждой надписи свой цвет, затем зелёный, красный, синий, фиолетовый, затем свой цвет у каждого знака, и снова по кругу.
@@ -38,6 +38,13 @@
 -- laser: each screen its colour, then green, red, blue, violet, then a colour
 -- a character.
 --
+-- The 5 s are the wall clock's, not the time since the page opened: px.t()
+-- over PERIOD 100 (twenty turns, a whole number of rounds of 4 screens or 5),
+-- aligned to the epoch by the firmware, says whose turn it is, so two panels
+-- write the same line at the same moment - unless only one of them has the
+-- weather. The laser's colour is the presses since the page opened
+-- (px.button() from its value then), so quick presses are never lost.
+--
 -- The digits are true arcs and strokes; the letters come from the panel's
 -- own 5x7 system font, Latin and Cyrillic, read at load and joined into
 -- strokes. The weather is the weather clock's (px.weather).
@@ -50,7 +57,7 @@
 -- temperature (px.weather); without them it is flatter and skips the
 -- temperature.
 -- ============================================================
-PERIOD = 600.0
+PERIOD = 100.0                        -- twenty 5 s turns of the wall clock
 FPS = 15
 
 local W, H = px.size()
@@ -356,7 +363,8 @@ local SPARK = {}                      -- embers where it writes
 local WRITE_V, SCAN_V, JUMP_V = 46, 1500, 4000
 local WV = WRITE_V                    -- this writing's speed: a whole new text is written in ~1.4 s
 local TAU_SCAN, TAU_WRITE = 0.9, 12   -- how long a line glows once passed (writing: the rest waits)
-local lastClicks = rawget(px, "button") and px.button() or 0
+local clickBase = rawget(px, "button") and px.button() or 0   -- the presses before the page opened
+local lastClicks = clickBase
 local lastMin = -1
 local SCREEN_S = 5
 local xfAt = nil                      -- when the last screen's text began to dissolve
@@ -364,7 +372,7 @@ local xfAt = nil                      -- when the last screen's text began to di
 -- change of screen that slot becomes the one that fades, and the other
 -- takes the new frames. No text is drawn twice for it.
 local LINES_SLOT, FADE_SLOT = 3, 2
-local screen, screenAt = 0, -1e9
+local screen, screenTurn = 0, nil     -- the screen on the wall, and the clock's turn it was written in
 
 local function first_seg()
   for i = 1, NSEG do if mode == "scan" or writing[SLOTOF[i]] then return i end end
@@ -521,6 +529,8 @@ local SCREENS = {
     end },
   { key = "cannes", make = function() return "КАННЫ", SCREEN_COL.cannes end },
 }
+local TEMP = 4                              -- SCREENS' temperature, the one that can be missing
+local WEATHER = rawget(px, "weather")       -- px.weather (2.7.4), or nil
 
 function draw()
   local t = px.t() * PERIOD
@@ -534,27 +544,31 @@ function draw()
   T = T + dt
 
   local c = rawget(px, "button") and px.button() or 0
-  if c ~= lastClicks then lastClicks = c; colour = (colour + 1) % (#LASERS + 2) end
+  if c ~= lastClicks then lastClicks = c; colour = (c - clickBase) % (#LASERS + 2) end
 
   local now = px.now()
-  if T - screenAt >= SCREEN_S then
-    -- the next screen that has something to say
-    for _ = 1, #SCREENS do
-      screen = screen % #SCREENS + 1
-      local text, col = SCREENS[screen].make(now)
-      if text then
-        local flow = HAS_MIX and NSEG > 0
-        if flow then
-          -- last frame's text, kept as it glowed, dissolves under the new one
-          LINES_SLOT, FADE_SLOT = FADE_SLOT, LINES_SLOT
-          xfAt = T
-        end
-        screenCol = col
-        screenAt = T
-        lastMin = now.min
-        start_writing(build(text, SCREENS[screen].key, flow))
-        break
+  local turn = t // SCREEN_S                -- a float's floor, no call: this runs every frame
+  if turn ~= screenTurn then
+    screenTurn = turn
+    -- the clock's turn among the screens that have something to say: all of
+    -- them, the temperature only while there is weather
+    -- (a float with a whole value: it indexes SCREENS as the integer does)
+    local pick
+    if WEATHER and WEATHER() then pick = turn % #SCREENS + 1
+    else pick = turn % (#SCREENS - 1) + 1; if pick >= TEMP then pick = pick + 1 end end
+    -- (the weather cannot go between the two asks: the panel copies it in before a frame)
+    local text, col = SCREENS[pick].make(now)
+    if pick ~= screen then
+      screen = pick
+      local flow = HAS_MIX and NSEG > 0
+      if flow then
+        -- last frame's text, kept as it glowed, dissolves under the new one
+        LINES_SLOT, FADE_SLOT = FADE_SLOT, LINES_SLOT
+        xfAt = T
       end
+      screenCol = col
+      lastMin = now.min
+      start_writing(build(text, SCREENS[screen].key, flow))
     end
   elseif SCREENS[screen].key == "time" and now.min ~= lastMin then
     lastMin = now.min

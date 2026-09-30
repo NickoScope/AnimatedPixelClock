@@ -327,7 +327,7 @@ How it works, with the tank running and the numbers from the panel: [in English]
 
 Night, the back wall of a house, and a small laser projector on the pavement in front of it. A thin beam, lit up by the dust in the air, carries one bright dot over the bricks. The dot writes on the wall stroke by stroke. The beam goes dark between strokes, and sparks fly where the dot burns. Once a text is written, the projector runs over it again and again, fast, the way a real one does. The lines shimmer as the scan comes round, and the beam in the air becomes a flickering fan.
 
-**Every 5 seconds the wall says the next thing:**
+**Every 5 seconds by the clock the wall says the next thing,** the same line at the same moment on every panel, unless only one of them has the weather:
 - the time;
 - the day of the week;
 - the date;
