@@ -5,16 +5,17 @@
 -- @name.en Solids
 -- @name.ru Многогранники
 -- @about.en The Platonic solids (tetrahedron, cube, octahedron, icosahedron) turning among slowly
--- @about.en drifting stars, lit, as wireframes or both. Every 20 s the solid on screen reshapes itself
--- @about.en into the next.
+-- @about.en drifting stars, lit, as wireframes or both. Every 20 s by the clock, the same on every panel,
+-- @about.en the solid on screen reshapes itself into the next.
 -- @about.ru Платоновы тела (тетраэдр, куб, октаэдр, икосаэдр) вращаются среди медленно плывущих звёзд:
--- @about.ru освещённые, каркасом или и так и так. Каждые 20 с фигура на экране перетекает в следующую.
--- @control.en knob press: Next solid now (unless one is already reshaping).
--- @control.ru knob press: Сразу следующая фигура (если смена уже не идёт).
--- @function.en 4 solids, 20 s each
+-- @about.ru освещённые, каркасом или и так и так. Каждые 20 с по часам, одинаково на всех панелях, фигура
+-- @about.ru на экране перетекает в следующую.
+-- @control.en knob press: Next solid now (if one is already reshaping, right after it); it holds until the next change by the clock.
+-- @control.ru knob press: Сразу следующая фигура (если смена уже идёт, то сразу после неё); она держится до ближайшей смены по часам.
+-- @function.en 4 solids, 20 s each, by the clock: the same on every panel
 -- @function.en No clock
 -- @function.en Needs firmware 2.7.6 or later
--- @function.ru 4 фигуры по 20 с
+-- @function.ru 4 фигуры по 20 с, по часам: одинаково на всех панелях
 -- @function.ru Часов нет
 -- @function.ru Нужна прошивка 2.7.6 или новее
 --
@@ -26,12 +27,24 @@
 -- frame, each star an anti-aliased dot, so it glides instead of stepping. The
 -- button brings the next solid now.
 --
+-- The solid is read off the wall clock, so two panels (or a panel and its
+-- twin) show the same one at the same moment: px.t() is the phase of the
+-- 80 s PERIOD aligned to the epoch, and its 20 s quarters are the solids. A
+-- press moves one solid on from the clock's (the presses are counted from
+-- the moment the effect opened); the solid it brings holds until the
+-- clock's next 20 s boundary, anything from 0 to 20 s. The change itself is
+-- timed in clock seconds: on the clock it starts at the boundary, so every
+-- panel is at the same point of the morph, and a panel opened in the middle
+-- of one joins it there. A press while a change is under way is kept, not
+-- lost, and its change follows the one under way: a press that one panel
+-- took and another dropped would leave the two a solid apart for good.
+--
 -- The firmware turns, projects, sorts and draws each solid in one call
 -- (px.model once, px.mesh a frame); the script only chooses where it points.
 --
 -- Needs firmware 2.7.6 or later (px.model, px.mesh, px.dot; px.mix 2.7.5).
 -- ============================================================
-PERIOD = 600.0
+PERIOD = 80.0                 -- 4 solids x 20 s: the solid is read off the clock
 FPS = 15
 
 local W, H = px.size()
@@ -170,11 +183,17 @@ end
 local SX, SY, SV, SB = {}, {}, {}, {}
 for i = 1, 60 do SX[i], SY[i], SV[i], SB[i] = rnd() * W, rnd() * H, 0.6 + rnd() * 2.4, 60 + floor(rnd() * 150) end
 
-local cur, SCENE, XF = 1, 20, SETTLE
-local T, tprev, sceneAt, xfAt = 0, nil, 0, nil
-local from, morphAt = nil, nil
-local LINES_SLOT, FADE_SLOT = 3, 2
-local lastClicks = rawget(px, "button") and px.button() or 0
+local SCENE = 20
+local T, tprev = 0, nil
+-- the solid on screen (or the one it is changing into), the one it changes
+-- from, and the clock's second (px.t() * PERIOD) the change began: nil when
+-- none is under way. A change is the morph (MORPH) and then the settle (SETTLE).
+local cur, from, changeAt = nil, nil, nil
+local skinDrawn, saved = false, false   -- this panel drew the change's skin; saved its last frame
+local FADE_SLOT = 2
+-- px.button() counts from boot, not from here: the presses since the effect opened
+local base = rawget(px, "button") and px.button() or 0
+local seen = base
 local OPTS = { ax = 0, ay = 0, az = 0, scale = 21, x = 63.5, y = 31.5, dist = 4, r = 255, g = 255, b = 255, mode = "wire" }
 
 function draw()
@@ -187,7 +206,7 @@ function draw()
   end
   tprev = t
   T = T + dt
-  if T > 3600 then T = T - 3600; sceneAt = sceneAt - 3600; if xfAt then xfAt = xfAt - 3600 end end
+  if T > 3600 then T = T - 3600 end   -- a 32-bit float T, held under an hour
 
   if not HAS then
     px.clear(0, 0, 0)
@@ -195,14 +214,32 @@ function draw()
     return
   end
 
+  -- the solid: the clock's 20 s quarter of the PERIOD, moved on by the presses
   local c = rawget(px, "button") and px.button() or 0
-  local change = c ~= lastClicks or T - sceneAt > SCENE
-  if c ~= lastClicks then lastClicks = c end
-  if change and not morphAt then
-    from, cur = cur, cur % #SOLIDS + 1
-    sceneAt = T
-    morphAt = T
+  local slot = floor(t / SCENE)                      -- 0..3, the same on every panel with NTP
+  local s = t - slot * SCENE                         -- clock seconds into the quarter
+  local want = (slot + c - base) % #SOLIDS + 1
+  local age = changeAt and (t - changeAt) % PERIOD   -- clock seconds into the change, across the wrap
+  local over = nil                                   -- clock seconds since a change ended this frame
+  if age and age >= MORPH + SETTLE then
+    over = age - MORPH - SETTLE
+    changeAt, age = nil, nil
   end
+  if not cur then
+    cur = want
+    if s < MORPH + SETTLE then                       -- opened in the clock's change: join it there
+      from, changeAt, age = (want - 2) % #SOLIDS + 1, t - s, s
+    end
+  elseif not changeAt and want ~= cur then
+    -- due from the press, else from the boundary or from the end of the change
+    -- that held it back, whichever came later: every panel at the same point
+    local due = s
+    if c ~= seen then due = 0 elseif over and over < s then due = over end
+    from, cur = cur, want
+    changeAt, age = (t - due) % PERIOD, due
+    skinDrawn, saved = false, false
+  end
+  seen = c
 
   -- the stars, gliding left at fractions of a pixel a frame
   px.clear(0, 0, 4)
@@ -214,12 +251,12 @@ function draw()
   end
   px.mode("set")
 
-  if xfAt then
-    local u = (T - xfAt) / XF
-    if u >= 1 then xfAt = nil else px.mix(FADE_SLOT, 1 - u * u * (3 - 2 * u)) end
+  if age and age >= MORPH and saved then            -- the settle: the skin's last frame flows out
+    local u = (age - MORPH) / SETTLE
+    px.mix(FADE_SLOT, 1 - u * u * (3 - 2 * u))
   end
 
-  local s = SOLIDS[cur]
+  local sd = SOLIDS[cur]
   OPTS.ax = T * (0.45 + 0.15 * sin(T * 0.11))
   OPTS.ay = T * (0.62 + 0.2 * sin(T * 0.07 + 1))
   OPTS.az = 0.4 * sin(T * 0.13)
@@ -231,9 +268,9 @@ function draw()
     o.r = floor(sd.r * (0.7 + 0.3 * hue)); o.g = floor(sd.g * (1 - 0.3 * hue)); o.b = sd.b
   end
 
-  if morphAt then
+  if age and (age < MORPH or (skinDrawn and not saved)) then
     -- the skin, sliding from the old solid's shape to the new one's
-    local u = (T - morphAt) / MORPH
+    local u = age / MORPH
     if u >= 1 then u = 1 end
     local e = u * u * (3 - 2 * u)
     local A, B = SKV[from], SKV[cur]
@@ -246,20 +283,18 @@ function draw()
     SKINOPTS.b = floor(a.b + (b.b - a.b) * e)
     SKINOPTS.mode = "solid"
     px.mesh(M, SKINOPTS)
+    skinDrawn = true
     if u >= 1 then
       -- arrived: this frame flows out under the real solid
-      morphAt = nil
-      px.save(LINES_SLOT)
-      LINES_SLOT, FADE_SLOT = FADE_SLOT, LINES_SLOT
-      xfAt = T
+      px.save(FADE_SLOT)
+      saved = true
     end
     return
   end
 
-  colour(s, OPTS)
-  OPTS.mode = s.mode
-  if s.mode == "wire" then px.mode("add") end
-  px.mesh(s.m, OPTS)
+  colour(sd, OPTS)
+  OPTS.mode = sd.mode
+  if sd.mode == "wire" then px.mode("add") end
+  px.mesh(sd.m, OPTS)
   px.mode("set")
-  px.save(LINES_SLOT)
 end
