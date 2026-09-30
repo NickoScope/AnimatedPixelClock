@@ -581,6 +581,12 @@ rest_command:
 
 ## Credits
 
+Thank you to [Waveshare](https://www.waveshare.com/) for the panels and the board: two
+[RGB-Matrix-P2-64x64-B](https://www.waveshare.com/rgb-matrix-p2-64x64.htm) panels and the
+[ESP32-S3-RGB-Matrix](https://www.waveshare.com/esp32-s3-rgb-matrix.htm) board. Everyone else this
+project stands on - the authors of the ideas and algorithms behind the effects, the data, the fonts -
+is in [CREDITS.md](CREDITS.md).
+
 This is a fork of [Keralots/AnimatedPixelClock](https://github.com/Keralots/AnimatedPixelClock)
 by Keralots: the clock styles, the ambient effects, the web portal, the PC
 companion and the audio visualizer come from there. Its sibling project for

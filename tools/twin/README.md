@@ -270,6 +270,8 @@ sudo rm -rf /opt/socket_vmnet /var/log/socket_vmnet
 
 The twin stands on other people's work. Thank you all.
 
+- **Waveshare**, for the panels and the board the twin copies: two [RGB-Matrix-P2-64x64-B](https://www.waveshare.com/rgb-matrix-p2-64x64.htm) panels and the [ESP32-S3-RGB-Matrix](https://www.waveshare.com/esp32-s3-rgb-matrix.htm) board, with its [board support package](https://github.com/waveshareteam/ESP32-S3-RGB-Matrix) and schematic.
+
 - **esp32sim**, the emulator the twin runs on: [Joakim Eriksson (@joakimeriksson)](https://github.com/joakimeriksson) and
   [Alice (@aliceisjustplaying)](https://github.com/aliceisjustplaying), MIT - https://github.com/joakimeriksson/esp32sim.
   It boots the real ESP32-S3 ROM and runs Espressif's own Wi-Fi blob, which is what made a true twin possible.
@@ -291,6 +293,7 @@ The twin stands on other people's work. Thank you all.
   (Benoît Blanchon), Adafruit GFX, PubSubClient (Nicholas O'Leary), arduinoWebSockets (Markus Sattler),
   IRremoteESP8266 (David Conran, Mark Szabo, Sébastien Warin, Ken Shirriff and others), QRCode (Richard Moore),
   [Lua 5.4](https://www.lua.org/) (PUC-Rio).
+- The authors of the ideas, algorithms, data and fonts behind the effects: [CREDITS.md](../../CREDITS.md).
 
 The Mac app bundles the esp32sim engine (MIT), the ESP32-S3 ROM (Apache-2.0) and the firmware (MIT); their
 notices are in the app (About) and in `tools/twin/app/NOTICE.md`.
