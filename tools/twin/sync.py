@@ -46,8 +46,8 @@ How each thing is copied (firmware 2.7.5, c4ddd3a; 2.7.6 changed no route):
   come from a real frame: tools/twin/learn_remote.txt), secrets, identity (name, MAC, address,
   Wi-Fi) and firmware state (metric names, usage counters, caches, crash report).
 
-The owner's override (2026-09-29 22:50) comes last, over whatever the copy brought: OVERRIDES below,
-climateHa off. The rail board publishes its station, retained, on every broker connect, and nothing in
+The owner's overrides come last, over whatever the copy brought: OVERRIDES below - climateHa off
+(2026-09-29 22:50) and fbAskHa off (2026-09-30 22:40). The rail board publishes its station, retained, on every broker connect, and nothing in
 the firmware switches that off (railboard.cpp:555-569): the twin keeps the panel's station, so run this
 again after changing the panel's.
 
@@ -55,10 +55,12 @@ The owner, 2026-09-30 19:35: the twin keeps no paid screen off by force. Its por
 (/api/keys, as the panel's: a key is written there and never given out), and its boards work from the
 keys entered there; secrets are never copied. So the trains and flights pages and the flight board's
 airport are copied like the rest, and the airport the old override added, NO_ASK, is removed from the
-twin. Without a key the twin makes no paid call of its own (aero_direct.cpp:725, rtt_direct.cpp:737). A
-twin that has a broker and no AeroAPI key asks Home Assistant for a built-in airport's board over MQTT
-(fb_mqtt.cpp:103-136, at most once per airport and half in 15 min and 12 an hour, fb_mqtt.cpp:24-45),
-as a panel without a key does.
+twin. Without a key the twin makes no paid call of its own (aero_direct.cpp:725, rtt_direct.cpp:737). Nor
+does it have one made for it: a board with a broker and no AeroAPI key asks Home Assistant for a built-in
+airport's board over MQTT (fb_mqtt.cpp:103-136, at most once per airport and half in 15 min and 12 an hour,
+fb_mqtt.cpp:24-45), and HA fetches it with the owner's key. The owner, 2026-09-30 22:40: a twin without a key
+of its own must not ask. Firmware 2.7.13 has the switch (fbAskHa, /api/export and /api/import only), and it
+is an override here; a twin whose firmware has no such switch and would ask is warned about.
 
 Tests: python3 -m unittest tools/twin/test_sync.py -v   (fake devices, no network)
 """
@@ -116,6 +118,11 @@ OVERRIDES = (
     ("form.climateHa", False,
      "the twin's indoor sensor as a second device in Home Assistant: switched off, the firmware sends the "
      "empty retained discovery configs, and HA removes the entities (climate.cpp:127-131, 165-182)"),
+    # The owner, 2026-09-30 22:40 (firmware 2.7.13, settings.fbAskHa).
+    ("export.fbAskHa", False,
+     "a twin without an AeroAPI key of its own asking Home Assistant for a flight board over MQTT: each ask is "
+     "a fetch HA pays for with the owner's key (fb_mqtt.cpp:24-45, 103-136); switched off, the retained boards "
+     "still come, free"),
 )
 OVERRIDE_NAMES = tuple(o[0] for o in OVERRIDES)
 
@@ -305,6 +312,8 @@ def settings_of(snap):
     s["identity.mac"] = norm_mac(info.get("mac"))
     s["firmware"] = f"{info.get('version')} ({info.get('build')})"
     s["secret.weatherApiKey"] = _flag(export.get("weatherApiKey") or form.get("weatherApiKey"))
+    if "fbAskHa" in export:                                  # firmware 2.7.13; only in export and import
+        s["export.fbAskHa"] = export["fbAskHa"]
 
     pn = snap.get("/api/panel")
     if pn:
@@ -737,6 +746,22 @@ def plan_overrides(p):
             continue
         if name == "form.climateHa":
             p.step("POST /api/import  {\"climateHa\":false}", "json", "/api/import", {"climateHa": False}, [name], True)
+        if name == "export.fbAskHa":
+            p.step("POST /api/import  {\"fbAskHa\":false}", "json", "/api/import", {"fbAskHa": False}, [name], True)
+
+
+def asks_ha(dsnap):
+    """Whether the twin would ask Home Assistant for flight boards and nothing can stop it: its firmware has no
+    fbAskHa, a broker is set (mqtt.configured), it has no AeroAPI key (or no direct fetch built), and the airport
+    shown is a built-in one - the only kind HA serves (fb_mqtt.cpp mayAsk)."""
+    exp, fb = dsnap.get("/api/export") or {}, dsnap.get("/api/flightboard") or {}
+    if "fbAskHa" in exp or not (fb.get("mqtt") or {}).get("configured"):
+        return False
+    direct = fb.get("direct") or {}
+    if direct.get("built") is not False and direct.get("key"):
+        return False
+    sel = next((a for a in fb.get("airports") or [] if a.get("id") == fb.get("airport")), {})
+    return sel.get("kind") == "builtin"
 
 
 def make_plan(ssnap, dsnap):
@@ -750,6 +775,10 @@ def make_plan(ssnap, dsnap):
     if (si.get("version"), si.get("build")) != (di.get("version"), di.get("build")):
         p.warnings.append(f"the panel runs {si.get('version')} ({si.get('build')}), the twin {di.get('version')} "
                           f"({di.get('build')}): a field only one of them has is listed below, not copied")
+    if asks_ha(dsnap):
+        p.warnings.append(f"the twin has an MQTT broker and no AeroAPI key, and its firmware {di.get('version')} has no "
+                          "fbAskHa (2.7.13): its flight board asks Home Assistant for a built-in airport's board, and HA "
+                          "pays for it with the owner's key - update the twin's firmware, or remove the broker from its settings")
     car = p.src.get("carousel") or {}
     if car.get("enabled") and car.get("allStyles"):
         p.warnings.append("the panel's carousel walks the clock styles, so its clockStyle is the one on screen now, "
@@ -787,7 +816,7 @@ def print_plan(p, steps=True, why=True):
     print(f"\ncopy from the panel ({len(copies)}):" if copies else "\ncopy from the panel: nothing differs")
     for n, _, a, b in copies:
         print(f"  {n:38} {show_change(p.value(n, a), p.value(n, b))}")
-    print("\nthe owner's override (2026-09-29 22:50), applied last:")
+    print("\nthe owner's overrides (2026-09-29 22:50, 2026-09-30 22:40), applied last:")
     reasons = {n: r for n, _, r in OVERRIDES}
     for n, _, a, b in (c for c in p.changes if c[1] == OVERRIDE):
         print(f"  {n:38} {show_change(a, b)}")

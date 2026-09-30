@@ -100,6 +100,8 @@ class Fake:
         self.home, self.home_chosen = 0, False
         self.crs, self.favourites, self.rb_from = "GLD", [], "ha"
         self.rb_token, self.aero_key, self.ais_key = False, False, False
+        self.fb_ask_ha = None                 # settings.fbAskHa (2.7.13); None: a firmware without it
+        self.mqtt_configured = False          # a broker in NVS (fb/host)
         self.airport, self.dir = 1, "alt"
         self.custom_apts = [None] * 6
         self.selections = []                  # (airport code, dir) each time the selection changed
@@ -141,6 +143,8 @@ class Fake:
                  "weatherApiKey": f["weatherApiKey"], "timezoneString": self.tz, "gmtOffset": self.gmt,
                  "daylightSaving": self.dst, "metricNames": ["x"] * 20, "spriteColors": list(self.colors)}
             e.update(copy.deepcopy(self.metrics))
+            if self.fb_ask_ha is not None:
+                e["fbAskHa"] = self.fb_ask_ha
             return e
         if path == "/api/panel":
             return {"pages": [{"i": i, "key": k, "on": v} for i, (k, v) in enumerate(self.pages.items())],
@@ -160,7 +164,7 @@ class Fake:
             return {"airport": self.airport, "dir": self.dir, "airports": self.airports(),
                     "limits": {"custom": 6, "name": 12, "namePx": 56, "advance": [4] * 95},
                     "direct": {"built": True, "key": self.aero_key, "budget": dict(self.budget)},
-                    "tracked": [{"ident": t} for t in self.tracked]}
+                    "tracked": [{"ident": t} for t in self.tracked], "mqtt": {"configured": self.mqtt_configured}}
         if path == "/api/market":
             return {"config": copy.deepcopy(self.market),
                     "registry": {"rows": [{"key": k, "group": g} for k, g in self.market_groups.items()]}}
@@ -224,6 +228,8 @@ class Fake:
         if path == "/api/import":
             if "climateHa" in d:
                 self.form["climateHa"] = bool(d["climateHa"])
+            if "fbAskHa" in d and self.fb_ask_ha is not None:     # web.cpp handleImportConfig: a bool only
+                self.fb_ask_ha = bool(d["fbAskHa"])
             if "timezoneString" in d:
                 self.tz, self.form["timezoneRegion"] = d["timezoneString"], -1
             return {"success": True}
@@ -580,7 +586,8 @@ class Overrides(unittest.TestCase):
             src = f.read()
         self.assertIn("The owner, 2026-09-29 22:50", src)
         self.assertIn("The owner, 2026-09-30 19:35", src)
-        self.assertEqual(S.OVERRIDE_NAMES, ("form.climateHa",))
+        self.assertIn("The owner, 2026-09-30 22:40", src)
+        self.assertEqual(S.OVERRIDE_NAMES, ("form.climateHa", "export.fbAskHa"))
 
     def test_applied_last_and_the_copy_never_touches_them(self):
         p, t = panel_and_twin()
@@ -662,6 +669,38 @@ class PaidScreens(unittest.TestCase):
         self.assertEqual(len(writes(t)), n)
         self.assertIn("requests to the twin: none", out)
         self.assertIn("false on the twin, as the override wants (the panel: false)", out)
+
+
+class AskHa(unittest.TestCase):
+    """The owner, 2026-09-30 22:40: a twin without an AeroAPI key of its own never asks Home Assistant for a flight
+    board (each ask is a fetch HA pays for with the owner's key). Firmware 2.7.13: settings.fbAskHa."""
+
+    def test_switched_off_on_the_twin_last_and_never_copied(self):
+        p, t = panel_and_twin()
+        p.fb_ask_ha = t.fb_ask_ha = True                   # both on 2.7.13, the default: ask
+        code, out = run_sync(Net(p, t), "--apply")
+        self.assertEqual(code, 0, out)
+        self.assertIs(t.fb_ask_ha, False)
+        self.assertIs(p.fb_ask_ha, True)                   # the panel is only read
+        bodies = [json.loads(r[2]) for r in writes(t) if r[1] == "/api/import"]
+        self.assertEqual([b for b in bodies if "fbAskHa" in b], [{"fbAskHa": False}])
+        self.assertIn("export.fbAskHa", out)
+        code, out = run_sync(Net(p, t), "--apply")        # a second run: nothing to switch
+        self.assertEqual(code, 0, out)
+        self.assertIn("requests to the twin: none", out)
+
+    def test_a_twin_that_cannot_be_stopped_is_warned_about(self):
+        p, t = panel_and_twin()
+        t.mqtt_configured = True                          # a broker, no key, firmware without fbAskHa, LFMN built in
+        code, out = run_sync(Net(p, t), "--dry-run")
+        self.assertEqual(code, 0, out)
+        self.assertIn("has no fbAskHa (2.7.13)", out)
+        t.fb_ask_ha = True                                 # 2.7.13: the override stops it, no warning
+        code, out = run_sync(Net(p, t), "--dry-run")
+        self.assertNotIn("has no fbAskHa (2.7.13)", out)
+        t.fb_ask_ha, t.aero_key = None, True               # a key of its own: the board is the direct fetch's
+        code, out = run_sync(Net(p, t), "--dry-run")
+        self.assertNotIn("has no fbAskHa (2.7.13)", out)
 
 
 class Afterwards(unittest.TestCase):
