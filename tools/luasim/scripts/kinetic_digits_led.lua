@@ -4,16 +4,18 @@
 -- @name.ru Кинетические цифры
 -- @about.en A mechanical flip-digit board made of LEDs: seven-segment digits whose segments flip over in
 -- @about.en waves across the board. It runs a program of 12 scenes: running text, plasma, rings, a large
--- @about.en clock, the Game of Life, a cube, and a mode where every LED is a flip dot.
+-- @about.en clock, the Game of Life, a cube, and a mode where every LED is a flip dot. The program runs by
+-- @about.en the clock, the same scene at the same moment on every panel.
 -- @about.ru Механическое табло из перекидных цифр, собранное из светодиодов: сегменты семисегментных
 -- @about.ru цифр переворачиваются волной по табло. Идёт программа из 12 сцен: бегущий текст, плазма,
 -- @about.ru кольца, большие часы, «Жизнь» Конвея, куб и режим, где каждый светодиод — флип-точка.
+-- @about.ru Программа идёт по часам, одинаково на всех панелях.
 -- @control.en knob press: Next scene, and it stays on screen. Its name shows for a second.
 -- @control.en knob press x2: Previous scene, and it stays on screen.
--- @control.en knob press x3: Back to the automatic program (AUTO).
+-- @control.en knob press x3: Back to the automatic program, which follows the clock (AUTO).
 -- @control.ru knob press: Следующая сцена, и она остаётся на экране. Её название видно секунду.
 -- @control.ru knob press x2: Предыдущая сцена, и она остаётся на экране.
--- @control.ru knob press x3: Возврат к автоматической программе (AUTO).
+-- @control.ru knob press x3: Возврат к автоматической программе по часам (AUTO).
 -- @function.en 12 scenes, 18–30 s each
 -- @function.en A clock scene among them
 -- @function.en Scenes flow into each other (firmware 2.7.5 or later)
@@ -56,10 +58,16 @@
 -- frames: a slow frame shows a flip later in its course, never slower.
 --
 -- It runs its own program of scenes (SHOW below), a change of grid going out
--- as a wave and coming back in. The knob's click or the remote's OK on this
--- page (px.button, firmware 2.7.3+) picks a scene, counted over 0.45 s as
--- OCEANARIUM counts them: one press the next scene, two the one before, and a
--- chosen scene stays until three presses hand the board back to the program.
+-- as a wave and coming back in. The program runs on the wall clock, not on
+-- the time since the page opened: it is PERIOD = 266 s long (the scenes'
+-- seconds added up), and px.t() - the phase the firmware aligns to the epoch -
+-- says where in it the clock is, so every panel with NTP shows the same scene
+-- and changes at the same moment, and a page opened late starts at the
+-- clock's scene. The knob's click or the remote's OK on this
+-- page (px.button, firmware 2.7.3+) picks a scene, counted over 0.45 s of the
+-- clock as OCEANARIUM counts them: one press the next scene, two the one
+-- before, and a chosen scene stays until three presses hand the board back
+-- to the program, at the scene the clock has reached (not the next one).
 -- The scene's name shows for a second on the dark board before it fills.
 --
 -- A change of scene flows (firmware 2.7.5+, px.mix): the new board starts at
@@ -69,7 +77,6 @@
 -- the old picture waits in slot 2. On older firmware the board goes out as a
 -- wave first, as before.
 
-PERIOD = 600.0
 FPS = 15
 
 local floor, sin, cos, sqrt, abs = math.floor, math.sin, math.cos, math.sqrt, math.abs
@@ -96,6 +103,10 @@ local SHOW = {
   { mode = "dots", src = "ball", pal = "src", style = "plate", secs = 25 },
   { mode = "digits", size = "4x7", src = "plasma", pal = "src", style = "plate", secs = 18 },
 }
+-- Where each scene starts in the program, and PERIOD its length: px.t() is
+-- then the program's clock.
+PERIOD = 0.0
+for i = 1, #SHOW do SHOW[i].at = PERIOD; PERIOD = PERIOD + SHOW[i].secs end
 local THR, INV = 110, false
 local DFPS = 12                     -- board updates a second
 local FLIP = 0.160                  -- seconds a flip takes
@@ -206,7 +217,7 @@ local function field_grid(Wc, Hc)
 end
 local ACTIVE, NACT = {}, 0                            -- the segments or dots in flight
 local INACT = {}
-local scene, sceneAt, going = 1, 0, false
+local scene, going = 1, false
 local DOTS = false
 
 local function segrects(s, cw, ch, ital)
@@ -1638,7 +1649,7 @@ local function draw_active(style)
 end
 
 -- ── the program ─────────────────────────────────────────────────────────────
-local BTN = { last = nil, n = 0, at = 0, title = false }
+local BTN = { last = nil, n = 0, at = 0, title = false, pin = nil }   -- pin: the scene picked by hand
 local nextScene = 2
 local hold = false                  -- a scene picked by hand stays
 local titleUntil = -1
@@ -1648,7 +1659,6 @@ local function scene_name(sc)
 end
 local function start_scene(k, title)
   scene = (k - 1) % #SHOW + 1
-  sceneAt = T
   going = false
   build(SHOW[scene])
   life = nil
@@ -1670,6 +1680,27 @@ end
 -- A change by hand flows in half a second: the scene's name has to read
 -- clearly in its one second on the dark board.
 local FL = { mix = rawget(px, "mix") ~= nil, secs = 2.0, auto = 2.0, hand = 0.5, at = nil, old = 2, new = 3 }
+
+-- The program's scene c seconds into it (the last answer first: it holds for
+-- the scene's seconds).
+FL.ci = 1
+FL.scene_at = function(c)
+  local sc = SHOW[FL.ci]
+  if c >= sc.at and c < sc.at + sc.secs then return FL.ci end
+  local i = #SHOW
+  while i > 1 and c < SHOW[i].at do i = i - 1 end
+  FL.ci = i
+  return i
+end
+-- The seconds into the program from px.now(), for the load, where px.t() is
+-- not on PERIOD yet: the UTC seconds since 1970 (an int32 until 2038) in
+-- integers - a float would round them to 128 s.
+FL.now_in_program = function()
+  local n = px.now()
+  local y = n.year
+  local days = 365 * (y - 1970) + (y - 1969) // 4 - (y - 1901) // 100 + (y - 1601) // 400 + n.yday
+  return (days * 86400 + n.hour * 3600 + n.min * 60 + n.sec - floor(n.utc * 3600 + 0.5)) % floor(PERIOD)
+end
 
 -- the board goes out as a wave; when it is dark the chosen scene comes in.
 -- With px.mix it does not wait: the scene flows in over the old picture.
@@ -1701,25 +1732,31 @@ end
 
 -- The effect's button (px.button, firmware 2.7.3+), presses grouped over
 -- 0.45 s - what worked with the remote on OCEANARIUM: the remote holds the
--- switch 250 ms after its last frame, so its clicks come ~0.4 s apart.
+-- switch 250 ms after its last frame, so its clicks come ~0.4 s apart. The
+-- window is in the clock's seconds (c, into the program), and a gesture is
+-- read at its last press plus the window: the board's scene then is the one
+-- picked by hand, else the program's.
 local MULTI = 0.45
-local function buttons()
+local function buttons(c)
   local btn = rawget(px, "button")
   if not btn then return end
   local n = btn()
-  if BTN.last and n ~= BTN.last then BTN.n, BTN.at = BTN.n + (n - BTN.last), T end
+  if BTN.last and n ~= BTN.last then BTN.n, BTN.at = BTN.n + (n - BTN.last), c end
   BTN.last = n
-  if BTN.n > 0 and T - BTN.at > MULTI then
+  if BTN.n > 0 and (c - BTN.at) % PERIOD > MULTI then
     local k = BTN.n
     BTN.n = 0
-    if k == 1 then hold = true; BTN.title = true; go_to(scene + 1)
-    elseif k == 2 then hold = true; BTN.title = true; go_to(scene - 1)
-    else hold = false; BTN.title = "AUTO"; go_to(scene + 1) end
+    local at = (BTN.at + MULTI) % PERIOD
+    local cur = hold and BTN.pin or FL.scene_at(at)
+    if k == 1 then hold = true; BTN.pin = cur % #SHOW + 1; BTN.title = true
+    elseif k == 2 then hold = true; BTN.pin = (cur - 2) % #SHOW + 1; BTN.title = true
+    else hold = false; BTN.title = "AUTO" end
+    go_to(hold and BTN.pin or FL.scene_at(at))
   end
 end
 
 capture_glyphs()
-start_scene(1)
+start_scene(FL.scene_at(FL.now_in_program()))   -- the clock's scene, without its name
 
 function draw()
   local t = px.t() * PERIOD
@@ -1735,9 +1772,11 @@ function draw()
   T = T + dt
   DT = dt
 
-  buttons()
-  local sc = SHOW[scene]
-  if not going and not hold and T - sceneAt > sc.secs and T > titleUntil then go_to(scene + 1) end
+  buttons(t)
+  -- the scene picked by hand, else the program's by the clock: a change when
+  -- it is not the one on the board (or on its way), once a name has been read
+  local want = hold and BTN.pin or FL.scene_at(t)
+  if want ~= (going and nextScene or scene) and T > titleUntil then go_to(want) end
   local flowing = FL.at ~= nil
   if flowing then px.restore(FL.new) end
   FL.frame(SHOW[scene])

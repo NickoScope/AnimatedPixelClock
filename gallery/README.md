@@ -354,9 +354,9 @@ The panel pretends to be a mechanical flip board. Every digit is seven segments 
 - a turning cube;
 - on the dot board, a wire cube and a wire ball that fly, spin and bounce off the edges by physics, shimmering like the plasma, the ball with four laser beams.
 
-A change of scene flows: the new board starts at once and flips in from dark while the old picture dissolves over it in two seconds. A scene picked by hand flows in half a second, and its name shows for a second before the board fills. On firmware before 2.7.5 the board goes out as a wave first instead.
+The program runs by the clock: it is 266 seconds round, the scenes' lengths added up, so every panel shows the same scene and changes at the same moment, and a page opened late starts at the clock's scene. A change of scene flows: the new board starts at once and flips in from dark while the old picture dissolves over it in two seconds. A scene picked by hand flows in half a second, and its name shows for a second before the board fills. On firmware before 2.7.5 the board goes out as a wave first instead.
 
-**The button.** The knob's click or the remote's OK on this page picks a scene: one press the next scene, two the one before. A chosen scene stays until three presses hand the board back to the program.
+**The button.** The knob's click or the remote's OK on this page picks a scene: one press the next scene, two the one before. A chosen scene stays until three presses hand the board back to the program, at the scene the clock has reached.
 
 **How it is drawn.** A picture is never drawn in full. Each source is a function evaluated only at the points where a digit samples it: two samples across and two down for the upright segments, three down for the level ones. This sampling is Ksawery Kirklewski's idea, from his Flipdigits Player, and it is what makes the board affordable on this processor. The code was written from scratch. It needs firmware 2.7.3 or later for the button. On the panel it runs at about 15 fps.
 
