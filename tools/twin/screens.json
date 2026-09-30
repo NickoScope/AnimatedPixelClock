@@ -92,9 +92,9 @@
      "remote": [
       "home"
      ],
-     "en": "Back to the clock; the clip stops.",
-     "ru": "Домой, на часы; клип выключается.",
-     "source": "src/ir/ir_actions.cpp:126-128; src/main.cpp:892"
+     "en": "Back to the clock; the clip stops (in the screensaver’s scheduled hours it plays on).",
+     "ru": "Домой, на часы; клип выключается (в часы заставки по расписанию — продолжает играть).",
+     "source": "src/ir/ir_actions.cpp:126-128; src/main.cpp:892; src/web/web.cpp:838-840; src/web/web_panel.cpp:1250-1255; src/ambient/ambient.cpp:16-30"
     }
    ],
    "functions": {
@@ -268,9 +268,9 @@
       "en": "Portal / Home Assistant",
       "ru": "Портал / Home Assistant"
      },
-     "en": "“Clock” mode shows the clock over the stats; “auto” gives them back.",
-     "ru": "Режим «часы» показывает часы поверх показателей; «авто» возвращает их.",
-     "source": "src/web/web.cpp:327-328, 610-614"
+     "en": "“Clock” mode shows the clock instead of the stats; “auto” gives them back.",
+     "ru": "Режим «часы» показывает часы вместо показателей; «авто» возвращает их.",
+     "source": "src/web/web.cpp:327-328, 610-614; src/main.cpp:1399-1400"
     },
     {
      "on": {
@@ -592,9 +592,9 @@
       "en": "Knob press, 3rd",
       "ru": "Нажатие ручки, 3-е"
      },
-     "en": "Out: turning walks the pages again.",
-     "ru": "Выход: поворот снова листает страницы.",
-     "source": "src/railboard/railboard.cpp:665-666; src/main.cpp:1132-1136"
+     "en": "Out: turning walks the pages again. Without a list of stations this is the 2nd press.",
+     "ru": "Выход: поворот снова листает страницы. Без списка станций это уже 2-е нажатие.",
+     "source": "src/railboard/railboard.cpp:660-667; src/main.cpp:1132-1136"
     },
     {
      "on": {
@@ -1081,7 +1081,7 @@
      "Ошибка в скрипте — на экране LUA ERROR и имя эффекта; если снова выбрать страницу, он запустится заново."
     ]
    },
-   "source": "src/main.cpp:96-108, 137-139, 708-724, 809-822, 1106-1110, 1183-1199; src/web/web_panel.cpp:1019-1058; src/lua/lua_effects.cpp:642-648, 738; src/lua/README.md:72-76, 131-133"
+   "source": "src/main.cpp:96-108, 137-139, 708-724, 809-822, 1106-1110, 1183-1199; src/web/web_panel.cpp:1019-1058; src/lua/lua_effects.cpp:642-648, 738; src/lua/README.md:72-76, 142-144"
   }
  ],
  "effects": {
@@ -1150,9 +1150,9 @@
     "en": "Double press",
     "ru": "Двойное нажатие"
    },
-   "en": "No double press: two presses are simply two presses.",
-   "ru": "Двойного нажатия нет: два нажатия — это просто два нажатия.",
-   "source": "src/control/control.h:39-45"
+   "en": "No double press: two presses are simply two presses. A Lua effect may count them itself.",
+   "ru": "Двойного нажатия нет: два нажатия — это просто два нажатия. Lua-эффект может сам их сосчитать.",
+   "source": "src/control/control.h:39-45; src/main.cpp:1110; src/lua/lua_px.cpp:407-410"
   },
   {
    "on": {
@@ -1281,7 +1281,7 @@
    },
    "en": "Restarts the panel; settings and uploaded effects stay.",
    "ru": "Перезапуск панели; настройки и загруженные эффекты сохраняются.",
-   "source": "esp32sim web/panel.html:129; src/panel/panel.h:9-11; src/lua/lua_store.h:113"
+   "source": "esp32sim web/panel.html:158 (#rst); src/panel/panel.h:9-11; src/lua/lua_store.h:113"
   },
   {
    "on": {

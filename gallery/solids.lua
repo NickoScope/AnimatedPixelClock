@@ -9,8 +9,8 @@
 -- @about.en into the next.
 -- @about.ru Платоновы тела (тетраэдр, куб, октаэдр, икосаэдр) вращаются среди медленно плывущих звёзд:
 -- @about.ru освещённые, каркасом или и так и так. Каждые 20 с фигура на экране перетекает в следующую.
--- @control.en knob press: Next solid now.
--- @control.ru knob press: Сразу следующая фигура.
+-- @control.en knob press: Next solid now (unless one is already reshaping).
+-- @control.ru knob press: Сразу следующая фигура (если смена уже не идёт).
 -- @function.en 4 solids, 20 s each
 -- @function.en No clock
 -- @function.en Needs firmware 2.7.6 or later

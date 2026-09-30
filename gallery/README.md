@@ -507,8 +507,10 @@ they are Lua comments. Every script here carries them.
   `control` or `function`, the language two small letters (`en`, `ru`). The
   page shows the viewer's language, else English.
 - Only the header counts: the lines from the top of the file down to the first
-  line that is neither blank nor a `--` comment. A tag below that, or inside a
-  `--[[ ]]` block, is never read. Put them right after the title comment.
+  line that is neither blank nor a `--` comment. A tag below that is never
+  read. Keep them out of `--[[ ]]` blocks: the page does not track those, and
+  a line inside one that does not start with `--` ends the header. Put them
+  right after the title comment.
 - `@name`: one line, what the screen is called in that language. Without it
   the page uses the effect's name as the panel shows it.
 - `@about`: what it shows, in plain words. Several lines of one language are

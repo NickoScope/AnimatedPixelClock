@@ -178,7 +178,7 @@
       "name": "SOLIDS",
       "file": "solids.lua",
       "line": "the Platonic solids turning among slow stars",
-      "bytes": 11710,
+      "bytes": 11787,
       "preview": "preview/solids.png"
     },
     {
@@ -220,7 +220,7 @@
       "name": "VORTEX",
       "file": "vortex.lua",
       "line": "light poured into a whirlpool that never ends",
-      "bytes": 5759,
+      "bytes": 5873,
       "preview": "preview/vortex.png"
     },
     {

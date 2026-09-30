@@ -14,8 +14,10 @@
 -- @control.ru knob press: Сразу следующая фигура.
 -- @function.en 5 shapes, 30 s each
 -- @function.en No clock
+-- @function.en Needs firmware 2.7.5 or later
 -- @function.ru 5 фигур по 30 с
 -- @function.ru Часов нет
+-- @function.ru Нужна прошивка 2.7.5 или новее
 --
 -- A few bright shapes are drawn at the middle each frame, and px.feedback
 -- does the rest: every frame the whole picture is resampled a little larger,
