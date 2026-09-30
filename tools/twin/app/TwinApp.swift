@@ -693,11 +693,24 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNav
     @objc func showData() { NSWorkspace.shared.activateFileViewerSelecting([twin.p.data]) }
     @objc func showLog() { NSWorkspace.shared.open(twin.p.log) }
     @objc func about() {
-        alert(APP_NAME,
-              L("The virtual twin of the NickoScopeMatrix LED panel: the real AnimatedPixelClock firmware on an emulated ESP32-S3 and HUB75 panel (the esp32sim engine, fork NickoScope/TWIN-NickoScopeMatrix-64x128).",
-                "Виртуальный двойник LED-панели NickoScopeMatrix: настоящая прошивка AnimatedPixelClock на эмулированном ESP32-S3 и HUB75 (движок esp32sim, форк NickoScope/TWIN-NickoScopeMatrix-64x128).")
-              + "\n\n" + L("Firmware in the app: ", "Прошивка в приложении: ") + twin.p.firmwareVersion
-              + "\n" + L("The twin's data: ", "Данные двойника: ") + twin.p.data.path)
+        let a = NSAlert(); a.messageText = APP_NAME
+        a.informativeText = L("The virtual twin of the NickoScopeMatrix LED panel: the real AnimatedPixelClock firmware on an emulated ESP32-S3 and HUB75 panel.",
+                              "Виртуальный двойник LED-панели NickoScopeMatrix: настоящая прошивка AnimatedPixelClock на эмулированном ESP32-S3 и HUB75.")
+            + "\n\n" + L("Firmware in the app: ", "Прошивка в приложении: ") + twin.p.firmwareVersion
+            + "\n" + L("The twin's data: ", "Данные двойника: ") + twin.p.data.path
+            + "\n\n" + L("Thank you to the authors whose work this is built on:", "Спасибо авторам, на чьей работе это построено:")
+            + "\n• esp32sim — Joakim Eriksson (@joakimeriksson), Alice (@aliceisjustplaying), MIT"
+            + "\n• AnimatedPixelClock — Keralots, MIT; " + L("the fork", "форк") + " NickoScope"
+            + "\n• ESP32-HUB75-MatrixPanel-DMA — mrcodetastic"
+            + "\n• Espressif — " + L("the ESP32-S3 ROM, ESP-IDF, arduino-esp32, esptool, esptool-js", "ПЗУ ESP32-S3, ESP-IDF, arduino-esp32, esptool, esptool-js")
+            + "\n• ESP Web Tools — ESPHome; Improv Wi-Fi; Improv WiFi Library — jnthas"
+            + "\n• socket_vmnet — " + L("the Lima project", "проект Lima")
+            + "\n• " + L("the firmware's libraries: WiFiManager, ArduinoJson, Adafruit GFX, PubSubClient, arduinoWebSockets, IRremoteESP8266, QRCode, Lua",
+                          "библиотеки прошивки: WiFiManager, ArduinoJson, Adafruit GFX, PubSubClient, arduinoWebSockets, IRremoteESP8266, QRCode, Lua")
+        a.addButton(withTitle: "OK"); a.addButton(withTitle: L("Licenses…", "Лицензии…"))
+        if a.runModal() == .alertSecondButtonReturn, let n = Bundle.main.url(forResource: "NOTICE", withExtension: "md") {
+            NSWorkspace.shared.open(n)
+        }
     }
 
     // Links that leave the page open in the default browser.

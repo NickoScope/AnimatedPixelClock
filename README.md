@@ -586,11 +586,20 @@ by Keralots: the clock styles, the ambient effects, the web portal, the PC
 companion and the audio visualizer come from there. Its sibling project for
 small OLED screens is [SmallOLED-PCMonitor](https://github.com/Keralots/SmallOLED-PCMonitor).
 
+The virtual twin (see "Virtual twin" above) runs on [esp32sim](https://github.com/joakimeriksson/esp32sim) by
+Joakim Eriksson (@joakimeriksson) and Alice (@aliceisjustplaying), MIT; its other building blocks and their
+authors are listed in [tools/twin/README.md](tools/twin/README.md#authors-and-thanks). Thank you.
+
 ## Libraries
 
-- [ESP32-HUB75-MatrixPanel-DMA](https://github.com/mrcodetastic/ESP32-HUB75-MatrixPanel-I2S-DMA) (matrix driver)
-- Adafruit GFX, WiFiManager (tzapu), ArduinoJson, Improv-Serial
-- [Lua 5.4](https://www.lua.org/) for the effects
+- [ESP32-HUB75-MatrixPanel-DMA](https://github.com/mrcodetastic/ESP32-HUB75-MatrixPanel-DMA) by mrcodetastic (matrix driver)
+- [WiFiManager](https://github.com/tzapu/WiFiManager) (tzapu, tablatronix), [ArduinoJson](https://arduinojson.org/) (Benoît Blanchon),
+  [Adafruit GFX](https://github.com/adafruit/Adafruit-GFX-Library) (Adafruit)
+- [Improv WiFi Library](https://github.com/jnthas/Improv-WiFi-Library) (jnthas), [QRCode](https://github.com/ricmoo/QRCode) (Richard Moore)
+- [PubSubClient](https://github.com/knolleary/pubsubclient) (Nicholas O'Leary), [arduinoWebSockets](https://github.com/Links2004/arduinoWebSockets) (Markus Sattler)
+- [IRremoteESP8266](https://github.com/crankyoldgit/IRremoteESP8266) (David Conran, Mark Szabo, Sébastien Warin, Ken Shirriff and others)
+- [Lua 5.4](https://www.lua.org/) (PUC-Rio) for the effects
+- [ESP Web Tools](https://github.com/esphome/esp-web-tools) (ESPHome) and [esptool-js](https://github.com/espressif/esptool-js) (Espressif) for the web flasher
 
 ## License
 

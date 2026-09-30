@@ -258,3 +258,32 @@ sudo rm -rf /opt/socket_vmnet /var/log/socket_vmnet
 
 Только выключить до следующих испытаний — первая строка. Включить снова — `bootstrap` и
 `kickstart` из установки.
+
+## Authors and thanks
+
+The twin stands on other people's work. Thank you all.
+
+- **esp32sim**, the emulator the twin runs on: [Joakim Eriksson (@joakimeriksson)](https://github.com/joakimeriksson) and
+  [Alice (@aliceisjustplaying)](https://github.com/aliceisjustplaying), MIT - https://github.com/joakimeriksson/esp32sim.
+  It boots the real ESP32-S3 ROM and runs Espressif's own Wi-Fi blob, which is what made a true twin possible.
+  Our additions are the fork https://github.com/NickoScope/TWIN-NickoScopeMatrix-64x128 (NICKOSCOPE.md lists them).
+- **AnimatedPixelClock**, the firmware the twin runs: [Keralots](https://github.com/Keralots/AnimatedPixelClock), MIT;
+  the fork [NickoScope/AnimatedPixelClock](https://github.com/NickoScope/AnimatedPixelClock).
+- **ESP32-HUB75-MatrixPanel-DMA** by [mrcodetastic](https://github.com/mrcodetastic/ESP32-HUB75-MatrixPanel-DMA):
+  the panel driver whose output the twin's HUB75 decoder reads back into light.
+- **Espressif**: the ESP32-S3 mask ROM ([esp-rom-elfs](https://github.com/espressif/esp-rom-elfs), Apache-2.0),
+  ESP-IDF and [arduino-esp32](https://github.com/espressif/arduino-esp32), the ESP32-S3 Technical Reference
+  Manual the models follow, [esptool](https://github.com/espressif/esptool) and
+  [esptool-js](https://github.com/espressif/esptool-js) (Apache-2.0).
+- **ESP Web Tools** by the [ESPHome maintainers](https://github.com/esphome/esp-web-tools) (Apache-2.0): the
+  web flasher; **Improv Wi-Fi** ([improv-wifi.com](https://www.improv-wifi.com/)) and the
+  [Improv WiFi Library](https://github.com/jnthas/Improv-WiFi-Library) by jnthas (MIT).
+- **socket_vmnet** by the [Lima project](https://github.com/lima-vm/socket_vmnet) (Apache-2.0): the twin's bridge
+  to the home network.
+- The firmware's libraries, which the twin runs as they are: WiFiManager (tzapu, tablatronix), ArduinoJson
+  (Benoît Blanchon), Adafruit GFX, PubSubClient (Nicholas O'Leary), arduinoWebSockets (Markus Sattler),
+  IRremoteESP8266 (David Conran, Mark Szabo, Sébastien Warin, Ken Shirriff and others), QRCode (Richard Moore),
+  [Lua 5.4](https://www.lua.org/) (PUC-Rio).
+
+The Mac app bundles the esp32sim engine (MIT), the ESP32-S3 ROM (Apache-2.0) and the firmware (MIT); their
+notices are in the app (About) and in `tools/twin/app/NOTICE.md`.

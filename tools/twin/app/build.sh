@@ -52,6 +52,7 @@ cp "$ROM" "$RES/rom/"
 cp "$EFUSE" "$RES/efuse-opi.txt"
 cp "$IMAGE" "$RES/firmware/merged.bin"
 echo "$VERSION" > "$RES/firmware/VERSION"
+cp "$HERE/NOTICE.md" "$RES/NOTICE.md"                             # the bundled works' licenses
 # The web pages, made by twin.py's own build_web, so the page and the flasher are the ones twin.py serves.
 TWIN_HOME="$TWIN_HOME" TWIN_ENGINE="$ENGINE" python3 -c "import sys; sys.path.insert(0, '$TWIN_DIR'); import twin; twin.build_web('$BUILD/web')" >/dev/null
 cp -R "$BUILD/web" "$RES/web"
