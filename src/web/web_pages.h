@@ -2009,7 +2009,8 @@ drop.addEventListener('drop', function (e) { var f = e.dataTransfer.files[0]; if
 // A newer release on the web flasher's GitHub Pages site: its VERSION file and
 // the OTA image next to it, which Pages serves to any page (CORS *). Checked
 // once a load, quietly - a panel without internet just shows nothing. Only for
-// the board the releases are built for (/api/portal "board").
+// the board the releases are built for (/api/portal "board"). No Referer goes
+// with it: the panel's LAN address is nobody else's business.
 var FW_LATEST = 'https://nickoscope.github.io/AnimatedPixelClock/firmware/latest/';
 var fwNew = null;
 function verNum(v) { var m = /^v?(\d+)\.(\d+)\.(\d+)/.exec(v || ''); return m ? [+m[1], +m[2], +m[3]] : null; }
@@ -2017,8 +2018,9 @@ function verNewer(a, b) { for (var i = 0; i < 3; i++) if (a[i] !== b[i]) return 
 function checkFirmwareUpdate(d) {
 if (fwNew !== null || d.board !== 'waveshare') return;
 fwNew = false;
-fetch(FW_LATEST + 'VERSION', { cache: 'no-store' }).then(function (r) { if (!r.ok) throw new Error(); return r.text(); }).then(function (t) {
+fetch(FW_LATEST + 'VERSION', { cache: 'no-store', referrerPolicy: 'no-referrer' }).then(function (r) { if (!r.ok) throw new Error(); return r.text(); }).then(function (t) {
 var latest = t.trim(), have = verNum(d.ver), want = verNum(latest);
+if (/-/.test(latest)) return;   // a pre-release is not offered: its file and tag carry the suffix
 if (!have || !want || !verNewer(want, have)) return;
 fwNew = 'v' + want.join('.');
 $('#fwNewTag').textContent = fwNew;
@@ -2037,7 +2039,7 @@ var btn = this, name = 'OTA_ONLY_firmware-' + fwNew + '-waveshare.bin';
 btn.disabled = true;
 var prog = $('#otaProgress'), pct = $('#otaPct');
 prog.classList.add('show'); pct.textContent = 'Downloading ' + fwNew + ' from GitHub...';
-fetch(FW_LATEST + name, { cache: 'no-store' }).then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.blob(); })
+fetch(FW_LATEST + name, { cache: 'no-store', referrerPolicy: 'no-referrer' }).then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.blob(); })
 .then(function (b) { doUpload(new File([b], name)); })
 .catch(function (err) { btn.disabled = false; pct.textContent = 'Could not download ' + name + ' (' + err.message + '). Get it from the release page and drop it below.'; });
 });
