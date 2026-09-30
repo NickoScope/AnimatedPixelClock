@@ -10,9 +10,13 @@ protocol, standard library only:
      firmware version, and nothing throws;
   2. the port: /flasher/selftest.html?twin=auto&run=1 - the shim against the Web Serial draft, then
      esptool-js 0.6.0 (the one inside ESP Web Tools 10.4.0) through it: reset into download mode,
-     stub, flash ID, the hard reset ESP Web Tools does after flashing. Nothing is written to flash.
+     stub, flash ID, the hard reset ESP Web Tools does after flashing. Nothing is written to flash;
+  3. the language (twin-lang.js): ?lang=ru puts the twin's note and the title in Russian and keeps it
+     in localStorage, the port chooser follows window.twinSetLang while it is open, and the self-test
+     page takes the kept language and its EN button switches it back. Runs between 1 and 2 and leaves
+     English kept.
 
-  python3 tools/twin/flasher/check_flasher.py --port 8790 [--chrome PATH] [--only page|port]
+  python3 tools/twin/flasher/check_flasher.py --port 8790 [--chrome PATH] [--only page|lang|port]
 
 Exit status 0 all passed, 1 something failed, 2 not run (no Chrome, no twin). Loads ESP Web Tools and
 esptool-js from unpkg.com, as the page does, so it needs the internet.
@@ -127,8 +131,10 @@ class Chrome:
                 self.events.append(m)
         raise TimeoutError(method)
 
-    def eval(self, expr, timeout=30):
-        r = self.call("Runtime.evaluate", {"expression": expr, "returnByValue": True, "awaitPromise": True}, timeout)
+    def eval(self, expr, timeout=30, gesture=False):
+        """EXPR's value; GESTURE runs it as if from a click (user activation, which requestPort needs)."""
+        r = self.call("Runtime.evaluate", {"expression": expr, "returnByValue": True, "awaitPromise": True,
+                                           "userGesture": gesture}, timeout)
         if "exceptionDetails" in r:
             raise RuntimeError(r["exceptionDetails"].get("text", "exception"))
         return r["result"].get("value")
@@ -196,6 +202,64 @@ def page(c, base):
     check("page: no exceptions or console errors", not bad, "; ".join(bad))
 
 
+def lang(c, base):
+    since = len(c.events)
+    c.call("Page.navigate", {"url": f"{base}/flasher/index.html?lang=ru"})
+    ready = c.wait("!!(location.search === '?lang=ru' && window.twinLang && document.getElementById('twin-banner') "
+                   "&& document.readyState !== 'loading')", 20)
+    ru = c.eval("""(() => { const b = document.getElementById('twin-banner'); if (!b) return null;
+        return { title: document.title, note: b.lang, html: document.documentElement.lang,
+                 link: b.querySelector('a').getAttribute('href'), text: b.querySelector('a').textContent,
+                 pressed: b.querySelector('button[aria-pressed="true"]').dataset.lang,
+                 kept: localStorage.getItem('twin-lang') }; })()""") if ready else None
+    check("lang: ?lang=ru puts the twin's note and title in Russian and keeps it; the page stays English",
+          bool(ru) and ru["title"].startswith("Двойник · ") and ru["note"] == "ru" and ru["html"] == "en"
+          and ru["link"] == "../panel.html?lang=ru" and ru["text"] == "Панель двойника" and ru["pressed"] == "ru"
+          and ru["kept"] == "ru", json.dumps(ru, ensure_ascii=False))
+    ch = c.eval("""(async () => {
+        const p = navigator.serial.requestPort().then(() => 'resolved', (e) => e.name);
+        const d = document.getElementById('twin-serial-chooser');
+        if (!d) return { cancel: await p };
+        const words = () => [d.lang, d.querySelector('h2').textContent, d.querySelector('[data-choice="twin"]').textContent];
+        const ru = words();
+        window.twinSetLang('en');
+        const en = words();
+        d.querySelector('[data-choice="cancel"]').click();
+        const b = document.getElementById('twin-banner');
+        return { ru, en, cancel: await p, gone: !document.getElementById('twin-serial-chooser'), title: document.title,
+                 link: b.querySelector('a').getAttribute('href'), kept: localStorage.getItem('twin-lang') };
+    })()""", gesture=True) if ready else None
+    check("lang: the port chooser speaks the page's language and follows twinSetLang while open",
+          bool(ch) and ch.get("ru") == ["ru", "Какой порт открыть?", "Двойник — USB-Serial/JTAG эмулятора (303A:1001)"]
+          and ch.get("en") == ["en", "Which port to open?", "Twin — the emulator’s USB-Serial/JTAG (303A:1001)"]
+          and ch.get("cancel") == "NotFoundError" and ch.get("gone"), json.dumps(ch, ensure_ascii=False))
+    check("lang: twinSetLang('en') switches the note and the panel link back and keeps it",
+          bool(ch) and str(ch.get("title", "")).startswith("Twin · ") and ch.get("link") == "../panel.html?lang=en"
+          and ch.get("kept") == "en", json.dumps({k: ch.get(k) for k in ("title", "link", "kept")} if ch else None,
+                                                 ensure_ascii=False))
+    if ready:
+        c.eval("window.twinSetLang('ru')")
+    c.call("Page.navigate", {"url": f"{base}/flasher/selftest.html"})
+    ready = c.wait("!!(location.pathname.endsWith('/selftest.html') && window.twinLang && document.getElementById('run') "
+                   "&& document.readyState === 'complete')", 20)
+    words = """(() => ({ html: document.documentElement.lang, title: document.title,
+        heading: document.querySelector('h1').textContent, run: document.getElementById('run').textContent,
+        pressed: document.querySelector('.lang button[aria-pressed="true"]').dataset.lang,
+        kept: localStorage.getItem('twin-lang') }))()"""
+    st_ru = c.eval(words) if ready else None
+    check("lang: the self-test page takes the kept language (no ?lang=)",
+          bool(st_ru) and st_ru == {"html": "ru", "title": "Двойник · самотест порта",
+                                    "heading": "Самотест: порт двойника и esptool-js 0.6.0", "run": "Запустить",
+                                    "pressed": "ru", "kept": "ru"}, json.dumps(st_ru, ensure_ascii=False))
+    st_en = c.eval("document.querySelector('.lang button[data-lang=\"en\"]').click(), " + words) if ready else None
+    check("lang: the self-test page's EN button switches it at once and keeps it",
+          bool(st_en) and st_en == {"html": "en", "title": "Twin · port self-test",
+                                    "heading": "Self-test: the twin’s port and esptool-js 0.6.0", "run": "Run",
+                                    "pressed": "en", "kept": "en"}, json.dumps(st_en, ensure_ascii=False))
+    bad = c.problems(since)
+    check("lang: no exceptions or console errors", not bad, "; ".join(bad))
+
+
 def port(c, base, timeout):
     since = len(c.events)
     c.call("Page.navigate", {"url": f"{base}/flasher/selftest.html?twin=auto&run=1"})
@@ -220,7 +284,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--port", type=int, default=8790, help="the twin's --web port")
     ap.add_argument("--chrome", default=os.environ.get("CHROME"), help="Chrome or Chromium executable")
-    ap.add_argument("--only", choices=("page", "port"))
+    ap.add_argument("--only", choices=("page", "lang", "port"))
     ap.add_argument("--timeout", type=float, default=240, help="seconds for the port self-test")
     a = ap.parse_args()
     exe = next((p for p in ([a.chrome] if a.chrome else CHROMES) if p and (os.path.exists(p) or shutil.which(p))), None)
@@ -238,6 +302,8 @@ def main():
         print(f"Chrome: {c.call('Browser.getVersion').get('product')}")
         if a.only in (None, "page"):
             page(c, base)
+        if a.only in (None, "lang"):
+            lang(c, base)
         if a.only in (None, "port"):
             port(c, base, a.timeout)
     finally:

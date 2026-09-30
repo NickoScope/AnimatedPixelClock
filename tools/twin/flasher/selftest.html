@@ -1,33 +1,79 @@
 <!doctype html>
-<html lang="ru">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <script src="twin-serial.js"></script>
+<script src="twin-lang.js"></script>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="icon" href="data:,">
-<title>Двойник · самотест порта</title>
+<title>Twin · port self-test</title>
 <style>
   :root { color-scheme: light dark; --bg: #f4f0e7; --ink: #1d1b16; --muted: #5c574c; --ok: #1f7a3a; --bad: #b3261e; }
   @media (prefers-color-scheme: dark) { :root { --bg: #16150f; --ink: #ece6d8; --muted: #a39d8f; --ok: #6fcf8a; --bad: #ff8a80; } }
   body { margin: 0; padding: 16px; background: var(--bg); color: var(--ink); font: 15px/1.45 system-ui, -apple-system, sans-serif; }
   main { max-width: 900px; margin: 0 auto; }
-  h1 { font-size: 20px; margin: 0 0 6px; }
+  header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 16px; margin: 0 0 6px; }
+  h1 { font-size: 20px; margin: 0; }
   p { color: var(--muted); margin: 0 0 12px; }
   button { font: inherit; padding: 8px 16px; border-radius: 8px; border: 1px solid currentColor; background: transparent; color: inherit; cursor: pointer; }
   ol { padding-left: 22px; }
   li.ok::marker { color: var(--ok); } li.bad::marker { color: var(--bad); }
   li.bad { color: var(--bad); }
+  .lang { display: inline-flex; align-items: center; gap: 2px; color: var(--muted); font-size: 13px; white-space: nowrap; }
+  .lang button { padding: 2px 8px; border-radius: 6px; border-color: transparent; color: var(--muted); font-size: 13px; letter-spacing: .04em; }
+  .lang button[aria-pressed="true"] { border-color: currentColor; color: var(--ink); font-weight: 600; }
   pre { white-space: pre-wrap; word-break: break-word; font: 12px/1.4 ui-monospace, Menlo, monospace; background: rgba(0,0,0,.06); padding: 10px; border-radius: 8px; max-height: 50vh; overflow: auto; }
 </style>
 </head>
 <body>
 <main>
-  <h1>Самотест: порт двойника и esptool-js 0.6.0</h1>
-  <p>Сначала проверяется поведение <code>navigator.serial</code> по спецификации Web Serial, затем esptool-js 0.6.0 (тот же, что внутри ESP Web Tools 10.4.0) подключается к двойнику: сброс в режим загрузки, stub, flash ID, сброс в прошивку. Flash не пишется.</p>
-  <button id="run" type="button">Запустить</button>
+  <header>
+    <h1 data-text="heading">Self-test: the twin’s port and esptool-js 0.6.0</h1>
+    <span class="lang" role="group" aria-label="Language" data-label="group"><button type="button" data-lang="en" lang="en" title="English" aria-pressed="true">EN</button><span aria-hidden="true">·</span><button type="button" data-lang="ru" lang="ru" title="Русский" aria-pressed="false">RU</button></span>
+  </header>
+  <p data-html="about">First <code>navigator.serial</code> is checked against the Web Serial spec, then esptool-js 0.6.0 (the one inside ESP Web Tools 10.4.0) connects to the twin: reset into download mode, stub, flash ID, reset into the firmware. Nothing is written to flash.</p>
+  <button id="run" type="button" data-text="run">Run</button>
   <ol id="checks"></ol>
   <pre id="out" aria-live="polite"></pre>
 </main>
+<script>
+// The page's words in the language of the twin's pages (twin-lang.js): English or Russian, switched
+// at once by the EN · RU buttons or window.twinSetLang. The names of the checks stay as written in
+// both: check_flasher.py prints them. localize(root) is also called by the module below for what it
+// adds (the verdict).
+const TEXT = {
+  en: {
+    title: 'Twin · port self-test',
+    heading: 'Self-test: the twin’s port and esptool-js 0.6.0',
+    group: 'Language',
+    about: 'First <code>navigator.serial</code> is checked against the Web Serial spec, then esptool-js 0.6.0 (the one inside ESP Web Tools 10.4.0) connects to the twin: reset into download mode, stub, flash ID, reset into the firmware. Nothing is written to flash.',
+    run: 'Run',
+    pass: 'ALL PASSED',
+    fail: 'SOME CHECKS FAILED',
+  },
+  ru: {
+    title: 'Двойник · самотест порта',
+    heading: 'Самотест: порт двойника и esptool-js 0.6.0',
+    group: 'Язык',
+    about: 'Сначала проверяется поведение <code>navigator.serial</code> по спецификации Web Serial, затем esptool-js 0.6.0 (тот же, что внутри ESP Web Tools 10.4.0) подключается к двойнику: сброс в режим загрузки, stub, flash ID, сброс в прошивку. Flash не пишется.',
+    run: 'Запустить',
+    pass: 'ВСЁ ПРОШЛО',
+    fail: 'ЕСТЬ ОШИБКИ',
+  },
+};
+function localize(root) {
+  const t = TEXT[twinLang.get()];
+  for (const el of root.querySelectorAll('[data-text]')) el.textContent = t[el.dataset.text];
+  for (const el of root.querySelectorAll('[data-html]')) el.innerHTML = t[el.dataset.html];   // our own markup
+  for (const el of root.querySelectorAll('[data-label]')) el.setAttribute('aria-label', t[el.dataset.label]);
+}
+twinLang.bindSwitch(document.querySelector('.lang'));
+twinLang.watch((lang) => {
+  document.documentElement.lang = lang;
+  document.title = TEXT[lang].title;
+  localize(document);
+});
+</script>
 <script type="module">
 // Checks of twin-serial.js against the WICG Web Serial draft (2 June 2026, SerialPort §4.3-§4.10),
 // then esptool-js 0.6.0 through it: ESPLoader.main() and flashId() as ESP Web Tools 10.4.0 calls them
@@ -35,7 +81,7 @@
 const ST = window.__selftest = { started: false, done: false, ok: null, checks: [], terminal: [], banner: null, error: null, ms: {} };
 const $ = (id) => document.getElementById(id);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const out = (s) => { $('out').textContent += s + '\n'; };
+const out = (s) => { $('out').append(s + '\n'); };
 function record(name, ok, detail) {
   ST.checks.push({ name, ok, detail: detail || '' });
   const li = document.createElement('li');
@@ -166,7 +212,10 @@ async function run() {
   ST.counters = Object.assign({}, window.__twinSerial.counters);
   ST.ok = ST.checks.length > 0 && ST.checks.every((c) => c.ok);
   ST.done = true;
-  out(ST.ok ? 'ВСЁ ПРОШЛО' : 'ЕСТЬ ОШИБКИ');
+  const verdict = document.createElement('span');   // in the page's language, and switched with it
+  verdict.dataset.text = ST.ok ? 'pass' : 'fail';
+  $('out').append(verdict, '\n');
+  localize($('out'));
 }
 $('run').addEventListener('click', run);
 if (new URLSearchParams(location.search).get('run') === '1') run();

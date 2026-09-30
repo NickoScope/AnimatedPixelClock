@@ -255,13 +255,48 @@ class TwinFlasherPage(unittest.TestCase):
 
     def test_the_four_edits(self):
         out = T.flasher_index(self.PAGE)
-        self.assertIn('<meta charset="utf-8">\n  <script src="twin-serial.js"></script>', out)
+        self.assertIn('<meta charset="utf-8">\n  <script src="twin-serial.js"></script>\n'
+                      '  <script src="twin-lang.js"></script>', out)
         self.assertIn("esp-web-tools@10.4.0/dist/web/install-button.js", out)
         self.assertNotIn("esp-web-tools@10/", out)
-        self.assertIn("<title>Двойник · Flasher</title>", out)
+        self.assertIn("<title>Twin · Flasher</title>", out)          # English until the note's script runs
         self.assertIn("<body>\n" + T.BANNER, out)
-        # the shim is a classic script ahead of the ESP Web Tools module
+        # the shim and the language are classic scripts ahead of the ESP Web Tools module
         self.assertLess(out.index('src="twin-serial.js"'), out.index('type="module"'))
+        self.assertLess(out.index('src="twin-lang.js"'), out.index('type="module"'))
+
+    def test_the_note_speaks_both_languages(self):
+        en, ru = T.BANNER_TEXT["en"], T.BANNER_TEXT["ru"]
+        self.assertEqual(set(en), set(ru))
+        # the Russian words are the proofread ones the note had before it learned English
+        self.assertEqual(ru["note"], "Копия прошивальщика для виртуального двойника: Install → «Двойник» прошивает "
+                                     "эмулятор на этом Mac, «Плата по USB» — настоящую плату.")
+        self.assertEqual((ru["panel"], ru["title"]), ("Панель двойника", "Двойник · "))
+        # as the page starts: English, EN pressed, the panel link in English; the script carries both
+        self.assertIn(f'<span data-twin="note">{en["note"]}</span>', T.BANNER)
+        self.assertIn(f'href="../panel.html?lang=en" style="color:#f0b429;white-space:nowrap">{en["panel"]}</a>', T.BANNER)
+        self.assertIn('data-lang="en" lang="en" title="English" aria-pressed="true"', T.BANNER)
+        self.assertIn('data-lang="ru" lang="ru" title="Русский" aria-pressed="false"', T.BANNER)
+        self.assertIn(">EN</button>", T.BANNER)
+        self.assertIn(">RU</button>", T.BANNER)
+        self.assertIn("'../panel.html?lang=' + lang", T.BANNER)
+        self.assertIn(ru["note"], T.BANNER)
+        self.assertEqual(T.BANNER.count("<script>"), 1)
+        self.assertEqual(T.BANNER.count("</script>"), 1)                 # nothing in the texts ends it early
+        # no anchor of a later edit inside an earlier replacement
+        for i, (_, new) in enumerate(T.FLASHER_EDITS):
+            for old, _ in T.FLASHER_EDITS[i + 1:]:
+                self.assertNotIn(old, new)
+
+    def test_the_chooser_names_what_the_note_names(self):
+        with open(os.path.join(T.FLASHER_SRC, "twin-serial.js"), encoding="utf-8") as f:
+            js = f.read()
+        for lang, twin, board in (("en", "Twin", "Board over USB"), ("ru", "Двойник", "Плата по USB")):
+            note = T.BANNER_TEXT[lang]["note"]
+            self.assertIn(twin, note)
+            self.assertIn(board, note)
+            self.assertIn(f"twin: '{twin} — ", js)
+            self.assertIn(f"native: '{board}…'", js)
 
     def test_an_anchor_missing_or_twice_stops_the_build(self):
         for page in (self.PAGE.replace("<title>", "<title lang=en>"),
@@ -275,8 +310,11 @@ class TwinFlasherPage(unittest.TestCase):
     def test_the_public_page_takes_the_edits(self):
         out = T.flasher_index(get(DOCS_INDEX).decode("utf-8"))
         self.assertEqual(out.count("twin-serial.js"), 1)
+        self.assertEqual(out.count("twin-lang.js"), 1)
         self.assertEqual(out.count("esp-web-tools@10.4.0/"), 1)
         self.assertLess(out.index("twin-serial.js"), out.index("esp-web-tools@"))
+        self.assertLess(out.index("twin-lang.js"), out.index("esp-web-tools@"))
+        self.assertEqual(out.count("<title>Twin · "), 1)
 
     def make_engine(self, d):
         engine = os.path.join(d, "engine")
@@ -300,7 +338,7 @@ class TwinFlasherPage(unittest.TestCase):
             self.assertTrue(os.path.exists(os.path.join(dest, T.GENERATED)))
             for name in ("flasher.js", "styles.css"):
                 self.assertEqual(get(os.path.join(fl, name)), get(os.path.join(T.DOCS, name)))
-            for name in ("twin-serial.js", "selftest.html"):
+            for name in ("twin-serial.js", "twin-lang.js", "selftest.html"):
                 self.assertEqual(get(os.path.join(fl, name)), get(os.path.join(T.FLASHER_SRC, name)))
             self.assertEqual(tree_digest(os.path.join(fl, "img")), tree_digest(os.path.join(T.DOCS, "img")))
             bin_name = f"AnimatedPixelClock-{T.FIRMWARE_ID}-{version}-Full.bin"

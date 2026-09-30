@@ -37,7 +37,8 @@
 // The chooser: requestPort() shows a small dialog - the twin, a board over USB (the browser's own
 // chooser, called from the click so it has its user activation), or cancel (NotFoundError, which
 // ESP Web Tools answers with its "no port selected" dialog). `?twin=auto` in the page URL picks the
-// twin without asking (for automated checks).
+// twin without asking (for automated checks). The dialog speaks the language of the twin's pages,
+// English or Russian (twin-lang.js, loaded after this script; English when it is missing).
 //
 // For checks: window.__twinSerial = { port, serial, native, journal, counters } and
 // window.__usjLog (the journal: opens, closes, every line pair sent, every engine event).
@@ -395,6 +396,25 @@
       && (f.usbProductId === undefined || Number(f.usbProductId) === PID));
   }
 
+  // The chooser's words, in the language of the twin's pages (twin-lang.js; English without it). The
+  // choices are named as in the twin's note over the page (twin.py BANNER_TEXT).
+  const CHOOSER_TEXT = {
+    en: {
+      title: 'Which port to open?',
+      about: 'This is the flasher copy for the virtual twin: “Twin” is the panel emulator on this Mac.',
+      twin: 'Twin — the emulator’s USB-Serial/JTAG (303A:1001)',
+      native: 'Board over USB…',
+      cancel: 'Cancel',
+    },
+    ru: {
+      title: 'Какой порт открыть?',
+      about: 'Это копия прошивальщика для виртуального двойника: «Двойник» — эмулятор панели на этом Mac.',
+      twin: 'Двойник — USB-Serial/JTAG эмулятора (303A:1001)',
+      native: 'Плата по USB…',
+      cancel: 'Отмена',
+    },
+  };
+
   // The chooser. Resolves with the twin, with the browser's own chooser's promise, or rejects.
   function choose(options) {
     return new Promise((resolve, reject) => {
@@ -406,16 +426,23 @@
       const btn = 'display:block;width:100%;margin:8px 0 0;padding:11px 14px;border-radius:8px;border:1px solid #cfc7b6;'
         + 'background:#fff;color:#1d1b16;font:inherit;text-align:left;cursor:pointer';
       d.innerHTML = `
-        <h2 id="twin-serial-chooser-title" style="margin:0 0 6px;font-size:18px">Какой порт открыть?</h2>
-        <p style="margin:0 0 6px;color:#5c574c">Это копия прошивальщика для виртуального двойника: «Двойник» — эмулятор панели на этом Mac.</p>
-        <button type="button" data-choice="twin" style="${btn};background:#1d1b16;color:#fffdf8;border-color:#1d1b16">Двойник — USB-Serial/JTAG эмулятора (303A:1001)</button>
-        <button type="button" data-choice="native" style="${btn}">Плата по USB…</button>
-        <button type="button" data-choice="cancel" style="${btn}">Отмена</button>`;
+        <h2 id="twin-serial-chooser-title" data-text="title" style="margin:0 0 6px;font-size:18px"></h2>
+        <p data-text="about" style="margin:0 0 6px;color:#5c574c"></p>
+        <button type="button" data-choice="twin" data-text="twin" style="${btn};background:#1d1b16;color:#fffdf8;border-color:#1d1b16"></button>
+        <button type="button" data-choice="native" data-text="native" style="${btn}"></button>
+        <button type="button" data-choice="cancel" data-text="cancel" style="${btn}"></button>`;
+      // The words now, and again when the page switches language while the dialog is open.
+      const words = (lang) => {
+        d.lang = lang;
+        for (const el of d.querySelectorAll('[data-text]')) el.textContent = CHOOSER_TEXT[lang][el.dataset.text];
+      };
+      const unwatch = window.twinLang ? window.twinLang.watch(words) : (words('en'), () => {});
       document.body.appendChild(d);
       let done = false;
       const finish = (then) => {
         if (done) return;
         done = true;
+        unwatch();
         try { d.close(); } catch (_) { /* not open */ }
         d.remove();
         then();

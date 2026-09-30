@@ -43,7 +43,8 @@ Paths (override with the environment): TWIN_HOME (~/twin) holds the engine, the 
 file and the builds' ELFs (fw/<build>/firmware.elf); TWIN_IMAGE and TWIN_ELF override the image and
 the symbols; TWIN_ENGINE (TWIN_HOME/esp32sim) is the engine's checkout.
 """
-import argparse, binascii, os, re, shutil, struct, subprocess, sys
+import argparse, binascii, json, os, re, shutil, struct, subprocess, sys
+from html import escape
 
 HOME = os.path.expanduser(os.environ.get("TWIN_HOME", "~/twin"))
 ENGINE = os.path.expanduser(os.environ.get("TWIN_ENGINE", os.path.join(HOME, "esp32sim")))
@@ -65,7 +66,7 @@ EFUSE = os.path.join(HOME, "efuse-opi.txt")
 WEB = os.path.join(STATE, "web")
 HERE = os.path.dirname(os.path.abspath(__file__))
 DOCS = os.path.join(os.path.dirname(os.path.dirname(HERE)), "docs")   # the public flasher page
-FLASHER_SRC = os.path.join(HERE, "flasher")                           # twin-serial.js, selftest.html
+FLASHER_SRC = os.path.join(HERE, "flasher")                           # twin-serial.js, twin-lang.js, selftest.html
 FLASH_MB = 32
 # The module's flash answers as a Macronix octal part. IDF 4.4.7 accepts any 0xC2 0x8x ID
 # (spi_flash_oct_flash_init.c, s_probe_mxic_chip); c28039 is Macronix's MX25UM25645G (256 Mbit).
@@ -319,24 +320,87 @@ EWT_VERSION = "10.4.0"
 # docs/flasher.js:15 and :38: the image is firmware/latest/AnimatedPixelClock-<firmware>-<VERSION>-Full.bin
 FIRMWARE_ID = "waveshare"
 GENERATED = ".twin-generated"
-BANNER = ('<div role="note" style="background:#1d1b16;color:#f4f0e7;font:14px/1.45 system-ui,-apple-system,sans-serif;'
-          'padding:8px 16px;text-align:center">Копия прошивальщика для виртуального двойника: Install → '
-          '«Двойник» прошивает эмулятор на этом Mac, «Плата по USB» — настоящую плату. '
-          '<a href="../panel.html" style="color:#f0b429">Панель двойника</a></div>')
+# The twin's own files beside the public page, from tools/twin/flasher/
+FLASHER_FILES = ("twin-serial.js", "twin-lang.js", "selftest.html")
+# The twin's note over the public page, in the language of the twin's pages (flasher/twin-lang.js:
+# ?lang=, then localStorage['twin-lang'], then English), with the EN · RU switch and the link back to
+# the panel, which carries ?lang= of the language in force. The public page is English and stays so:
+# only the note and the title's prefix switch. The note is written in English (the default); the
+# script right after it puts it in the page's language before anything is drawn.
+BANNER_TEXT = {
+    "en": {"note": "Flasher copy for the virtual twin: Install → “Twin” flashes the emulator on this Mac, "
+                   "“Board over USB” a real board.",
+           "panel": "Twin panel", "group": "Language", "title": "Twin · "},
+    "ru": {"note": "Копия прошивальщика для виртуального двойника: Install → «Двойник» прошивает эмулятор "
+                   "на этом Mac, «Плата по USB» — настоящую плату.",
+           "panel": "Панель двойника", "group": "Язык", "title": "Двойник · "},
+}
+_BANNER_SCRIPT = """(function () {
+  'use strict';
+  const L = window.twinLang, bar = document.getElementById('twin-banner');
+  if (!L || !bar) return;
+  const TEXT = %s;
+  const base = document.title.startsWith(TEXT.en.title) ? document.title.slice(TEXT.en.title.length) : document.title;
+  const group = bar.querySelector('[data-twin="group"]'), link = bar.querySelector('[data-twin="panel"]');
+  L.bindSwitch(group);
+  L.watch((lang) => {
+    const t = TEXT[lang];
+    bar.lang = lang;
+    bar.querySelector('[data-twin="note"]').textContent = t.note;
+    link.textContent = t.panel;
+    link.setAttribute('href', '../panel.html?lang=' + lang);
+    group.setAttribute('aria-label', t.group);
+    for (const b of group.querySelectorAll('button[data-lang]')) {
+      const on = b.dataset.lang === lang;
+      b.style.background = on ? '#f4f0e7' : 'transparent';
+      b.style.color = on ? '#1d1b16' : '#f4f0e7';
+    }
+    document.title = t.title + base;
+  });
+})();
+"""
+
+
+def _banner() -> str:
+    """The note as the page starts: English, the EN button pressed; then its script."""
+    t = BANNER_TEXT["en"]
+
+    def button(code, name, on):
+        colors = "background:#f4f0e7;color:#1d1b16" if on else "background:transparent;color:#f4f0e7"
+        return (f'<button type="button" data-lang="{code}" lang="{code}" title="{name}" aria-pressed="{str(on).lower()}" '
+                'style="font:600 12px/1.4 system-ui,-apple-system,sans-serif;letter-spacing:.04em;margin:0;padding:1px 7px;'
+                f'border:1px solid rgba(244,240,231,.45);border-radius:5px;cursor:pointer;{colors}">{code.upper()}</button>')
+    text = json.dumps(BANNER_TEXT, ensure_ascii=False).replace("</", "<\\/")
+    return ('<div id="twin-banner" role="note" lang="en" style="background:#1d1b16;color:#f4f0e7;'
+            'font:14px/1.45 system-ui,-apple-system,sans-serif;padding:8px 16px;text-align:center">'
+            f'<span data-twin="note">{escape(t["note"])}</span> '
+            f'<a data-twin="panel" href="../panel.html?lang=en" style="color:#f0b429;white-space:nowrap">{escape(t["panel"])}</a> '
+            f'<span data-twin="group" role="group" aria-label="{escape(t["group"])}" '
+            'style="display:inline-block;white-space:nowrap;margin-left:10px">'
+            + button("en", "English", True) + '<span aria-hidden="true" style="padding:0 4px;opacity:.6">·</span>'
+            + button("ru", "Русский", False) + '</span></div>\n'
+            '<script>\n' + _BANNER_SCRIPT % text + '</script>')
+
+
+BANNER = _banner()
 # (anchor, replacement): each anchor must occur exactly once in docs/index.html, so a change to the
 # public page that moves one stops the build instead of leaving a half-made copy.
 FLASHER_EDITS = (
-    # first in <head>, a classic script: it must run before ESP Web Tools' module (twin-serial.js)
-    ('<meta charset="utf-8">', '<meta charset="utf-8">\n  <script src="twin-serial.js"></script>'),
+    # first in <head>, a classic script: it must run before ESP Web Tools' module (twin-serial.js);
+    # then the language of the twin's note and chooser (twin-lang.js)
+    ('<meta charset="utf-8">', '<meta charset="utf-8">\n  <script src="twin-serial.js"></script>\n'
+                               '  <script src="twin-lang.js"></script>'),
     ("https://unpkg.com/esp-web-tools@10/", f"https://unpkg.com/esp-web-tools@{EWT_VERSION}/"),
-    ("<title>", "<title>Двойник · "),
+    # English until the note's script puts the title in the page's language
+    ("<title>", "<title>" + BANNER_TEXT["en"]["title"]),
     ("<body>", "<body>\n" + BANNER),
 )
 
 
 def flasher_index(html: str) -> str:
-    """docs/index.html as the twin serves it: the navigator.serial shim, ESP Web Tools pinned, a
-    title and a note that say whose page it is. Nothing else changes; flasher.js is copied as is."""
+    """docs/index.html as the twin serves it: the navigator.serial shim, the twin's language, ESP Web
+    Tools pinned, a title and a note that say whose page it is (the note in English or Russian, with
+    its EN · RU switch). Nothing else changes; flasher.js is copied as is."""
     for old, new in FLASHER_EDITS:
         n = html.count(old)
         if n != 1:
@@ -372,8 +436,8 @@ def flasher_firmware(image=None, version=None):
 
 def build_web(dest, image=None, version=None):
     """Make DEST: the engine's web/ (panel.html and the rest), and flasher/ with the page from docs/
-    (flasher_index), flasher.js, styles.css, img/, the shim, the self-test page and the firmware
-    in firmware/latest/. Made again on every run; DEST must be absent or made by this function.
+    (flasher_index), flasher.js, styles.css, img/, the twin's own files (FLASHER_FILES: the shim, the
+    language, the self-test page) and the firmware in firmware/latest/. Made again on every run; DEST must be absent or made by this function.
     Returns the firmware version offered."""
     image, version = flasher_firmware(image, version)
     if os.path.lexists(dest):
@@ -393,7 +457,7 @@ def build_web(dest, image=None, version=None):
     for name in ("flasher.js", "styles.css"):
         shutil.copy2(os.path.join(DOCS, name), fl)
     shutil.copytree(os.path.join(DOCS, "img"), os.path.join(fl, "img"))
-    for name in ("twin-serial.js", "selftest.html"):
+    for name in FLASHER_FILES:
         shutil.copy2(os.path.join(FLASHER_SRC, name), fl)
     shutil.copy2(image, os.path.join(fw, f"AnimatedPixelClock-{FIRMWARE_ID}-{version}-Full.bin"))
     with open(os.path.join(fw, "VERSION"), "w") as f:
