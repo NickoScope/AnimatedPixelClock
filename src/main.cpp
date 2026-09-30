@@ -1087,15 +1087,6 @@ void loop() {
   controlLoop();
   if (ctrlEntered && millis() - ctrlLastEventMs > ctrlEnterTimeoutMs(ctrlPage)) ctrlEntered = false;
   for (CtrlEvent e = controlTake(); e != CTRL_NONE; e = controlTake()) {
-#if defined(SYNC_EVENTS_ENABLED)
-    {
-      // Every gesture, out to the twin's sync before it acts (sync_events.h).
-      // One made by /api/ir/do is the request's: its cause was noted there.
-      const uint8_t src = controlTakenSource();
-      const SyncBy by = src == CTRL_SRC_KNOB ? SYNC_BY_KNOB : src == CTRL_SRC_IR ? SYNC_BY_IR : syncHttpBy();
-      syncInput(e == CTRL_CW ? SYNC_IN_CW : e == CTRL_CCW ? SYNC_IN_CCW : SYNC_IN_PRESS, by);
-    }
-#endif
 #if defined(CAROUSEL_ENABLED)
     carouselNote();            // somebody is here; stop advancing on our own
 #endif
@@ -1113,6 +1104,16 @@ void loop() {
       continue;
     }
     if (ctrlPage >= ctrlPageCount()) { ctrlPage = PAGE_CLOCK; ctrlEntered = false; }  // card expired
+#endif
+#if defined(SYNC_EVENTS_ENABLED)
+    {
+      // Every gesture that reaches a page or an effect, out to the twin's sync
+      // before it acts (sync_events.h) - after the two that swallow it (the 3D
+      // scene, a notification). One made by /api/ir/do is that request's.
+      const uint8_t src = controlTakenSource();
+      const SyncBy by = src == CTRL_SRC_KNOB ? SYNC_BY_KNOB : src == CTRL_SRC_IR ? SYNC_BY_IR : syncSimulatedBy();
+      syncInput(e == CTRL_CW ? SYNC_IN_CW : e == CTRL_CCW ? SYNC_IN_CCW : SYNC_IN_PRESS, by);
+    }
 #endif
     if (e == CTRL_PRESS) {
 #if defined(LUA_EFFECTS_ENABLED)

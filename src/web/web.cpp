@@ -294,7 +294,7 @@ void setupWebServer() {
    const long page = server.arg("page").toInt();
    if (fn == ir::kFnPage && (page < 0 || page > 255)) { irBad("page must be 0..255"); return; }
 #if defined(SYNC_EVENTS_ENABLED)
-   syncNoteCause(syncHttpBy());   // what it does next is a request's doing, the twin's own or not
+   syncNoteSimulated(syncHttpBy());   // what it does next is this request's doing, the twin's own or not
 #endif
    irSimulateFn(fn, (uint8_t)page, (uint32_t)server.arg("hold").toInt());
    sendIrTable();

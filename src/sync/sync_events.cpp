@@ -5,8 +5,10 @@
 // lowest). Everything here is loop()-task state: the listeners and the input
 // ring go to PSRAM (PSRAM_ARRAY), the rest is a few words. A datagram is built
 // on the loop task's stack (under 320 B) and sent from the socket the PC
-// monitor already listens on (network.cpp udp, port 4210): no new socket, one
-// lwIP pbuf per datagram for as long as it takes to leave.
+// monitor already listens on (network.cpp udp, port 4210): no new socket. The
+// first send allocates WiFiUDP's 1,460 B transmit buffer, from the internal
+// heap (a malloc under CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL), and keeps it;
+// each datagram is then one lwIP pbuf for as long as it takes to leave.
 
 #include "sync_events.h"
 
@@ -67,6 +69,7 @@ uint32_t s_seq = 0;
 uint8_t  s_cause = SYNC_BY_AUTO;
 uint32_t s_causeAt = 0;
 uint32_t s_lastReq = 0;
+uint8_t  s_simBy = SYNC_BY_HTTP;
 
 struct Screen {
   uint8_t  page, style, bright;
@@ -157,6 +160,9 @@ void syncNoteCause(SyncBy by) {
   s_causeAt = millis() | 1;
 }
 
+void syncNoteSimulated(SyncBy by) { s_simBy = by; syncNoteCause(by); }
+SyncBy syncSimulatedBy() { return (SyncBy)s_simBy; }
+
 SyncBy syncHttpBy() {
   return server.header("X-Twin-Sync") == "1" ? SYNC_BY_SYNC : SYNC_BY_HTTP;
 }
@@ -173,7 +179,7 @@ void syncAfterHttp(uint32_t reqCount) {
     extern const char *webLastUri();
     const char *u = webLastUri();
     static const char *const kActs[] = {"/api/display/", "/api/mode/", "/api/clock/", "/api/ir/do",
-                                        "/api/ir/press", "/api/anim/play"};
+                                        "/api/ir/press", "/api/anim/play", "/api/fx3d"};
     bool acts = false;
     for (const char *a : kActs) acts = acts || strncmp(u, a, strlen(a)) == 0;
     if (!acts) return;

@@ -52,6 +52,11 @@ enum SyncInputKind : uint8_t { SYNC_IN_PRESS = 0, SYNC_IN_CW, SYNC_IN_CCW };
 void   syncNoteCause(SyncBy by);
 // For a web handler: "sync" when the request carries X-Twin-Sync: 1, else "http".
 SyncBy syncHttpBy();
+// /api/ir/do: who asked, kept for the gestures it makes. They reach the knob's
+// queue later (a press only on release), when the server may be serving
+// another request, so the header must be read at the request, not then.
+void   syncNoteSimulated(SyncBy by);
+SyncBy syncSimulatedBy();
 // loop(), right after server.handleClient(): a request that was served there
 // becomes the cause (http or sync). reqCount is the web server's running count.
 void   syncAfterHttp(uint32_t reqCount);

@@ -193,6 +193,7 @@ static void push(CtrlEvent e, uint8_t src) {
   if (n == s_qTail) return;         // full: drop the newest, keep the order
   s_q[s_qHead] = e;
   s_qSrc[s_qHead] = src;
+  __atomic_thread_fence(__ATOMIC_RELEASE);   // the event and its source before the head that publishes them
   s_qHead = n;
 }
 
@@ -335,6 +336,7 @@ void controlLoop() {
 
 CtrlEvent controlTake() {
   if (s_qTail == s_qHead) return CTRL_NONE;
+  __atomic_thread_fence(__ATOMIC_ACQUIRE);
   const CtrlEvent e = s_q[s_qTail];
   s_takenSrc = s_qSrc[s_qTail];
   s_qTail = (uint8_t)((s_qTail + 1) % 16);

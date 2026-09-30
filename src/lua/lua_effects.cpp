@@ -343,7 +343,7 @@ void effectTask(void *) {
 #endif
         memset(s_work, 0, LUA_PX_BYTES);      // luasim starts every run on black
         fillClock(s_canvas.clock, 60.0);      // for a script that reads px.now() at load
-        s_canvas.clicks = s_clicksBase.load(std::memory_order_relaxed);   // from when it was chosen
+        s_canvas.clicks = s_clicksBase.load(std::memory_order_acquire);   // from when it was chosen
         fillWorld(s_canvas);
         const int64_t t0 = esp_timer_get_time();
         const bool ok = src && s_fx.open(id, src, srcLen, &s_canvas, kLuaFxPanelLimits);
@@ -562,7 +562,7 @@ void luaEffectStop() { luaEffectsSelect(-1); }
 // so the index on screen can silently come to mean a different file.
 void luaEffectsReload() {
   if (s_selected < 0) return;
-  s_clicksBase.store(s_clicks.load(std::memory_order_relaxed), std::memory_order_relaxed);
+  s_clicksBase.store(s_clicks.load(std::memory_order_relaxed), std::memory_order_release);
   s_run.fetch_add(1, std::memory_order_relaxed);
   s_seq = (s_seq + 1) & 0x00FFFFFF;
   if (s_seq == 0) s_seq = 1;
@@ -663,7 +663,7 @@ void luaEffectsSelect(int16_t index) {
   if (index == s_selected) return;
   s_selected = index;
   if (index >= 0) {
-    s_clicksBase.store(s_clicks.load(std::memory_order_relaxed), std::memory_order_relaxed);
+    s_clicksBase.store(s_clicks.load(std::memory_order_relaxed), std::memory_order_release);
     s_run.fetch_add(1, std::memory_order_relaxed);
   }
   s_seq = (s_seq + 1) & 0x00FFFFFF;
