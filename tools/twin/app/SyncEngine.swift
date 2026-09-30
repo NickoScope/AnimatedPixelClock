@@ -4,8 +4,9 @@
 // brightness, on/off), the settings, the Lua effects (a new one appears, a removed one goes) and the
 // firmware are mirrored both ways. Firmware goes to the twin by itself and to the physical panel only
 // after a person says yes here ("Update the panel too?"). What sync brings is not sent back (no echo);
-// when both sides change the same thing, the later change wins. The owner's one override on the twin,
-// climateHa off (2026-09-29, tools/twin/sync.py OVERRIDES), holds always and never travels to the panel;
+// when both sides change the same thing, the later change wins. The owner's overrides on the twin -
+// climateHa off (2026-09-29) and fbAskHa off (2026-09-30 22:40), tools/twin/sync.py OVERRIDES - hold always
+// and never travel to the panel;
 // secrets - the weather API key, and the AeroAPI, RTT and AIS keys of the portal's Keys page - identity
 // and state never travel at all. Other owners work in their own forks: firmwareRepo names where releases
 // and the gallery come from.
@@ -15,10 +16,13 @@
 // entered there. So the flights and trains pages, their place in the walk and the flight board's airport
 // are mirrored like everything else; the keys never are, in either direction - each device has its own.
 // Without a key the board makes no paid call of its own: the AeroAPI fetch stops before anything is counted
-// or sent (aero_direct.cpp:725, NO KEY), the RTT one too (rtt_direct.cpp:737, NO TOKEN). A twin with an MQTT
-// broker in its NVS (never set by sync) and no AeroAPI key asks Home Assistant for a built-in airport's
-// board, as a panel without a key does (fb_mqtt.cpp:103-136; once per airport and half in 15 min, 12 an
-// hour at most, :24-45) - and HA pays for that fetch with its own key.
+// or sent (aero_direct.cpp:725, NO KEY), the RTT one too (rtt_direct.cpp:737, NO TOKEN). Nor does it have one
+// made for it: a board without a key and with an MQTT broker in NVS (never set by sync) asks Home Assistant
+// for a built-in airport's board (fb_mqtt.cpp:103-136; once per airport and half in 15 min, 12 an hour at
+// most, :24-45), and HA fetches it with the owner's AeroAPI key. The owner, 2026-09-30 22:40: a twin without
+// a key of its own must not ask. Since firmware 2.7.13 fbAskHa off stops the asking (the retained boards
+// still come, free), and sync keeps it off on the twin, an override like climateHa (enforceOverrides); a
+// twin whose firmware has no fbAskHa yet and would ask is said in the log and the status (asksHa).
 // The owner, 2026-09-30 19:13: "if the panel runs the carousel, the twin runs it too, with the same
 // screens, in step - and the other way round". How: "One carousel for both" below.
 // The owner, 2026-09-30, after two reviews: switched on, sync is full, both ways; switched off, all
@@ -46,8 +50,10 @@
 // /api/panel every 2 s and /api/info every 5 s while it is open, web_panel_js.h:86, web_pages.h:2376):
 //   screen    every 3 s   GET /api/panel (web_panel.cpp:309-393: now.key/name/style/entered, the carousel -
 //                         enabled, idleS, slotS, allStyles, running, holdS, pageS, nextS - pages[]) and GET
-//                         /api/status (web.cpp:554-580: brightness %, forcedOff, uptime - a smaller uptime is
-//                         a reboot, whose reset screen is nobody's change)
+//                         /api/status (web.cpp:554-580: brightness %, forcedOff, uptime). An uptime smaller
+//                         than the last one read - by any round, from /api/status or /api/info, one clock
+//                         (millis() / 1000, web.cpp:495, 632) - is a restart: the round stops, and the restart
+//                         is dealt with first; its reset screen is nobody's change (restarts, rebooted)
 //   step      the panel's GET /api/panel alone, right after its carousel's next step is due (nextS), while
 //                         the twin follows it; it stands for the next screen round ("One carousel for both")
 //   who       every 15 s  GET /api/info of both: the MAC must still be the pair's; also at once after a
@@ -64,9 +70,12 @@
 //             "new" (boot_health.cpp:36-45), five minutes at most.
 //   load      /api/info's webRefused and allocFails (web.cpp:477-485): when either grew since the last
 //             round the panel is under strain, and for the next 10 min (our choice) the screen is read
-//             every 5 s (the portal's own cadence, net_turns.h:32) and the settings round leaves 1.6 s
+//             every 5 s (the portal's own cadence, net_turns.h:32), the panel's carousel step is not looked
+//             for in between (the twin follows it a screen round later), and the settings round leaves 1.6 s
 //             between the panel's requests - more than NET_TURN_QUIET_MS, so the panel's own fetches are
 //             not held back by it (net_turns.h:47).
+//   failure   a device that does not answer, or a round that failed: the next screen round in 5 s, and
+//             nothing before it - no step read, no effects or settings round (backOff).
 //
 // Change, echo, who wins. Each side has a base: what it held after the last round, with what this
 // engine wrote to it included - after every write the target is read again and that reading becomes
@@ -121,10 +130,13 @@
 // together, the panel first. While a person is at the twin - its carousel's hold began after sync last wrote
 // to it, or a page is entered with its knob - the panel's steps are not written over them; as that hold is
 // about to end the twin takes the panel's screen again. The twin restarted mid-walk: it takes the panel's
-// screen, and nothing is written to the panel - nor its settings: what differs on it after the restart is
-// taken for writes it lost (a module saves to NVS 2.5 s after a change, panel.cpp panelTick), and the panel's
-// values go back to it (settingsChanges). Sync switched off: nothing is rolled back, and each carousel walks
-// by itself once the twin's hold ends.
+// screen, and nothing of its reset screen is written to the panel. A setting sync wrote to it just before -
+// its old boot did not answer lostWithin after the write (a module saves to NVS 2.5 s after a change,
+// panel.cpp panelTick) - and that it shows again as it was before the write, is a write it lost: the panel's
+// value goes back to it (twinLost, settingsChanges). Whatever else differs on it is its own change, carried as
+// ever - a person's choice saved before the restart. Sync switched off: nothing is rolled back, and each
+// carousel walks by itself once the twin's hold ends. The panel leads: a write to it that moves its page (a
+// renumbered effect list) is not undone - the twin follows its page (putBack).
 //
 // How each thing is written:
 //   page      POST /api/panel {"show":{"page":i}}, i looked up by key and name on the target
@@ -187,8 +199,9 @@
 // microphones, the knob, how the presence radar is set up, whether the climate sensor and the remote's
 // receiver are used and how the sensor is calibrated - which go from the panel to the twin only. The
 // owner's override on the twin: climateHa off (sync.py OVERRIDES), so the twin's indoor sensor is not a
-// second device in Home Assistant; it is left out of what is compared and put back on the twin whenever
-// it drifts. The overrides of 2026-09-29 that kept the trains and flights pages out of the twin's walk and
+// second device in Home Assistant, and fbAskHa off (firmware 2.7.13), so a twin without an AeroAPI key never
+// has HA fetch a flight board with the owner's key; both are left out of what is compared and put back on
+// the twin whenever they drift. The overrides of 2026-09-29 that kept the trains and flights pages out of the twin's walk and
 // its flight board on ZZZZ "NO REQUESTS" are gone (the owner, 2026-09-30 19:35): while the twin still
 // holds what they left (Settings.residue) and has never been compared on it since, the panel's value goes
 // to the twin, whichever way sync aligns, and the airport ZZZZ they added is removed from the twin.
@@ -243,6 +256,10 @@ struct SyncDown: Error { let side: Side; let msg: Msg }
 struct SyncWait: Error { let msg: Msg; init(_ m: Msg) { msg = m } }
 /// Sync was switched off, or the pair is being changed, while something was to be written: nothing more is.
 struct SyncStopped: Error {}
+/// A side restarted: a read of its uptime (/api/status or /api/info) came back smaller than the one before.
+/// Whatever the round was about to do was decided on the side as it was before, so the round stops there,
+/// and the restart is dealt with first (SyncEngine.restarts).
+struct SyncRestart: Error { let side: Side }
 
 enum Side: String, Codable {
     case panel, twin
@@ -632,9 +649,9 @@ struct Firmware {
 
 enum Settings {
     // Not compared: identity, secrets, state, what the screen mirror carries, the zone (compared as
-    // "tz"), the owner's override (climateHa).
+    // "tz"), the owner's overrides (climateHa, fbAskHa).
     static let exportSkip: Set<String> = ["deviceName", "weatherApiKey", "metricNames", "clockStyle", "timezoneString", "gmtOffset",
-                                          "daylightSaving", "climateHa", "ntpServer1", "ntpServer2"]   // NTP: the network's, not carried
+                                          "daylightSaving", "climateHa", "fbAskHa", "ntpServer1", "ntpServer2"]   // NTP: the network's, not carried
     // The form's own: identity and the network (a useStaticIP change restarts, web.cpp:2251-2263), the
     // key, what the screen mirror carries, the zone's region, a card marker, and the export's keys
     // under other names (rowMode = displayRowMode, rpmKFormat = useRpmKFormat, netMBFormat =
@@ -890,6 +907,11 @@ final class SyncEngine {
     // hold would end within holdAhead, before the panel's (twinMove). Our choice.
     static let stepQuiet: TimeInterval = 3.5, stepQuietMax: TimeInterval = 30, STEP_TRIES = 3, stepMargin: TimeInterval = 0.08
     static let holdAhead: TimeInterval = 8
+    // A write to the twin is kept once its old boot answered this long after it: a module saves its settings to
+    // NVS 2.5 s after a change (SETTLE_MS: panel.cpp:24, clock_style.cpp:25, railboard.cpp:418, media_ha.cpp:87,
+    // MARKET_NVS_SETTLE_MS market.h:61; firmware 2.7.9), and 1.5 s more for the two requests' way and a pass of
+    // loop(). Our choice.
+    static let lostWithin: TimeInterval = 4
     /// sync.log is started again past this size, the old one kept as sync.log.1. Our choice.
     static let logKeep = 4 << 20
 
@@ -991,9 +1013,23 @@ final class SyncEngine {
     private var holdWhy: Msg?                                          // why the direction is asked again (a massive change)
     private var stopLogged = false
     private var quietSince: Date?
-    /// A side restarted: the carousel's settings wait for the settings round (fastRound). The twin restarted:
-    /// that round takes what differs on it for writes it lost (settingsChanges).
-    private var walkHeld = false, twinRestarted = false
+    /// A side restarted: the carousel's settings wait for the settings round (fastRound).
+    private var walkHeld = false
+    /// Each side's uptime as last read - from /api/status or /api/info, whichever read it: one clock, millis()
+    /// / 1000 (web.cpp:495, 632) - and when. A smaller one is a restart, whoever read it (sawUptime).
+    private var uptimeSeen: [Side: (up: Int, at: Date)] = [:]
+    /// A restart a read saw and that is not dealt with yet (restarts), with the last moment the side answered
+    /// before it.
+    private var restartSeen: [Side: Date] = [:]
+    /// The screen round goes first, before the effects and settings rounds: after a device did not answer,
+    /// after a round failed, after a restart - so nothing is compared before both screens are read again.
+    private var needScreenRound = false
+    /// The settings sync wrote to the twin, each with the twin's value before the write (a digest) and when:
+    /// until a read shows its old boot answered lostWithin after the write (a module saves to NVS SETTLE_MS
+    /// after a change), a restart may have lost it. The twin restarted: the writes it may have lost (twinLost),
+    /// for the first full settings pass - a key whose value is again the one before the write is a lost write,
+    /// and the panel's goes back; anything else that differs on the twin is its own change (settingsChanges).
+    private var twinWrote: [String: (before: String, at: Date)] = [:], twinLost: [String: String]?
     /// A person at the twin (sawTwin): when a touch of its carousel was seen that sync did not make - cleared
     /// by sync's next write there; the twin's last hold read, and when; when sync last wrote to it (a page or a
     /// style holds its carousel, and so does a world clock's new home: web_panel.cpp:764-771).
@@ -1047,6 +1083,7 @@ final class SyncEngine {
         case let d as SyncDown: return d.msg
         case let w as SyncWait: return w.msg
         case is SyncStopped: return M("sync was switched off", "синхронизацию выключили")
+        case let r as SyncRestart: return M("\(r.side.word.en) restarted", r.side == .panel ? "панель перезагрузилась" : "двойник перезагрузился")
         case let f as Failure: return M(f.description, f.description)
         default: return M(e.localizedDescription, e.localizedDescription)
         }
@@ -1072,6 +1109,7 @@ final class SyncEngine {
         do {
             try connect()
             try verifyIfDue()
+            try restarts()                                             // a restart any read saw: first of all
             // The owner's two confirmations: until both are given, nothing is written.
             guard consented else { try consentFirst(); return }
             guard aligned else { try align(); return }
@@ -1079,19 +1117,20 @@ final class SyncEngine {
             let now = Date()
             let forced = locked { () -> Bool in let f = _syncNow; _syncNow = false; return f }
             if forced { declined = []; carry = (0, .distantPast); retryPending() }
-            let strained = strainedUntil.map { now < $0 } ?? false
             if now >= nextFast || forced {
                 try fastRound(); nextFast = Date().addingTimeInterval(strained ? SyncEngine.strainedFastEvery : SyncEngine.fastEvery)
+                needScreenRound = false
                 planStep()
             } else if let at = stepAt, now >= at {
                 try stepRead()
             }
             guard aligned else { return }
             // The leader's next step is near: the rounds that take a while (effects, settings) wait until it
-            // is carried, stepQuietMax at most - with a short slot a step is always near.
+            // is carried, stepQuietMax at most - with a short slot a step is always near. After a failure, a
+            // device that did not answer or a restart, they wait for the screen round (needScreenRound).
             let near = !forced && (stepAt.map { $0.timeIntervalSince(now) < SyncEngine.stepQuiet } ?? false)
             quietSince = near ? (quietSince ?? now) : nil
-            let quiet = near && now.timeIntervalSince(quietSince ?? now) < SyncEngine.stepQuietMax
+            let quiet = needScreenRound || (near && now.timeIntervalSince(quietSince ?? now) < SyncEngine.stepQuietMax)
             if (fxDue || forced || now >= nextEffects) && !quiet {
                 fxDue = false
                 try effectsRound(); nextEffects = Date().addingTimeInterval(SyncEngine.effectsEvery)
@@ -1101,7 +1140,7 @@ final class SyncEngine {
                 fwWatch = nil
                 try slowRound(market: forced || slowRounds % 5 == 0); slowRounds += 1
                 nextSlow = Date().addingTimeInterval(settingsEvery)
-            } else if let w = fwWatch, now >= w {
+            } else if let w = fwWatch, now >= w, !quiet {
                 fwWatch = Date().addingTimeInterval(15)                  // a new image: its /api/info only, again if this fails
                 for s in sides { try readDocs(s, ["/api/info"]) }
                 fwWatch = nil
@@ -1117,6 +1156,9 @@ final class SyncEngine {
         } catch let w as SyncWait {
             phase(w.msg)
             Thread.sleep(forTimeInterval: 2)
+        } catch is SyncRestart {
+            // restartSeen has it: the next step deals with it before anything else (restarts), at once.
+            stepAt = nil; needScreenRound = true
         } catch let d as SyncDown {
             if down.insert(d.side).inserted { log("error", "down", d.msg, problem: true) }
             verifyNow = true
@@ -1126,14 +1168,24 @@ final class SyncEngine {
                 panelLostAt = Date()                                     // looked for again over mDNS, at most every 30 s
                 DispatchQueue.main.async { self.onPanelLost?() }
             }
-            nextFast = Date().addingTimeInterval(5)
-            Thread.sleep(forTimeInterval: 3)
+            backOff()
+            stepWin = nil                                                // its carousel's clock is not known any more
         } catch {
             log("error", "-", describe(error), problem: true)
-            nextFast = Date().addingTimeInterval(5)
-            Thread.sleep(forTimeInterval: 3)
+            backOff()
         }
     }
+
+    /// After a failure: the next screen round in 5 s, and nothing before it - not the read that looks for the
+    /// leader's step (it is planned again after a screen round that read the panel), not the effects or the
+    /// settings round (needScreenRound).
+    private func backOff() {
+        nextFast = Date().addingTimeInterval(5); stepAt = nil; needScreenRound = true
+        Thread.sleep(forTimeInterval: 3)
+    }
+
+    /// The panel under strain (its refused requests or failed allocations grew, watchLoad): read less.
+    private var strained: Bool { strainedUntil.map { Date() < $0 } ?? false }
 
     /// How long the worker sleeps between two steps: until the next screen round or the read that looks for
     /// the leader's carousel step, 0.5 s at most.
@@ -1155,7 +1207,8 @@ final class SyncEngine {
         dev = [:]; pairKey = ""; consented = false; aligned = false; resumed = false; needDirection = false; question = nil; holdWhy = nil
         heldReply = nil; alignRetry = .distantPast; fxWaitSince = nil; fxAbsent = [:]; fxAlignFrom = nil; imageCache = nil
         base = [:]; firmwareBase = [:]; screen = [:]; screenAt = [:]; pageReadAt = [:]; wrote = [:]; effects = [:]; docs = [:]; fw = [:]; caps = [:]; hashes = [:]
-        stepWin = nil; stepAt = nil; stepTries = 0; quietSince = nil; walkHeld = false; twinRestarted = false; twinTouch = nil; twinHoldSeen = nil; twinWroteAt = .distantPast; personSaid = false
+        stepWin = nil; stepAt = nil; stepTries = 0; quietSince = nil; walkHeld = false; twinTouch = nil; twinHoldSeen = nil; twinWroteAt = .distantPast; personSaid = false
+        uptimeSeen = [:]; restartSeen = [:]; needScreenRound = false; twinWrote = [:]; twinLost = nil
         pendingFx = [:]; noted = []; offer = nil; declined = []; wantPanel = nil; wantTwin = nil; inFlight = nil
         carry = (0, .distantPast); fwWatch = nil; fwWatchSince = [:]; slowRounds = 0; down = []; failures = [:]; load = nil; strainedUntil = nil
         nextFast = .distantPast; nextSlow = .distantPast; nextEffects = .distantPast; nextVerify = .distantPast; verifyNow = false
@@ -1195,6 +1248,8 @@ final class SyncEngine {
             d.mayWrite = { [weak self] in self?.writesAllowed ?? false }
             d.willWrite = { [weak self] in self?.twinWroteAt = Date() }
             dev[.twin] = d; fw[.twin] = f
+            // A twin at another address, of the same pair: a restart is one, as ever (a new pair starts afresh).
+            if "\(fw[.panel]?.mac ?? "")|\(f.mac)" == pairKey { try sawUptime(.twin, info.i("uptime"), at: Date()) }
         }
         let pAddr = try choosePanel(found, twinMac: tMac)
         if dev[.panel]?.address != pAddr {
@@ -1210,11 +1265,13 @@ final class SyncEngine {
             d.mayWrite = { [weak self] in self?.writesAllowed ?? false }
             dev[.panel] = d; fw[.panel] = f
             publish { $0.peer = "\(f.name) (\(pAddr), \(f.mac))" }
+            if "\(f.mac)|\(fw[.twin]!.mac)" == pairKey { try sawUptime(.panel, info.i("uptime"), at: Date()) }
         }
         let key = "\(fw[.panel]!.mac)|\(fw[.twin]!.mac)"
         if key != pairKey {
             base = [:]; firmwareBase = [:]; pendingFx = [:]; noted = []; resumed = false; needDirection = false; question = nil; wrote = [:]
             stepWin = nil; stepAt = nil; stepTries = 0; twinTouch = nil; twinHoldSeen = nil
+            uptimeSeen = [:]; restartSeen = [:]; twinWrote = [:]; twinLost = nil
             wantPanel = nil; wantTwin = nil; inFlight = nil; heldReply = nil; fxAlignFrom = nil; imageCache = nil
             pairKey = key; consented = false; aligned = false; loadState()
             nextVerify = Date().addingTimeInterval(SyncEngine.verifyEvery)
@@ -1272,6 +1329,7 @@ final class SyncEngine {
             }
             fw[s] = f
             docs[s, default: [:]]["/api/info"] = i
+            try sawUptime(s, i.i("uptime"), at: Date())
         }
         verifyNow = false; nextVerify = Date().addingTimeInterval(SyncEngine.verifyEvery)
         if !down.isEmpty { log("note", "back", M("both devices answer again", "оба устройства снова отвечают")); down = [] }
@@ -1293,18 +1351,66 @@ final class SyncEngine {
         guard let st = try d.get("/api/status") else {
             throw SyncError(M("\(s.word.en) has no /api/status: its firmware is too old for sync", "\(s.at) нет /api/status: прошивка слишком старая для синхронизации"))
         }
+        // Restarted (a smaller uptime): nothing of this screen is anybody's change - the restart is dealt with
+        // first (restarts), whichever round read it.
+        try sawUptime(s, st.i("uptime"), at: Date())
         var x = Screen()
         x.apply(panel: pn)
         x.bright = st.i("brightness") ?? 0; x.off = st.b("forcedOff") ?? false; x.uptime = st.i("uptime") ?? 0
         docs[s, default: [:]]["/api/panel"] = pn; pageReadAt[s] = got
-        if s == .panel { timeStep(x, sent: sent, received: got) }
-        else {
-            // Restarted (a smaller uptime): its carousel's hold starts from boot - no touch (rebooted() follows).
-            if let prev = screen[.twin], x.uptime < prev.uptime { twinTouch = nil; twinHoldSeen = nil }
-            sawTwin(x, at: got)
-        }
+        if s == .panel { timeStep(x, sent: sent, received: got) } else { sawTwin(x, at: got) }
         return x
     }
+
+    /// A side's uptime, from any read of it. Smaller than the one before: the side restarted since - noted
+    /// (restartSeen, with the last moment it answered before), and the read throws SyncRestart, so nothing is
+    /// decided on what it held before. The twin: which of sync's writes the restart may have lost (twinLost);
+    /// a read of its old boot lostWithin after a write shows that write kept.
+    private func sawUptime(_ s: Side, _ up: Int?, at: Date) throws {
+        guard let up else { return }                                   // a firmware without the field: never a restart
+        let prev = uptimeSeen[s]
+        uptimeSeen[s] = (up, at)
+        guard let prev, SyncEngine.restarted(before: prev.up, now: up) else {
+            if s == .twin { twinWrote = twinWrote.filter { at.timeIntervalSince($0.value.at) < SyncEngine.lostWithin } }
+            return
+        }
+        if restartSeen[s] == nil { restartSeen[s] = prev.at }
+        if s == .twin {
+            twinLost = (twinLost ?? [:]).merging(SyncEngine.mayBeLost(twinWrote, alive: prev.at)) { a, _ in a }
+            twinWrote = [:]
+        }
+        throw SyncRestart(side: s)
+    }
+    /// One clock for both routes (millis() / 1000, web.cpp:495, 632): it only goes back when the device restarts.
+    static func restarted(before: Int, now: Int) -> Bool { now < before }
+    /// The writes to the twin a restart may have lost: those its old boot did not answer lostWithin after -
+    /// ALIVE, the last moment it answered. Each with the twin's value before the write.
+    static func mayBeLost(_ w: [String: (before: String, at: Date)], alive: Date) -> [String: String] {
+        w.filter { alive.timeIntervalSince($0.value.at) < lostWithin }.mapValues { $0.before }
+    }
+    /// Of those, the ones the twin shows again as they were before the write (NOW: its digests): lost. Anything
+    /// else that differs on it is its own change.
+    static func lost(_ candidates: [String: String]?, now: [String: String]) -> Set<String> {
+        Set((candidates ?? [:]).filter { now[$0.key] == $0.value }.keys)
+    }
+
+    /// The restarts reads saw (sawUptime), dealt with before anything else: the pair checked again, and each
+    /// restarted side's screen taken as it is now - its reset screen, nobody's change (rebooted). The screen
+    /// round comes next, then the settings round, which gives the twin back the writes its restart lost.
+    private func restarts() throws {
+        guard !restartSeen.isEmpty else { return }
+        try verifyIdentity()
+        for s in sides {
+            guard restartSeen[s] != nil else { continue }
+            if s == .twin { twinTouch = nil; twinHoldSeen = nil }       // its carousel's hold starts from boot: no touch
+            let x = try readScreen(s); screenAt[s] = Date()
+            restartSeen[s] = nil
+            rebooted(s, x)
+        }
+        needScreenRound = true
+    }
+    /// A restart seen by a read whose failure was not thrown (a `try?`): the round stops before it decides anything.
+    private func noRestartPending() throws { if let s = restartSeen.keys.first { throw SyncRestart(side: s) } }
 
     /// The uploaded scripts; nil when they cannot be known now - a build without Lua (404) or without the
     /// script store (no "uploaded"), a filesystem that did not mount (count 0 and fsFree 0:
@@ -1347,7 +1453,10 @@ final class SyncEngine {
         var d = docs[s] ?? [:]
         for r in routes {
             if let doc = try device(s).get(r) { d[r] = doc } else { d[r] = nil }
-            if r == "/api/info", let doc = d[r] { fw[s] = Firmware(doc) }
+            if r == "/api/info", let doc = d[r] {
+                fw[s] = Firmware(doc); docs[s] = d
+                try sawUptime(s, doc.i("uptime"), at: Date())               // restarted: the rest is not read now
+            }
         }
         docs[s] = d
     }
@@ -1799,9 +1908,15 @@ final class SyncEngine {
     /// one step (the screen round goes on every fastEvery whatever happens), none while a person is at the twin.
     private func planStep() {
         stepAt = nil
-        guard aligned, SyncEngine.leader(panel: screen[.panel]) == .panel, !personAtTwin, let w = stepWin,
-              stepTries < SyncEngine.STEP_TRIES else { return }
+        guard aligned, SyncEngine.stepPlanned(leader: SyncEngine.leader(panel: screen[.panel]), person: personAtTwin,
+                                              strained: strained, tries: stepTries), let w = stepWin else { return }
         stepAt = SyncEngine.stepReadAt((w.lo, w.hi))
+    }
+    /// Whether the panel's step is looked for between the screen rounds: while it leads, no person is at the
+    /// twin, fewer than STEP_TRIES looked in vain - and never while the panel is under strain, when it is read
+    /// only every strainedFastEvery: the twin follows it a screen round later then.
+    static func stepPlanned(leader: Side?, person: Bool, strained: Bool, tries: Int) -> Bool {
+        leader == .panel && !person && !strained && tries < STEP_TRIES
     }
 
     /// The panel's /api/panel alone, when its carousel's step is due: the step is given to the twin at once,
@@ -1821,7 +1936,7 @@ final class SyncEngine {
             if x.running && SyncEngine.leader(panel: x) == .panel, try !twinChosen() {
                 rebaseScreen(.panel)                                      // its walk: nobody's change
                 try twinAct(quick: true)
-                nextFast = max(nextFast, Date().addingTimeInterval(SyncEngine.fastEvery))
+                nextFast = max(nextFast, Date().addingTimeInterval(strained ? SyncEngine.strainedFastEvery : SyncEngine.fastEvery))
             } else {
                 nextFast = Date()
             }
@@ -1855,7 +1970,7 @@ final class SyncEngine {
         case .follow:
             let f = SyncEngine.followFields(leader: p, follower: t)
             do { try mirrorScreen(from: .panel, fields: f, quick: quick); forgive("follow", .panel, Array(f)) }
-            catch { if error is SyncStopped || error is SyncDown || tryAgain("follow", .panel, Array(f)) { throw error } }
+            catch { if error is SyncStopped || error is SyncDown || error is SyncRestart || tryAgain("follow", .panel, Array(f)) { throw error } }
         case .hold:
             try holdTwin()
         }
@@ -1875,19 +1990,18 @@ final class SyncEngine {
 
     private func fastRound() throws {
         var fresh: [Side: Screen] = [:]
-        for s in sides { fresh[s] = try readScreen(s) }
-        // A reboot, or an uptime that jumped ahead: the pair is checked before anything is written.
-        var reboots: [Side] = [], jumped = false
+        for s in sides { fresh[s] = try readScreen(s) }                 // a restart throws SyncRestart (restarts)
+        try noRestartPending()
+        // An uptime that jumped ahead: the pair is checked before anything is written.
+        var jumped = false
         for s in sides {
             guard let prev = screen[s], let at = screenAt[s] else { continue }
             let x = fresh[s]!
             if prev.luaSig != x.luaSig { fxDue = true }
-            if x.uptime < prev.uptime { reboots.append(s) }
-            else if x.uptime > prev.uptime + Int(Date().timeIntervalSince(at)) + 30 { jumped = true }   // 30 s of slack: our choice
+            if x.uptime > prev.uptime + Int(Date().timeIntervalSince(at)) + 30 { jumped = true }   // 30 s of slack: our choice
         }
-        if !reboots.isEmpty || jumped { try verifyIdentity() }
+        if jumped { try verifyIdentity() }
         for s in sides { screen[s] = fresh[s]; screenAt[s] = Date() }
-        for s in reboots { rebooted(s, fresh[s]!) }
         if base[.panel]?["screen"] == nil || base[.twin]?["screen"] == nil { rebaseScreen(.panel); rebaseScreen(.twin); return }
         // One carousel for both: its settings and the pages it visits, carried in this round; the side written
         // to is read again, and what it shows then is nobody's change (afterWrite). Not after a restart until the
@@ -1921,7 +2035,7 @@ final class SyncEngine {
             let c = changed[s]!
             if !c.isEmpty {
                 do { try mirrorScreen(from: s, fields: c); forgive("screen", s, Array(c)) }
-                catch { if error is SyncStopped || error is SyncDown || tryAgain("screen", s, Array(c)) { throw error } }   // the base stays: seen again
+                catch { if error is SyncStopped || error is SyncDown || error is SyncRestart || tryAgain("screen", s, Array(c)) { throw error } }   // the base stays: seen again
             }
             rebaseScreen(s)
         }
@@ -1968,7 +2082,7 @@ final class SyncEngine {
     /// are seen and tried again - always when a device did not answer or sync was stopped, three times for
     /// a refusal.
     private func revert(_ kind: String, _ s: Side, _ keys: [String], _ old: [String: String], _ error: Error) {
-        let transient = error is SyncDown || error is SyncStopped || error is SyncWait
+        let transient = error is SyncDown || error is SyncStopped || error is SyncWait || error is SyncRestart
         if transient || tryAgain(kind, s, keys) { for k in keys { base[s, default: [:]][kind, default: [:]][k] = old[k] } }
         else { log("error", kind, M("given up after three attempts: \(keys.map(Settings.shown).joined(separator: ", "))",
                                     "брошено после трёх попыток: \(keys.map(Settings.shown).joined(separator: ", "))"), problem: true) }
@@ -1987,8 +2101,10 @@ final class SyncEngine {
         log("note", "reboot", M("\(s.word.en) restarted (uptime \(x.uptime) s): " + m.en,
                                 (s == .panel ? "панель перезагрузилась" : "двойник перезагрузился") + " (uptime \(x.uptime) с): " + m.ru))
         screen[s] = x; rebaseScreen(s); wrote[s] = nil               // what it shows now is its reset screen
-        if s == .twin { twinTouch = nil; twinHoldSeen = nil; twinRestarted = true }   // its carousel starts again
-        walkHeld = true; nextSlow = Date()                           // the settings round first (fastRound)
+        if s == .twin { twinTouch = nil; twinHoldSeen = nil }       // its carousel starts again
+        // The settings round first (fastRound), after the screen round (needScreenRound): it compares everything,
+        // and gives the twin back what its restart lost (twinLost, settingsChanges).
+        walkHeld = true; nextSlow = Date()
         fwWatch = Date().addingTimeInterval(5)
         caps[s] = nil
         if s == .twin, aligned { twinFollowsPanel() }
@@ -1999,6 +2115,7 @@ final class SyncEngine {
     private func twinFollowsPanel() {
         do { try mirrorScreen(from: .panel, fields: SyncEngine.screenFields) }
         catch is SyncStopped {}
+        catch is SyncRestart {}                                           // restartSeen: dealt with next (restarts)
         catch { log("note", "screen", M("the twin did not take the panel's screen: " + describe(error).en, "двойник не принял экран панели: " + describe(error).ru)) }
     }
 
@@ -2008,6 +2125,7 @@ final class SyncEngine {
     /// /api/panel read within fastEvery + 1 s stands for a read before the write - its page numbers - and the
     /// answer to the write, the same document as GET /api/panel, for the read after it.
     private func mirrorScreen(from s: Side, fields asked: Set<String>, quick: Bool = false) throws {
+        try noRestartPending()
         let o = s.other
         guard let src = screen[s] else { return }
         let leads = SyncEngine.leader(panel: screen[.panel]) == s
@@ -2116,6 +2234,7 @@ final class SyncEngine {
     }
 
     private func effectsPass(_ cur: [Side: Effects], allowMass: Bool) throws {
+        try noRestartPending()
         guard hasFxBase(.panel), hasFxBase(.twin) else { try alignEffectsLate(cur); return }
         for s in sides where base[s]!["effects"]!["mode"] != cur[s]!.fields["mode"] {
             log("note", "effects", M("the effects of \(s.word.en) are compared by \(cur[s]!.byHash ? "content" : "size") from now on", "эффекты \(s.of) теперь сравниваются \(cur[s]!.byHash ? "по содержимому" : "по размеру")"))
@@ -2159,7 +2278,7 @@ final class SyncEngine {
                                      "эффекты, которые при выравнивании было не прочитать, выравниваю сейчас: берётся \(from.word.ru) как есть"))
         effects = cur
         do { try convergeEffects(from: from, a, b) }
-        catch let e where e is SyncStopped || e is SyncDown || e is SyncWait { throw e }
+        catch let e where e is SyncStopped || e is SyncDown || e is SyncWait || e is SyncRestart { throw e }
         catch {
             // A target that keeps refusing (a full LittleFS, a clashing built-in name): three tries, then ask.
             if tryAgain("effects-late", to, ["all"]) { throw error }
@@ -2348,24 +2467,23 @@ final class SyncEngine {
     /// panel (CONFLICTS: the ones whose values differ), the panel's hardware never from the twin (HARDWARE),
     /// a key new on a side (a newer firmware, a module that appeared) is nobody's change - except what the
     /// owner's old overrides left on the twin (Settings.residue): with no twin base yet, the panel's value goes
-    /// to the twin (RESIDUE, among the panel's). TWIN_RESTARTED: the twin restarted since the last full pass,
-    /// and what differs on it from its base is no person's change but a write it lost - each module saves its
-    /// settings to NVS a moment later (panel.cpp panelTick, SETTLE_MS 2.5 s), and a restart within that moment
-    /// keeps the old value: the panel's value goes back to the twin (RESTORED, among the panel's). ONLY: these
-    /// keys alone.
+    /// to the twin (RESIDUE, among the panel's). LOST: the twin restarted since the last full pass, and these
+    /// keys are writes of sync's it lost - each module saves its settings to NVS a moment later (SETTLE_MS 2.5 s,
+    /// lostWithin), and a restart within that moment keeps the old value, which the twin shows again (lost): the
+    /// panel's value goes back to the twin (RESTORED, among the panel's). What else differs on the twin after a
+    /// restart is its own change, carried as ever - a person's choice it had saved before the restart. ONLY:
+    /// these keys alone.
     static func settingsChanges(cur: [Side: J], dig: [Side: [String: String]], base bp: [String: String], _ bt: [String: String],
-                                only: ((String) -> Bool)? = nil, twinRestarted: Bool = false)
+                                only: ((String) -> Bool)? = nil, lost: Set<String> = [])
         -> (changed: [Side: [String]], conflicts: [String], hardware: [String], residue: [String], restored: [String]) {
         var changed: [Side: [String]] = [:]
         for (s, b) in [(Side.panel, bp), (.twin, bt)] {
             changed[s] = dig[s]!.keys.filter { (only?($0) ?? true) && b[$0] != nil && b[$0] != dig[s]![$0] }.sorted()
         }
-        var restored: [String] = []
-        if twinRestarted {
-            restored = changed[.twin]!.filter { !changed[.panel]!.contains($0) }
-            changed[.panel] = Array(Set(changed[.panel]!).union(changed[.twin]!)).sorted()
-            changed[.twin] = []
-        }
+        let lostNow = changed[.twin]!.filter { lost.contains($0) }
+        let restored = lostNow.filter { !changed[.panel]!.contains($0) }
+        changed[.panel] = Array(Set(changed[.panel]!).union(lostNow)).sorted()
+        changed[.twin]!.removeAll { lost.contains($0) }
         let residue = dig[.panel]!.keys.filter { k in
             (only?(k) ?? true) && bt[k] == nil && cur[.twin]![k] != nil && Settings.residue(k, twin: cur[.twin]![k])
                 && canon(cur[.panel]![k]) != canon(cur[.twin]![k])
@@ -2391,11 +2509,12 @@ final class SyncEngine {
             for s in sides { base[s, default: [:]]["settings"] = dig[s]! }
             try enforceOverrides(); return
         }
+        try noRestartPending()
         // The twin's restart is judged by the first full pass after it (walkHeld keeps the screen round's
-        // carousel pass waiting for it).
-        let restarted = only == nil && twinRestarted
-        if only == nil { twinRestarted = false }
-        let ch = SyncEngine.settingsChanges(cur: cur, dig: dig, base: bp, bt, only: only, twinRestarted: restarted)
+        // carousel pass waiting for it): of the writes it may have lost, those it shows again as they were.
+        let lost = only == nil ? SyncEngine.lost(twinLost, now: dig[.twin]!) : []
+        if only == nil { twinLost = nil }
+        let ch = SyncEngine.settingsChanges(cur: cur, dig: dig, base: bp, bt, only: only, lost: lost)
         let changed = ch.changed
         for k in ch.conflicts { log("panel→twin", "conflict", M("conflict: the panel's taken - \(Settings.shown(k))", "конфликт: взята панель — \(Settings.shown(k))")) }
         // The panel's hardware never goes to the panel: the twin keeps its own until the panel changes it.
@@ -2455,6 +2574,7 @@ final class SyncEngine {
         let o = s.other, dv = device(o)
         let keys = o == .panel ? all.filter { !Settings.hardware.contains($0) } : all      // never the panel's hardware to it
         let src = flat(s), sd = docs[s] ?? [:]
+        let twinBefore = o == .twin ? digests(flat(.twin)) : [:]                  // what a restart that loses the write shows
         let sForm = sd["/api/portal"]?.o("form") ?? [:], sExport = sd["/api/export"] ?? [:]
         var saveKeys = keys.filter { $0.hasPrefix("f.") }
         var body: J = [:]
@@ -2536,6 +2656,7 @@ final class SyncEngine {
         }
         if keys.contains("logOn") { try dv.action("/api/log", [("on", (src["logOn"] as? NSNumber)?.boolValue == true ? "1" : "0")]); done.append("logOn") }
         guard !done.isEmpty else { return }
+        if o == .twin { let at = Date(); for k in keys { twinWrote[k] = (twinBefore[k] ?? "", at) } }
         // Read back what was written: the target's new values become its base, so they are not sent back.
         let routes = Array(Set(keys.flatMap(Settings.routes))).filter { Device.reads.contains($0) }.sorted()
         try readDocs(o, routes)
@@ -2613,17 +2734,28 @@ final class SyncEngine {
         return done
     }
 
-    /// The owner's override on the twin (sync.py OVERRIDES): climateHa off, put back whenever it drifts; it is
-    /// never compared or sent to the panel. And what the dropped overrides of 2026-09-29 added to the twin: the
-    /// custom airport ZZZZ "NO REQUESTS", removed once the twin's board is on another airport (the panel's,
-    /// settingsPass) - unless the panel has such an airport itself, or its list is not known. Neither touches
-    /// a compared setting (ZZZZ is left out of flightboard.custom), so no base moves.
+    /// The owner's overrides on the twin (sync.py OVERRIDES), put back whenever they drift, never compared or
+    /// sent to the panel: climateHa off (2026-09-29), and fbAskHa off (2026-09-30 22:40, firmware 2.7.13) - a
+    /// twin without an AeroAPI key of its own never asks Home Assistant for a flight board, since each ask is a
+    /// fetch HA pays for with the owner's key (fb_mqtt.cpp:24-45, 103-136). A twin whose firmware has no
+    /// fbAskHa yet and would ask is said once (asksHa). And what the dropped overrides of 2026-09-29 added to the
+    /// twin: the custom airport ZZZZ "NO REQUESTS", removed once the twin's board is on another airport (the
+    /// panel's, settingsPass) - unless the panel has such an airport itself, or its list is not known. None
+    /// touches a compared setting (ZZZZ is left out of flightboard.custom), so no base moves.
     private func enforceOverrides() throws {
         let tw = device(.twin), d = docs[.twin] ?? [:]
         var did: [String] = [], routes: [String] = []
         if d["/api/export"]?.b("climateHa") == true {
             try tw.post("/api/import", ["climateHa": false]); did.append("climateHa false")    // climate.cpp:127-131, 165-182
             routes += ["/api/export", "/api/portal"]
+        }
+        if d["/api/export"]?.b("fbAskHa") == true {
+            try tw.post("/api/import", ["fbAskHa": false]); did.append("fbAskHa false")        // 2.7.13: web.cpp handleImportConfig
+            if !routes.contains("/api/export") { routes.append("/api/export") }
+        }
+        if SyncEngine.asksHa(export: d["/api/export"], board: d["/api/flightboard"]) {
+            noteOnce("askha-\(fw[.twin]?.id ?? "")", M("the twin has an MQTT broker and no AeroAPI key, and its firmware \(fw[.twin]?.version ?? "") has no fbAskHa (2.7.13): its flight board asks Home Assistant for a built-in airport's board, and HA pays for it with its key - update the twin's firmware, or remove the broker from its settings",
+                                                        "у двойника задан брокер MQTT и нет ключа AeroAPI, а в его прошивке \(fw[.twin]?.version ?? "") нет fbAskHa (2.7.13): табло рейсов двойника просит у Home Assistant табло встроенного аэропорта, и HA платит за это своим ключом — обновите прошивку двойника или уберите брокер из его настроек"))
         }
         if let fb = d["/api/flightboard"],
            let z = fb.a("airports").first(where: { $0.s("kind") == "custom" && $0.s("code") == Settings.noAsk.icao && $0.s("name") == Settings.noAsk.name }),
@@ -2637,16 +2769,36 @@ final class SyncEngine {
         log("override", "twin", M("the owner's override on the twin: " + did.joined(separator: ", "), "переопределение владельца на двойнике: " + did.joined(separator: ", ")))
     }
 
+    /// Whether a twin would ask Home Assistant for flight boards and nothing here can stop it: its firmware has
+    /// no fbAskHa (before 2.7.13: absent from /api/export), a broker is set (mqtt.configured: NVS fb/host,
+    /// mqtt_bus.cpp:171-186), it has no AeroAPI key (direct.key, or no direct fetch built), and the airport shown
+    /// is a built-in one - the only kind HA serves (fb_mqtt.cpp mayAsk).
+    static func asksHa(export: J?, board: J?) -> Bool {
+        guard let export, export["fbAskHa"] == nil, let fb = board, fb.o("mqtt")?.b("configured") == true else { return false }
+        let direct = fb.o("direct") ?? [:]
+        guard direct.b("built") == false || direct.b("key") != true else { return false }
+        return fb.a("airports").first { $0.i("id") == fb.i("airport") }?.s("kind") == "builtin"
+    }
+
     /// After writing to side O: its screen as it is now becomes its base (a new home city, a removed
     /// effect or a renumbered list can move its page); if its page had been the source's and moved,
-    /// the source's page is put back.
+    /// the source's page is put back (putBack). A restart it shows stops the round (SyncRestart).
     private func afterWrite(_ o: Side, from s: Side) throws {
+        try noRestartPending()
         let before = screen[o]
-        guard let now = try? readScreen(o) else { return }
+        let now: Screen
+        do { now = try readScreen(o) } catch let r as SyncRestart { throw r } catch { return }
         screen[o] = now; screenAt[o] = Date(); rebaseScreen(o)
-        if let before, let src = screen[s], before.shown == src.shown, now.shown != src.shown {
-            try mirrorScreen(from: s, fields: ["page"])
-        }
+        if SyncEngine.putBack(to: o, before: before, now: now, source: screen[s]) { try mirrorScreen(from: s, fields: ["page"]) }
+    }
+    /// Whether side O's page, moved by a write to it, is put back to the source's: only where O showed the
+    /// source's page before and shows another now - not when O's own carousel walks (it moved the page, and
+    /// walks on), and never on the leading panel: a show there holds its carousel for the idle time
+    /// (panelShowPage -> carouselNote, main.cpp:883-889), and the twin follows the page it is on now anyway -
+    /// a renumbered list or a new home city there is the panel's own screen, which the twin takes.
+    static func putBack(to o: Side, before: Screen?, now: Screen, source: Screen?) -> Bool {
+        guard let before, let src = source, before.shown == src.shown, now.shown != src.shown, !now.running else { return false }
+        return !(o == .panel && leader(panel: now) == .panel)
     }
 
     // MARK: firmware
@@ -2730,7 +2882,7 @@ final class SyncEngine {
             if fw[.panel]?.id != w || fw[.twin]?.id == w { wantTwin = nil; stateDirty = true }
             else if carry.tries < SyncEngine.CARRY_TRIES, Date() >= carry.next {
                 do { try updateFirmware(from: .panel, offer: nil) }
-                catch let e where e is SyncStopped || e is SyncWait { throw e }
+                catch let e where e is SyncStopped || e is SyncWait || e is SyncRestart { throw e }
                 catch { failedCarry(.twin, error) }
             }
         }
@@ -2800,7 +2952,7 @@ final class SyncEngine {
         try verifyIdentity()                                                  // the MACs, and fw[] read again
         guard offerHolds(o) else { return }
         do { try updateFirmware(from: .twin, offer: o) }
-        catch let e where e is SyncStopped || e is SyncWait { throw e }
+        catch let e where e is SyncStopped || e is SyncWait || e is SyncRestart { throw e }
         catch { failedCarry(.panel, error) }
     }
 
