@@ -976,22 +976,8 @@ static void handleYachtradar() {
 // by itself - an IP address or an mDNS .local name. A page whose own domain
 // was pointed at the panel's address (DNS rebinding) sends matching Host and
 // Origin, both its own domain; that domain is neither.
-static bool hostIsPanels(const String &hostPort) {
-  const int colon = hostPort.lastIndexOf(':');
-  const String h = colon > 0 ? hostPort.substring(0, colon) : hostPort;
-  if (!h.length()) return false;
-  if (h.endsWith(".local")) return true;
-  for (size_t i = 0; i < h.length(); i++)
-    if (!(isdigit((unsigned char)h[i]) || h[i] == '.')) return false;
-  return true;                          // an IPv4 literal
-}
-static bool __attribute__((unused)) originIsForeign() {
-  if (!server.hasHeader("Origin")) return false;
-  const String o = server.header("Origin");
-  if (!o.length() || o == "null") return false;
-  const String host = server.hostHeader();
-  return !(host.length() && hostIsPanels(host) && o == String("http://") + host);
-}
+// The check itself lives in web.cpp (webOriginForeign), shared with POST /reset.
+static bool __attribute__((unused)) originIsForeign() { return webOriginForeign(); }
 
 // ---------------------------------------------------------------- /api/keys
 // The services' keys, entered on the portal's Keys page instead of only by

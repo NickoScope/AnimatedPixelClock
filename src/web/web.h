@@ -30,6 +30,12 @@ void handleFavicon();
 void handlePortalValues();   // GET /api/portal: the values the page fills in
 void handleSave();
 void handleReset();
+// True for a request a browser made on behalf of another site's page: an
+// Origin that is not exactly http://<Host>, or a Host that is not this panel's
+// own (an IPv4 address or an mDNS .local name - a DNS-rebound domain is
+// neither). No Origin at all (curl, the agent tools, the twin app) is not
+// foreign. POST /reset and the Panel group's writes (web_panel.cpp) use it.
+bool webOriginForeign();
 void handleMetricsAPI();
 void handleDeviceInfo();
 void handleRename();

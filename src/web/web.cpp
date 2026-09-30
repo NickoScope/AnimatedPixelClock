@@ -197,7 +197,15 @@ void setupWebServer() {
  server.on("/panel.js", HTTP_GET, handlePanelJs);
 #endif
  server.on("/save", HTTP_POST, handleSave);
- server.on("/reset", handleReset);
+ // POST only, with {"confirm":"factory-reset"} and from this panel's own page
+ // (handleReset). It was on every method: a GET wiped the settings and Wi-Fi,
+ // so one <img src=".../reset"> on any page open in a browser on this network
+ // reset the panel (found by the functional test, 2026-09-30). A GET now only
+ // says how.
+ server.on("/reset", HTTP_POST, handleReset);
+ server.on("/reset", HTTP_GET, []() {
+   server.send(405, "text/plain", "Factory reset is a POST from the portal's Firmware page.\n");
+ });
  server.on("/metrics", handleMetricsAPI);
  server.on("/api/info", HTTP_GET, handleDeviceInfo);
  server.on("/api/diagnostics", HTTP_GET, handleDeviceInfo);
@@ -2462,7 +2470,47 @@ void handleSave() {
  }
 }
 
+static bool hostIsPanels(const String &hostPort) {
+  const int colon = hostPort.lastIndexOf(':');
+  const String h = colon > 0 ? hostPort.substring(0, colon) : hostPort;
+  if (!h.length()) return false;
+  if (h.endsWith(".local")) return true;
+  for (size_t i = 0; i < h.length(); i++)
+    if (!(isdigit((unsigned char)h[i]) || h[i] == '.')) return false;
+  return true;                          // an IPv4 literal
+}
+
+bool webOriginForeign() {
+  if (!server.hasHeader("Origin")) return false;
+  const String o = server.header("Origin");
+  if (!o.length() || o == "null") return false;
+  const String host = server.hostHeader();
+  return !(host.length() && hostIsPanels(host) && o == String("http://") + host);
+}
+
+// POST /reset {"confirm":"factory-reset"}. Three doors, each closing a way a
+// stranger's page could reach it: POST only (an <img> or a link is a GET);
+// Content-Type application/json (a cross-site JSON POST needs a CORS preflight,
+// and no route here answers OPTIONS); the Origin, when a browser sends one,
+// naming this panel (webOriginForeign). The confirmation in the body keeps an
+// accidental POST from any tool from wiping the board.
 void handleReset() {
+ if (webOriginForeign()) {
+   sendJsonGuarded(403, "{\"success\":false,\"error\":\"refused: this request came from another origin\"}");
+   return;
+ }
+ if (!server.header("Content-Type").startsWith("application/json") || !server.hasArg("plain")) {
+   sendJsonGuarded(415, "{\"success\":false,\"error\":\"send application/json {\\\"confirm\\\":\\\"factory-reset\\\"}\"}");
+   return;
+ }
+ {
+   JsonDocument in(webJsonAllocator());
+   if (server.arg("plain").length() > 256 || deserializeJson(in, server.arg("plain")) ||
+       strcmp(in["confirm"] | "", "factory-reset") != 0) {
+     sendJsonGuarded(400, "{\"success\":false,\"error\":\"the body must be {\\\"confirm\\\":\\\"factory-reset\\\"}\"}");
+     return;
+   }
+ }
  String html = R"rawliteral(
 <!DOCTYPE html><html><head><title>Factory Reset</title><style> body{font-family:Arial;background:#1a1a2e;color:#e94560;display:flex;justify-content:center;align-items:center;height:100vh;margin:0}.msg{text-align:center}</style></head><body><div class="msg"><h1>&#128260;</h1><p>Factory reset in progress...<br>All settings erased.<br>Connect to "PixelClock-Setup" to reconfigure.</p></div></body></html>
 )rawliteral";
