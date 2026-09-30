@@ -25,7 +25,8 @@
 # the .dmg there, and TWIN_BUNDLE_ID=<id> gives it another bundle identifier - so another settings
 # domain (defaults), another data directory by default (~/Library/Application Support/<id>: its own
 # flash, MAC and sync state, never the installed app's, and nothing copied in from ~/twin/state), its
-# own key for the sync state in the Keychain, and "TEST <id>" in its window's title. A test that syncs
+# own key for the sync state in the Keychain, "TEST <id>" in its window's title, and no Dock icon (a
+# test build is quit by its PID when its test ends, never left beside the installed app). A test that syncs
 # with a twin playing the panel also passes -dataDir <dir> and -panelAddress 127.0.0.1:<port>: the
 # test switches hold for nothing else (SyncEngine.swift).
 set -euo pipefail
@@ -47,6 +48,10 @@ APP_VERSION="1.3"
 NAME="TWIN-NickoScopeMatrix-64x128"
 BUNDLE_ID="${TWIN_BUNDLE_ID:-com.nickoscope.TWIN-NickoScopeMatrix-64x128}"
 APP_OUT="${APP_OUT:-}"
+# A test build stays out of the Dock and the app switcher (LSUIElement), so it is never mistaken for
+# the installed app and quit instead of it.
+TEST_KEYS=""
+[ "$BUNDLE_ID" != "com.nickoscope.TWIN-NickoScopeMatrix-64x128" ] && TEST_KEYS="<key>LSUIElement</key><true/>"
 for f in "$ENGINE/target/release/esp32sim" "$ROM" "$EFUSE" "$IMAGE"; do
     [ -f "$f" ] || { echo "missing: $f (see tools/twin/README.md, Setup)" >&2; exit 1; }
 done
@@ -112,6 +117,7 @@ cat > "$APP/Contents/Info.plist" <<EOF
     <key>NSAllowsArbitraryLoadsInWebContent</key><true/>
   </dict>
   <key>TwinFirmware</key><string>$VERSION</string>
+  $TEST_KEYS
 </dict>
 </plist>
 EOF
