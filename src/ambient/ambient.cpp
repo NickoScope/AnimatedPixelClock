@@ -31,7 +31,7 @@ bool ambientActive() {
 }
 
 // Small HH:MM in the top-right corner, on a black backing so it stays
-// readable over bright effects like the fire.
+// readable over bright stars or a custom animation.
 static void drawAmbientClock() {
   struct tm timeinfo;
   if (!peekLocalTime(&timeinfo)) return;
@@ -55,11 +55,10 @@ void displayAmbient() {
   switch (settings.ambientStyle) {
     case 0: ambientInvadersFrame(); break;
     case 1: ambientPacmanChaseFrame(); break;
-    // case 2 (old lava) removed; reserved for a future Mario effect. Stored
-    // 2 values are normalized to 0 on load/import (see settings.cpp).
+    // case 2 (old lava) removed; reserved for a future Mario effect. Cases 4
+    // (Aquarium) and 5 (Burning room) removed at the owner's word, 2026-09-30.
+    // Stored 2, 4 and 5 are normalized to 0 on load/import (normalizeAmbientStyle).
     case 3: ambientStarsFrame(); break;
-    case 4: ambientAquariumFrame(); break;
-    case 5: ambientThisIsFineFrame(); break;
     case 6: ambientCustomFrame(); break;
     default: ambientInvadersFrame(); break;
   }

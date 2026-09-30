@@ -23,8 +23,6 @@ void displayAmbient();
 void ambientInvadersFrame();
 void ambientPacmanChaseFrame();
 void ambientStarsFrame();
-void ambientAquariumFrame();
-void ambientThisIsFineFrame();
 void ambientCustomFrame();
 
 // Drop the custom player's cached file/buffers (after upload/delete/save).

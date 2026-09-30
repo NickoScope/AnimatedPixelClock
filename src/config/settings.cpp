@@ -433,7 +433,7 @@ void loadSettings() {
   settings.ambientStyle =
       preferences.getUChar("ambStyle", 0); // Default: Space Invaders
   {
-    // Retire the removed lava slot (2): normalize in RAM and, if the stored
+    // Retire the removed slots (2 lava; 4 Aquarium and 5 Burning room, 2.7.8): normalize in RAM and, if the stored
     // value actually changed, write it back now (Preferences is already open)
     // so NVS no longer holds a 2 that a future Mario effect would inherit.
     uint8_t normalized = normalizeAmbientStyle(settings.ambientStyle);

@@ -49,9 +49,9 @@ The pages:
 | Markets | Indices, ticker, portfolio and holdings pages with an exchange tape | Home Assistant, MQTT | [src/market](src/market/README.md) |
 | Lua effects | Up to 36 on a panel, loaded over the air; none are compiled in since 2.6.0. The gallery has the ones that used to be (football, snooker, snake and Tetris clocks, Minecraft, the room radar, La Gioconda) and more | nothing; the room radar needs a presence sensor over MQTT | [src/lua](src/lua/README.md), [gallery](gallery/README.md) |
 
-The weather clock, the ambient screensavers, custom GIF animations, the PC
-monitor and the audio visualizer from upstream are all still in; they are
-described further down.
+The weather clock, the ambient screensavers (all but upstream's aquarium and
+burning room, removed in 2.7.8), custom GIF animations, the PC monitor and the
+audio visualizer from upstream are still in; they are described further down.
 
 The board's own SHTC3 sensor reports temperature and humidity in `/api/info`, on
 the portal's Clock page, and, on request, as two Home Assistant sensors
@@ -241,9 +241,8 @@ style's Colors card like any other clock.
 ## Ambient screensaver
 
 On the web interface's Display page you can run an **ambient screensaver** instead of
-the clock: a Space Invaders battle, a Pac-Man chase, a starfield, an aquarium with
-fish, bubbles and kelp, or a burning room where a very calm dog insists everything is
-fine. An optional small clock stays in the corner. Press **Start
+the clock: a Space Invaders battle, a Pac-Man chase, a starfield, or your own uploaded
+animation. An optional small clock stays in the corner. Press **Start
 now** to keep the effect on until you stop it, or enable the schedule to have it come
 on automatically during set hours (e.g. 20:00-23:00). `GET /api/mode/ambient` /
 `/api/mode/auto` do the same from automations.

@@ -1764,7 +1764,7 @@ void handleSave() {
  // a partial form can't silently disable them)
  if (server.hasArg("ambientStyle")) {
  settings.ambientEnabled = server.hasArg("ambientEnabled");
- // normalizeAmbientStyle maps the retired lava slot (2) and any out-of-range
+ // normalizeAmbientStyle maps the retired slots (2 lava, 4 Aquarium, 5 Burning room) and any out-of-range
  // value to 0 (Space Invaders); parse as int first so it can't wrap.
  settings.ambientStyle = normalizeAmbientStyle(server.arg("ambientStyle").toInt());
  if (settings.ambientStyle == 6 && !animFsUsable()) settings.ambientStyle = 0;
@@ -2570,7 +2570,7 @@ void handleImportConfig() {
  if (!doc["climateShow"].isNull()) settings.climateShow = climate::clampShow(doc["climateShow"].as<long>());
  if (!doc["climateHa"].isNull()) settings.climateHa = doc["climateHa"];
  if (!doc["ambientEnabled"].isNull()) settings.ambientEnabled = doc["ambientEnabled"];
- // Read as int and normalize so the retired lava slot (2) or a bad value maps
+ // Read as int and normalize so a retired slot (2, 4, 5) or a bad value maps
  // to 0 (Space Invaders) rather than wrapping into the uint8_t field.
  if (!doc["ambientStyle"].isNull()) settings.ambientStyle = normalizeAmbientStyle(doc["ambientStyle"].as<int>());
  if (!doc["ambientStartHour"].isNull()) settings.ambientStartHour = doc["ambientStartHour"];

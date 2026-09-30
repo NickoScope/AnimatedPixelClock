@@ -14,7 +14,7 @@
 #include "../util/psram_state.h"
 
 // ========== Version ==========
-#define FIRMWARE_VERSION "2.7.7"
+#define FIRMWARE_VERSION "2.7.8"
 
 // ========== Constants ==========
 #define MAX_METRICS 20
@@ -22,12 +22,14 @@
 #define METRIC_UNIT_LEN 8
 #define TIMEOUT STATS_TIMEOUT
 
-// Ambient effect slots in use: 0,1,3,4,5,6 (2 reserved for a future Mario
-// effect after old lava was removed). Map the retired slot 2 and any
+// Ambient effect slots in use: 0,1,3,6 (2 reserved for a future Mario
+// effect after old lava was removed; 4 and 5 retired in 2.7.8). Map the retired slots and any
 // out-of-range value to 0 (Space Invaders) so the web <select> always has a
 // matching option and a stray import can't select a dead effect.
+// 2 (lava), 4 (Aquarium) and 5 (Burning room) are retired - the last two at the owner's word,
+// 2026-09-30 - so a stored or imported one becomes Space Invaders.
 static inline uint8_t normalizeAmbientStyle(int s) {
-  return (s == 2 || s < 0 || s > 6) ? 0 : (uint8_t)s;
+  return (s == 2 || s == 4 || s == 5 || s < 0 || s > 6) ? 0 : (uint8_t)s;
 }
 
 #define SCOPE_TRAIL_MAX 4
@@ -162,8 +164,8 @@ struct Settings {
 
   // Ambient screensaver (scheduled, replaces the clock)
   bool ambientEnabled;          // Enable the scheduled ambient window
-  uint8_t ambientStyle;         // 0=Space Invaders, 1=Pac-Man chase, (2 reserved), 3=Starfield,
-                                // 4=Aquarium, 5=Burning room, 6=Custom animation (uploaded .pca)
+  uint8_t ambientStyle;         // 0=Space Invaders, 1=Pac-Man chase, 3=Starfield, 6=Custom animation
+                                // (uploaded .pca); 2, 4 and 5 are retired (normalizeAmbientStyle)
   uint8_t ambientStartHour;     // Window start (0-23, wraps midnight)
   uint8_t ambientEndHour;       // Window end (0-23)
   bool ambientShowClock;        // Small HH:MM overlay in the corner
