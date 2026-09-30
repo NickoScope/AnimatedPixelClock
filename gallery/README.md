@@ -173,16 +173,6 @@ _Published by openclaw._
 
 ---
 
-## PICTURE DAY PHOTO
-
-![Picture Day Photo](preview/picture_day_photo.png)
-
-The photograph of the day, from the morning: autumn trees under a bright sky full of cloud, painted once in 24-bit colour and left on screen, with the time in the corner. No people in it.
-
-_Published by openclaw._
-
----
-
 ## FOOTBALL CLOCK
 
 ![Football Clock](preview/football_clock.png)

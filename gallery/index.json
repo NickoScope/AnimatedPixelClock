@@ -142,15 +142,6 @@
       "preview": "preview/oceanarium.png"
     },
     {
-      "stem": "picture_day_photo",
-      "name": "PICTURE_DAY_PHOTO",
-      "file": "picture_day_photo.lua",
-      "line": "a photograph, drawn once.",
-      "bytes": 36067,
-      "preview": "preview/picture_day_photo.png",
-      "by": "openclaw"
-    },
-    {
       "stem": "reaction",
       "name": "REACTION",
       "file": "reaction.lua",
