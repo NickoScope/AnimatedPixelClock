@@ -4,10 +4,23 @@
 // brightness, on/off), the settings, the Lua effects (a new one appears, a removed one goes) and the
 // firmware are mirrored both ways. Firmware goes to the twin by itself and to the physical panel only
 // after a person says yes here ("Update the panel too?"). What sync brings is not sent back (no echo);
-// when both sides change the same thing, the later change wins. The owner's overrides on the twin
-// (2026-09-29, tools/twin/sync.py OVERRIDES) hold always and never travel to the panel; secrets,
-// identity and state never travel at all. Other owners work in their own forks: firmwareRepo names
-// where releases and the gallery come from.
+// when both sides change the same thing, the later change wins. The owner's one override on the twin,
+// climateHa off (2026-09-29, tools/twin/sync.py OVERRIDES), holds always and never travels to the panel;
+// secrets - the weather API key, and the AeroAPI, RTT and AIS keys of the portal's Keys page - identity
+// and state never travel at all. Other owners work in their own forks: firmwareRepo names where releases
+// and the gallery come from.
+// The owner, 2026-09-30 19:35: the twin keeps no paid screen off by force. Like the panel, it has the Keys
+// page (data-page="pkeys", /api/keys: a key is written there and never given out - its GET says only
+// whether one is stored, web_panel.cpp:1000-1123), and its flight and rail boards work from the keys
+// entered there. So the flights and trains pages, their place in the walk and the flight board's airport
+// are mirrored like everything else; the keys never are, in either direction - each device has its own.
+// Without a key the board makes no paid call of its own: the AeroAPI fetch stops before anything is counted
+// or sent (aero_direct.cpp:725, NO KEY), the RTT one too (rtt_direct.cpp:737, NO TOKEN). A twin with an MQTT
+// broker in its NVS (never set by sync) and no AeroAPI key asks Home Assistant for a built-in airport's
+// board, as a panel without a key does (fb_mqtt.cpp:103-136; once per airport and half in 15 min, 12 an
+// hour at most, :24-45) - and HA pays for that fetch with its own key.
+// The owner, 2026-09-30 19:13: "if the panel runs the carousel, the twin runs it too, with the same
+// screens, in step - and the other way round". How: "One carousel for both" below.
 // The owner, 2026-09-30, after two reviews: switched on, sync is full, both ways; switched off, all
 // stays as it is - nothing is rolled back, and nothing more is written, not even what was half done.
 // The settings that describe the panel's own hardware go from the panel to the twin only (Settings.hardware).
@@ -31,9 +44,12 @@
 //
 // What is read, and how often (the periods are our choice, not measured; the portal itself polls
 // /api/panel every 2 s and /api/info every 5 s while it is open, web_panel_js.h:86, web_pages.h:2376):
-//   screen    every 3 s   GET /api/panel (web_panel.cpp:295-377: now.key/name/style, carousel.running,
-//                         pageS, pages[]) and GET /api/status (web.cpp:554-580: brightness %, forcedOff,
-//                         uptime - a smaller uptime is a reboot, whose reset screen is nobody's change)
+//   screen    every 3 s   GET /api/panel (web_panel.cpp:309-393: now.key/name/style/entered, the carousel -
+//                         enabled, idleS, slotS, allStyles, running, holdS, pageS, nextS - pages[]) and GET
+//                         /api/status (web.cpp:554-580: brightness %, forcedOff, uptime - a smaller uptime is
+//                         a reboot, whose reset screen is nobody's change)
+//   step      the panel's GET /api/panel alone, right after its carousel's next step is due (nextS), while
+//                         the twin follows it; it stands for the next screen round ("One carousel for both")
 //   who       every 15 s  GET /api/info of both: the MAC must still be the pair's; also at once after a
 //                         device answered again and when its uptime jumped (an address changes hands)
 //   effects   when the Lua names or walk switches in /api/panel change, and every 60 s: GET /api/lua
@@ -63,12 +79,10 @@
 // every show, knob turn and remote press (carousel.cpp:13-17); for everything else there is no
 // timestamp on the device, so the order is known only to within a poll period - 3 s for the screen,
 // 60 s for effects, syncSettingsEveryS for settings - and a tie goes to the panel ("conflict: the
-// panel's taken - <key>" in the log). A page or style change made by the carousel itself
-// (carousel.running, carousel.cpp:25-27) is not mirrored: two carousels would fight. Nor is what a
-// carousel shows written to the other side by anything else - the twin taking the panel's screen after
-// it restarted or after a firmware sync, an alignment: written, a style is saved there as a person's
-// choice and that side's carousel is held (Screen.walked). A screen write whose answer was lost may
-// still land; the side showing it later is sync's own write, not a person's change (wrote). The bases of
+// panel's taken - <key>" in the log). A page or style change made by a carousel (carousel.running,
+// carousel.cpp:25-27) is never a person's change (Screen.walked); how the twin shows the panel's walk is
+// "One carousel for both" below. A screen write whose answer was lost may still land; the side showing it
+// later is sync's own write, not a person's change (wrote). The bases of
 // settings, effects and firmware are kept in <dataDir>/sync-state.json - the settings as HMAC-SHA-256
 // digests whose key is in the login Keychain, not in the file, so no value can be guessed from the
 // file - and a restart of the app resumes where it stopped: what the panel changed meanwhile comes to
@@ -82,11 +96,44 @@
 // both sides' can - with the MASS_DELETES threshold, past which the direction is asked again. Effects
 // that have never been aligned are never merged by themselves: the direction is asked.
 //
+// One carousel for both. What the carousel is - on or off, idleS, slotS, allStyles (/api/panel
+// "carousel", NVS carOn/carIdle/carSlot/carAll, panel.cpp:358-361) - and which pages it visits (pages[].on,
+// NVS "pages"; each effect's walk switch, NVS "luaOff") are settings like the others, but read in every
+// screen round and carried at once, both ways (Settings.walkKey): switched on or off on either side - the
+// portal, the remote's carousel button (ir_actions.cpp:137-141), the API - it is on or off on both a round
+// later. While it is on, the panel leads and the twin follows: each step of the panel's carousel - a page,
+// and with "walk every clock style" a style (main.cpp:1173-1180) - is written to the twin, sync's own write
+// (wrote), never taken for a person's change there and never sent back. Each write holds the twin's own
+// carousel for the idle time (panelShowPage -> carouselNote, main.cpp:883-889), so the twin does not walk
+// by itself; before a hold of the twin's would end ahead of the panel's it is held again (holdTwin), and
+// when the carousel is switched on at the twin, the twin waits for the panel's first step. The panel is
+// never the follower: each clock style written to it would be saved to its flash 2.5 s later (applyStyle ->
+// clockStyleTick -> saveClockStyle, clock_style.cpp:43-50, 136-142), where its own carousel only shows a
+// style (showStyle, :52-62, not saved) - so nothing of the twin's walk is ever written to it (Screen.walked):
+// with the carousel on the panel leads, with it off there is no walk to follow. To follow within about a
+// second rather than a screen round later: every read of the panel's /api/panel gives the seconds to its
+// next step (nextS = max(secs - pageS, holdS), whole seconds, web_panel.cpp:345-365); the window of the step
+// is narrowed read by read (stepWindow), the panel's /api/panel alone is read just after the step is due
+// (stepRead) and the step written to the twin at once; that read stands for the next screen round, so the
+// panel is read about as often as before, and the rounds that take a while (effects, settings) wait while a
+// step is near. A person's page, style, brightness or on/off on either side is carried as before: it holds
+// that side's carousel, the write that carries it holds the other one, both wait the idle time and walk on
+// together, the panel first. While a person is at the twin - its carousel's hold began after sync last wrote
+// to it, or a page is entered with its knob - the panel's steps are not written over them; as that hold is
+// about to end the twin takes the panel's screen again. The twin restarted mid-walk: it takes the panel's
+// screen, and nothing is written to the panel - nor its settings: what differs on it after the restart is
+// taken for writes it lost (a module saves to NVS 2.5 s after a change, panel.cpp panelTick), and the panel's
+// values go back to it (settingsChanges). Sync switched off: nothing is rolled back, and each carousel walks
+// by itself once the twin's hold ends.
+//
 // How each thing is written:
 //   page      POST /api/panel {"show":{"page":i}}, i looked up by key and name on the target
 //             (web_panel.cpp:385-398; indexes differ per device, main.cpp:95-110)
 //   style     POST /api/panel {"style":id,"show":{"page":i}}: style is checked and stored 2.5 s later,
 //             and moves to the clock page, so show keeps the page (web_panel.cpp:400-402, 465-466)
+//   the walk  the panel's step as page and style, to the twin only; a hold of the twin's carousel as a show
+//             of the page it is on. The answer of POST /api/panel is the same document as its GET
+//             (web_panel.cpp:476-484) and is read as the twin's screen after the write
 //   brightness GET /api/display/brightness?value=0..100 - percent, exact both ways; 0 is off
 //             (web.cpp:596-609, display.cpp:183-195)
 //   on / off  GET /api/display/on | off (web.cpp:582-594)
@@ -131,16 +178,20 @@
 //             after CARRY_TRIES failures in a row not until "Sync now" (our choice); the question for the
 //             panel comes again on "Sync now" and at the next start, as long as they differ.
 //
-// Never written: /reset (a GET wipes everything, web.cpp:182, 2266-2285), /api/reboot, /api/rename,
-// deviceName, the network fields, weatherApiKey (neither compared nor sent: left out of both the
-// export's and the form's keys), metric names, counters, caches, the remote's learned codes. Never
+// Never written: /reset (the factory reset: since v2.7.9 only a POST {"confirm":"factory-reset"}, a GET
+// is 405 - web.cpp:210-213, 2545-2561), /api/reboot, /api/rename, deviceName, the network fields,
+// weatherApiKey (neither compared nor sent: left out of both the export's and the form's keys), the Keys
+// page's keys (/api/keys is neither read nor written: not a route of Device.reads or Device.posts),
+// metric names, counters, caches, the remote's learned codes. Never
 // written to the panel: the settings that describe its own hardware (Settings.hardware) - the
 // microphones, the knob, how the presence radar is set up, whether the climate sensor and the remote's
 // receiver are used and how the sensor is calibrated - which go from the panel to the twin only. The
-// owner's overrides on the twin: climateHa off, the trains and flights pages out
-// of the walk, the flight board on the custom airport ZZZZ "NO REQUESTS" (sync.py OVERRIDES); they are
-// left out of what is compared, put back on the twin whenever they drift, and the trains and flights
-// pages are not shown on the twin by sync either.
+// owner's override on the twin: climateHa off (sync.py OVERRIDES), so the twin's indoor sensor is not a
+// second device in Home Assistant; it is left out of what is compared and put back on the twin whenever
+// it drifts. The overrides of 2026-09-29 that kept the trains and flights pages out of the twin's walk and
+// its flight board on ZZZZ "NO REQUESTS" are gone (the owner, 2026-09-30 19:35): while the twin still
+// holds what they left (Settings.residue) and has never been compared on it since, the panel's value goes
+// to the twin, whichever way sync aligns, and the airport ZZZZ they added is removed from the twin.
 //
 // Safety. The panel is a device on the network that answers /api/info with model AnimatedPixelClock,
 // is not a twin (a TWIN- name or a MAC 02:54:57:49:*, the twins' locally administered block,
@@ -159,7 +210,10 @@
 // from the found ones), firmwareRepo (owner/name, default NickoScope/AnimatedPixelClock),
 // syncSettingsEveryS (60, at least 15).
 // For tests only: honoured only when the "panel" has a twin's MAC (02:54:57:49:*) and panelAddress names
-// it by a loopback address (127.0.0.1 or localhost) - a real panel has neither, whatever it is called -
+// it by a loopback address - 127.0.0.1 (localhost is one too, but since v2.7.9 /api/export, /api/portal
+// and /api/market answer 403 to a Host that is neither an IPv4 address nor a .local name, web.cpp:2510-2523,
+// 1144, 2584, web_panel.cpp:853, so sync cannot read settings through it) - a real panel has neither,
+// whatever it is called -
 // and syncPanelMayBeTwinForTesting (accept a twin as the panel) is on: syncConsentForTesting (answer
 // "Enable sync with the panel?" Enable by itself), syncAlignForTesting ("panel" | "twin": answer the
 // direction question by itself - "twin" also carries the twin's changes at a resume, "panel" gives the
@@ -307,11 +361,17 @@ struct Answer {
 
 final class Device {
     let side: Side, address: String
-    /// A pause after every request to the panel, so polling never runs back to back on it.
+    /// The least time between two requests to the panel, so polling never runs back to back on it. Kept
+    /// before the next request to it, not after each one: a write to the twin that follows a read of the
+    /// panel does not wait for it.
     var pace: TimeInterval
+    private var lastEnd = Date.distantPast
     /// Asked before every request that writes, and while it runs: false stops it (sync switched off, the
     /// pair being changed) - nothing more is sent, and a request under way is cut off.
     var mayWrite: () -> Bool = { true }
+    /// Told before every request that writes is sent (the twin's: a write may hold its carousel - sync's
+    /// hold, not a person's; SyncEngine.sawTwin).
+    var willWrite: () -> Void = {}
 
     init(_ side: Side, _ address: String) { self.side = side; self.address = address; pace = side == .panel ? Device.panelPace : 0 }
     static let panelPace: TimeInterval = 0.15
@@ -359,13 +419,15 @@ final class Device {
         while true {
             attempt += 1
             if stop && !allowed() { throw SyncStopped() }
+            if write { willWrite() }
             var req = URLRequest(url: url, timeoutInterval: timeout)
             req.httpMethod = method; req.httpBody = body
             if let type { req.setValue(type, forHTTPHeaderField: "Content-Type") }
             if Device.syncRoutes.contains(path) { req.setValue("1", forHTTPHeaderField: "X-Twin-Sync") }
+            if pace > 0 { let wait = lastEnd.addingTimeInterval(pace).timeIntervalSinceNow; if wait > 0 { Thread.sleep(forTimeInterval: wait) } }
             let (a, err, stopped) = Device.exchange(req, limit: limit, cancel: stop ? { !allowed() } : nil)
+            lastEnd = Date()
             if stopped { throw SyncStopped() }
-            if pace > 0 { Thread.sleep(forTimeInterval: pace) }
             if let a, a.status == 503, let wait = a.retryAfter, attempt < 6 {
                 Thread.sleep(forTimeInterval: min(wait, 30) + 0.4 * Double(attempt)); continue
             }
@@ -489,7 +551,23 @@ final class Device {
 struct Screen {
     var key = "", name = "", page = 0, style = 0, bright = 0, off = false, uptime = 0
     var running = false, allStyles = false, pageS = 0
+    /// The carousel switched on (its setting: walking, or held after a person's choice), its idle time, the
+    /// seconds it is still held (rounded up), the seconds to its next step, when it is on and the page has a
+    /// time (web_panel.cpp:345-365: max(secs - pageS, holdS), pageS rounded down); a page entered with the
+    /// knob (now.entered).
+    var enabled = false, idleS = 0, holdS = 0, nextS: Int? = nil, entered = false
     var pages: [J] = [], styles: Set<Int> = []
+    /// What GET /api/panel says - and the answer to POST /api/panel, the same document (handlePanel,
+    /// web_panel.cpp:476-484): the page, the style and the carousel. Brightness, on/off and uptime come
+    /// from /api/status and are left as they are.
+    mutating func apply(panel pn: J) {
+        let now = pn.o("now") ?? [:], car = pn.o("carousel") ?? [:]
+        key = now.s("key") ?? ""; name = now.s("name") ?? ""; page = now.i("page") ?? 0; style = now.i("style") ?? 0
+        entered = now.b("entered") ?? false
+        running = car.b("running") ?? false; allStyles = car.b("allStyles") ?? false; pageS = car.i("pageS") ?? 0
+        enabled = car.b("enabled") ?? false; idleS = car.i("idleS") ?? 0; holdS = car.i("holdS") ?? 0; nextS = car.i("nextS")
+        pages = pn.a("pages"); styles = Set(pn.a("styles").compactMap { $0.i("id") })
+    }
     /// What is mirrored as "the page": its key and name (indexes differ per device). Cards are this
     /// device's own notifications and stay out.
     var shown: String { key == "cards" ? "cards" : "\(key)/\(name)" }
@@ -497,10 +575,11 @@ struct Screen {
     /// The fields the carousel walks right now (carousel.running, carousel.cpp:25-27): the page, and with "walk
     /// every clock style" the style too - each style a slot of its own, and the first style put back when the
     /// lap ends (main.cpp:1173-1180; clockStyleCarouselNext, clock_style.cpp:64-78). The carousel only shows a
-    /// style (showStyle, clock_style.cpp:52-62: not saved); nobody chose it. So these are never a change of
-    /// this side's, and never written to the other side: there a style is saved to NVS as a person's choice
-    /// 2.5 s later ("[style] saved style N", clock_style.cpp:136-142) and its own carousel is held for the idle
-    /// time (panelShowStyle -> panelShowPage -> carouselNote, main.cpp:883-909).
+    /// style (showStyle, clock_style.cpp:52-62: not saved); nobody chose it. So these are never a person's
+    /// change of this side's. The leading panel's walk is what the twin is given (SyncEngine.followFields);
+    /// the twin's own walk is never written to the panel: there a style is saved to NVS as a person's choice
+    /// 2.5 s later ("[style] saved style N", clock_style.cpp:136-142) and the panel's carousel is held for the
+    /// idle time (panelShowStyle -> panelShowPage -> carouselNote, main.cpp:883-909).
     var walked: Set<String> { running ? (allStyles ? ["page", "style"] : ["page"]) : [] }
     /// The Lua pages and their walk switches: when this changes, the effects are read.
     var luaSig: String {
@@ -563,8 +642,24 @@ enum Settings {
     static let formIdentity: Set<String> = ["deviceName", "useStaticIP", "staticIP", "gateway", "subnet", "dns1", "dns2"]
     static let formSkip: Set<String> = formIdentity.union(["ntpServer1", "ntpServer2", "weatherApiKey", "displayBrightness", "clockStyle", "timezoneRegion", "irCard",
                                                            "rowMode", "rpmKFormat", "netMBFormat", "weatherFahrenheit"])
-    // The owner's overrides keep these pages out of the twin's walk; they are not mirrored either way.
-    static let pageSkip: Set<String> = ["trains", "flights", "cards", "clock"]
+    // Not a page switch of its own: the cards (their switch is cardsOn, "pages.cards") and the clock, which
+    // cannot be switched off. The flights and trains pages are mirrored like the rest (the owner, 2026-09-30 19:35).
+    static let pageSkip: Set<String> = ["cards", "clock"]
+    /// What the carousel is, as settings: its own (on/off, idle, slot, every clock style) and which pages it
+    /// visits. Read in every screen round (GET /api/panel) and carried at once: one carousel for both sides.
+    /// The effects' walk switches are the effects' (Effects.walk), read as soon as they change (Screen.luaSig).
+    static func walkKey(_ k: String) -> Bool { k == "carousel" || k.hasPrefix("pages.") }
+    /// What the owner's overrides of 2026-09-29 left on the twin until they were dropped (2026-09-30 19:35):
+    /// the trains and flights pages off, the flight board on ZZZZ. While the twin's base has no such key - it
+    /// was never compared since - and the twin still holds that value, it is the override's, not a person's:
+    /// the panel's value goes to the twin, whichever way sync aligns.
+    static func residue(_ k: String, twin v: Any?) -> Bool {
+        switch k {
+        case "pages.trains", "pages.flights": return (v as? NSNumber)?.boolValue == false
+        case "flightboard.selection": return ((v as? [Any])?.first as? String) == noAsk.icao
+        default: return false
+        }
+    }
     static let metricFields: [(String, String)] = [("metricLabels", "label_"), ("metricOrder", "order_"), ("metricCompanions", "companion_"),
         ("metricPositions", "position_"), ("metricBarPositions", "barPosition_"), ("metricBarMin", "barMin_"), ("metricBarMax", "barMax_"),
         ("metricBarWidths", "barWidth_"), ("metricBarOffsets", "barOffset_")]   // web.cpp:2047-2120; config.h MAX_METRICS 20
@@ -572,7 +667,9 @@ enum Settings {
     static let knobKeys = ["reverse", "lockoutMs", "debounceMs", "detent"]
     static let railKeys = ["rows", "switch_s", "level", "stale_s", "due_min", "clock_seconds", "row_color", "head_color", "due_color"]
     static let budgetKeys = ["floor_min", "day_cap", "month_cap"]
-    static let noAsk = (icao: "ZZZZ", name: "NO REQUESTS")      // sync.py NO_ASK
+    /// The airport the override of 2026-09-29 added and selected on the twin (sync.py NO_ASK until 2026-09-30):
+    /// never compared, and removed from the twin where it is left (enforceOverrides).
+    static let noAsk = (icao: "ZZZZ", name: "NO REQUESTS")
     /// The panel's own hardware, not the owner's taste (the owner, 2026-09-30): from the panel to the twin
     /// only, never to the panel. Checked against the settings the firmware gives out (feat/sync-routes
     /// e3f6445: config.h:143-186, web.cpp handlePortalValues 1245-1293, handleSave 1925-2012,
@@ -641,6 +738,9 @@ enum Settings {
             s["railboard.config"] = cfg.s("from") == "web" ? pick(cfg, railKeys) as Any : "ha-or-build" as Any
         }
         if let fb = d["/api/flightboard"] {
+            // The airport selected, by its ICAO code (an id is a slot on this device), and which half it shows.
+            let sel = fb.a("airports").first { $0.i("id") == fb.i("airport") }
+            s["flightboard.selection"] = [sel?.s("code") ?? NSNull(), fb.s("dir") ?? NSNull()] as [Any]
             s["flightboard.custom"] = fb.a("airports").filter { $0.s("kind") == "custom" && $0.s("code") != noAsk.icao }
                 .map { [$0.s("code") ?? "", $0.s("iata") ?? "", $0.s("name") ?? "", $0.s("tz") ?? ""] }
                 .sorted { canon($0) < canon($1) }
@@ -784,6 +884,14 @@ final class SyncEngine {
     // Effects that cannot be known now (the /api/lua/source probe got no answer): a question waits for them
     // this long, reading them again every fxRetry. Our choice.
     static let fxWaitMax: TimeInterval = 60, fxRetry: TimeInterval = 10
+    // The leading panel's carousel step (stepRead): the rounds that take a while wait while it is this near,
+    // this long at most; a read that looks for it and does not see it looks again, this many times at most;
+    // it looks this long after the latest moment the step can come. The twin's carousel is held again when its
+    // hold would end within holdAhead, before the panel's (twinMove). Our choice.
+    static let stepQuiet: TimeInterval = 3.5, stepQuietMax: TimeInterval = 30, STEP_TRIES = 3, stepMargin: TimeInterval = 0.08
+    static let holdAhead: TimeInterval = 8
+    /// sync.log is started again past this size, the old one kept as sync.log.1. Our choice.
+    static let logKeep = 4 << 20
 
     let dataDir: URL
     var logFile: URL { dataDir.appendingPathComponent("sync.log") }
@@ -849,7 +957,13 @@ final class SyncEngine {
     private var imageCache: (key: String, data: Data, fromRelease: Bool)?
     private var base: [Side: [String: [String: String]]] = [:]    // side -> "screen"|"settings"|"effects" -> field -> value
     private var firmwareBase: [Side: String] = [:]
-    private var screen: [Side: Screen] = [:], screenAt: [Side: Date] = [:]
+    /// The screens as last read; when with /api/status too (screenAt: a reboot is a smaller uptime), and when
+    /// /api/panel alone (pageReadAt: a step read, the answer to a write).
+    private var screen: [Side: Screen] = [:], screenAt: [Side: Date] = [:], pageReadAt: [Side: Date] = [:]
+    /// When the leading panel's carousel steps next, as a window of time (lo, hi], narrowed by each read of
+    /// its /api/panel while it shows the same page and style (KEY); the read that looks for the step (stepAt),
+    /// and how many looked in vain for this step.
+    private var stepWin: (lo: Date, hi: Date, key: String)?, stepAt: Date?, stepTries = 0
     /// Screen fields sync wrote to a side and has not read back from it yet: a write whose answer was lost -
     /// the Panel group's 503 comes after the work was done (failOom, web_panel.cpp:145-160), a timeout - may
     /// still have landed. When the side shows that value later, it is sync's own write, not a person's change,
@@ -876,6 +990,14 @@ final class SyncEngine {
     private var panelLostAt = Date.distantPast
     private var holdWhy: Msg?                                          // why the direction is asked again (a massive change)
     private var stopLogged = false
+    private var quietSince: Date?
+    /// A side restarted: the carousel's settings wait for the settings round (fastRound). The twin restarted:
+    /// that round takes what differs on it for writes it lost (settingsChanges).
+    private var walkHeld = false, twinRestarted = false
+    /// A person at the twin (sawTwin): when a touch of its carousel was seen that sync did not make - cleared
+    /// by sync's next write there; the twin's last hold read, and when; when sync last wrote to it (a page or a
+    /// style holds its carousel, and so does a world clock's new home: web_panel.cpp:764-771).
+    private var twinTouch: Date?, twinHoldSeen: (hold: Int, at: Date, on: Bool)?, twinWroteAt = Date.distantPast, personSaid = false
 
     init(dataDir: URL) { self.dataDir = dataDir }
 
@@ -884,7 +1006,7 @@ final class SyncEngine {
         let t = Thread { [weak self] in
             while let self {
                 self.step()
-                Thread.sleep(forTimeInterval: 0.5)
+                Thread.sleep(forTimeInterval: self.pause)
             }
         }
         t.name = "twin-sync"; t.qualityOfService = .utility
@@ -906,6 +1028,12 @@ final class SyncEngine {
     private func log(_ dir: String, _ what: String, _ m: Msg, problem: Bool = false, sticky: Bool = false) {
         let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd HH:mm:ss.SSS"
         let line = "\(f.string(from: Date())) \(dir) \(what) \(T(m))\n"
+        // A walking carousel writes a line a slot: past logKeep bytes the log becomes sync.log.1 (the one
+        // before is dropped) and a new one starts.
+        if let size = (try? FileManager.default.attributesOfItem(atPath: logFile.path))?[.size] as? Int, size > SyncEngine.logKeep {
+            let old = dataDir.appendingPathComponent("sync.log.1")
+            try? FileManager.default.removeItem(at: old); try? FileManager.default.moveItem(at: logFile, to: old)
+        }
         if let h = try? FileHandle(forWritingTo: logFile) { h.seekToEndOfFile(); h.write(Data(line.utf8)); try? h.close() }
         else { try? line.write(to: logFile, atomically: false, encoding: .utf8) }
         publish { if problem { $0.problem = (Date(), m); $0.sticky = sticky } else { $0.last = (Date(), m); $0.problem = nil } }
@@ -954,14 +1082,22 @@ final class SyncEngine {
             let strained = strainedUntil.map { now < $0 } ?? false
             if now >= nextFast || forced {
                 try fastRound(); nextFast = Date().addingTimeInterval(strained ? SyncEngine.strainedFastEvery : SyncEngine.fastEvery)
+                planStep()
+            } else if let at = stepAt, now >= at {
+                try stepRead()
             }
             guard aligned else { return }
-            if fxDue || forced || now >= nextEffects {
+            // The leader's next step is near: the rounds that take a while (effects, settings) wait until it
+            // is carried, stepQuietMax at most - with a short slot a step is always near.
+            let near = !forced && (stepAt.map { $0.timeIntervalSince(now) < SyncEngine.stepQuiet } ?? false)
+            quietSince = near ? (quietSince ?? now) : nil
+            let quiet = near && now.timeIntervalSince(quietSince ?? now) < SyncEngine.stepQuietMax
+            if (fxDue || forced || now >= nextEffects) && !quiet {
                 fxDue = false
                 try effectsRound(); nextEffects = Date().addingTimeInterval(SyncEngine.effectsEvery)
             }
             guard aligned else { return }
-            if forced || now >= nextSlow {
+            if (forced || now >= nextSlow) && !quiet {
                 fwWatch = nil
                 try slowRound(market: forced || slowRounds % 5 == 0); slowRounds += 1
                 nextSlow = Date().addingTimeInterval(settingsEvery)
@@ -999,6 +1135,15 @@ final class SyncEngine {
         }
     }
 
+    /// How long the worker sleeps between two steps: until the next screen round or the read that looks for
+    /// the leader's carousel step, 0.5 s at most.
+    private var pause: TimeInterval {
+        guard aligned else { return 0.5 }
+        var next = nextFast
+        if let s = stepAt, s < next { next = s }
+        return min(0.5, max(0.02, next.timeIntervalSinceNow))
+    }
+
     private var settingsEvery: TimeInterval {
         let s = UserDefaults.standard.integer(forKey: "syncSettingsEveryS")
         return TimeInterval(s <= 0 ? 60 : max(15, s))
@@ -1009,7 +1154,8 @@ final class SyncEngine {
         saveState()
         dev = [:]; pairKey = ""; consented = false; aligned = false; resumed = false; needDirection = false; question = nil; holdWhy = nil
         heldReply = nil; alignRetry = .distantPast; fxWaitSince = nil; fxAbsent = [:]; fxAlignFrom = nil; imageCache = nil
-        base = [:]; firmwareBase = [:]; screen = [:]; screenAt = [:]; wrote = [:]; effects = [:]; docs = [:]; fw = [:]; caps = [:]; hashes = [:]
+        base = [:]; firmwareBase = [:]; screen = [:]; screenAt = [:]; pageReadAt = [:]; wrote = [:]; effects = [:]; docs = [:]; fw = [:]; caps = [:]; hashes = [:]
+        stepWin = nil; stepAt = nil; stepTries = 0; quietSince = nil; walkHeld = false; twinRestarted = false; twinTouch = nil; twinHoldSeen = nil; twinWroteAt = .distantPast; personSaid = false
         pendingFx = [:]; noted = []; offer = nil; declined = []; wantPanel = nil; wantTwin = nil; inFlight = nil
         carry = (0, .distantPast); fwWatch = nil; fwWatchSince = [:]; slowRounds = 0; down = []; failures = [:]; load = nil; strainedUntil = nil
         nextFast = .distantPast; nextSlow = .distantPast; nextEffects = .distantPast; nextVerify = .distantPast; verifyNow = false
@@ -1047,6 +1193,7 @@ final class SyncEngine {
             guard f.name.hasPrefix("TWIN-") else { throw SyncWait(M("waiting for the twin to be named TWIN-…", "жду, пока двойник получит имя TWIN-…")) }
             guard f.mac == tMac else { throw SyncError(M("\(tAddr) answers with MAC \(f.mac), not this twin's \(tMac)", "\(tAddr) отвечает с MAC \(f.mac), а у этого двойника \(tMac)")) }
             d.mayWrite = { [weak self] in self?.writesAllowed ?? false }
+            d.willWrite = { [weak self] in self?.twinWroteAt = Date() }
             dev[.twin] = d; fw[.twin] = f
         }
         let pAddr = try choosePanel(found, twinMac: tMac)
@@ -1067,6 +1214,7 @@ final class SyncEngine {
         let key = "\(fw[.panel]!.mac)|\(fw[.twin]!.mac)"
         if key != pairKey {
             base = [:]; firmwareBase = [:]; pendingFx = [:]; noted = []; resumed = false; needDirection = false; question = nil; wrote = [:]
+            stepWin = nil; stepAt = nil; stepTries = 0; twinTouch = nil; twinHoldSeen = nil
             wantPanel = nil; wantTwin = nil; inFlight = nil; heldReply = nil; fxAlignFrom = nil; imageCache = nil
             pairKey = key; consented = false; aligned = false; loadState()
             nextVerify = Date().addingTimeInterval(SyncEngine.verifyEvery)
@@ -1133,17 +1281,28 @@ final class SyncEngine {
 
     // MARK: reading
 
+    /// A side's screen: GET /api/panel and /api/status. The /api/panel document is kept with the settings'
+    /// documents (docs): the carousel's settings and the pages it visits are compared from it every round.
     private func readScreen(_ s: Side) throws -> Screen {
         let d = device(s)
-        guard let pn = try d.get("/api/panel"), let st = try d.get("/api/status") else {
+        let sent = Date()
+        guard let pn = try d.get("/api/panel") else {
             throw SyncError(M("\(s.word.en) has no /api/panel: its firmware is too old for sync", "\(s.at) нет /api/panel: прошивка слишком старая для синхронизации"))
         }
+        let got = Date()
+        guard let st = try d.get("/api/status") else {
+            throw SyncError(M("\(s.word.en) has no /api/status: its firmware is too old for sync", "\(s.at) нет /api/status: прошивка слишком старая для синхронизации"))
+        }
         var x = Screen()
-        let now = pn.o("now") ?? [:], car = pn.o("carousel") ?? [:]
-        x.key = now.s("key") ?? ""; x.name = now.s("name") ?? ""; x.page = now.i("page") ?? 0; x.style = now.i("style") ?? 0
-        x.running = car.b("running") ?? false; x.allStyles = car.b("allStyles") ?? false; x.pageS = car.i("pageS") ?? 0
-        x.pages = pn.a("pages"); x.styles = Set(pn.a("styles").compactMap { $0.i("id") })
+        x.apply(panel: pn)
         x.bright = st.i("brightness") ?? 0; x.off = st.b("forcedOff") ?? false; x.uptime = st.i("uptime") ?? 0
+        docs[s, default: [:]]["/api/panel"] = pn; pageReadAt[s] = got
+        if s == .panel { timeStep(x, sent: sent, received: got) }
+        else {
+            // Restarted (a smaller uptime): its carousel's hold starts from boot - no touch (rebooted() follows).
+            if let prev = screen[.twin], x.uptime < prev.uptime { twinTouch = nil; twinHoldSeen = nil }
+            sawTwin(x, at: got)
+        }
         return x
     }
 
@@ -1371,11 +1530,14 @@ final class SyncEngine {
         let to = from.other
         phase(M("first alignment: \(from.arrow)", "первое выравнивание: \(from.arrow)"))
         log(from.arrow, "align", M("alignment, \(from.word.en) as it is", "выравнивание: берётся \(from.word.ru) как есть"))
-        let keys = settingsDiff(from: from)
+        // What the owner's old overrides left on the twin, never compared since: the panel's, whichever way.
+        let twinNow = flat(.twin)
+        let residue = settingsDiff(from: .panel).filter { Settings.residue($0, twin: twinNow[$0]) && base[.twin]?["settings"]?[$0] == nil }
+        let keys = settingsDiff(from: from).filter { from == .panel || !residue.contains($0) }
         if !keys.isEmpty { try applySettings(from: from, keys: keys) }
         if from == .twin {
             // The panel's own hardware goes panel -> twin whichever way the rest is aligned (the owner, 2026-09-30).
-            let hw = settingsDiff(from: .panel).filter { Settings.hardware.contains($0) }
+            let hw = settingsDiff(from: .panel).filter { Settings.hardware.contains($0) || residue.contains($0) }
             if !hw.isEmpty { try applySettings(from: .panel, keys: hw) }
         }
         if to == .twin { try enforceOverrides() }
@@ -1531,8 +1693,185 @@ final class SyncEngine {
     // MARK: the screen
 
     private func rebaseScreen(_ s: Side) { if let x = screen[s] { base[s, default: [:]]["screen"] = x.fields } }
-    /// The whole screen, as a side takes the other's (Screen.fields); what a carousel walks is left out when written.
+    /// The whole screen, as a side takes the other's (Screen.fields); the panel's carousel walk is written only
+    /// while the panel leads (SyncEngine.leader), the twin's never.
     static let screenFields: Set<String> = ["page", "style", "bright", "off"]
+
+    // MARK: the carousel ("One carousel for both" in the header)
+
+    /// Who leads while the carousel is on: the panel, whenever its carousel is on - walking, or held after a
+    /// person's choice; the twin waits for its steps. Nobody while it is off: the carousel's settings are one
+    /// for both sides (Settings.walkKey), so the twin's is off too, a round later at most. Never the twin: a
+    /// panel that follows would take a write each slot, and each clock style written to it would be saved to
+    /// its flash (clock_style.cpp:43-50, 136-142) - where its own carousel only shows the style. A panel whose
+    /// build has no carousel (web_panel.cpp:470: 400) never leads, and the twin's walk stays the twin's.
+    static func leader(panel: Screen?) -> Side? { panel?.enabled == true ? .panel : nil }
+
+    /// What the twin is given of the leading panel's screen: the page - not a card (each device's own
+    /// notifications), not one the twin does not have - and the clock style, when the twin has it; the style
+    /// also off the clock page, where the lap's end puts the first one back (clockStyleCarouselNext,
+    /// clock_style.cpp:64-78), so the clock comes around in the same style on both. Nothing while the twin
+    /// shows a card of its own, or has a page entered with its knob (a show would leave it: main.cpp:891).
+    static func followFields(leader p: Screen, follower t: Screen) -> Set<String> {
+        guard t.key != "cards", !t.entered else { return [] }
+        var f = Set<String>()
+        if p.shown != t.shown, p.key != "cards", t.index(key: p.key, name: p.name) != nil { f.insert("page") }
+        if p.style != t.style, t.styles.contains(p.style) { f.insert("style") }
+        return f
+    }
+
+    /// Which of the ASKED screen fields of side S's screen SRC may be written to the other side: all while S is
+    /// the leading panel; else not what S's own carousel walks now (Screen.walked) - so the twin's walk never
+    /// reaches the panel, whatever asks (a restart, an alignment, a person's change beside it).
+    static func writable(_ asked: Set<String>, from s: Side, _ src: Screen, panel: Screen?) -> Set<String> {
+        leader(panel: panel) == s ? asked : asked.subtracting(src.walked)
+    }
+
+    enum TwinMove: Equatable { case none, follow, hold }
+    /// What the twin needs now, the panel leading. FOLLOW: it shows another page or style than the panel.
+    /// HOLD: its carousel would walk by itself before the panel's does - the panel is held (a person's choice)
+    /// and the twin walks, or its hold ends within holdAhead and sooner than the panel's. A PERSON at the twin:
+    /// nothing while their hold lasts - the screen is theirs - and as it is about to end, the panel's screen,
+    /// or a hold where the twin already shows it, so the twin walks on with the panel.
+    static func twinMove(panel p: Screen, twin t: Screen, person: Bool) -> TwinMove {
+        guard leader(panel: p) == .panel, !t.entered, t.key != "cards" else { return .none }
+        let differs = !followFields(leader: p, follower: t).isEmpty
+        let endsSoon = t.enabled && (t.running || Double(t.holdS) <= holdAhead)
+        if person { return endsSoon ? (differs ? .follow : .hold) : .none }
+        if differs { return .follow }
+        if endsSoon && !p.running && (t.running || t.holdS < p.holdS) { return .hold }
+        return .none
+    }
+
+    /// Whether a carousel was touched between two reads of its hold: holdS only grows at a touch
+    /// (carouselNote: a knob turn or press, the remote, a page shown from the portal or by sync) and else falls
+    /// a second a second; rounded up to the second, so a rise of more than 1.5 s over the fall is a touch.
+    static func touched(before: Int, at a: Date, now: Int, at b: Date) -> Bool {
+        now > 0 && Double(now) > Double(before) - b.timeIntervalSince(a) + 1.5
+    }
+    /// Each read of the twin's /api/panel (or the answer to a write there): a touch sync did not make - none
+    /// written between this read and the one before - is a person at the twin (twinTouch); sync's own write
+    /// since that touch clears it.
+    private func sawTwin(_ t: Screen, at: Date) {
+        // A carousel switched off says holdS 0 (carouselHoldMs): switched on, its hold is not a touch.
+        if let h = twinHoldSeen, h.on, t.enabled, twinWroteAt < h.at, SyncEngine.touched(before: h.hold, at: h.at, now: t.holdS, at: at) { twinTouch = at }
+        if let p = twinTouch, twinWroteAt > p { twinTouch = nil }
+        twinHoldSeen = (t.holdS, at, t.enabled)
+    }
+    /// A person at the twin now: a touch sync did not make, whose hold has not ended, or a page entered with its knob.
+    private var personAtTwin: Bool {
+        guard let t = screen[.twin] else { return false }
+        return t.entered || (twinTouch != nil && t.holdS > 0)
+    }
+
+    /// When the leader's carousel steps next, from one read of its /api/panel: nextS seconds, rounded
+    /// (web_panel.cpp:353-364: max(secs - pageS, holdS), pageS cut down to the second, holdS rounded up),
+    /// counted from the moment the panel answered - somewhere between SENT and RECEIVED. So the step comes
+    /// after sent + nextS - 1 and by received + nextS. nextS 0 or less: due now, at the next pass of loop().
+    static func stepWindow(nextS: Int, sent: Date, received: Date) -> (lo: Date, hi: Date) {
+        let n = Double(max(nextS, 0))
+        return (sent.addingTimeInterval(n - 1), received.addingTimeInterval(n))
+    }
+    /// Two windows of the same step: what both allow; nil when they do not meet (the carousel was held or
+    /// stepped meanwhile: the newer one stands).
+    static func narrow(_ a: (lo: Date, hi: Date), _ b: (lo: Date, hi: Date)) -> (lo: Date, hi: Date)? {
+        let lo = max(a.lo, b.lo), hi = min(a.hi, b.hi)
+        return lo < hi ? (lo, hi) : nil
+    }
+    /// When to look for the step: in the middle of a wide window (what it finds halves it), else just after its
+    /// end, when the step has come.
+    static func stepReadAt(_ w: (lo: Date, hi: Date)) -> Date {
+        let width = w.hi.timeIntervalSince(w.lo)
+        return width > 0.6 ? w.lo.addingTimeInterval(width / 2) : w.hi.addingTimeInterval(stepMargin)
+    }
+
+    /// Each read of the panel's /api/panel narrows the window of its carousel's next step (stepWin).
+    private func timeStep(_ x: Screen, sent: Date, received: Date) {
+        guard x.enabled, let n = x.nextS else { stepWin = nil; stepTries = 0; return }
+        let key = "\(x.shown)|\(x.style)"
+        var w = SyncEngine.stepWindow(nextS: n, sent: sent, received: received)
+        // Not stepped yet when the panel answered: the step is later than the request. A window that does not
+        // meet the last one (the carousel was held meanwhile) starts again.
+        if let o = stepWin, o.key == key, let m = SyncEngine.narrow((max(o.lo, sent), o.hi), w) { w = m } else { stepTries = 0 }
+        stepWin = (w.lo, w.hi, key)
+    }
+    /// The read that looks for the panel's step while the twin follows it; none after STEP_TRIES in vain for
+    /// one step (the screen round goes on every fastEvery whatever happens), none while a person is at the twin.
+    private func planStep() {
+        stepAt = nil
+        guard aligned, SyncEngine.leader(panel: screen[.panel]) == .panel, !personAtTwin, let w = stepWin,
+              stepTries < SyncEngine.STEP_TRIES else { return }
+        stepAt = SyncEngine.stepReadAt((w.lo, w.hi))
+    }
+
+    /// The panel's /api/panel alone, when its carousel's step is due: the step is given to the twin at once,
+    /// and this read stands for the next screen round. A page or style the carousel did not put there (it is
+    /// held: a person's choice), or a person's choice on the twin, goes to the screen round, at once.
+    private func stepRead() throws {
+        stepTries += 1
+        guard var x = screen[.panel] else { stepAt = nil; return }
+        let before = x, sent = Date()
+        guard let pn = try device(.panel).get("/api/panel") else { stepAt = nil; return }
+        let got = Date()
+        x.apply(panel: pn)
+        docs[.panel, default: [:]]["/api/panel"] = pn
+        screen[.panel] = x; pageReadAt[.panel] = got
+        timeStep(x, sent: sent, received: got)
+        if x.fields != before.fields {
+            if x.running && SyncEngine.leader(panel: x) == .panel, try !twinChosen() {
+                rebaseScreen(.panel)                                      // its walk: nobody's change
+                try twinAct(quick: true)
+                nextFast = max(nextFast, Date().addingTimeInterval(SyncEngine.fastEvery))
+            } else {
+                nextFast = Date()
+            }
+        }
+        planStep()
+    }
+
+    /// The twin's /api/panel, read just before the panel's step is written to it: whether a person chose a
+    /// page or style there since the last round, or is at it. Then the screen round comes first and carries
+    /// that choice (it holds the panel's carousel); the step would have written over it.
+    private func twinChosen() throws -> Bool {
+        guard var t = screen[.twin], let b = base[.twin]?["screen"], let tp = try device(.twin).get("/api/panel") else { return false }
+        t.apply(panel: tp)
+        docs[.twin, default: [:]]["/api/panel"] = tp
+        screen[.twin] = t; pageReadAt[.twin] = Date()
+        sawTwin(t, at: Date())
+        return personAtTwin || !SyncEngine.screenChanges(t, base: b, wrote: wrote[.twin]).changed.isDisjoint(with: ["page", "style"])
+    }
+
+    /// The twin as the panel leads it (twinMove): the panel's page and style written to it - sync's own write
+    /// (wrote), never a change of the twin's - or its carousel held. HOLD also asks for a hold where twinMove
+    /// sees nothing to do: the carousel was just switched on at the twin, whose carousel started first and
+    /// would step first. Each write holds the twin's carousel for the idle time (panelShowPage -> carouselNote,
+    /// main.cpp:883-889), so it does not walk by itself.
+    private func twinAct(quick: Bool = false, hold: Bool = false) throws {
+        guard let p = screen[.panel], let t = screen[.twin] else { return }
+        var move = SyncEngine.twinMove(panel: p, twin: t, person: personAtTwin)
+        if move == .none, hold, SyncEngine.leader(panel: p) == .panel, t.enabled { move = .hold }
+        switch move {
+        case .none: return
+        case .follow:
+            let f = SyncEngine.followFields(leader: p, follower: t)
+            do { try mirrorScreen(from: .panel, fields: f, quick: quick); forgive("follow", .panel, Array(f)) }
+            catch { if error is SyncStopped || error is SyncDown || tryAgain("follow", .panel, Array(f)) { throw error } }
+        case .hold:
+            try holdTwin()
+        }
+    }
+
+    /// The twin's carousel held from now, as a knob turn would hold it: its own page shown again (panelShowPage
+    /// -> carouselNote; the page is not saved anywhere). Not while a page is entered with its knob (a show
+    /// leaves it) or a card is shown. Its answer is the twin's screen after it.
+    private func holdTwin() throws {
+        guard let t = screen[.twin], !t.entered, t.key != "cards" else { return }
+        let a = try device(.twin).post("/api/panel", ["show": ["page": t.page]])
+        var x = t; x.apply(panel: a); screen[.twin] = x; pageReadAt[.twin] = Date(); rebaseScreen(.twin)
+        sawTwin(x, at: Date())
+        log("panel→twin", "hold", M("the twin's carousel held \(x.holdS) s: it waits for the panel's step",
+                                    "карусель двойника на паузе \(x.holdS) с: ждёт шага панели"))
+    }
 
     private func fastRound() throws {
         var fresh: [Side: Screen] = [:]
@@ -1549,8 +1888,20 @@ final class SyncEngine {
         if !reboots.isEmpty || jumped { try verifyIdentity() }
         for s in sides { screen[s] = fresh[s]; screenAt[s] = Date() }
         for s in reboots { rebooted(s, fresh[s]!) }
-        let cur = screen                                    // after a reboot's own handling
         if base[.panel]?["screen"] == nil || base[.twin]?["screen"] == nil { rebaseScreen(.panel); rebaseScreen(.twin); return }
+        // One carousel for both: its settings and the pages it visits, carried in this round; the side written
+        // to is read again, and what it shows then is nobody's change (afterWrite). Not after a restart until the
+        // settings round has compared everything: a device whose flash was erased comes back with the defaults,
+        // a massive change the person is asked about (MASS_SETTINGS), not a carousel to carry.
+        var switchedOn = false
+        if !walkHeld {
+            let wasOn = screen[.panel]?.enabled == true
+            try settingsPass(allowMass: false, only: Settings.walkKey)
+            // Switched on at the twin and now at the panel: the twin's carousel started first and would step
+            // first; held (twinAct, after the person's changes below), it waits for the panel's step.
+            switchedOn = !wasOn && screen[.panel]?.enabled == true
+        }
+        let cur = screen                                    // after a reboot's own handling and the carousel's settings
         var changed: [Side: Set<String>] = [:]
         for s in sides {
             let r = SyncEngine.screenChanges(cur[s]!, base: base[s]!["screen"]!, wrote: wrote[s])
@@ -1574,6 +1925,18 @@ final class SyncEngine {
             }
             rebaseScreen(s)
         }
+        // Said once a round has read the twin's uptime too: a restart also starts its carousel's hold afresh.
+        if personAtTwin != personSaid {
+            personSaid = personAtTwin
+            if personSaid, SyncEngine.leader(panel: screen[.panel]) == .panel {
+                log("note", "person", M("a person at the twin: the panel's steps wait until the twin's carousel would walk again",
+                                        "у двойника человек: шаги панели жду, пока карусель двойника снова не пойдёт"))
+            }
+        }
+        // The panel leads: the twin shows what it shows, and its carousel does not walk ahead of the panel's.
+        // A person's page or style from the twin went to the panel just now and holds it from now: the twin's
+        // hold, older, is renewed before it ends (twinMove), so the panel's carousel goes on first.
+        try twinAct(hold: switchedOn)
     }
 
     /// The screen fields side CUR changed since its BASE, as a person's change to carry: not the page or the
@@ -1612,15 +1975,20 @@ final class SyncEngine {
     }
 
     private func rebooted(_ s: Side, _ x: Screen) {
-        // What the panel's carousel walks now is not copied: the twin has the same carousel and walks by itself.
-        let walk = s == .twin ? (screen[.panel]?.walked ?? []) : []
-        let en = walk.isEmpty ? "it takes the panel's screen" : "it takes the panel's screen but the \(walk.count > 1 ? "page and style" : "page") the panel's carousel walks now: the twin's carousel walks by itself"
-        let ru = walk.isEmpty ? "он повторяет экран панели"
-            : "он повторяет экран панели, кроме \(walk.count > 1 ? "страницы и стиля" : "страницы"), которые сейчас ведёт карусель панели: у двойника своя карусель"
-        log("note", "reboot", M("\(s.word.en) restarted (uptime \(x.uptime) s): " + (s == .panel ? "its reset screen is not mirrored" : en),
-                                s == .panel ? "панель перезагрузилась (uptime \(x.uptime) с): её сброшенный экран не переношу"
-                                            : "двойник перезагрузился (uptime \(x.uptime) с): " + ru))
+        // Nothing of a restart is written to the panel. The twin takes the panel's screen; while the panel's
+        // carousel is on, the page and style it walks too - the twin follows it (leader).
+        let leads = SyncEngine.leader(panel: s == .panel ? x : screen[.panel]) == .panel
+        let panelMsg = leads ? M("its carousel leads: the twin shows what it shows", "ведёт её карусель: двойник показывает то же")
+                             : M("its reset screen is not mirrored", "её сброшенный экран не переношу")
+        let twinMsg = leads ? M("it takes the panel's screen, the page and style of its carousel too: the twin follows it",
+                                "он повторяет экран панели, и страницу со стилем её карусели: двойник идёт за ней")
+                            : M("it takes the panel's screen", "он повторяет экран панели")
+        let m = s == .panel ? panelMsg : twinMsg
+        log("note", "reboot", M("\(s.word.en) restarted (uptime \(x.uptime) s): " + m.en,
+                                (s == .panel ? "панель перезагрузилась" : "двойник перезагрузился") + " (uptime \(x.uptime) с): " + m.ru))
         screen[s] = x; rebaseScreen(s); wrote[s] = nil               // what it shows now is its reset screen
+        if s == .twin { twinTouch = nil; twinHoldSeen = nil; twinRestarted = true }   // its carousel starts again
+        walkHeld = true; nextSlow = Date()                           // the settings round first (fastRound)
         fwWatch = Date().addingTimeInterval(5)
         caps[s] = nil
         if s == .twin, aligned { twinFollowsPanel() }
@@ -1634,19 +2002,22 @@ final class SyncEngine {
         catch { log("note", "screen", M("the twin did not take the panel's screen: " + describe(error).en, "двойник не принял экран панели: " + describe(error).ru)) }
     }
 
-    /// Makes the other side's screen show FIELDS of side S's, then reads it again as its base. What S's carousel
-    /// walks now is left out, whoever asks (Screen.walked); what is written is kept in `wrote` until it is read back.
-    private func mirrorScreen(from s: Side, fields asked: Set<String>) throws {
+    /// Makes the other side's screen show FIELDS of side S's, then reads it again as its base. The panel's
+    /// carousel walk is written only while the panel leads (leader), the twin's never; what is written is kept
+    /// in `wrote` until it is read back. QUICK (the panel's step, page and style only): the other side's
+    /// /api/panel read within fastEvery + 1 s stands for a read before the write - its page numbers - and the
+    /// answer to the write, the same document as GET /api/panel, for the read after it.
+    private func mirrorScreen(from s: Side, fields asked: Set<String>, quick: Bool = false) throws {
         let o = s.other
         guard let src = screen[s] else { return }
-        let fields = asked.subtracting(src.walked)
+        let leads = SyncEngine.leader(panel: screen[.panel]) == s
+        let fields = SyncEngine.writable(asked, from: s, src, panel: screen[.panel])
         guard !fields.isEmpty else { return }
-        var dst = try readScreen(o)
+        let fresh = quick && fields.isSubset(of: ["page", "style"]) && pageReadAt[o].map { Date().timeIntervalSince($0) < SyncEngine.fastEvery + 1 } == true
+        var dst = fresh ? screen[o]! : try readScreen(o)
         var body: J = [:], did: [String] = [], expect: [String: String] = [:]
         if fields.contains("page"), src.shown != dst.shown {
             if src.key == "cards" {
-            } else if o == .twin && (src.key == "trains" || src.key == "flights") {
-                noteOnce("page-\(src.key)", M("the \(src.name) page is not shown on the twin (the owner's override)", "страницу \(src.name) на двойнике не показываю (переопределение владельца)"))
             } else if let i = dst.index(key: src.key, name: src.name) {
                 body["show"] = ["page": i]; expect["page"] = src.shown; did.append(M("page \(src.name)", "страница \(src.name)").text(lang))
             } else {
@@ -1664,22 +2035,30 @@ final class SyncEngine {
             }
         }
         // Kept before each write: its answer may be lost after the work was done.
-        if !body.isEmpty { wrote[o, default: [:]].merge(expect) { $1 }; try device(o).post("/api/panel", body) }
-        var offNow = dst.off
+        var answer: J?
+        if !body.isEmpty {
+            wrote[o, default: [:]].merge(expect) { $1 }
+            answer = try device(o).post("/api/panel", body)            // on the twin: sync's hold (willWrite)
+        }
+        var offNow = dst.off, acted = false
         if fields.contains("bright"), src.bright != dst.bright {
             wrote[o, default: [:]]["bright"] = "\(src.bright)"
             try device(o).action("/api/display/brightness", [("value", "\(src.bright)")])
             offNow = src.bright == 0                                   // display.cpp:193
-            did.append(M("brightness \(src.bright)%", "яркость \(src.bright)%").text(lang))
+            did.append(M("brightness \(src.bright)%", "яркость \(src.bright)%").text(lang)); acted = true
         }
         if fields.contains("off") || fields.contains("bright"), src.off != offNow {
             wrote[o, default: [:]]["off"] = src.off ? "1" : "0"
             try device(o).action(src.off ? "/api/display/off" : "/api/display/on")
-            did.append(src.off ? M("screen off", "экран выключен").text(lang) : M("screen on", "экран включён").text(lang))
+            did.append(src.off ? M("screen off", "экран выключен").text(lang) : M("screen on", "экран включён").text(lang)); acted = true
         }
         guard !did.isEmpty else { return }
-        dst = try readScreen(o); screen[o] = dst; screenAt[o] = Date(); rebaseScreen(o); wrote[o] = nil
-        log(s.arrow, "screen", M(did.joined(separator: ", "), did.joined(separator: ", ")))
+        if fresh, !acted, let a = answer, a.o("now") != nil {
+            dst.apply(panel: a); pageReadAt[o] = Date()
+            if o == .twin { sawTwin(dst, at: Date()) }
+        } else { dst = try readScreen(o); screenAt[o] = Date() }
+        screen[o] = dst; rebaseScreen(o); wrote[o] = nil
+        log(s.arrow, leads && !asked.isDisjoint(with: src.walked) ? "walk" : "screen", M(did.joined(separator: ", "), did.joined(separator: ", ")))
     }
 
     // MARK: effects
@@ -1947,6 +2326,7 @@ final class SyncEngine {
         watchLoad()
         firmwareRound()
         try settingsPass(allowMass: false)
+        walkHeld = false
     }
 
     /// The panel's own counters of refused requests and failed allocations (web.cpp:477-485): when they grow,
@@ -1964,36 +2344,85 @@ final class SyncEngine {
         }
     }
 
-    private func settingsPass(allowMass: Bool) throws {
+    /// What each side changed since its base, as settingsPass carries it: a key both changed goes from the
+    /// panel (CONFLICTS: the ones whose values differ), the panel's hardware never from the twin (HARDWARE),
+    /// a key new on a side (a newer firmware, a module that appeared) is nobody's change - except what the
+    /// owner's old overrides left on the twin (Settings.residue): with no twin base yet, the panel's value goes
+    /// to the twin (RESIDUE, among the panel's). TWIN_RESTARTED: the twin restarted since the last full pass,
+    /// and what differs on it from its base is no person's change but a write it lost - each module saves its
+    /// settings to NVS a moment later (panel.cpp panelTick, SETTLE_MS 2.5 s), and a restart within that moment
+    /// keeps the old value: the panel's value goes back to the twin (RESTORED, among the panel's). ONLY: these
+    /// keys alone.
+    static func settingsChanges(cur: [Side: J], dig: [Side: [String: String]], base bp: [String: String], _ bt: [String: String],
+                                only: ((String) -> Bool)? = nil, twinRestarted: Bool = false)
+        -> (changed: [Side: [String]], conflicts: [String], hardware: [String], residue: [String], restored: [String]) {
+        var changed: [Side: [String]] = [:]
+        for (s, b) in [(Side.panel, bp), (.twin, bt)] {
+            changed[s] = dig[s]!.keys.filter { (only?($0) ?? true) && b[$0] != nil && b[$0] != dig[s]![$0] }.sorted()
+        }
+        var restored: [String] = []
+        if twinRestarted {
+            restored = changed[.twin]!.filter { !changed[.panel]!.contains($0) }
+            changed[.panel] = Array(Set(changed[.panel]!).union(changed[.twin]!)).sorted()
+            changed[.twin] = []
+        }
+        let residue = dig[.panel]!.keys.filter { k in
+            (only?(k) ?? true) && bt[k] == nil && cur[.twin]![k] != nil && Settings.residue(k, twin: cur[.twin]![k])
+                && canon(cur[.panel]![k]) != canon(cur[.twin]![k])
+        }.sorted()
+        changed[.panel] = Array(Set(changed[.panel]!).union(residue)).sorted()
+        var conflicts: [String] = []
+        for k in Set(changed[.panel]!).intersection(changed[.twin]!).sorted() {
+            changed[.twin]!.removeAll { $0 == k }
+            if canon(cur[.panel]![k]) != canon(cur[.twin]![k]) { conflicts.append(k) }
+        }
+        let hardware = changed[.twin]!.filter { Settings.hardware.contains($0) }
+        changed[.twin]!.removeAll { Settings.hardware.contains($0) }
+        return (changed, conflicts, hardware, residue, restored)
+    }
+
+    /// The settings each side changed since its base, carried to the other side. ONLY: these keys alone
+    /// (the carousel's, in every screen round: Settings.walkKey), the others' bases left as they are.
+    private func settingsPass(allowMass: Bool, only: ((String) -> Bool)? = nil) throws {
         let cur: [Side: J] = [.panel: flat(.panel), .twin: flat(.twin)]
         let dig = cur.mapValues(digests)
         guard let bp = base[.panel]?["settings"], let bt = base[.twin]?["settings"], !bp.isEmpty, !bt.isEmpty else {
+            if only != nil { return }                               // no bases yet: the settings round sets them
             for s in sides { base[s, default: [:]]["settings"] = dig[s]! }
             try enforceOverrides(); return
         }
-        var changed: [Side: [String]] = [:]
-        for (s, b) in [(Side.panel, bp), (.twin, bt)] {
-            // A key new on this side (a newer firmware, a module that appeared) is not a change of anyone's.
-            changed[s] = dig[s]!.keys.filter { b[$0] != nil && b[$0] != dig[s]![$0] }.sorted()
-        }
-        for k in Set(changed[.panel]!).intersection(changed[.twin]!).sorted() {
-            changed[.twin]!.removeAll { $0 == k }
-            if canon(cur[.panel]![k]) != canon(cur[.twin]![k]) {
-                log("panel→twin", "conflict", M("conflict: the panel's taken - \(Settings.shown(k))", "конфликт: взята панель — \(Settings.shown(k))"))
-            }
-        }
+        // The twin's restart is judged by the first full pass after it (walkHeld keeps the screen round's
+        // carousel pass waiting for it).
+        let restarted = only == nil && twinRestarted
+        if only == nil { twinRestarted = false }
+        let ch = SyncEngine.settingsChanges(cur: cur, dig: dig, base: bp, bt, only: only, twinRestarted: restarted)
+        let changed = ch.changed
+        for k in ch.conflicts { log("panel→twin", "conflict", M("conflict: the panel's taken - \(Settings.shown(k))", "конфликт: взята панель — \(Settings.shown(k))")) }
         // The panel's hardware never goes to the panel: the twin keeps its own until the panel changes it.
-        for k in changed[.twin]! where Settings.hardware.contains(k) {
+        for k in ch.hardware {
             noteOnce("hw-\(k)-\(dig[.twin]![k] ?? "")", M("\(Settings.shown(k)): the panel's hardware setting - not carried from the twin to the panel",
                                                           "\(Settings.shown(k)): настройка железа панели — с двойника на панель не переношу"))
         }
-        changed[.twin]!.removeAll { Settings.hardware.contains($0) }
+        if !ch.residue.isEmpty {
+            log("override", "twin", M("no longer overridden on the twin (the owner, 2026-09-30 19:35): the panel's \(ch.residue.map(Settings.shown).joined(separator: ", "))",
+                                      "переопределения двойника сняты (владелец, 30.09 19:35): беру с панели \(ch.residue.map(Settings.shown).joined(separator: ", "))"))
+        }
         if !allowMass {
-            for s in sides where changed[s]!.count > SyncEngine.MASS_SETTINGS {
-                try massChange(s, M("\(changed[s]!.count) settings changed on \(s.word.en) at once", "\(s.on) сразу изменилось настроек: \(changed[s]!.count)"))
+            // Each side's own: the twin's lost writes are the twin's (an erased flash is many at once).
+            let own: [Side: Int] = [.panel: changed[.panel]!.filter { !ch.residue.contains($0) && !ch.restored.contains($0) }.count,
+                                    .twin: changed[.twin]!.count + ch.restored.count]
+            for s in sides where own[s]! > SyncEngine.MASS_SETTINGS {
+                try massChange(s, M("\(own[s]!) settings changed on \(s.word.en) at once", "\(s.on) сразу изменилось настроек: \(own[s]!)"))
             }
         }
-        for s in sides { base[s, default: [:]]["settings"] = dig[s]! }
+        if !ch.restored.isEmpty {
+            log("panel→twin", "restart", M("the twin restarted before it saved \(ch.restored.map(Settings.shown).joined(separator: ", ")): the panel's value goes back to it",
+                                          "двойник перезагрузился, не успев сохранить \(ch.restored.map(Settings.shown).joined(separator: ", ")): возвращаю значение панели"))
+        }
+        for s in sides {
+            if let only { for (k, v) in dig[s]! where only(k) { base[s, default: [:]]["settings", default: [:]][k] = v } }
+            else { base[s, default: [:]]["settings"] = dig[s]! }
+        }
         var failed: [(Side, [String], Error)] = []
         for s in sides {
             let o = s.other
@@ -2005,15 +2434,24 @@ final class SyncEngine {
                 if canon(cur[o]![k]) != canon(cur[s]![k]) { keys.append(k) }
             }
             guard !keys.isEmpty else { continue }
-            do { try applySettings(from: s, keys: keys); forgive("settings", s, keys) } catch { failed.append((s, keys, error)) }
+            do { try applySettings(from: s, keys: keys, only: only); forgive("settings", s, keys) } catch { failed.append((s, keys, error)) }
         }
-        for (s, keys, e) in failed { revert("settings", s, keys, s == .panel ? bp : bt, e) }
+        for (s, keys, e) in failed {
+            revert("settings", s, keys, s == .panel ? bp : bt, e)
+            // What an old override left, not written because a device did not answer or sync stopped: the twin's
+            // base drops it again, so it is seen again.
+            if s == .panel, e is SyncDown || e is SyncStopped || e is SyncWait {
+                for k in keys where ch.residue.contains(k) { base[.twin]?["settings"]?[k] = nil }
+            }
+        }
         if let e = failed.first(where: { $0.2 is SyncStopped })?.2 ?? failed.first?.2 { throw e }
-        try enforceOverrides()
+        if only == nil { try enforceOverrides() }                  // the settings round's: it reads the twin's documents again
     }
 
-    /// Writes the settings KEYS of side S to the other side, then reads what it wrote again as the other side's base.
-    private func applySettings(from s: Side, keys all: [String]) throws {
+    /// Writes the settings KEYS of side S to the other side, then reads what it wrote again as the other side's
+    /// base - of the keys ONLY allows, when given (a screen round's carousel settings: the rest of the other
+    /// side's base waits for the settings round, which compares it).
+    private func applySettings(from s: Side, keys all: [String], only: ((String) -> Bool)? = nil) throws {
         let o = s.other, dv = device(o)
         let keys = o == .panel ? all.filter { !Settings.hardware.contains($0) } : all      // never the panel's hardware to it
         let src = flat(s), sd = docs[s] ?? [:]
@@ -2102,7 +2540,8 @@ final class SyncEngine {
         let routes = Array(Set(keys.flatMap(Settings.routes))).filter { Device.reads.contains($0) }.sorted()
         try readDocs(o, routes)
         if o == .twin { try enforceOverrides() }
-        base[o, default: [:]]["settings"] = digests(flat(o))
+        if let only { for (k, v) in digests(flat(o)) where only(k) { base[o, default: [:]]["settings", default: [:]][k] = v } }
+        else { base[o, default: [:]]["settings"] = digests(flat(o)) }
         log(s.arrow, "settings", M("settings: " + done.joined(separator: ", "), "настройки: " + done.joined(separator: ", ")))
         try afterWrite(o, from: s)
     }
@@ -2138,8 +2577,10 @@ final class SyncEngine {
     }
 
     /// Flight board: custom airports (added, never removed: a removal resubscribes the board, panel.cpp:576-585),
-    /// the AeroAPI budget, tracked flights (sync.py plan_flightboard). The selection is the owner's override on
-    /// the twin and is never mirrored.
+    /// the AeroAPI budget, tracked flights (sync.py plan_flightboard), and the airport selected with the half it
+    /// shows - by the airport's ICAO code, looked up among the target's once the new ones are added (an id is a
+    /// slot on each device): POST {"airport":id,"dir":...} (web_panel.cpp:517-527, 586). Mirrored both ways
+    /// since the owner dropped the override that kept the twin on ZZZZ (2026-09-30 19:35).
     private func flightBoard(from s: Side, keys: [String]) throws -> [String] {
         let o = s.other, dv = device(o), src = flat(s)
         guard let od = try dv.get("/api/flightboard") else { return [] }
@@ -2159,41 +2600,41 @@ final class SyncEngine {
             for f in want.subtracting(have).sorted() { try dv.post("/api/flightboard", ["track": f]) }
             done.append("flightboard.tracked")
         }
+        if keys.contains("flightboard.selection"), let sel = src["flightboard.selection"] as? [Any], let code = sel.first as? String {
+            let now = keys.contains("flightboard.custom") ? (try dv.get("/api/flightboard") ?? od) : od
+            if let id = now.a("airports").first(where: { $0.s("code") == code })?.i("id") {
+                var body: J = ["airport": id]
+                if sel.count > 1, let dir = sel[1] as? String { body["dir"] = dir }
+                try dv.post("/api/flightboard", body); done.append("flightboard.selection")
+            } else {
+                noteOnce("fb-sel-\(o)-\(code)", M("\(o.word.en) has no airport \(code) to select on the flight board", "\(o.at) нет аэропорта \(code), чтобы выбрать его на табло рейсов"))
+            }
+        }
         return done
     }
 
-    /// The owner's overrides on the twin (sync.py OVERRIDES), put back whenever they drift. None of them is
-    /// ever compared or sent to the panel.
+    /// The owner's override on the twin (sync.py OVERRIDES): climateHa off, put back whenever it drifts; it is
+    /// never compared or sent to the panel. And what the dropped overrides of 2026-09-29 added to the twin: the
+    /// custom airport ZZZZ "NO REQUESTS", removed once the twin's board is on another airport (the panel's,
+    /// settingsPass) - unless the panel has such an airport itself, or its list is not known. Neither touches
+    /// a compared setting (ZZZZ is left out of flightboard.custom), so no base moves.
     private func enforceOverrides() throws {
         let tw = device(.twin), d = docs[.twin] ?? [:]
-        var did: [String] = []
+        var did: [String] = [], routes: [String] = []
         if d["/api/export"]?.b("climateHa") == true {
             try tw.post("/api/import", ["climateHa": false]); did.append("climateHa false")    // climate.cpp:127-131, 165-182
+            routes += ["/api/export", "/api/portal"]
         }
-        for p in d["/api/panel"]?.a("pages") ?? [] where ["trains", "flights"].contains(p.s("key") ?? "") && p.b("on") == true {
-            try tw.post("/api/panel", ["enable": ["key": p.s("key")!, "on": false] as J]); did.append("\(p.s("key")!) off")
-        }
-        if let fb = d["/api/flightboard"] {
-            let apts = fb.a("airports")
-            let sel = apts.first { $0.i("id") == fb.i("airport") }
-            if sel?.s("code") != Settings.noAsk.icao {
-                let dir = docs[.panel]?["/api/flightboard"]?.s("dir") ?? fb.s("dir") ?? "alt"
-                if let mine = apts.first(where: { $0.s("kind") == "custom" && $0.s("code") == Settings.noAsk.icao }) {
-                    try tw.post("/api/flightboard", ["airport": mine["id"] ?? 0, "dir": dir])
-                } else if apts.filter({ $0.s("kind") == "custom" }).count < (fb.o("limits")?.i("custom") ?? 6) {
-                    let tz = (docs[.panel]?["/api/flightboard"]?.a("airports").first { $0.i("id") == docs[.panel]?["/api/flightboard"]?.i("airport") })?.s("tz") ?? "Europe/Paris"
-                    try tw.post("/api/flightboard", ["add": ["icao": Settings.noAsk.icao, "iata": "", "name": Settings.noAsk.name, "tz": tz, "select": true] as J, "dir": dir])
-                } else {
-                    noteOnce("noask-full", M("the twin's six custom airports are all used: ZZZZ cannot be selected", "у двойника заняты все шесть своих аэропортов: ZZZZ не выбрать"))
-                }
-                did.append("flight board ZZZZ")
-            }
+        if let fb = d["/api/flightboard"],
+           let z = fb.a("airports").first(where: { $0.s("kind") == "custom" && $0.s("code") == Settings.noAsk.icao && $0.s("name") == Settings.noAsk.name }),
+           let id = z.i("id"), fb.i("airport") != id,
+           let panelApts = docs[.panel]?["/api/flightboard"]?.a("airports"), !panelApts.contains(where: { $0.s("code") == Settings.noAsk.icao }) {
+            try tw.post("/api/flightboard", ["remove": id]); did.append("\(Settings.noAsk.icao) \"\(Settings.noAsk.name)\" removed")
+            routes.append("/api/flightboard")
         }
         guard !did.isEmpty else { return }
-        try readDocs(.twin, ["/api/export", "/api/portal", "/api/panel", "/api/flightboard"])
-        if base[.twin]?["settings"] != nil { base[.twin]!["settings"] = digests(flat(.twin)) }
-        if let x = try? readScreen(.twin) { screen[.twin] = x; screenAt[.twin] = Date(); rebaseScreen(.twin) }
-        log("override", "twin", M("the owner's overrides on the twin: " + did.joined(separator: ", "), "переопределения владельца на двойнике: " + did.joined(separator: ", ")))
+        try readDocs(.twin, routes)
+        log("override", "twin", M("the owner's override on the twin: " + did.joined(separator: ", "), "переопределение владельца на двойнике: " + did.joined(separator: ", ")))
     }
 
     /// After writing to side O: its screen as it is now becomes its base (a new home city, a removed
