@@ -282,6 +282,12 @@ class Fake:
                                           "tz": a["tz"]}
                 if a.get("select"):
                     apt = 100 + slot
+            if "remove" in d:                        # the selection moves to Nice if it was this one (panel.cpp:576-585)
+                if not (100 <= d["remove"] < 106) or self.custom_apts[d["remove"] - 100] is None:
+                    return 400, {"error": "remove: only a custom airport can be deleted"}
+                self.custom_apts[d["remove"] - 100] = None
+                if apt == d["remove"]:
+                    apt = 1
             if "budget" in d:
                 self.budget.update(d["budget"])
             if "track" in d:
@@ -573,31 +579,61 @@ class Overrides(unittest.TestCase):
         with open(os.path.join(HERE, "sync.py"), encoding="utf-8") as f:
             src = f.read()
         self.assertIn("The owner, 2026-09-29 22:50", src)
-        self.assertEqual(S.OVERRIDE_NAMES, ("form.climateHa", "pages.trains", "pages.flights", "flightboard.selection"))
+        self.assertIn("The owner, 2026-09-30 19:35", src)
+        self.assertEqual(S.OVERRIDE_NAMES, ("form.climateHa",))
 
     def test_applied_last_and_the_copy_never_touches_them(self):
         p, t = panel_and_twin()
         plan = S.make_plan({r: p.get(r) for r in S.READ_ROUTES}, {r: t.get(r) for r in S.READ_ROUTES})
         flags = [s.override for s in plan.steps]
         self.assertEqual(flags, sorted(flags))               # every override after every copy
-        self.assertEqual(sum(flags), 4)
+        self.assertEqual(sum(flags), 1)
         for s in plan.steps:
             if not s.override:
                 self.assertFalse(set(s.covers) & set(S.OVERRIDE_NAMES), s.label)
-                self.assertNotIn("airport", s.body if isinstance(s.body, dict) else {})
-                self.assertNotIn("dir", s.body if isinstance(s.body, dict) else {})
         code, out = run_sync(Net(p, t), "--apply")
         self.assertEqual(code, 0, out)
         self.assertFalse(t.form["climateHa"])
-        self.assertFalse(t.pages["trains"])
-        self.assertFalse(t.pages["flights"])
-        self.assertTrue(p.pages["trains"])
-        self.assertEqual(t.apt(t.airport)["code"], "ZZZZ")
-        self.assertEqual(t.dir, p.dir)
-        self.assertEqual(t.selections, [("ZZZZ", "alt")])     # never a built-in airport on the way
-        last = [r for r in writes(t)][-4:]
-        self.assertEqual([r[1] for r in last], ["/api/import", "/api/panel", "/api/panel", "/api/flightboard"])
-        self.assertEqual(json.loads(last[0][2]), {"climateHa": False})
+        last = writes(t)[-1]
+        self.assertEqual((last[1], json.loads(last[2])), ("/api/import", {"climateHa": False}))
+
+
+class PaidScreens(unittest.TestCase):
+    """The owner, 2026-09-30 19:35: the twin keeps no paid screen off by force; its keys are its own."""
+
+    def test_the_pages_and_the_airport_are_copied(self):
+        p, t = panel_and_twin()
+        t.pages["trains"] = t.pages["flights"] = False          # as the old override left them
+        t.custom_apts[2] = {"code": "ZZZZ", "iata": "", "name": "NO REQUESTS", "tz": "Europe/Paris"}
+        t.airport = 102
+        p.airport, p.dir = 3, "dep"
+        code, out = run_sync(Net(p, t), "--apply")
+        self.assertEqual(code, 0, out)
+        self.assertTrue(t.pages["trains"])
+        self.assertTrue(t.pages["flights"])
+        self.assertEqual((t.apt(t.airport)["code"], t.dir), ("EGLL", "dep"))
+        self.assertIsNone(t.custom_apts[2])                    # the old override's airport is gone
+        self.assertEqual(t.selections, [("EGLL", "dep")])       # selected before ZZZZ went: never Nice on the way
+        paths = [(r[1], json.loads(r[2])) for r in writes(t) if r[1] == "/api/flightboard"]
+        self.assertEqual(paths, [("/api/flightboard", {"airport": 3, "dir": "dep"}), ("/api/flightboard", {"remove": 102})])
+
+    def test_a_custom_airport_selected_on_the_panel_is_added_and_selected(self):
+        p, t = panel_and_twin()
+        p.custom_apts[0] = {"code": "LFKJ", "iata": "AJA", "name": "AJACCIO", "tz": "Europe/Paris"}
+        p.airport = 100
+        code, out = run_sync(Net(p, t), "--apply")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(t.apt(t.airport)["code"], "LFKJ")
+        self.assertEqual(t.selections, [("LFKJ", "alt")])
+
+    def test_the_keys_are_never_copied_nor_read(self):
+        p, t = panel_and_twin()
+        code, out = run_sync(Net(p, t), "--apply")
+        self.assertEqual(code, 0, out)
+        self.assertFalse(t.aero_key or t.rb_token or t.ais_key)
+        for dev in (p, t):
+            self.assertFalse([r for r in dev.requests if "/api/keys" in r[1]])
+        self.assertNotIn("/api/keys", S.READ_ROUTES + S.POST_ROUTES)
 
     def test_override_wins_over_the_panel(self):
         p, t = panel_and_twin()
@@ -607,13 +643,14 @@ class Overrides(unittest.TestCase):
         self.assertFalse(t.form["climateHa"])
         self.assertIn("form.climateHa", out)
 
-    def test_the_no_request_airport_is_reused(self):
+    def test_the_old_no_request_airport_is_removed_not_selected(self):
         p, t = panel_and_twin()
         t.custom_apts[2] = {"code": "ZZZZ", "iata": "", "name": "NO REQUESTS", "tz": "Europe/Paris"}
         code, out = run_sync(Net(p, t), "--apply")
         self.assertEqual(code, 0, out)
         (body,) = [json.loads(r[2]) for r in t.requests if r[0] == "POST" and r[1] == "/api/flightboard"]
-        self.assertEqual(body, {"airport": 102, "dir": "alt"})
+        self.assertEqual(body, {"remove": 102})
+        self.assertEqual(t.apt(t.airport)["code"], "LFMN")
 
     def test_a_second_run_sends_nothing(self):
         p, t = panel_and_twin()
@@ -624,7 +661,7 @@ class Overrides(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertEqual(len(writes(t)), n)
         self.assertIn("requests to the twin: none", out)
-        self.assertIn("false on the twin, as the override wants (the panel: true)", out)
+        self.assertIn("false on the twin, as the override wants (the panel: false)", out)
 
 
 class Afterwards(unittest.TestCase):
@@ -645,7 +682,7 @@ class Afterwards(unittest.TestCase):
         self.assertEqual(code, 1, out)
         self.assertIn("FAILED", out)
         self.assertFalse(t.form["climateHa"])
-        self.assertEqual(t.apt(t.airport)["code"], "ZZZZ")
+        self.assertEqual(t.apt(t.airport)["code"], p.apt(p.airport)["code"])
 
 
 class Http(unittest.TestCase):

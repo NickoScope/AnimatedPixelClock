@@ -39,18 +39,26 @@ How each thing is copied (firmware 2.7.5, c4ddd3a; 2.7.6 changed no route):
                   (timezoneRegion -1); /save sets a region (web.cpp:1554-1568).
   /api/panel (pages, carousel), /api/knob, /api/lua (effects in the walk), /api/worldclock (custom
   cities, home), /api/railboard (station, favourites, its settings when the portal owns them),
-  /api/flightboard (custom airports, budget, tracked flights), /api/market (the keys that differ),
+  /api/flightboard (custom airports, budget, tracked flights, the airport selected and its half, by
+  the airport's ICAO code), /api/market (the keys that differ),
   /api/media (the player), GET /api/ir/fn (a remote button's function), GET /api/log?on= (the log).
   Not over HTTP: Lua scripts (no route gives a script's source), the remote's learned codes (they
   come from a real frame: tools/twin/learn_remote.txt), secrets, identity (name, MAC, address,
   Wi-Fi) and firmware state (metric names, usage counters, caches, crash report).
 
-The owner's overrides (2026-09-29 22:50) come last, over whatever the copy brought: OVERRIDES below.
-Two of them are as far as HTTP goes. The rail board publishes its station, retained, on every
-broker connect, and nothing in the firmware switches that off (railboard.cpp:555-569): the twin
-keeps the panel's station, so run this again after changing the panel's. The flight board asks Home
-Assistant for boards whatever page is up (main.cpp:1219-1221, fb_mqtt.cpp:103-136); only a custom
-airport stops that (fb_mqtt.cpp:38-41), so the twin gets one, NO_ASK, and it must stay selected.
+The owner's override (2026-09-29 22:50) comes last, over whatever the copy brought: OVERRIDES below,
+climateHa off. The rail board publishes its station, retained, on every broker connect, and nothing in
+the firmware switches that off (railboard.cpp:555-569): the twin keeps the panel's station, so run this
+again after changing the panel's.
+
+The owner, 2026-09-30 19:35: the twin keeps no paid screen off by force. Its portal has the Keys page
+(/api/keys, as the panel's: a key is written there and never given out), and its boards work from the
+keys entered there; secrets are never copied. So the trains and flights pages and the flight board's
+airport are copied like the rest, and the airport the old override added, NO_ASK, is removed from the
+twin. Without a key the twin makes no paid call of its own (aero_direct.cpp:725, rtt_direct.cpp:737). A
+twin that has a broker and no AeroAPI key asks Home Assistant for a built-in airport's board over MQTT
+(fb_mqtt.cpp:103-136, at most once per airport and half in 15 min and 12 an hour, fb_mqtt.cpp:24-45),
+as a panel without a key does.
 
 Tests: python3 -m unittest tools/twin/test_sync.py -v   (fake devices, no network)
 """
@@ -96,27 +104,18 @@ RB_CFG_KEYS = ("rows", "switch_s", "level", "stale_s", "due_min", "clock_seconds
 BUDGET_KEYS = ("floor_min", "day_cap", "month_cap")                     # /api/flightboard direct.budget
 MARKET_SHOWN = ("display", "display_adv")   # registry groups whose values may be printed
 
-# The airport that asks nobody: not one of the six built-in ones Home Assistant serves (mayAsk,
-# fb_mqtt.cpp:38-41; a custom copy of a built-in code is refused, panel.cpp:561-565). The name
-# fits the header: 43 px of the 56 the twin's /api/flightboard limits allow, checked again here.
+# The airport the override of 2026-09-29 added and selected on the twin, until the owner dropped it on
+# 2026-09-30 19:35: never compared, and removed from the twin where it is left (plan_flightboard).
 NO_ASK = {"icao": "ZZZZ", "iata": "", "name": "NO REQUESTS"}
 
 # The owner, 2026-09-29 22:50: "1. перенеси все настройки 2. выключи на двойнике" - copy
 # everything, then switch off on the twin what must run once in the house. Applied after the copy, over it; the
-# copy never writes these names. (name, the value, what it stops)
+# copy never writes these names. (name, the value, what it stops) The trains and flights pages and the flight
+# board's airport were here too until the owner, 2026-09-30 19:35: now they are copied.
 OVERRIDES = (
     ("form.climateHa", False,
      "the twin's indoor sensor as a second device in Home Assistant: switched off, the firmware sends the "
      "empty retained discovery configs, and HA removes the entities (climate.cpp:127-131, 165-182)"),
-    ("pages.trains", False,
-     "the rail board out of the knob's walk and the carousel (main.cpp:826-835), so the knob cannot reach "
-     "its STATION stop and publish a station (railboard.cpp:657-692); the station itself is the panel's"),
-    ("pages.flights", False,
-     "the flight board out of the walk, so the knob cannot step it back to a built-in airport "
-     "(flightboard.cpp:264-275)"),
-    ("flightboard.selection", None,
-     "a custom airport selected: no request on nickoscope_watch/flightboard/req (fb_mqtt.cpp:38-41, 126-134); "
-     "the direction stays the panel's"),
 )
 OVERRIDE_NAMES = tuple(o[0] for o in OVERRIDES)
 
@@ -390,9 +389,6 @@ def kind_of(name):
 def override_value(name, src, dst):
     for n, v, _ in OVERRIDES:
         if n == name:
-            if name == "flightboard.selection":
-                direction = (src.get(name) or dst.get(name) or [None, "alt"])[1]
-                return [NO_ASK["icao"], direction]
             return v
     raise KeyError(name)
 
@@ -632,18 +628,41 @@ def plan_railboard(p):
 
 
 def plan_flightboard(p):
+    fb = p.dsnap.get("/api/flightboard") or {}
+    sel = p.src.get("flightboard.selection") if p.both("flightboard.selection") else None
     if p.both("flightboard.custom"):
         have = {a[0] for a in p.view["flightboard.custom"]}
         want = {a[0] for a in p.src["flightboard.custom"]}
         for icao, iata, name, tz in p.src["flightboard.custom"]:
             if icao not in have:
                 add = {"icao": icao, "iata": iata, "name": name, "tz": tz}
-                p.step(f"POST /api/flightboard  add airport {show(add)}", "json", "/api/flightboard", {"add": add},
-                       ["flightboard.custom"])
+                body, covers = {"add": add}, ["flightboard.custom"]
+                if sel and sel[0] == icao:           # the panel's airport is this new one: added and selected
+                    add["select"] = True
+                    body["dir"] = sel[1]
+                    covers.append("flightboard.selection")
+                    sel = None
+                p.step(f"POST /api/flightboard  add airport {show(add)}", "json", "/api/flightboard", body, covers)
         extra = sorted(have - want)
         if extra:
             p.note("flightboard.custom", COPY, f"the twin also has {', '.join(extra)}: not removed - a removal "
                    "resubscribes the board, which may ask Home Assistant for one (panel.cpp:576-585)")
+    if sel:
+        icao, direction = sel
+        apt = next((a for a in fb.get("airports") or [] if a.get("code") == icao), None)
+        if apt is None:
+            p.note("flightboard.selection", COPY, f"the twin has no airport {icao} to select")
+        else:
+            p.step(f"POST /api/flightboard  select {icao} ({apt.get('id')}), dir {direction}", "json", "/api/flightboard",
+                   {"airport": apt.get("id"), "dir": direction}, ["flightboard.selection"])
+    # What the old override added: gone from the twin once another airport is selected there, unless the panel
+    # has one such itself.
+    old = next((a for a in fb.get("airports") or [] if a.get("kind") == "custom" and a.get("code") == NO_ASK["icao"]
+                and a.get("name") == NO_ASK["name"]), None)
+    panel_has = any(a.get("code") == NO_ASK["icao"] for a in (p.ssnap.get("/api/flightboard") or {}).get("airports") or [])
+    if old is not None and not panel_has and (p.src.get("flightboard.selection") or [None])[0] != NO_ASK["icao"]:
+        p.step(f"POST /api/flightboard  remove {NO_ASK['icao']} \"{NO_ASK['name']}\" ({old.get('id')}), the old override's "
+               "airport", "json", "/api/flightboard", {"remove": old.get("id")}, [])
     if p.both("flightboard.budget"):
         b = p.src["flightboard.budget"]
         p.step(f"POST /api/flightboard  budget {show(b)}", "json", "/api/flightboard", {"budget": b},
@@ -705,11 +724,6 @@ def plan_log(p):
         p.step(f"GET /api/log?on={on}  the network log", "action", "/api/log", {"on": on}, ["logOn"])
 
 
-def name_width(name, limits):
-    adv = (limits or {}).get("advance") or []
-    return sum(adv[ord(ch) - 32] if 32 <= ord(ch) < 32 + len(adv) else 0 for ch in name)
-
-
 def plan_overrides(p):
     for name, _, why in OVERRIDES:
         want = override_value(name, p.src, p.dst)
@@ -723,34 +737,6 @@ def plan_overrides(p):
             continue
         if name == "form.climateHa":
             p.step("POST /api/import  {\"climateHa\":false}", "json", "/api/import", {"climateHa": False}, [name], True)
-        elif name.startswith("pages."):
-            key = name[len("pages."):]
-            p.step(f"POST /api/panel  page {key} off", "json", "/api/panel", {"enable": {"key": key, "on": False}},
-                   [name], True)
-        elif name == "flightboard.selection":
-            fb = p.dsnap.get("/api/flightboard") or {}
-            icao, direction = want
-            mine = next((a for a in fb.get("airports") or [] if a.get("kind") == "custom" and a.get("code") == icao),
-                        None)
-            if mine is not None:
-                p.step(f"POST /api/flightboard  select {icao} ({mine.get('id')}), dir {direction}", "json",
-                       "/api/flightboard", {"airport": mine.get("id"), "dir": direction}, [name], True)
-                continue
-            limits = fb.get("limits") or {}
-            customs = [a for a in fb.get("airports") or [] if a.get("kind") == "custom"]
-            planned = sum(1 for s in p.steps if s.path == "/api/flightboard" and "add" in (s.body or {}))
-            if len(customs) + planned >= limits.get("custom", 6):
-                p.note(name, OVERRIDE, "the twin's six custom airports are all used: delete one, then run again")
-                continue
-            if limits.get("namePx") and name_width(NO_ASK["name"], limits) > limits["namePx"]:
-                p.note(name, OVERRIDE, f"{NO_ASK['name']} is wider than the header's {limits['namePx']} px")
-                continue
-            sapts = {a.get("id"): a for a in (p.ssnap.get("/api/flightboard") or {}).get("airports") or []}
-            tz = (sapts.get((p.ssnap.get("/api/flightboard") or {}).get("airport")) or {}).get("tz") or "Europe/Paris"
-            add = dict(NO_ASK, tz=tz, select=True)
-            p.step(f"POST /api/flightboard  add {NO_ASK['icao']} \"{NO_ASK['name']}\" ({tz}), select it, "
-                   f"dir {direction}", "json", "/api/flightboard",
-                   {"add": add, "dir": direction}, [name], True)
 
 
 def make_plan(ssnap, dsnap):
@@ -801,7 +787,7 @@ def print_plan(p, steps=True, why=True):
     print(f"\ncopy from the panel ({len(copies)}):" if copies else "\ncopy from the panel: nothing differs")
     for n, _, a, b in copies:
         print(f"  {n:38} {show_change(p.value(n, a), p.value(n, b))}")
-    print("\nthe owner's overrides (2026-09-29 22:50), applied last:")
+    print("\nthe owner's override (2026-09-29 22:50), applied last:")
     reasons = {n: r for n, _, r in OVERRIDES}
     for n, _, a, b in (c for c in p.changes if c[1] == OVERRIDE):
         print(f"  {n:38} {show_change(a, b)}")
