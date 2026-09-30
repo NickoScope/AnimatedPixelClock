@@ -2714,7 +2714,10 @@ void handleExportConfig() {
 
  json += "}";
 
- server.sendHeader("Access-Control-Allow-Origin", "*");
+ // No Access-Control-Allow-Origin: the export carries the weather API key,
+ // and with "*" any page open in a browser on the network could read it. The
+ // portal asks from its own origin and the twin app is not a browser; neither
+ // needs it (the 2026-09-30 review of the upstream code).
  server.setContentLength(json.length());
  server.send(200, "application/json", "");
  WiFiClient client = server.client();
