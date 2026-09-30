@@ -173,7 +173,20 @@ def validate_partitions(table: bytes, firmware_size: int, flash_size: int):
         raise ValueError("Firmware does not fit both OTA slots at the expected offsets")
 
 
-def prepare_full_bin(env: str, version: str) -> bytes:
+# The flasher writes these parts one by one at their own offsets, and nothing
+# between them: the NVS partition (0x9000-0xE000, settings, Wi-Fi, keys) lies in
+# the gap between the partition table and the OTA data, and the merged Full.bin
+# fills that gap with 0xFF - so writing Full.bin wiped the settings even when
+# the flasher was told not to erase (the owner's question, 2026-09-30).
+PART_FILES = {
+    BOOTLOADER_OFFSET: "bootloader",
+    PARTITIONS_OFFSET: "partitions",
+    OTA_DATA_OFFSET: "otadata",
+}
+
+
+def prepare_parts(env: str, version: str) -> dict:
+    """Every flash part of an env's build, checked, by offset."""
     bd = build_dir(env)
     metadata = json.loads((bd / "idedata.json").read_text(encoding="utf-8"))["extra"]
     app_offset = int(metadata["application_offset"], 0)
@@ -195,7 +208,24 @@ def prepare_full_bin(env: str, version: str) -> bytes:
     if b"\0" + version.removeprefix("v").encode() + b"\0" not in firmware:
         raise ValueError(f"Firmware version missing from {env}; rebuild before packaging")
     validate_partitions(parts[PARTITIONS_OFFSET], len(firmware), FLASH_BYTES[env])
-    return merge_segments(segments)
+    return parts
+
+
+def prepare_full_bin(env: str, version: str) -> bytes:
+    return merge_segments(list(prepare_parts(env, version).items()))
+
+
+def write_flasher_parts(env: str, fid: str, version: str) -> list:
+    """The bootloader, partition table and OTA data beside the Full.bin, for the
+    web flasher's per-part manifest; the app is the OTA_ONLY image. Names written."""
+    parts = prepare_parts(env, version)
+    names = []
+    for offset, label in PART_FILES.items():
+        name = f"AnimatedPixelClock-{fid}-{version}-{label}.bin"
+        (DOCS_LATEST / name).write_bytes(parts[offset])
+        print(f"  Part: docs/firmware/latest/{name} @ {offset:#x} ({len(parts[offset])} B)")
+        names.append(name)
+    return names
 
 
 def write_full_bin(image: bytes, out_path: Path):
@@ -235,7 +265,7 @@ def find_old_full_bins(version: str):
     """List Full.bin files in docs/firmware/latest/ not for this version."""
     if not DOCS_LATEST.exists():
         return []
-    pats = (re.compile(r"^AnimatedPixelClock-(.+)-(v[^-]+)-Full\.bin$"),
+    pats = (re.compile(r"^AnimatedPixelClock-(.+)-(v[^-]+)-(?:Full|bootloader|partitions|otadata)\.bin$"),
             re.compile(r"^OTA_ONLY_firmware-()(v[^-]+)-.+\.bin$"))
     old = []
     for f in DOCS_LATEST.iterdir():
@@ -303,6 +333,7 @@ def main():
         # page: the portal's "Update now" downloads it from there (web_pages.h,
         # FW_LATEST) - a release asset's download has no CORS header.
         copy_ota_bin(env, DOCS_LATEST / f"OTA_ONLY_firmware-{version}-{fid}.bin")
+        write_flasher_parts(env, fid, version)
 
     shutil.copy2(args.companion, ota_dir / COMPANION_EXE.name)
     release_names = [name for _, fid, _ in VARIANTS
@@ -310,7 +341,9 @@ def main():
     write_checksums(ota_dir, release_names + [COMPANION_EXE.name])
     write_checksums(DOCS_LATEST, [name for _, fid, _ in VARIANTS
                                   for name in (f"AnimatedPixelClock-{fid}-{version}-Full.bin",
-                                               f"OTA_ONLY_firmware-{version}-{fid}.bin")])
+                                               f"OTA_ONLY_firmware-{version}-{fid}.bin",
+                                               *(f"AnimatedPixelClock-{fid}-{version}-{label}.bin"
+                                                 for label in PART_FILES.values()))])
     write_version_file(version)
     # Stamp what these images were built FROM, not only what they are called.
     # tools/firmware_stamp.py --check reads it in the pre-commit hook and
