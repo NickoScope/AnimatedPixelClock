@@ -126,6 +126,9 @@
 #include "../ambient/anim_store.h"
 #include "../clips/clip_sd.h"
 #endif
+#if defined(SYNC_EVENTS_ENABLED)
+#include "../sync/sync_events.h"
+#endif
 #include "web.h"
 #include "../fonts/pxfb_text.h"   // the Cyrillic advances the portal measures names with
 
@@ -218,6 +221,7 @@ static const char *const KEY_NAMES[PANEL_KEY_COUNT] = {
 static const char *keyName(uint8_t key) {
   return key < PANEL_KEY_COUNT ? KEY_NAMES[key] : "other";
 }
+const char *panelPageKeyName(uint8_t page) { return keyName(panelPageKey(page)); }
 
 // Cards follow the fixed pages, so the first card's page is the fixed count.
 static uint8_t fixedPageCount() {
@@ -341,6 +345,11 @@ static void buildPanel(JsonDocument &doc) {
     snprintf(hm, sizeof(hm), "%02d:%02d", lt.tm_hour, lt.tm_min);
   }
   now["time"] = hm;
+#if defined(SYNC_EVENTS_ENABLED)
+  // now.fx {id, open, run, clicks}, now.seq, now.inputSeq; ?input=N adds the
+  // inputs after seq N (sync_events.h).
+  syncPanelJson(now, doc, server.hasArg("input") ? (int32_t)server.arg("input").toInt() : -1);
+#endif
 
   const PanelCarousel &c = panelCarousel();
   JsonObject car = doc["carousel"].to<JsonObject>();
@@ -483,6 +492,29 @@ static void handlePanel() {
   buildPanel(doc);
   sendDoc(doc);
 }
+
+// ---------------------------------------------------------------- /api/sync/listen
+#if defined(SYNC_EVENTS_ENABLED)
+// POST {"port":N} subscribes the sender's address to the sync datagrams for
+// 60 s (renew with the same request); {"port":N,"stop":true} leaves. The
+// address is the TCP peer's, never one named in the body, so nobody can point
+// the panel's datagrams at a third machine. sync_events.h has the format.
+static void handleSyncListen() {
+  if (!isPost()) REJECT(405, "POST {\"port\":N}");
+  if (webOriginForeign() || webHostForeign()) REJECT(403, "refused: this request came from another origin");
+  JsonDocument in(&s_alloc);
+  if (!readBody(in)) return;
+  long port = 0;
+  if (!intIn(in["port"], 1024, 65535, &port)) REJECT(400, "port must be 1024..65535");
+  const bool stop = in["stop"].is<bool>() && in["stop"].as<bool>();
+  if (!syncListen(server.client().remoteIP(), (uint16_t)port, stop)) REJECT(409, "two listeners already: try again once one lapses");
+  JsonDocument doc(&s_alloc);
+  doc["success"] = true;
+  doc["ttl"] = stop ? 0 : 60;
+  doc["seq"] = syncSeq();
+  sendDoc(doc);
+}
+#endif
 
 // ---------------------------------------------------------------- /api/flightboard
 #if defined(FLIGHTBOARD_ENABLED)
@@ -1175,7 +1207,15 @@ static void handleLua() {
     if (showI >= 0) luaEffectShow((uint8_t)showI);
     // {"click":true}: the effect's button (px.button), as the knob's click or
     // the remote's OK on its page. For the portal and for Home Assistant.
-    if (in["click"].is<bool>() && in["click"].as<bool>()) luaEffectsClick();
+    if (in["click"].is<bool>() && in["click"].as<bool>()) {
+      luaEffectsClick();
+#if defined(CAROUSEL_ENABLED)
+      carouselNote();          // as the knob's click does: somebody is here
+#endif
+#if defined(SYNC_EVENTS_ENABLED)
+      syncInput(SYNC_IN_PRESS, syncHttpBy());
+#endif
+    }
   }
   JsonDocument doc(&s_alloc);
   doc["success"] = true;
@@ -1655,6 +1695,9 @@ void panelWebBegin() {
 #endif
 #if defined(PANEL_KEYS_ENABLED)
   route("/api/keys", handleKeys);
+#endif
+#if defined(SYNC_EVENTS_ENABLED)
+  route("/api/sync/listen", handleSyncListen);
 #endif
 #if defined(LUA_EFFECTS_ENABLED)
   route("/api/lua", handleLua);

@@ -55,6 +55,7 @@ void irLoop();     // every loop() pass: frames, the learn window, the serial co
 // switch inside that callback would delay every knob sample.
 int8_t irTakeRotate();          // detents accumulated since the last call, -3..+3, 0 = none
 bool   irOkDown(uint32_t nowMs);  // the button's level, held while repeat frames keep arriving
+bool   irSimulatedNow(uint32_t nowMs);   // the remote's events now come from /api/ir/do
 
 // ── the portal and /api/info ────────────────────────────────────────────────
 void irInfoJson(JsonObject out);      // /api/info's "ir"

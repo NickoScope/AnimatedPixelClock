@@ -49,4 +49,8 @@ uint32_t    luaEffectsStackFreeMin();
 // A click for the effect on screen (px.button): the knob's click and the
 // remote's OK on an effect page, and POST /api/lua {"click":true}. loop() only.
 void        luaEffectsClick();
+// The effect on screen for the twin's sync: its index (-1 none), how many times
+// an effect has been chosen since boot, the clicks since it was chosen, and
+// whether its first frame has arrived.
+void        luaEffectsFx(int16_t *id, uint32_t *run, uint32_t *clicks, bool *open);
 const char *luaEffectsTrialReport();   // the last upload's trial run, "" before one

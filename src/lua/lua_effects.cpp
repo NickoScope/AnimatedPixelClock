@@ -157,6 +157,14 @@ LuaPxCanvas s_canvas;   // task only
 // Clicks for px.button: counted on loop() (luaEffectsClick), read by the task
 // into s_canvas before each draw.
 std::atomic<uint32_t> s_clicks{0};
+// The clicks an effect starts from, taken when it is chosen (luaEffectsSelect,
+// luaEffectsReload) rather than when its task gets round to opening it: a click
+// in between was counted into the effect's starting point and never seen - the
+// simulation session measured 0 of 4 clicks sent right after a page change
+// arriving, 4 of 4 from 50 ms on. And how many times an effect has been chosen,
+// so the twin's sync can tell a reopening from a click (/api/panel now.fx).
+std::atomic<uint32_t> s_clicksBase{0};
+std::atomic<uint32_t> s_run{0};
 
 // An effect is either compiled into the image or uploaded to LittleFS, and
 // everything here addresses the two as one list: the built-in ones first, in
@@ -335,7 +343,7 @@ void effectTask(void *) {
 #endif
         memset(s_work, 0, LUA_PX_BYTES);      // luasim starts every run on black
         fillClock(s_canvas.clock, 60.0);      // for a script that reads px.now() at load
-        s_canvas.clicks = s_clicks.load(std::memory_order_relaxed);
+        s_canvas.clicks = s_clicksBase.load(std::memory_order_relaxed);   // from when it was chosen
         fillWorld(s_canvas);
         const int64_t t0 = esp_timer_get_time();
         const bool ok = src && s_fx.open(id, src, srcLen, &s_canvas, kLuaFxPanelLimits);
@@ -554,6 +562,8 @@ void luaEffectStop() { luaEffectsSelect(-1); }
 // so the index on screen can silently come to mean a different file.
 void luaEffectsReload() {
   if (s_selected < 0) return;
+  s_clicksBase.store(s_clicks.load(std::memory_order_relaxed), std::memory_order_relaxed);
+  s_run.fetch_add(1, std::memory_order_relaxed);
   s_seq = (s_seq + 1) & 0x00FFFFFF;
   if (s_seq == 0) s_seq = 1;
   s_wantWord = selWord(s_seq, s_selected);
@@ -561,6 +571,15 @@ void luaEffectsReload() {
 }
 
 void luaEffectsClick() { s_clicks.fetch_add(1, std::memory_order_relaxed); }
+
+void luaEffectsFx(int16_t *id, uint32_t *run, uint32_t *clicks, bool *open) {
+  *id = s_selected;
+  *run = s_run.load(std::memory_order_relaxed);
+  *clicks = s_clicks.load(std::memory_order_relaxed) - s_clicksBase.load(std::memory_order_relaxed);
+  portENTER_CRITICAL(&s_mux);
+  *open = s_selected >= 0 && s_frontWord == s_wantWord;   // its first frame has come
+  portEXIT_CRITICAL(&s_mux);
+}
 
 uint32_t luaEffectsStackFreeMin() {
   // uxTaskGetStackHighWaterMark is in words on some ports and bytes on Xtensa;
@@ -643,6 +662,10 @@ void luaEffectsSelect(int16_t index) {
   if (index >= (int16_t)luaEffectCount()) index = -1;
   if (index == s_selected) return;
   s_selected = index;
+  if (index >= 0) {
+    s_clicksBase.store(s_clicks.load(std::memory_order_relaxed), std::memory_order_relaxed);
+    s_run.fetch_add(1, std::memory_order_relaxed);
+  }
   s_seq = (s_seq + 1) & 0x00FFFFFF;
   if (s_seq == 0) s_seq = 1;               // word 0 means "never selected"
   s_wantWord = selWord(s_seq, index);

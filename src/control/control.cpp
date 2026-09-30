@@ -104,6 +104,9 @@ static inline int filteredAB(int raw) {
 // Single producer (the sampling task) and single consumer (loop()): the head is
 // written only by the producer, the tail only by the consumer.
 static CtrlEvent        s_q[16];
+static uint8_t          s_qSrc[16];      // CtrlSource of each queued event
+static uint8_t          s_takenSrc = CTRL_SRC_KNOB;
+static uint8_t          s_swSrc = CTRL_SRC_KNOB;   // who pressed the switch being held
 static volatile uint8_t s_qHead = 0;
 static volatile uint8_t s_qTail = 0;
 
@@ -175,7 +178,7 @@ static inline int pinA() { return CTRL_AB_ACTIVE_HIGH ? !digitalRead(CTRL_PIN_A)
 static inline int pinB() { return CTRL_AB_ACTIVE_HIGH ? !digitalRead(CTRL_PIN_B) : digitalRead(CTRL_PIN_B); }
 static inline int encAB() { return (pinB() << 1) | pinA(); }   // B bit 1, A bit 0
 
-static void push(CtrlEvent e) {
+static void push(CtrlEvent e, uint8_t src) {
   switch (e) {
   case CTRL_CW:    s_nCw = s_nCw + 1; break;
   case CTRL_CCW:   s_nCcw = s_nCcw + 1; break;
@@ -189,6 +192,7 @@ static void push(CtrlEvent e) {
   const uint8_t n = (uint8_t)((s_qHead + 1) % 16);
   if (n == s_qTail) return;         // full: drop the newest, keep the order
   s_q[s_qHead] = e;
+  s_qSrc[s_qHead] = src;
   s_qHead = n;
 }
 
@@ -234,7 +238,7 @@ static void sampleTick(void *) {
   // reverse setting is not applied: it exists to fix how one knob is wired, and
   // the remote's left is left. src/ir/ir.h.
   for (int8_t irRot = irTakeRotate(); irRot != 0; irRot += (irRot > 0 ? -1 : 1))
-    push(irRot > 0 ? CTRL_CW : CTRL_CCW);
+    push(irRot > 0 ? CTRL_CW : CTRL_CCW, irSimulatedNow(now) ? CTRL_SRC_SIM : CTRL_SRC_IR);
 #endif
   const bool atDetent = (ab == 0b11) || (s_halfDetent == 1 && ab == 0b00);
   if (s_encDir != 0 && atDetent) {
@@ -242,7 +246,7 @@ static void sampleTick(void *) {
     const bool forward = (s_encDir > 0) != s_cfgReverse;
     s_encDir = 0;
     s_lastEnc = ab * 5;
-    push(forward ? CTRL_CW : CTRL_CCW);
+    push(forward ? CTRL_CW : CTRL_CCW, CTRL_SRC_KNOB);
 #if defined(CTRL_DEBUG)
     s_dbgSteps = s_dbgSteps + 1;
 #endif
@@ -259,13 +263,18 @@ static void sampleTick(void *) {
 #endif
   if (raw != s_swRaw) { s_swRaw = raw; s_swRawSinceMs = now; }
   if (raw != s_swDown && (now - s_swRawSinceMs) >= debounceMs) {
-    if (raw) { s_swDownAtMs = now; s_swLongSent = false; }
-    else if (!s_swLongSent && (now - s_swDownAtMs) < kSwShortMaxMs) push(CTRL_PRESS);
+    if (raw) {
+      s_swDownAtMs = now; s_swLongSent = false;
+#if defined(IR_ENABLED)
+      s_swSrc = digitalRead(CTRL_PIN_SW) == LOW ? CTRL_SRC_KNOB : (irSimulatedNow(now) ? CTRL_SRC_SIM : CTRL_SRC_IR);
+#endif
+    }
+    else if (!s_swLongSent && (now - s_swDownAtMs) < kSwShortMaxMs) push(CTRL_PRESS, s_swSrc);
     s_swDown = raw;                 // last: a reader never pairs it with an old press time
   }
   if (s_swDown && !s_swLongSent && (now - s_swDownAtMs) >= kSwLongMs) {
     s_swLongSent = true;
-    push(CTRL_LONG);
+    push(CTRL_LONG, s_swSrc);
   }
 }
 
@@ -327,12 +336,15 @@ void controlLoop() {
 CtrlEvent controlTake() {
   if (s_qTail == s_qHead) return CTRL_NONE;
   const CtrlEvent e = s_q[s_qTail];
+  s_takenSrc = s_qSrc[s_qTail];
   s_qTail = (uint8_t)((s_qTail + 1) % 16);
 #if defined(CTRL_DEBUG)
   Serial.printf("[ctrl] event %s\n", e == CTRL_CW ? "CW" : e == CTRL_CCW ? "CCW" : e == CTRL_PRESS ? "PRESS" : "LONG");
 #endif
   return e;
 }
+
+uint8_t controlTakenSource() { return s_takenSrc; }
 
 void controlConfigure(bool reverse, uint16_t lockoutMs, uint16_t debounceMs, int8_t detent) {
   s_cfgReverse    = reverse;

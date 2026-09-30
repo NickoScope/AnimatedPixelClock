@@ -54,6 +54,9 @@ static void handlePanelJs();
 #include <esp_ota_ops.h>     // the running partition and its app descriptor: GET /api/firmware/image
 #include <esp_partition.h>
 #include "../clocks/cycle_config.h"
+#if defined(SYNC_EVENTS_ENABLED)
+#include "../sync/sync_events.h"
+#endif
 #include "web_heap_backoff.h"
 #include "../network/net_lock.h"
 #include "../network/net_turns.h"
@@ -170,12 +173,15 @@ public:
     (void)method;
     strncpy(last, uri.c_str(), sizeof(last) - 1);
     last[sizeof(last) - 1] = '\0';
+    count++;
     return false;
   }
   char last[64] = "";
+  uint32_t count = 0;                        // requests seen: the twin's sync reads who wrote (sync_events.h)
 };
 static UriRecorder s_uriRecorder;
 const char *webLastUri() { return s_uriRecorder.last; }
+uint32_t webRequestCount() { return s_uriRecorder.count; }
 
 void setupWebServer() {
  server.addHandler(&s_uriRecorder);   // first, so it sees every request
@@ -287,6 +293,9 @@ void setupWebServer() {
    if (!ir::fnByName(server.arg("fn").c_str(), &fn) || !irActionBuilt(fn)) { irBad("no such function in this build"); return; }
    const long page = server.arg("page").toInt();
    if (fn == ir::kFnPage && (page < 0 || page > 255)) { irBad("page must be 0..255"); return; }
+#if defined(SYNC_EVENTS_ENABLED)
+   syncNoteCause(syncHttpBy());   // what it does next is a request's doing, the twin's own or not
+#endif
    irSimulateFn(fn, (uint8_t)page, (uint32_t)server.arg("hold").toInt());
    sendIrTable();
  });
