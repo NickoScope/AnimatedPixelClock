@@ -57,6 +57,9 @@
 //   POST /api/yachtradar    {"bySize":b}
 //   GET  /api/lua           effects, current            (LUA_EFFECTS_ENABLED only)
 //   POST /api/lua           {"show":i} | {"click":true} (px.button)
+//   GET  /api/lua/source    ?name=<script> | ?i=<effect index>: an uploaded script's bytes as
+//                           stored, text/plain; charset=utf-8; 400 neither or both, 404 none
+//                           such or compiled in                 (LUA_STORE_ENABLED only)
 //   GET  /api/clips         card {mounted, type, totalKB, freeKB}, reason, maxFrames, maxBytes,
 //                           current, playing, clips [{name, bytes, frames, ms}],
 //                           stream {state idle|playing|failed, clip, frames, reads, readAvgMs,
@@ -78,6 +81,7 @@
 #if defined(CONTROL_ENCODER_ENABLED)
 
 #include <ArduinoJson.h>
+#include <Preferences.h>
 #include <WebServer.h>
 #include <esp_heap_caps.h>
 #include <string.h>
@@ -98,6 +102,9 @@
 #include "../mqtt/mqtt_bus.h"
 #include "../panel/panel.h"
 #include "../railboard/railboard.h"
+#if defined(RAILBOARD_DIRECT_ENABLED)
+#include "../railboard/rtt_direct.h"   // rttDirectTokenChanged, for the Keys page
+#endif
 #include "../market/market.h"
 #include "../media/media.h"
 #include "../utils/utils.h"
@@ -140,14 +147,14 @@ static void failOom() {
   server.send(503, "application/json", "{\"success\":false,\"error\":\"out of memory\"}");
 }
 
-static void sendDoc(JsonDocument &doc, int code = 200) {
+static void sendDoc(JsonDocument &doc, int code = 200, bool cors = true) {
   if (doc.overflowed()) { failOom(); return; }
   const size_t n = measureJson(doc);
   char *buf = (char *)heap_caps_malloc(n + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
   if (!buf) buf = (char *)heap_caps_malloc(n + 1, MALLOC_CAP_8BIT);
   if (!buf) { failOom(); return; }
   serializeJson(doc, buf, n + 1);
-  sendJsonBytesGuarded(code, buf, n);
+  sendJsonBytesGuarded(code, buf, n, cors);
   heap_caps_free(buf);
 }
 
@@ -162,7 +169,7 @@ static void fail(int code, const char *why) {
 
 static bool isPost() { return server.method() == HTTP_POST; }
 
-static bool readBody(JsonDocument &doc, size_t bodyMax = BODY_MAX) {
+static bool readBody(JsonDocument &doc, size_t bodyMax = BODY_MAX, bool wipe = false) {
   // Only a JSON content type. With it, a browser must ask this server first (a
   // CORS preflight, an OPTIONS request) before another site's page may post
   // here, and no route answers OPTIONS. A text/plain body needs no such
@@ -178,9 +185,13 @@ static bool readBody(JsonDocument &doc, size_t bodyMax = BODY_MAX) {
   // Content-Length first saves that second copy for a body over the limit;
   // the first cannot be avoided from here.
   if (server.clientContentLength() > (int)bodyMax) { fail(413, "body too large"); return false; }
-  const String body = server.arg("plain");
+  String body = server.arg("plain");
   if (body.length() > bodyMax) { fail(413, "body too large"); return false; }
-  if (deserializeJson(doc, body) || !doc.is<JsonObject>()) { fail(400, "invalid JSON"); return false; }
+  const bool ok = !deserializeJson(doc, body) && doc.is<JsonObject>();
+  // A body that carried a secret (/api/keys): this copy is wiped before it is
+  // freed. WebServer's own copy of the argument is out of reach from here.
+  if (wipe && body.length()) memset(const_cast<char *>(body.c_str()), 0, body.length());
+  if (!ok) { fail(400, "invalid JSON"); return false; }
   return true;
 }
 
@@ -272,6 +283,9 @@ String panelWebFeatures() {
 #endif
 #if defined(YACHTRADAR_ENABLED)
   f += " yachts";
+#endif
+#if defined(FLIGHTBOARD_DIRECT_ENABLED) || defined(RAILBOARD_DIRECT_ENABLED) || defined(YACHTRADAR_ENABLED)
+  f += " keys";                         // the Keys page (/api/keys)
 #endif
 #if defined(CLIPS_SD_ENABLED)
   f += " sdclips";
@@ -836,6 +850,7 @@ static void handleMedia() {
 // A config with sixteen positions and every row runs to a few KB, so the body
 // limit is wider here.
 static void handleMarket() {
+  if (webHostForeign()) REJECT(403, "refused: this request names another host");   // DNS rebinding: the portfolio is private
   if (isPost()) {
     JsonDocument in(&s_alloc);
     if (!readBody(in, 8192)) return;
@@ -853,7 +868,9 @@ static void handleMarket() {
   pageInfo(doc, PANEL_KEY_MARKET);
   marketWebJson(doc.as<JsonObject>());
   mqttJson(doc["mqtt"].to<JsonObject>(), mqttBusStatus());
-  sendDoc(doc);
+  // The owner's portfolio - weights, entry dates, holdings, contributions: no
+  // CORS header, so no other site's page can read it (2026-09-30 audit).
+  sendDoc(doc, 200, false);
 }
 #endif
 
@@ -940,7 +957,6 @@ static void handleYachtradar() {
 }
 #endif
 
-#if defined(LUA_STORE_ENABLED)
 // Nothing on this panel is authenticated, and that has been an acceptable trade
 // while the worst an unauthenticated caller could do was change a setting.
 // Uploading a script is not that: it is code. The panel cannot grow a password
@@ -954,12 +970,157 @@ static void handleYachtradar() {
 // naming this panel is allowed, anything else is refused. This stops the
 // drive-by, not a caller already on the network - that one is the standing
 // posture, written down rather than fixed here.
-static bool originIsForeign() {
-  if (!server.hasHeader("Origin")) return false;
-  const String o = server.header("Origin");
-  if (!o.length() || o == "null") return false;
-  const String host = server.hostHeader();
-  return !(host.length() && o.endsWith(host));
+// The same door guards the Keys page (/api/keys): a key written there is a
+// service account's credential.
+//
+// Stricter since the Keys page (2026-09-30 gate audit): the Origin has to be
+// exactly http://<Host>, not merely end with it (http://110.0.0.5 ends with
+// 10.0.0.5), and the Host a browser used has to be one this panel answers to
+// by itself - an IP address or an mDNS .local name. A page whose own domain
+// was pointed at the panel's address (DNS rebinding) sends matching Host and
+// Origin, both its own domain; that domain is neither.
+// The check itself lives in web.cpp (webOriginForeign), shared with POST /reset.
+static bool __attribute__((unused)) originIsForeign() { return webOriginForeign(); }
+
+// ---------------------------------------------------------------- /api/keys
+// The services' keys, entered on the portal's Keys page instead of only by
+// flashing env:provision (bringup/provision.cpp): the owner's word, 2026-09-30.
+// Each goes where that image puts it, into the namespace its module reads:
+//
+//   aero  NVS aero/key            FlightAware AeroAPI (src/flightboard/aero_direct.cpp)
+//   rtt   NVS rb/token, rb/kind   Realtime Trains     (src/railboard/rtt_direct.cpp)
+//   ais   NVS yr/ais              aisstream.io        (src/yachtradar/yachtradar.cpp)
+//
+// Write-only. GET says only whether each key is stored, never its value or its
+// length, and nothing here logs one. POST {"id", "value"} stores a key (and for
+// rtt "kind": "auto" | "refresh" | "access"), POST {"id", "clear": true}
+// removes it. The module is told at once and takes the new key between
+// fetches, so neither a reboot nor the provisioning image is needed.
+//
+// A value is 1 to its module's limit of printable ASCII, no space, no quote and
+// no backslash: the AIS key goes into a JSON string (yachtradar.cpp
+// subscribe()) and the others into an HTTP header, and a key needs none of
+// those characters. A request from another site's page is refused
+// (originIsForeign) - the rest of the network is the standing posture of this
+// unauthenticated portal (see above).
+#if defined(FLIGHTBOARD_DIRECT_ENABLED) || defined(RAILBOARD_DIRECT_ENABLED) || defined(YACHTRADAR_ENABLED)
+#define PANEL_KEYS_ENABLED 1
+
+struct KeySpec {
+  const char *id, *ns, *key;
+  size_t      maxLen;                  // characters, the module's buffer less its NUL
+};
+static const KeySpec kKeys[] = {
+#if defined(FLIGHTBOARD_DIRECT_ENABLED)
+  {"aero", "aero", "key", 255},        // aero_direct.cpp kKeyMax = 256
+#endif
+#if defined(RAILBOARD_DIRECT_ENABLED)
+  {"rtt", "rb", "token", 2047},        // rtt_direct.cpp kTokenMax = 2048
+#endif
+#if defined(YACHTRADAR_ENABLED)
+  {"ais", "yr", "ais", 128},           // a String there; 128 is our room, aisstream's keys are 40
+#endif
+};
+// The body: the longest key, the JSON around it and some room.
+static const size_t KEYS_BODY_MAX = 2048 + 256;
+
+static const KeySpec *keySpec(const char *id) {
+  if (!id) return nullptr;
+  for (const KeySpec &k : kKeys)
+    if (!strcmp(k.id, id)) return &k;
+  return nullptr;
+}
+
+static bool keyValid(const char *v, size_t maxLen) {
+  const size_t n = v ? strlen(v) : 0;
+  if (n < 1 || n > maxLen) return false;
+  for (size_t i = 0; i < n; i++) {
+    const unsigned char c = (unsigned char)v[i];
+    if (c < 0x21 || c > 0x7E || c == '"' || c == '\\') return false;
+  }
+  return true;
+}
+
+static bool keyStored(const KeySpec &k) {
+  Preferences p;
+  bool have = false;
+  // Read-write although nothing is written: a read-only open of a namespace
+  // never written logs an error, and this page asks every 15 s.
+  if (p.begin(k.ns, false)) {          // isKey() logs nothing for a missing key
+    have = p.isKey(k.key);
+    p.end();
+  }
+  return have;
+}
+
+static void keyTell(const KeySpec &k) {
+#if defined(FLIGHTBOARD_DIRECT_ENABLED)
+  if (!strcmp(k.id, "aero")) aeroDirectKeyChanged();
+#endif
+#if defined(RAILBOARD_DIRECT_ENABLED)
+  if (!strcmp(k.id, "rtt")) rttDirectTokenChanged();
+#endif
+#if defined(YACHTRADAR_ENABLED)
+  if (!strcmp(k.id, "ais")) yachtRadarKeyChanged();
+#endif
+}
+
+static void handleKeys() {
+  if (isPost()) {
+    if (originIsForeign()) REJECT(403, "refused: this request came from another origin");
+    JsonDocument in(&s_alloc);
+    if (!readBody(in, KEYS_BODY_MAX, true)) return;
+    const KeySpec *k = keySpec(in["id"] | (const char *)nullptr);
+    if (!k) REJECT(400, "id must be one of the keys this panel has");
+    const bool clear = in["clear"].is<bool>() && in["clear"].as<bool>();
+    const char *value = in["value"] | (const char *)nullptr;
+    if (clear == (value != nullptr)) REJECT(400, "send value to store a key, or clear:true to remove it");
+    const char *kind = in["kind"] | (const char *)nullptr;
+    if (kind && strcmp(k->id, "rtt")) REJECT(400, "kind is only for the rtt token");
+    if (kind && strcmp(kind, "auto") && strcmp(kind, "refresh") && strcmp(kind, "access"))
+      REJECT(400, "kind must be auto, refresh or access");
+    if (!clear && !keyValid(value, k->maxLen))
+      REJECT(400, "a key is printable ASCII without spaces, quotes or backslashes, and not too long");
+    Preferences p;
+    if (!p.begin(k->ns, false)) REJECT(500, "the settings store would not open");
+    bool ok = true;
+    if (clear) {
+      if (p.isKey(k->key)) ok = p.remove(k->key);   // remove() logs an error for a key that is not there
+      if (!strcmp(k->id, "rtt") && p.isKey("kind")) ok &= p.remove("kind");
+    } else {
+      ok = p.putString(k->key, value) == strlen(value);
+      if (ok && kind) {
+        if (!strcmp(kind, "auto")) { if (p.isKey("kind")) ok = p.remove("kind"); }
+        else ok = p.putString("kind", kind) == strlen(kind);
+      }
+      // The document's copy of the key, now that it is in NVS. The request's
+      // own copies inside WebServer are out of reach from here.
+      memset(const_cast<char *>(value), 0, strlen(value));
+    }
+    p.end();
+    keyTell(*k);                        // even after a failure: what is stored now is what counts
+    if (!ok) REJECT(500, "the settings store refused the write");
+  }
+  JsonDocument doc(&s_alloc);
+  doc["success"] = true;
+  JsonArray list = doc["keys"].to<JsonArray>();
+  for (const KeySpec &k : kKeys) {
+    JsonObject o = list.add<JsonObject>();
+    o["id"] = k.id;
+    o["stored"] = keyStored(k);
+    o["maxLen"] = (uint32_t)k.maxLen;
+    if (!strcmp(k.id, "rtt")) {
+      // Not secret: which of RTT's two tokens the owner said it is.
+      char kindBuf[12] = "";
+      Preferences p;
+      if (p.begin(k.ns, false)) {
+        if (p.isKey("kind")) p.getString("kind", kindBuf, sizeof(kindBuf));
+        p.end();
+      }
+      o["kind"] = kindBuf[0] ? kindBuf : "auto";
+    }
+  }
+  sendDoc(doc);
 }
 #endif
 
@@ -1197,6 +1358,71 @@ static void handleLuaUploadDone() {
 }
 #endif
 
+// ------------------------------------------------------- /api/lua/source
+#if defined(LUA_STORE_ENABLED)
+// GET /api/lua/source?name=<script> | ?i=<effect>: an uploaded script's bytes as
+// they sit on LittleFS - what was uploaded, unchanged - for the twin's sync,
+// which mirrors the effects between a panel and its twin. `name` is the script's
+// stem as GET /api/lua lists it (uploaded.scripts[].name) and as {"delete": ...}
+// takes it; `i` is its index in GET /api/lua's effects, as {"show": i} takes it.
+// Streamed from the file a piece at a time (sendStreamGuarded), never read whole
+// into memory: a script may be LUA_USER_SRC_MAX. 400 for neither or both, or an
+// i that is not a number; 404 for no uploaded script by that name or at that
+// index - a compiled-in effect has no file, it travels with the firmware; 500
+// when the file will not open.
+//
+// Access-Control-Allow-Origin: *, as GET /api/lua has, on the script and on the
+// JSON refusals alike (fail() sends through sendJsonBytesGuarded): the virtual
+// twin's panel page is served from elsewhere and reads the @name/@about lines
+// of a script's header from here for its "This screen" block. A page from any
+// site can read an uploaded script the same way - the scripts are the effects
+// on the panel, which /api/lua already lists to any page, and nothing else is
+// reachable: only a file in the store's own list, never a path. The route is
+// cheap: the file is sent a piece at a time, no copy of it held.
+static bool readLuaFile(void *ctx, uint32_t, uint8_t *buf, size_t len) {
+  return ((File *)ctx)->read(buf, len) == len;
+}
+
+static void handleLuaSource() {
+  const bool byName = server.hasArg("name"), byIndex = server.hasArg("i");
+  if (byName == byIndex) REJECT(400, "send name=<script> or i=<effect index>, one of them");
+  const uint8_t count = luaStoreCount();
+  const uint8_t builtIn = (uint8_t)(luaEffectCount() - count);
+  int slot = -1;
+  char stem[LUA_STORE_NAME_CAP];
+  if (byIndex) {
+    // Digits only: toInt() would read "3x" as 3 and "" as 0.
+    const String a = server.arg("i");
+    char *end = nullptr;
+    const long i = strtol(a.c_str(), &end, 10);
+    if (!a.length() || a.length() > 3 || *end || !isdigit((unsigned char)a[0])) REJECT(400, "i must be an effect index");
+    // Compiled-in effects come first in the list, uploaded ones after them
+    // (handleLua: uploaded.scripts[].i).
+    if (i < builtIn) REJECT(404, "that effect is compiled into the firmware: it has no file");
+    if (i - builtIn >= count) REJECT(404, "no effect at that index");
+    slot = (int)(i - builtIn);
+  } else {
+    const String want = server.arg("name");
+    for (uint8_t j = 0; j < count && slot < 0; j++)
+      if (luaStoreStem(j, stem, sizeof(stem)) && want == stem) slot = j;
+    if (slot < 0) REJECT(404, "no uploaded script by that name");
+  }
+  if (!luaStoreStem((uint8_t)slot, stem, sizeof(stem))) REJECT(404, "no uploaded script by that name");
+  File f = luaStoreOpen((uint8_t)slot);
+  if (!f) REJECT(500, "the script's file would not open");
+  // The stem is 1-24 of [A-Za-z0-9_] (lua_store.cpp validStem), so it goes
+  // into a header and a quoted filename as it is.
+  char disp[48];
+  snprintf(disp, sizeof(disp), "inline; filename=\"%s.lua\"", stem);
+  server.sendHeader("Content-Disposition", disp);
+  server.sendHeader("X-Lua-Name", stem);
+  server.sendHeader("Cache-Control", "no-store");
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  sendStreamGuarded(200, "text/plain; charset=utf-8", (uint32_t)f.size(), readLuaFile, &f, 0);
+  f.close();
+}
+#endif
+
 // ---------------------------------------------------------------- /api/clips
 #if defined(CLIPS_SD_ENABLED)
 static void listClips(JsonArray out) {
@@ -1315,6 +1541,7 @@ static void handleClipUploadChunk() {
   if (up.status == UPLOAD_FILE_START) {
     clipUpError = nullptr;
     clipUpWritten = 0;
+    if (originIsForeign()) { clipUpError = "refused: this request came from another origin"; return; }
     clipUpName = server.arg("name");
     if (!clipSdMounted()) { clipUpError = clipSdReason(); return; }
     if (!animValidName(clipUpName.c_str())) { clipUpError = "bad name (use 1-24 of A-z 0-9 _ -)"; return; }
@@ -1389,13 +1616,24 @@ static void handleClipFrame() {
 }
 #endif
 
+// Every panel route goes through the queue's door. One place, so a route
+// added later cannot quietly slip past it - which is how the settings write
+// and all of these were outside it until 2026-09-20.
+static WebServer::THandlerFunction gated(WebServer::THandlerFunction fn) {
+  return [fn]() { if (webBusyRefuse()) return; fn(); };
+}
+
 static void route(const char *uri, WebServer::THandlerFunction fn) {
-  // Every panel route goes through the queue's door. One place, so a route
-  // added later cannot quietly slip past it - which is how the settings write
-  // and all of these were outside it until 2026-09-20.
-  WebServer::THandlerFunction gated = [fn]() { if (webBusyRefuse()) return; fn(); };
-  server.on(uri, HTTP_GET, gated);
-  server.on(uri, HTTP_POST, gated);
+  const WebServer::THandlerFunction g = gated(fn);
+  server.on(uri, HTTP_GET, g);
+  server.on(uri, HTTP_POST, g);
+}
+
+// A route that only reads: GET alone, through the same door. A POST to it
+// finds no handler and answers 404, as for any route that is not there.
+// Unused in a build without the Lua store, its one caller so far.
+__attribute__((unused)) static void routeGet(const char *uri, WebServer::THandlerFunction fn) {
+  server.on(uri, HTTP_GET, gated(fn));
 }
 
 void panelWebBegin() {
@@ -1415,6 +1653,9 @@ void panelWebBegin() {
 #if defined(YACHTRADAR_ENABLED)
   route("/api/yachtradar", handleYachtradar);
 #endif
+#if defined(PANEL_KEYS_ENABLED)
+  route("/api/keys", handleKeys);
+#endif
 #if defined(LUA_EFFECTS_ENABLED)
   route("/api/lua", handleLua);
 #if defined(LUA_STORE_ENABLED)
@@ -1422,6 +1663,9 @@ void panelWebBegin() {
   // transfer that is already in flight. serverOnUpload, not server.on: a body
   // that is not a multipart file must not reach the chunk handler (upload_route.h).
   serverOnUpload(server, "/api/lua/upload", handleLuaUploadDone, handleLuaUploadChunk);
+  // Through the door, unlike the upload: a script can be half a megabyte, a
+  // large response like the portal's own, and refusing it costs nothing yet.
+  routeGet("/api/lua/source", handleLuaSource);
 #endif
 #endif
 #if defined(MEDIAPLAYER_ENABLED)

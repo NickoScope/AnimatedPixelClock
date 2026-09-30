@@ -12,7 +12,21 @@
 
 // web.cpp's guarded JSON sender, for a body that is not an Arduino String
 // (bounded blocking, watchdog fed, a stalled client dropped). Every build.
-void sendJsonBytesGuarded(int code, const char *data, size_t len);
+// cors: Access-Control-Allow-Origin: * - off for an answer that carries the
+// owner's private data (the market's portfolio), which no other site may read.
+void sendJsonBytesGuarded(int code, const char *data, size_t len, bool cors = true);
+
+// web.cpp's guarded sender for a body too large to hold in memory: `read` fills
+// each piece from wherever the body lives (a flash partition, a LittleFS file),
+// in order, and returns false when it cannot. The piece is on the calling
+// task's stack (web.cpp says why). Whatever headers the caller queued go out first, then
+// Content-Length `len` and the body. `totalMs` bounds the whole transfer; 0 is
+// the cap every other response has. true when the whole body went; after a
+// false the body stopped short and the connection closes, which a client that
+// checks Content-Length sees. Every build.
+typedef bool (*WebStreamRead)(void *ctx, uint32_t offset, uint8_t *buf, size_t len);
+bool sendStreamGuarded(int code, const char *contentType, uint32_t len, WebStreamRead read, void *ctx,
+                       uint32_t totalMs);
 
 // The queue's door. True when this request has already been answered with 503
 // because the network is busy with a fetch or the memory from the previous

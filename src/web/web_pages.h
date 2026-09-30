@@ -1496,7 +1496,7 @@ else animStatus('Upload failed: ' + (d.error || 'unknown'));
 var animDel = $('#animDeleteBtn');
 if (animDel) animDel.addEventListener('click', function () {
 if (!animSel || !animSel.value) { animStatus('Select an animation to delete.'); return; }
-fetch('/api/anim/delete?name=' + encodeURIComponent(animSel.value)).then(function (r) { return r.json(); })
+fetch('/api/anim/delete?name=' + encodeURIComponent(animSel.value), { method: 'POST' }).then(function (r) { return r.json(); })
 .then(function () { animStatus('Deleted.'); animRefresh(); }).catch(function () {});
 });
 function vizCall(path, okMsg) {
@@ -1941,7 +1941,9 @@ setTimeout(function () { window.location.href = '/'; }, 3000);
 $('#resetBtn').addEventListener('click', function () {
 if (!confirm('Have you exported a backup of your settings?\n\nUse "Export config" first if not.\n\nOK to continue with factory reset, Cancel to go back.')) return;
 if (!confirm('ARE YOU SURE?\n\nThis permanently erases ALL settings:\n- WiFi credentials\n- Display & clock config\n- Metric labels & layout\n- Network settings\n\nThe device restarts into AP setup mode. This cannot be undone.')) return;
-window.location.href = '/reset';
+fetch('/reset', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirm: 'factory-reset' }) })
+.then(function (r) { return r.text().then(function (t) { if (!r.ok) throw new Error(t || ('HTTP ' + r.status)); document.open(); document.write(t); document.close(); }); })
+.catch(function (err) { alert('Factory reset refused: ' + err.message); });
 });
 $('#exportBtn').addEventListener('click', function () {
 fetch('/api/export').then(function (r) { return r.json(); }).then(function (data) {
@@ -2122,8 +2124,8 @@ else now.textContent = c.state === 'absent' ? 'No SHTC3 answered on the I2C bus.
 // also answers with, so each click redraws from the reply it gets.
 var irPages = null, irLearnTimer = 0;
 function irEsc(s) { return String(s).replace(/[&<>"]/g, function (c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
-function irCall(path) {
-return fetch(path, { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (d) {
+function irCall(path, post) {
+return fetch(path, post ? { method: 'POST' } : { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (d) {
 if (d && d.buttons) irRender(d); else if (d && d.error) { var n = $('#irNow'); if (n) n.textContent = d.error; }
 return d;
 }).catch(function (e) { var n = $('#irNow'); if (n) n.textContent = 'The panel did not answer (' + e + ').'; });
@@ -2182,7 +2184,7 @@ if (d && d.learning) irLearnTimer = setTimeout(function () { irCall('/api/ir').t
 function irBind() {
 var c = $('#irCancelBtn'); if (c) c.addEventListener('click', function () { irCall('/api/ir/cancel'); });
 var f = $('#irForgetBtn'); if (f) f.addEventListener('click', function () {
-if (confirm('Forget every learned code? What each button does is kept.')) irCall('/api/ir/clear?btn=all'); });
+if (confirm('Forget every learned code? What each button does is kept.')) irCall('/api/ir/clear?btn=all', true); });
 // The table is asked for when the card first comes into view, not on every
 // portal load: /api/panel and /api/ir together are a few KB the panel's
 // memory would otherwise spend for a card nobody opened.

@@ -35,6 +35,11 @@ bool yachtRadarBegin();
 // open for a display nobody is looking at - the same gating fx34 uses. The task
 // disconnects and ends on its own, and its stack goes with it.
 void yachtRadarStop();
+// The portal's Keys page wrote or removed NVS yr/ais. Closes the stream if it
+// is open; yachtRadarKeyPoll (loop, every pass) waits for its task to end,
+// forgets the old key and reopens the stream if the page is still wanted.
+void yachtRadarKeyChanged();
+void yachtRadarKeyPoll(bool wanted);
 
 void     yachtRadarRender();
 

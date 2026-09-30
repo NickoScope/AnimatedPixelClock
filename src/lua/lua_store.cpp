@@ -382,6 +382,14 @@ char *luaStoreRead(uint8_t i, size_t *lenOut) {
 
 void luaStoreRelease(char *src) { if (src) heap_caps_free(src); }
 
+File luaStoreOpen(uint8_t i) {
+  Entry e;
+  if (!s_usable || !copyEntry(i, &e)) return File();
+  char path[48];
+  pathOf(e.stem, path, sizeof(path));
+  return LittleFS.open(path, "r");
+}
+
 int luaStoreDelete(const char *stem) {
   if (!s_usable || !validStem(stem)) return LUA_STORE_ABSENT;
   char path[48];

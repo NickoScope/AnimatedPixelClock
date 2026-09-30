@@ -606,10 +606,29 @@ change: `/api/worldclock`, `/api/flightboard`, `/api/market`, `/api/yachtradar`,
 `/api/media`, `/api/lua`, `/api/fx3d`, `/api/knob`, `/api/notify`,
 `/api/anim/*`, `/api/clips/*`, `/api/ir/*`.
 
+`/api/keys` (2.7.9) holds the services' keys - `aero` (FlightAware AeroAPI),
+`rtt` (Realtime Trains, with `kind` auto/refresh/access) and `ais`
+(aisstream.io). `GET` answers only whether each is stored; `POST
+{"id","value"}` stores one and `{"id","clear":true}` removes it. It never
+returns a key. **An agent does not write keys** unless the owner hands one over
+for that purpose, and never prints or logs one.
+
+Two routes only read, and answer with raw bytes rather than JSON: `GET
+/api/firmware/image` is the running app, byte for byte (`HEAD` gives its
+`X-Firmware-Version` and `X-App-Elf-Sha256` without the body), and `GET
+/api/lua/source?name=<script>` (or `?i=<index>`) is an uploaded effect's script
+as stored. They exist so the twin can mirror a panel, and README "Reading back
+what the panel runs" has the details. The image route answers 403 unless the
+request carries `X-Twin-Sync: 1` (GET and HEAD alike), sends no CORS header,
+and is not compiled at all into a build with `HARDCODED_WIFI_PASSWORD` set.
+`/api/lua/source` sends `Access-Control-Allow-Origin: *`: the twin's panel page
+reads script headers from it. The image is megabytes and holds `loop()` while
+it goes, so fetch it when you mean to, not in a poll.
+
 **Do not guess payload keys.** Read the handler. Every route is registered in
-`src/web/web.cpp` or through the `route()` helper in `src/web/web_panel.cpp` -
-and grepping only for `server.on` misses half of them, which has cost two wasted
-test sweeps.
+`src/web/web.cpp` or through the `route()`/`routeGet()` helpers in
+`src/web/web_panel.cpp` - and grepping only for `server.on` misses half of them,
+which has cost two wasted test sweeps.
 
 ---
 
@@ -684,7 +703,7 @@ The same over HTTP, since 2.5.4 (receiver on GPIO0, ten buttons with a
 function each, src/ir/ir_map.h): `GET /api/ir` is the table and the functions
 this build offers; `/api/ir/do?fn=<name>[&page=N][&hold=ms]` runs a function,
 `/api/ir/press?btn=1..10`, `/api/ir/fn?btn=N&fn=<name>[&page=N]`,
-`/api/ir/learn?btn=N`, `/api/ir/cancel`, `/api/ir/clear?btn=N|all`. Every one
+`/api/ir/learn?btn=N`, `/api/ir/cancel`, `/api/ir/clear?btn=N|all` (POST since 2.7.9). Every one
 answers with the table. `do` and `press` go down the same path a decoded frame
 does, so they drive the knob's state machine and the actions for real.
 

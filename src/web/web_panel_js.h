@@ -83,7 +83,7 @@ var HINTS = { clock: 'Always on - where the panel falls back to', world: 'Daylig
 var pageIdx = {}, lastPanel = null;
 
 // ---------------------------------------------------------------- polling
-var POLL = { pnow: [pollNow, 2000], pmedia: [pollMp, 2000], pworld: [pollWc, 30000], pyachts: [pollYr, 3000], plua: [pollEffects, 3000], pknob: [pollKnob, 250], pmarket: [pollMk, 5000] };
+var POLL = { pnow: [pollNow, 2000], pmedia: [pollMp, 2000], pworld: [pollWc, 30000], pyachts: [pollYr, 3000], pkeys: [pollKeys, 15000], plua: [pollEffects, 3000], pknob: [pollKnob, 250], pmarket: [pollMk, 5000] };
 var active = null, timer = null;
 function activePage() { var s = document.querySelector('section.page.active'); return s && POLL[s.dataset.page] ? s.dataset.page : null; }
 function tick() {
@@ -988,7 +988,7 @@ function renderFbBudget(d) {
       bu.day_cap + ' is at most ' + money(bu.day_cap * 0.005 * 31) + ' in a 31-day month, and the month cap stops it at ' + money(u.usdMonthCap) +
       '. Every call made counts, answered or not. Home Assistant\'s own calls on the same account are not counted here. 0 turns the direct fetch off.');
   var kv = [];
-  kv.push(['key', x.key ? 'stored on the panel (never shown)' : 'not stored: python3 tools/provision_secrets.py aeroapi-from-ha', x.key ? '' : 'pn-warn']);
+  kv.push(['key', x.key ? 'stored on the panel (never shown)' : 'not stored: enter it on the Keys page', x.key ? '' : 'pn-warn']);
   kv.push(['state', String(x.state).toLowerCase() + (x.waitS ? ', next call in ' + fbDur(x.waitS) : ''), /cap|auth|rate|tls|net|http|bad|nomem|refused/i.test(x.state) ? 'pn-warn' : '']);
   if (x.last) kv.push(['last call', x.last.what + ' ' + x.last.for + ' · ' + (x.last.http > 0 ? 'HTTP ' + x.last.http : String(x.last.state).toLowerCase()) +
     ' · ' + Math.round((x.last.bytes || 0) / 1024) + ' KB · ' + fbDur(x.last.ago) + ' ago']);
@@ -1261,10 +1261,57 @@ function renderYr(d) {
     html += '<span class="m' + v.m + '">' + esc(v.name ? v.name : 'MMSI ' + v.mmsi) + '</span><span class="r">' + (v.len ? v.len + ' m' : '--') +
       '</span><span class="r">' + v.km.toFixed(1) + ' km</span><span class="r">' + v.sog.toFixed(1) + ' kn</span>';
   });
-  if (!(d.vessels || []).length) html += '<span class="empty">' + (!d.keyPresent ? 'No AIS key is stored - provision one with env:provision.' : (!d.open ? 'Show the page on the panel to open the stream.' : 'No vessels reported yet.')) + '</span>';
+  if (!(d.vessels || []).length) html += '<span class="empty">' + (!d.keyPresent ? 'No AIS key is stored - enter one on the Keys page.' : (!d.open ? 'Show the page on the panel to open the stream.' : 'No vessels reported yet.')) + '</span>';
   var rows = $('yrRows'); if (rows) rows.innerHTML = html;
 }
 seg('yrSort', function (v) { api('/api/yachtradar', { bySize: v === '1' }).then(renderYr).catch(function () {}); });
+
+// ---------------------------------------------------------------- keys
+// /api/keys is write-only: it answers whether each key is stored, never the
+// key. The field is emptied as soon as the panel has taken it.
+function pollKeys() { return api('/api/keys').then(renderKeys); }
+function renderKeys(d) {
+  var have = {};
+  (d.keys || []).forEach(function (k) { have[k.id] = k; });
+  ['aero', 'rtt', 'ais'].forEach(function (id) {
+    var card = document.querySelector('[data-key="' + id + '"]'); if (!card) return;
+    var k = have[id];
+    card.hidden = !k;
+    if (!k) return;
+    var tag = $('keyTag-' + id);
+    if (tag) { tag.textContent = k.stored ? 'stored' : 'not stored'; tag.classList.toggle('pn-have', !!k.stored); tag.classList.toggle('pn-none', !k.stored); }
+    var inp = $('keyIn-' + id);
+    if (inp) inp.placeholder = k.stored ? 'stored - paste a new one to replace it' : inp.dataset.ph || inp.placeholder;
+    var clr = document.querySelector('[data-keyclear="' + id + '"]'); if (clr && !clr.dataset.armed) clr.disabled = !k.stored;
+    var kind = $('keyKind-' + id); if (kind && k.kind && !focused(kind)) kind.value = k.kind;
+  });
+}
+Array.prototype.forEach.call(document.querySelectorAll('[data-key] input[type="password"]'), function (inp) { inp.dataset.ph = inp.placeholder; });
+Array.prototype.forEach.call(document.querySelectorAll('[data-keysave]'), function (btn) {
+  btn.addEventListener('click', function () {
+    var id = btn.dataset.keysave, inp = $('keyIn-' + id), v = inp ? inp.value.trim() : '';
+    if (!v) { note('keyNote-' + id, 'Paste the key into the field first.', true); return; }
+    var body = { id: id, value: v }, kind = $('keyKind-' + id);
+    if (kind) body.kind = kind.value;
+    btn.disabled = true;
+    api('/api/keys', body).then(function (d) {
+      inp.value = '';
+      renderKeys(d);
+      note('keyNote-' + id, 'Stored. Its page uses it from the next fetch.');
+    }).catch(function (err) { note('keyNote-' + id, err.message, true); }).then(function () { btn.disabled = false; });
+  });
+});
+Array.prototype.forEach.call(document.querySelectorAll('[data-keyclear]'), function (btn) {
+  btn.addEventListener('click', function () {
+    var id = btn.dataset.keyclear;
+    armDelete(btn, function () {
+      api('/api/keys', { id: id, clear: true }).then(function (d) {
+        renderKeys(d);
+        note('keyNote-' + id, 'Removed from the panel.');
+      }).catch(function (err) { note('keyNote-' + id, err.message, true); });
+    });
+  });
+});
 
 // ---------------------------------------------------------------- lua effects
 var luaSig = '';
@@ -1314,7 +1361,7 @@ function clipRow(host, a, sd, here) {
   b[0].addEventListener('click', function () { playClip(a.name, sd, b[0]); });
   b[1].addEventListener('click', function () {
     armDelete(b[1], function () {
-      (sd ? api('/api/clips', { 'delete': a.name }) : fetch('/api/anim/delete?name=' + encodeURIComponent(a.name)))
+      (sd ? api('/api/clips', { 'delete': a.name }) : fetch('/api/anim/delete?name=' + encodeURIComponent(a.name), { method: 'POST' }))
         .then(function () { clipSig = ''; return pollClips(); }).catch(function (err) { flash(b[1], err.message, true); });
     });
   });
