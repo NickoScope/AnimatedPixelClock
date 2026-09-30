@@ -550,7 +550,7 @@ void take(const Outcome &o, uint32_t nowMs) {
     break;
   }
   case ST_NOKEY:
-    s_keyStored = false;                                // erased since boot: stop until a reboot
+    s_keyStored = false;                                // erased since boot: stop until one is stored again (Keys page)
     break;
   default: {
     const uint8_t i = s_errStreak < 3 ? s_errStreak : 3;
@@ -694,8 +694,8 @@ void aeroDirectLoop(const AeroWant &w) {
     s_keyDirty = false;
     Preferences p;
     s_keyStored = false;
-    if (p.begin(kKeyNs, true)) {
-      s_keyStored = p.isKey("key");
+    if (p.begin(kKeyNs, false)) {        // read-write, as loadNvs: a read-only open of a new namespace logs
+      s_keyStored = p.isKey("key") && p.getString("key", "").length() > 0;   // loadNvs's test
       p.end();
     }
     s_authStepS = 0;

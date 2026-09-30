@@ -166,7 +166,7 @@ static void fail(int code, const char *why) {
 
 static bool isPost() { return server.method() == HTTP_POST; }
 
-static bool readBody(JsonDocument &doc, size_t bodyMax = BODY_MAX) {
+static bool readBody(JsonDocument &doc, size_t bodyMax = BODY_MAX, bool wipe = false) {
   // Only a JSON content type. With it, a browser must ask this server first (a
   // CORS preflight, an OPTIONS request) before another site's page may post
   // here, and no route answers OPTIONS. A text/plain body needs no such
@@ -182,9 +182,13 @@ static bool readBody(JsonDocument &doc, size_t bodyMax = BODY_MAX) {
   // Content-Length first saves that second copy for a body over the limit;
   // the first cannot be avoided from here.
   if (server.clientContentLength() > (int)bodyMax) { fail(413, "body too large"); return false; }
-  const String body = server.arg("plain");
+  String body = server.arg("plain");
   if (body.length() > bodyMax) { fail(413, "body too large"); return false; }
-  if (deserializeJson(doc, body) || !doc.is<JsonObject>()) { fail(400, "invalid JSON"); return false; }
+  const bool ok = !deserializeJson(doc, body) && doc.is<JsonObject>();
+  // A body that carried a secret (/api/keys): this copy is wiped before it is
+  // freed. WebServer's own copy of the argument is out of reach from here.
+  if (wipe && body.length()) memset(const_cast<char *>(body.c_str()), 0, body.length());
+  if (!ok) { fail(400, "invalid JSON"); return false; }
   return true;
 }
 
@@ -962,12 +966,28 @@ static void handleYachtradar() {
 // posture, written down rather than fixed here.
 // The same door guards the Keys page (/api/keys): a key written there is a
 // service account's credential.
+//
+// Stricter since the Keys page (2026-09-30 gate audit): the Origin has to be
+// exactly http://<Host>, not merely end with it (http://110.0.0.5 ends with
+// 10.0.0.5), and the Host a browser used has to be one this panel answers to
+// by itself - an IP address or an mDNS .local name. A page whose own domain
+// was pointed at the panel's address (DNS rebinding) sends matching Host and
+// Origin, both its own domain; that domain is neither.
+static bool hostIsPanels(const String &hostPort) {
+  const int colon = hostPort.lastIndexOf(':');
+  const String h = colon > 0 ? hostPort.substring(0, colon) : hostPort;
+  if (!h.length()) return false;
+  if (h.endsWith(".local")) return true;
+  for (size_t i = 0; i < h.length(); i++)
+    if (!(isdigit((unsigned char)h[i]) || h[i] == '.')) return false;
+  return true;                          // an IPv4 literal
+}
 static bool __attribute__((unused)) originIsForeign() {
   if (!server.hasHeader("Origin")) return false;
   const String o = server.header("Origin");
   if (!o.length() || o == "null") return false;
   const String host = server.hostHeader();
-  return !(host.length() && o.endsWith(host));
+  return !(host.length() && hostIsPanels(host) && o == String("http://") + host);
 }
 
 // ---------------------------------------------------------------- /api/keys
@@ -1032,7 +1052,9 @@ static bool keyValid(const char *v, size_t maxLen) {
 static bool keyStored(const KeySpec &k) {
   Preferences p;
   bool have = false;
-  if (p.begin(k.ns, true)) {           // read-only; isKey() logs nothing for a missing key
+  // Read-write although nothing is written: a read-only open of a namespace
+  // never written logs an error, and this page asks every 15 s.
+  if (p.begin(k.ns, false)) {          // isKey() logs nothing for a missing key
     have = p.isKey(k.key);
     p.end();
   }
@@ -1055,7 +1077,7 @@ static void handleKeys() {
   if (isPost()) {
     if (originIsForeign()) REJECT(403, "refused: this request came from another origin");
     JsonDocument in(&s_alloc);
-    if (!readBody(in, KEYS_BODY_MAX)) return;
+    if (!readBody(in, KEYS_BODY_MAX, true)) return;
     const KeySpec *k = keySpec(in["id"] | (const char *)nullptr);
     if (!k) REJECT(400, "id must be one of the keys this panel has");
     const bool clear = in["clear"].is<bool>() && in["clear"].as<bool>();
@@ -1099,7 +1121,7 @@ static void handleKeys() {
       // Not secret: which of RTT's two tokens the owner said it is.
       char kindBuf[12] = "";
       Preferences p;
-      if (p.begin(k.ns, true)) {
+      if (p.begin(k.ns, false)) {
         if (p.isKey("kind")) p.getString("kind", kindBuf, sizeof(kindBuf));
         p.end();
       }

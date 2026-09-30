@@ -383,6 +383,7 @@ static const char PANEL_PAGES_HTML[] PROGMEM = R"PNL(<div id="panelRoot" data-f=
               <button type="button" class="btn btn-danger btn-sm" data-keyclear="aero">Remove</button>
             </div>
             <p class="field-hint" id="keyMsg-aero">For the flight board (FLIGHTS): with a key the panel asks AeroAPI itself, within the day and month caps it keeps; without one it shows what Home Assistant sends. AeroAPI is paid per call.</p>
+            <p class="field-hint" id="keyNote-aero" aria-live="polite"></p>
           </div>
         </div>
 
@@ -406,6 +407,7 @@ static const char PANEL_PAGES_HTML[] PROGMEM = R"PNL(<div id="panelRoot" data-f=
               </select>
             </div>
             <p class="field-hint" id="keyMsg-rtt">For the rail board (TRAINS). On "not sure" the panel tries the token as an access token and exchanges it if Realtime Trains refuses it. Saved with the token.</p>
+            <p class="field-hint" id="keyNote-rtt" aria-live="polite"></p>
           </div>
         </div>
 
@@ -419,6 +421,7 @@ static const char PANEL_PAGES_HTML[] PROGMEM = R"PNL(<div id="panelRoot" data-f=
               <button type="button" class="btn btn-danger btn-sm" data-keyclear="ais">Remove</button>
             </div>
             <p class="field-hint" id="keyMsg-ais">For the yacht radar. The stream opens while its page is on the panel; if it is open when the key changes, it reconnects with the new one.</p>
+            <p class="field-hint" id="keyNote-ais" aria-live="polite"></p>
           </div>
         </div>
       </section>

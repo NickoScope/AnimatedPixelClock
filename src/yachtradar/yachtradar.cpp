@@ -378,6 +378,10 @@ static void wsTask(void *) {
 
 bool yachtRadarBegin() {
   if (s_open) return !s_noKey;
+  // A key change is pending (yachtRadarKeyChanged): the old stream task may
+  // still be ending, and restarting it here would reconnect with the old key.
+  // yachtRadarKeyPoll opens the stream once the task is gone.
+  if (s_keyDirty) { s_reopen = true; return false; }
   if (s_key.isEmpty()) {
     // Read once, and again after the portal's Keys page changes it
     // (yachtRadarKeyPoll): the stream task reads s_key when it subscribes.
@@ -761,7 +765,9 @@ void yachtRadarKeyPoll(bool wanted) {
   s_key = String();                          // yachtRadarBegin() reads NVS again
   s_noKey = false;
   s_keyKnown = -1;
-  const bool again = s_reopen && wanted;
+  // Reopen if the page wants the stream: it was open, or the page is up and
+  // the stream could not open before - the first key entered while it shows.
+  const bool again = wanted && (s_reopen || !s_open);
   s_reopen = false;
   if (again) yachtRadarBegin();
 }

@@ -717,7 +717,10 @@ bool rttDirectLoop(const char *crs, rtt::Lists *out, int64_t *fetchedAt) {
       s_tokenDirty = false;
       Preferences p;
       s_tokenStored = false;
-      if (p.begin(kNvsNs, true)) {
+      // Read-write: a read-only open of a namespace never written logs an error.
+      // Without s_access (no PSRAM at begin) the direct fetch stays off, as it
+      // was: an exchange would write into it.
+      if (s_access && p.begin(kNvsNs, false)) {
         s_tokenStored = p.isKey("token");
         p.end();
       }

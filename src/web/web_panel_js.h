@@ -1281,7 +1281,7 @@ function renderKeys(d) {
     var tag = $('keyTag-' + id);
     if (tag) { tag.textContent = k.stored ? 'stored' : 'not stored'; tag.classList.toggle('pn-have', !!k.stored); tag.classList.toggle('pn-none', !k.stored); }
     var inp = $('keyIn-' + id);
-    if (inp) { inp.maxLength = k.maxLen; inp.placeholder = k.stored ? 'stored - paste a new one to replace it' : inp.dataset.ph || inp.placeholder; }
+    if (inp) inp.placeholder = k.stored ? 'stored - paste a new one to replace it' : inp.dataset.ph || inp.placeholder;
     var clr = document.querySelector('[data-keyclear="' + id + '"]'); if (clr && !clr.dataset.armed) clr.disabled = !k.stored;
     var kind = $('keyKind-' + id); if (kind && k.kind && !focused(kind)) kind.value = k.kind;
   });
@@ -1290,15 +1290,15 @@ Array.prototype.forEach.call(document.querySelectorAll('[data-key] input[type="p
 Array.prototype.forEach.call(document.querySelectorAll('[data-keysave]'), function (btn) {
   btn.addEventListener('click', function () {
     var id = btn.dataset.keysave, inp = $('keyIn-' + id), v = inp ? inp.value.trim() : '';
-    if (!v) { note('keyMsg-' + id, 'Paste the key into the field first.', true); return; }
+    if (!v) { note('keyNote-' + id, 'Paste the key into the field first.', true); return; }
     var body = { id: id, value: v }, kind = $('keyKind-' + id);
     if (kind) body.kind = kind.value;
     btn.disabled = true;
     api('/api/keys', body).then(function (d) {
       inp.value = '';
       renderKeys(d);
-      note('keyMsg-' + id, 'Stored. Its page uses it from the next fetch.');
-    }).catch(function (err) { note('keyMsg-' + id, err.message, true); }).then(function () { btn.disabled = false; });
+      note('keyNote-' + id, 'Stored. Its page uses it from the next fetch.');
+    }).catch(function (err) { note('keyNote-' + id, err.message, true); }).then(function () { btn.disabled = false; });
   });
 });
 Array.prototype.forEach.call(document.querySelectorAll('[data-keyclear]'), function (btn) {
@@ -1307,8 +1307,8 @@ Array.prototype.forEach.call(document.querySelectorAll('[data-keyclear]'), funct
     armDelete(btn, function () {
       api('/api/keys', { id: id, clear: true }).then(function (d) {
         renderKeys(d);
-        note('keyMsg-' + id, 'Removed from the panel.');
-      }).catch(function (err) { note('keyMsg-' + id, err.message, true); });
+        note('keyNote-' + id, 'Removed from the panel.');
+      }).catch(function (err) { note('keyNote-' + id, err.message, true); });
     });
   });
 });
