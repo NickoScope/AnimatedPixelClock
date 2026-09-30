@@ -543,13 +543,13 @@ enum Settings {
     // Not compared: identity, secrets, state, what the screen mirror carries, the zone (compared as
     // "tz"), the owner's override (climateHa).
     static let exportSkip: Set<String> = ["deviceName", "weatherApiKey", "metricNames", "clockStyle", "timezoneString", "gmtOffset",
-                                          "daylightSaving", "climateHa"]
+                                          "daylightSaving", "climateHa", "ntpServer1", "ntpServer2"]   // NTP: the network's, not carried
     // The form's own: identity and the network (a useStaticIP change restarts, web.cpp:2251-2263), the
     // key, what the screen mirror carries, the zone's region, a card marker, and the export's keys
     // under other names (rowMode = displayRowMode, rpmKFormat = useRpmKFormat, netMBFormat =
     // useNetworkMBFormat, weatherFahrenheit = weatherUseFahrenheit; web.cpp:1599-1607, 1713).
     static let formIdentity: Set<String> = ["deviceName", "useStaticIP", "staticIP", "gateway", "subnet", "dns1", "dns2"]
-    static let formSkip: Set<String> = formIdentity.union(["weatherApiKey", "displayBrightness", "clockStyle", "timezoneRegion", "irCard",
+    static let formSkip: Set<String> = formIdentity.union(["ntpServer1", "ntpServer2", "weatherApiKey", "displayBrightness", "clockStyle", "timezoneRegion", "irCard",
                                                            "rowMode", "rpmKFormat", "netMBFormat", "weatherFahrenheit"])
     // The owner's overrides keep these pages out of the twin's walk; they are not mirrored either way.
     static let pageSkip: Set<String> = ["trains", "flights", "cards", "clock"]
@@ -1356,6 +1356,11 @@ final class SyncEngine {
         log(from.arrow, "align", M("alignment, \(from.word.en) as it is", "выравнивание: берётся \(from.word.ru) как есть"))
         let keys = settingsDiff(from: from)
         if !keys.isEmpty { try applySettings(from: from, keys: keys) }
+        if from == .twin {
+            // The panel's own hardware goes panel -> twin whichever way the rest is aligned (the owner, 2026-09-30).
+            let hw = settingsDiff(from: .panel).filter { Settings.hardware.contains($0) }
+            if !hw.isEmpty { try applySettings(from: .panel, keys: hw) }
+        }
         if to == .twin { try enforceOverrides() }
         var fxLater: Side?
         if let a = effects[from], let b = effects[to] { try convergeEffects(from: from, a, b) }
@@ -1725,7 +1730,16 @@ final class SyncEngine {
         log(from.arrow, "effects", M("the effects, which could not be read at the alignment, are aligned now: \(from.word.en) as it is",
                                      "эффекты, которые при выравнивании было не прочитать, выравниваю сейчас: берётся \(from.word.ru) как есть"))
         effects = cur
-        try convergeEffects(from: from, a, b)
+        do { try convergeEffects(from: from, a, b) }
+        catch let e where e is SyncStopped || e is SyncDown || e is SyncWait { throw e }
+        catch {
+            // A target that keeps refusing (a full LittleFS, a clashing built-in name): three tries, then ask.
+            if tryAgain("effects-late", to, ["all"]) { throw error }
+            fxAlignFrom = nil
+            try massChange(to, M("the effects could not be aligned \(from.arrow) three times (\(error))",
+                                 "эффекты не удалось выровнять \(from.arrow) трижды (\(error))"))
+        }
+        forgive("effects-late", to, ["all"])
         guard let pe = effects[.panel], let te = effects[.twin] else { return }
         base[.panel, default: [:]]["effects"] = pe.fields; base[.twin, default: [:]]["effects"] = te.fields
         fxAlignFrom = nil; stateDirty = true
@@ -2232,7 +2246,9 @@ final class SyncEngine {
         }
         if let w = wantPanel {
             if fw[.twin]?.id != w || fw[.panel]?.id == w { wantPanel = nil; stateDirty = true }
-            else if offer == nil, !declined.contains(w) { offerToPanel() }
+            // Not while the panel's own firmware is still proving itself (just flashed, pending or new): the
+            // later change wins, and it may be the panel's.
+            else if offer == nil, !declined.contains(w), fw[.panel]?.settled != false, fwWatchSince[.panel] == nil { offerToPanel() }
         }
     }
 

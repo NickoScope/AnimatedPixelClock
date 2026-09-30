@@ -869,7 +869,11 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNav
     /// never write anything. The first button added is the default one, on the right.
     func safeButtons(_ a: NSAlert, _ safe: String, _ others: [String]) -> [NSButton] {
         let first = a.addButton(withTitle: safe); first.keyEquivalent = "\r"
-        return [first] + others.map { let b = a.addButton(withTitle: $0); b.keyEquivalent = ""; return b }
+        let rest = others.map { let b = a.addButton(withTitle: $0); b.keyEquivalent = ""; return b }
+        // The keyboard focus too: NSAlert puts it on the leftmost button, the one that writes, and with Full
+        // Keyboard Access on the space bar presses the focused button (the final review, 2026-09-30).
+        a.window.initialFirstResponder = first
+        return [first] + rest
     }
 
     /// Tests only (the engine passes it through its test gate): Return, as a person would press it by
@@ -952,10 +956,10 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNav
         t += "; " + L("effects: ", "эффекты: ") + list(m.panelEffects.map { $0.text(LANG) })
         if !m.conflicts.isEmpty { t += "\n" + L("Changed on both sides - the panel's is kept: ", "Изменено на обеих сторонах — останется как на панели: ") + list(m.conflicts) }
         if !m.hardware.isEmpty { t += "\n" + L("The panel's hardware changed on the twin (not carried to the panel): ", "Железо панели, изменённое на двойнике (на панель не переносится): ") + list(m.hardware) }
-        t += "\n\n" + L("From the panel to the twin: the twin becomes what the panel is; its own changes above are undone, the panel is not touched. From the twin to the panel: the twin's changes above are written to the panel, and the panel's come to the twin. Cancel: sync stays off, nothing is written.",
-                         "С панели на двойника: двойник станет таким, как панель; его изменения выше пропадут, панель не трогаю. С двойника на панель: изменения двойника выше запишутся на панель, а изменения панели придут на двойника. Отмена: синхронизация остаётся выключенной, ничего не записано.")
+        t += "\n\n" + L("Return the twin to the panel: the twin becomes what the panel is; its own changes above are undone, the panel is not touched. Carry the twin's changes to the panel: the twin's changes above are written to the panel, and the panel's come to the twin. Cancel: sync stays off, nothing is written.",
+                         "Вернуть двойнику состояние панели: двойник станет таким, как панель; его изменения выше пропадут, панель не трогаю. Перенести изменения двойника на панель: изменения двойника выше запишутся на панель, а изменения панели придут на двойника. Отмена: синхронизация остаётся выключенной, ничего не записано.")
         a.informativeText = t
-        _ = safeButtons(a, L("Cancel", "Отмена"), [L("From the panel to the twin", "С панели на двойника"), L("From the twin to the panel", "С двойника на панель")])
+        _ = safeButtons(a, L("Cancel", "Отмена"), [L("Return the twin to the panel", "Вернуть двойнику состояние панели"), L("Carry the twin's changes to the panel", "Перенести изменения двойника на панель")])
         if m.pressReturnForTesting { pressForTesting(a) }
         switch runQuestion(a) {
         case .alertSecondButtonReturn: sync.answerResume(id: m.id, .fromPanel)
