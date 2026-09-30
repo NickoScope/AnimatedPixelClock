@@ -2633,6 +2633,7 @@ void handleExportConfig() {
  json += "\"climateRhFollowsT\":" + String(settings.climateRhFollowsT ? "true" : "false") + ",";
  json += "\"climateShow\":" + String(settings.climateShow) + ",";
  json += "\"climateHa\":" + String(settings.climateHa ? "true" : "false") + ",";
+ json += "\"fbAskHa\":" + String(settings.fbAskHa ? "true" : "false") + ",";
  json += "\"ambientEnabled\":" + String(settings.ambientEnabled ? "true" : "false") + ",";
  json += "\"ambientStyle\":" + String(settings.ambientStyle) + ",";
  json += "\"ambientStartHour\":" + String(settings.ambientStartHour) + ",";
@@ -2888,6 +2889,9 @@ void handleImportConfig() {
  if (!doc["climateRhFollowsT"].isNull()) settings.climateRhFollowsT = doc["climateRhFollowsT"];
  if (!doc["climateShow"].isNull()) settings.climateShow = climate::clampShow(doc["climateShow"].as<long>());
  if (!doc["climateHa"].isNull()) settings.climateHa = doc["climateHa"];
+ // Only through export and import, not the portal's form: a form that lacks the
+ // box would switch it off. The twin's sync sets it (tools/twin).
+ if (doc["fbAskHa"].is<bool>()) settings.fbAskHa = doc["fbAskHa"];
  if (!doc["ambientEnabled"].isNull()) settings.ambientEnabled = doc["ambientEnabled"];
  // Read as int and normalize so a retired slot (2, 4, 5) or a bad value maps
  // to 0 (Space Invaders) rather than wrapping into the uint8_t field.

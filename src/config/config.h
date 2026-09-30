@@ -150,6 +150,8 @@ struct Settings {
   bool climateRhFollowsT;       // recompute RH at the corrected temperature (default on)
   uint8_t climateShow;          // weather screen: 0 off, 1 the outside | inside split (default)
   bool climateHa;               // Home Assistant discovery sensors over the MQTT bus (default off)
+  bool fbAskHa;                 // flight board without an AeroAPI key: ask Home Assistant for a board
+                                // it does not have (it pays with its key). Default on; off on a twin.
 
   // Presence radar (the Apollo MTR-1 over MQTT, src/presence). The fields exist
   // in every build; only PRESENCE_ENABLED builds subscribe. Bounds and

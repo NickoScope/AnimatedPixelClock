@@ -177,6 +177,7 @@ void loadSettings() {
     settings.climateRhFollowsT = true;
     settings.climateShow = climate::kShowSplit;
     settings.climateHa = false;
+    settings.fbAskHa = true;
     settings.irEnabled = true;
     settings.presenceScaleM = presence::kScaleDefaultM;
     settings.presenceMirrorX = presence::kMirrorDefault;
@@ -422,6 +423,7 @@ void loadSettings() {
   settings.climateRhFollowsT = preferences.getBool("climRhT", true);
   settings.climateShow = climate::clampShow(preferences.getUChar("climShow", climate::kShowSplit));
   settings.climateHa = preferences.getBool("climHa", false); // Default: no entities until asked
+  settings.fbAskHa = preferences.getBool("fbAskHa", true);   // Default: ask, as before 2.7.13
   settings.irEnabled = preferences.getBool("irEn", true);
   settings.presenceScaleM =
       presence::clampScaleM(preferences.getUChar("presScale", presence::kScaleDefaultM));
@@ -836,6 +838,7 @@ void saveSettings() {
   preferences.putBool("climRhT", settings.climateRhFollowsT);
   preferences.putUChar("climShow", settings.climateShow);
   preferences.putBool("climHa", settings.climateHa);
+  preferences.putBool("fbAskHa", settings.fbAskHa);
   preferences.putBool("irEn", settings.irEnabled);
   preferences.putUChar("presScale", settings.presenceScaleM);
   preferences.putBool("presMir", settings.presenceMirrorX);
