@@ -57,6 +57,9 @@
 //   POST /api/yachtradar    {"bySize":b}
 //   GET  /api/lua           effects, current            (LUA_EFFECTS_ENABLED only)
 //   POST /api/lua           {"show":i} | {"click":true} (px.button)
+//   GET  /api/lua/source    ?name=<script> | ?i=<effect index>: an uploaded script's bytes as
+//                           stored, text/plain; charset=utf-8; 400 neither or both, 404 none
+//                           such or compiled in                 (LUA_STORE_ENABLED only)
 //   GET  /api/clips         card {mounted, type, totalKB, freeKB}, reason, maxFrames, maxBytes,
 //                           current, playing, clips [{name, bytes, frames, ms}],
 //                           stream {state idle|playing|failed, clip, frames, reads, readAvgMs,
@@ -1366,6 +1369,71 @@ static void handleLuaUploadDone() {
 }
 #endif
 
+// ------------------------------------------------------- /api/lua/source
+#if defined(LUA_STORE_ENABLED)
+// GET /api/lua/source?name=<script> | ?i=<effect>: an uploaded script's bytes as
+// they sit on LittleFS - what was uploaded, unchanged - for the twin's sync,
+// which mirrors the effects between a panel and its twin. `name` is the script's
+// stem as GET /api/lua lists it (uploaded.scripts[].name) and as {"delete": ...}
+// takes it; `i` is its index in GET /api/lua's effects, as {"show": i} takes it.
+// Streamed from the file a piece at a time (sendStreamGuarded), never read whole
+// into memory: a script may be LUA_USER_SRC_MAX. 400 for neither or both, or an
+// i that is not a number; 404 for no uploaded script by that name or at that
+// index - a compiled-in effect has no file, it travels with the firmware; 500
+// when the file will not open.
+//
+// Access-Control-Allow-Origin: *, as GET /api/lua has, on the script and on the
+// JSON refusals alike (fail() sends through sendJsonBytesGuarded): the virtual
+// twin's panel page is served from elsewhere and reads the @name/@about lines
+// of a script's header from here for its "This screen" block. A page from any
+// site can read an uploaded script the same way - the scripts are the effects
+// on the panel, which /api/lua already lists to any page, and nothing else is
+// reachable: only a file in the store's own list, never a path. The route is
+// cheap: the file is sent a piece at a time, no copy of it held.
+static bool readLuaFile(void *ctx, uint32_t, uint8_t *buf, size_t len) {
+  return ((File *)ctx)->read(buf, len) == len;
+}
+
+static void handleLuaSource() {
+  const bool byName = server.hasArg("name"), byIndex = server.hasArg("i");
+  if (byName == byIndex) REJECT(400, "send name=<script> or i=<effect index>, one of them");
+  const uint8_t count = luaStoreCount();
+  const uint8_t builtIn = (uint8_t)(luaEffectCount() - count);
+  int slot = -1;
+  char stem[LUA_STORE_NAME_CAP];
+  if (byIndex) {
+    // Digits only: toInt() would read "3x" as 3 and "" as 0.
+    const String a = server.arg("i");
+    char *end = nullptr;
+    const long i = strtol(a.c_str(), &end, 10);
+    if (!a.length() || a.length() > 3 || *end || !isdigit((unsigned char)a[0])) REJECT(400, "i must be an effect index");
+    // Compiled-in effects come first in the list, uploaded ones after them
+    // (handleLua: uploaded.scripts[].i).
+    if (i < builtIn) REJECT(404, "that effect is compiled into the firmware: it has no file");
+    if (i - builtIn >= count) REJECT(404, "no effect at that index");
+    slot = (int)(i - builtIn);
+  } else {
+    const String want = server.arg("name");
+    for (uint8_t j = 0; j < count && slot < 0; j++)
+      if (luaStoreStem(j, stem, sizeof(stem)) && want == stem) slot = j;
+    if (slot < 0) REJECT(404, "no uploaded script by that name");
+  }
+  if (!luaStoreStem((uint8_t)slot, stem, sizeof(stem))) REJECT(404, "no uploaded script by that name");
+  File f = luaStoreOpen((uint8_t)slot);
+  if (!f) REJECT(500, "the script's file would not open");
+  // The stem is 1-24 of [A-Za-z0-9_] (lua_store.cpp validStem), so it goes
+  // into a header and a quoted filename as it is.
+  char disp[48];
+  snprintf(disp, sizeof(disp), "inline; filename=\"%s.lua\"", stem);
+  server.sendHeader("Content-Disposition", disp);
+  server.sendHeader("X-Lua-Name", stem);
+  server.sendHeader("Cache-Control", "no-store");
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  sendStreamGuarded(200, "text/plain; charset=utf-8", (uint32_t)f.size(), readLuaFile, &f, 0);
+  f.close();
+}
+#endif
+
 // ---------------------------------------------------------------- /api/clips
 #if defined(CLIPS_SD_ENABLED)
 static void listClips(JsonArray out) {
@@ -1558,13 +1626,24 @@ static void handleClipFrame() {
 }
 #endif
 
+// Every panel route goes through the queue's door. One place, so a route
+// added later cannot quietly slip past it - which is how the settings write
+// and all of these were outside it until 2026-09-20.
+static WebServer::THandlerFunction gated(WebServer::THandlerFunction fn) {
+  return [fn]() { if (webBusyRefuse()) return; fn(); };
+}
+
 static void route(const char *uri, WebServer::THandlerFunction fn) {
-  // Every panel route goes through the queue's door. One place, so a route
-  // added later cannot quietly slip past it - which is how the settings write
-  // and all of these were outside it until 2026-09-20.
-  WebServer::THandlerFunction gated = [fn]() { if (webBusyRefuse()) return; fn(); };
-  server.on(uri, HTTP_GET, gated);
-  server.on(uri, HTTP_POST, gated);
+  const WebServer::THandlerFunction g = gated(fn);
+  server.on(uri, HTTP_GET, g);
+  server.on(uri, HTTP_POST, g);
+}
+
+// A route that only reads: GET alone, through the same door. A POST to it
+// finds no handler and answers 404, as for any route that is not there.
+// Unused in a build without the Lua store, its one caller so far.
+__attribute__((unused)) static void routeGet(const char *uri, WebServer::THandlerFunction fn) {
+  server.on(uri, HTTP_GET, gated(fn));
 }
 
 void panelWebBegin() {
@@ -1594,6 +1673,9 @@ void panelWebBegin() {
   // transfer that is already in flight. serverOnUpload, not server.on: a body
   // that is not a multipart file must not reach the chunk handler (upload_route.h).
   serverOnUpload(server, "/api/lua/upload", handleLuaUploadDone, handleLuaUploadChunk);
+  // Through the door, unlike the upload: a script can be half a megabyte, a
+  // large response like the portal's own, and refusing it costs nothing yet.
+  routeGet("/api/lua/source", handleLuaSource);
 #endif
 #endif
 #if defined(MEDIAPLAYER_ENABLED)

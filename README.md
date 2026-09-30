@@ -548,6 +548,56 @@ rest_command:
     url: "http://pixelclock.local/api/display/on"
 ```
 
+### Reading back what the panel runs
+
+Two read-only routes return the panel's firmware and its uploaded effects byte
+for byte. The [virtual twin](#virtual-twin) syncs from them, so it can run the
+panel's exact build (a local one included, not only a release) and the same
+effects.
+
+| Endpoint | Returns |
+|----------|---------|
+| `GET /api/firmware/image` | The app the panel is running, read from its OTA slot: the same bytes as the build's `firmware.bin` or a release's `OTA_ONLY_...bin`. `application/octet-stream`. Needs the request header `X-Twin-Sync: 1` |
+| `HEAD /api/firmware/image` | The same headers, no body. A cheap way to ask which build is running. Needs `X-Twin-Sync: 1` too |
+| `GET /api/lua/source?name=<script>` | An uploaded effect's script as it was uploaded. `text/plain; charset=utf-8` |
+| `GET /api/lua/source?i=<index>` | The same, by the effect's index in `GET /api/lua` |
+
+The image comes with these headers:
+- `X-Firmware-Version`: the version `/api/info` reports.
+- `X-App-Elf-Sha256`: the SHA-256 of the `firmware.elf` it was linked from. Two
+  images with the same value are the same build.
+- `Content-Length`: the image's length, taken from its header: segments,
+  checksum and appended SHA-256.
+
+Without `X-Twin-Sync: 1` the image route answers 403 and sends nothing else.
+The header is there because of browsers: a page from another site cannot send
+it without a CORS preflight, which the panel does not answer, so such a page
+cannot make the panel stream its firmware. It is not a password - anything on
+your network that knows to send it gets the image. The image route sends no
+CORS header. A build with a Wi-Fi password compiled in
+(`HARDCODED_WIFI_PASSWORD`, `src/config/user_config.h`) has no image route at
+all, and answers 404: that image carries the password in plain text.
+
+`name` is the script name that `GET /api/lua` lists under
+`uploaded.scripts[].name`. The answer is 400 when you send both `name` and `i`,
+or neither. It is 404 when there is no uploaded script by that name or at that
+index. Effects compiled into the firmware have no file to return, so those
+indexes are 404 too. This route sends `Access-Control-Allow-Origin: *`, as
+`GET /api/lua` does: the twin's panel page reads the description lines at the
+top of a script from it. Any page can read your uploaded scripts the same way.
+
+Both routes send the body in pieces straight from flash, so a big file never
+has to fit in memory. Like the portal's pages, a GET may get a 503 with
+`Retry-After: 1` while the panel is short of memory or a fetch is running;
+retry it. The panel's own loop sends the image, so its picture holds still for
+the few seconds that takes, as it does during an OTA.
+
+```bash
+curl -sI -H 'X-Twin-Sync: 1' http://pixelclock.local/api/firmware/image                 # which build: version and ELF SHA-256
+curl -s  -H 'X-Twin-Sync: 1' http://pixelclock.local/api/firmware/image -o running.bin  # the app itself
+curl -s "http://pixelclock.local/api/lua/source?name=aquarium" -o aquarium.lua
+```
+
 ## Notifications API
 
 Push a message banner onto the display from anything that can send an HTTP request.

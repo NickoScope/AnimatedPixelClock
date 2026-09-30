@@ -613,10 +613,22 @@ change: `/api/worldclock`, `/api/flightboard`, `/api/market`, `/api/yachtradar`,
 returns a key. **An agent does not write keys** unless the owner hands one over
 for that purpose, and never prints or logs one.
 
+Two routes only read, and answer with raw bytes rather than JSON: `GET
+/api/firmware/image` is the running app, byte for byte (`HEAD` gives its
+`X-Firmware-Version` and `X-App-Elf-Sha256` without the body), and `GET
+/api/lua/source?name=<script>` (or `?i=<index>`) is an uploaded effect's script
+as stored. They exist so the twin can mirror a panel, and README "Reading back
+what the panel runs" has the details. The image route answers 403 unless the
+request carries `X-Twin-Sync: 1` (GET and HEAD alike), sends no CORS header,
+and is not compiled at all into a build with `HARDCODED_WIFI_PASSWORD` set.
+`/api/lua/source` sends `Access-Control-Allow-Origin: *`: the twin's panel page
+reads script headers from it. The image is megabytes and holds `loop()` while
+it goes, so fetch it when you mean to, not in a poll.
+
 **Do not guess payload keys.** Read the handler. Every route is registered in
-`src/web/web.cpp` or through the `route()` helper in `src/web/web_panel.cpp` -
-and grepping only for `server.on` misses half of them, which has cost two wasted
-test sweeps.
+`src/web/web.cpp` or through the `route()`/`routeGet()` helpers in
+`src/web/web_panel.cpp` - and grepping only for `server.on` misses half of them,
+which has cost two wasted test sweeps.
 
 ---
 

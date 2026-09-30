@@ -51,6 +51,8 @@ static void handlePanelJs();
 #include <errno.h>
 #include <esp_system.h>
 #include <esp_heap_caps.h>
+#include <esp_ota_ops.h>     // the running partition and its app descriptor: GET /api/firmware/image
+#include <esp_partition.h>
 #include "../clocks/cycle_config.h"
 #include "web_heap_backoff.h"
 #include "../network/net_lock.h"
@@ -62,6 +64,19 @@ static void sendJsonGuarded(int code, const String& json);
 static void sendBytesGuarded(int code, const char* contentType, const char* data, size_t len);
 static bool webRefuseBig();   // the radio's back-off: web_heap_backoff.h
 bool webBusyRefuse();         // the same door, for src/web/web_panel.cpp
+static void handleFirmwareImage();   // GET|HEAD /api/firmware/image
+
+// GET|HEAD /api/firmware/image exists only in a build with no Wi-Fi password
+// compiled in. HARDCODED_WIFI_PASSWORD (user_config.h, or a -D flag) sits in
+// the image as plain text, and this route hands the image to anyone on the
+// network who sends one header - a guard against a browser, not against a
+// person. sizeof of the literal: "" is 1, any password more. A pointer in its
+// place is 4 and leaves the route out too, which is the safe way round. A
+// compile-time constant, so where it is false the route's registration is dead
+// code and handleFirmwareImage is never emitted (checked 2026-09-30: a build
+// with -DHARDCODED_WIFI_SSID and -DHARDCODED_WIFI_PASSWORD has the password in
+// its image and neither "/api/firmware/image" nor the handler's symbol).
+static constexpr bool kFirmwareImageRoute = sizeof(HARDCODED_WIFI_PASSWORD) == 1;
 
 // Set when an OTA file part starts; the done handler restarts only after one.
 static bool s_otaSeen = false;
@@ -163,8 +178,9 @@ void setupWebServer() {
  // code (web_panel.cpp, originIsForeign). A header not in this list reads as
  // absent, and a guard that asks for one that was never collected is a guard
  // that never fires - which is how the Origin check shipped doing nothing.
- static const char* kHeaders[] = {"If-None-Match", "Content-Type", "Origin"};
- server.collectHeaders(kHeaders, 3);
+ // X-Twin-Sync is GET|HEAD /api/firmware/image's door (handleFirmwareImage).
+ static const char* kHeaders[] = {"If-None-Match", "Content-Type", "Origin", "X-Twin-Sync"};
+ server.collectHeaders(kHeaders, sizeof(kHeaders) / sizeof(kHeaders[0]));
  // Arduino's getSketchSize verifies the entire flash image. Cache it before
  // rendering starts, never repeat it in the five-second /api/info poll.
  runningFirmwareBytes = ESP.getSketchSize();
@@ -333,6 +349,16 @@ void setupWebServer() {
 #if defined(CONTROL_ENCODER_ENABLED)
  panelWebBegin();   // the Panel group: /api/panel, /api/knob and one per page module
 #endif
+
+ // The running app, as it sits in its OTA slot: the other half of /update, for
+ // the twin's sync (handleFirmwareImage). HEAD is its headers alone - which
+ // build this is - and is never refused for memory. Both want X-Twin-Sync: 1.
+ // Not in a build that carries a Wi-Fi password (kFirmwareImageRoute says why):
+ // a constant, so the registration and the handler behind it fold away there.
+ if (kFirmwareImageRoute) {
+   server.on("/api/firmware/image", HTTP_GET, handleFirmwareImage);
+   server.on("/api/firmware/image", HTTP_HEAD, handleFirmwareImage);
+ }
 
  // OTA Firmware Update handlers. serverOnUpload (upload_route.h): a POST body
  // that is not a multipart file used to reach the chunk handler below with no
@@ -1389,6 +1415,177 @@ void sendJsonBytesGuarded(int code, const char* data, size_t len) {
   netMarkHttp();
   server.sendHeader("Access-Control-Allow-Origin", "*");
   sendBytesGuarded(code, "application/json", data, len);
+}
+
+// A body too large for any buffer this board should hold, read a piece at a
+// time and sent as it is read: GET /api/firmware/image (the running app,
+// megabytes) and GET /api/lua/source (a script, up to LUA_USER_SRC_MAX). The
+// same guarantees as sendBytesGuarded - non-blocking writes, the watchdog fed,
+// a client that stops draining dropped - because it is the same writer.
+//
+// The piece is on the loop task's stack, and that is deliberate. esp_flash_read
+// reads straight into the caller's buffer only when the buffer is in internal
+// DRAM (IDF 4.4.7 hal/spi_flash_hal_iram.c:153-158, supports_direct_read); for
+// a PSRAM buffer it takes a bounce buffer from the internal heap on every call
+// (spi_flash/spi_flash_os_func_app.c:172-191, get_buffer_malloc) - the heap the
+// radio's receive buffers come from. A piece on the stack costs that heap
+// nothing, and a static one would cost it for ever.
+//
+// 1,024 B is **our choice**: under one TCP segment (WEB_SEND_CHUNK, TCP_MSS =
+// 1,436 here), so each piece leaves in one send(), and small beside the
+// -Wstack-usage=2048 ratchet (platformio.ini) on the loop task's 8,192 B
+// (CONFIG_ARDUINO_LOOP_STACK_SIZE); this function's frame is 1,120 B by
+// -fstack-usage. Measured on the twin (2026-09-30, uxTaskGetStackHighWaterMark
+// around the call): the image left the loop task's lowest free stack where the
+// portal's routes had put it, 4,948 B; a script, read through LittleFS, took
+// it to 3,876 B, the deepest the loop went in that run. A smaller piece means
+// more flash reads, and every one of them disables the cache and holds the
+// other core for its length (esp_flash_read -> spi1_start -> cache_disable,
+// spi_flash_os_func_app.c:95-117).
+#define WEB_STREAM_PIECE 1024
+
+bool sendStreamGuarded(int code, const char* contentType, uint32_t len, WebStreamRead read, void* ctx,
+                       uint32_t totalMs) {
+  server.setContentLength(len);
+  server.send(code, contentType, "");
+  WiFiClient client = server.client();
+  const int sock = client.fd();
+  const uint32_t deadline = millis() + (totalMs ? totalMs : STREAM_TOTAL_LIMIT_MS);
+  uint8_t piece[WEB_STREAM_PIECE];
+  bool ok = sock >= 0;
+  for (uint32_t off = 0; ok && off < len;) {
+    const size_t n = (len - off) < sizeof(piece) ? (size_t)(len - off) : sizeof(piece);
+    ok = read(ctx, off, piece, n) && writeAllGuarded(sock, (const char*)piece, n, deadline);
+    off += n;
+  }
+  // The headers, Content-Length among them, left before the first read, so a
+  // failure part-way cannot become an error status any more: the body stops
+  // short. As in sendBytesGuarded, stop() releases only this copy of the
+  // client; handleClient() closes the connection when the handler returns.
+  if (!ok) client.stop();
+  // Marked once, at the end: the quiet window a fetch waits for (net_turns.h)
+  // has to start when the last piece was offered, not seconds earlier when the
+  // request came in, or a fetch would start while lwIP still holds the tail.
+  netMarkHttp();
+  return ok;
+}
+
+// ---- GET /api/firmware/image ----
+// The application this panel is running, byte for byte as it sits in its OTA
+// slot: what `pio run` writes as firmware.bin and a release ships as
+// OTA_ONLY_firmware-v<version>-...bin. For the twin's sync (tools/twin), so a
+// twin can run whatever build its panel runs, a local one included, not only a
+// release. HEAD answers the same headers with no body: the cheap way to ask
+// which build this is.
+//
+//   X-Firmware-Version  FIRMWARE_VERSION (config.h), as /api/info and the mDNS
+//                       TXT record give it. Not esp_app_desc_t.version: the
+//                       prebuilt IDF libraries fix that field when they are
+//                       built (esp_app_desc.c: PROJECT_VER), and in this
+//                       framework it reads "esp-idf: v4.4.7 38eeba213a" in
+//                       every build.
+//   X-App-Elf-Sha256    esp_app_desc_t.app_elf_sha256 in hex: the SHA-256 of
+//                       the ELF this image was linked from, which esptool writes
+//                       into the image (--elf-sha256-offset 0xb0, added by
+//                       framework-arduinoespressif32 tools/platformio-build.py:
+//                       252). tools/twin/twin.py app_elf_sha reads the same 32
+//                       bytes out of an image file.
+//
+// The length is runningFirmwareBytes: ESP.getSketchSize(), which is
+// esp_image_verify's image_len (Esp.cpp:189-204) - the 24-byte image header,
+// every segment with its 8-byte header, padding to a 16-byte boundary whose
+// last byte is the checksum, and the 32-byte SHA-256 when hash_appended is set (IDF 4.4.7
+// bootloader_support/src/esp_image_format.c:494, 519, 863-881, 814-819). It was
+// measured at boot, where the image was also verified, checksum and hash; 0
+// means it did not verify (image_load zeroes its result on any failure, :255),
+// and then nothing is sent. The slot cannot change under a running app: an OTA
+// writes the other one.
+//
+// Only for a caller that sends the request header X-Twin-Sync: 1; anything else
+// gets a 403 before the image is touched or memory is asked about. A web page
+// cannot send it. In no-cors mode the browser drops it: that request's headers
+// carry the guard "request-no-cors", which lets through only the no-CORS-
+// safelisted ones (Fetch Standard, Headers). In cors mode a header outside the
+// safelist sends an OPTIONS preflight first, and this server answers that with
+// WebServer's 404 - no route here takes OPTIONS - so the real request never
+// leaves. Without the header, any page open in a browser on this network could
+// make the panel send megabytes, frozen for seconds, as often as it liked. The
+// twin app's sync sends it; by hand, curl -H 'X-Twin-Sync: 1'.
+//
+// No Access-Control-Allow-Origin, on the image or on the refusals, unlike the
+// JSON routes: a native client needs none, and no web page should be able to
+// read the firmware out of a panel through a visitor's browser.
+//
+// The route is compiled only when no Wi-Fi password is (kFirmwareImageRoute).
+//
+// While the image goes, loop() is inside this handler, as it is inside /update
+// during an OTA: the picture holds still and other requests wait.
+// **Our choice, not a measured figure:** 120 s for the whole transfer - the
+// 30 s every other response gets would need about 78 KB/s for a 2.3 MB image,
+// and this is the one response that size. Not measured on a panel: the twin
+// sent 2,331,024 B in 3.7 s (2026-09-30). A client that stops draining is
+// still dropped after STREAM_IDLE_LIMIT_MS without progress, as everywhere else.
+#define FIRMWARE_STREAM_LIMIT_MS 120000UL
+
+static bool readRunningApp(void* ctx, uint32_t offset, uint8_t* buf, size_t len) {
+  return esp_partition_read((const esp_partition_t*)ctx, offset, buf, len) == ESP_OK;
+}
+
+// A refusal from this route: the JSON on a GET, its headers alone on a HEAD
+// (WebServer sends whatever body it is given, whatever the method), and no
+// Access-Control-Allow-Origin on either - sendJsonGuarded would add one.
+static void firmwareImageFail(bool head, int code, const char* json) {
+  netMarkHttp();
+  server.sendHeader("Cache-Control", "no-store");
+  const size_t n = strlen(json);
+  if (head) {
+    server.setContentLength(n);
+    server.send(code, "application/json", "");
+    return;
+  }
+  sendBytesGuarded(code, "application/json", json, n);
+}
+
+static void handleFirmwareImage() {
+  const bool head = server.method() == HTTP_HEAD;
+  // The door first: a refusal costs nothing, and a request that cannot get in
+  // should not count against the memory back-off either.
+  if (server.header("X-Twin-Sync") != "1") {
+    firmwareImageFail(head, 403,
+                      "{\"success\":false,\"error\":\"send the request header X-Twin-Sync: 1 to read the image\"}");
+    return;
+  }
+  // Headers only cost what the refusal itself would: HEAD is never refused,
+  // like handleRoot's 304.
+  if (!head && webRefuseBig()) return;
+  const esp_partition_t* part = esp_ota_get_running_partition();
+  const uint32_t len = runningFirmwareBytes;
+  if (!part || len == 0 || len > part->size) {
+    firmwareImageFail(head, 500, "{\"success\":false,\"error\":\"the running image did not verify at boot\"}");
+    return;
+  }
+  // Read through a volatile pointer, as esp_ota_get_app_elf_sha256 does
+  // (esp_app_desc.c:78-101): the field is zero at compile time and written by
+  // esptool afterwards. That function keeps only CONFIG_APP_RETRIEVE_LEN_ELF_SHA
+  // = 16 hex digits of it in this build's sdkconfig, so it cannot be used here.
+  const volatile uint8_t* elf = esp_ota_get_app_description()->app_elf_sha256;
+  char sha[65];
+  for (int i = 0; i < 32; i++) snprintf(sha + 2 * i, 3, "%02x", (unsigned)elf[i]);
+  server.sendHeader("X-Firmware-Version", FIRMWARE_VERSION);
+  server.sendHeader("X-App-Elf-Sha256", sha);
+  server.sendHeader("Content-Disposition", "attachment; filename=\"firmware-" FIRMWARE_VERSION ".bin\"");
+  server.sendHeader("Cache-Control", "no-store");
+  if (head) {
+    netMarkHttp();
+    server.setContentLength(len);
+    server.send(200, "application/octet-stream", "");
+    return;
+  }
+  const uint32_t t0 = millis();
+  const bool ok = sendStreamGuarded(200, "application/octet-stream", len, readRunningApp, (void*)part,
+                                    FIRMWARE_STREAM_LIMIT_MS);
+  dbgLogf("[web] firmware image from %s: %u B %s in %u ms\n", part->label, (unsigned)len,
+          ok ? "sent" : "cut short", (unsigned)(millis() - t0));
 }
 
 // Send a gzip blob from web_assets.h (tools/web_assets_gen.py). Every browser

@@ -53,6 +53,11 @@
 // ============================================================
 
 #include <Arduino.h>
+// For File, luaStoreOpen's answer. LittleFS.h and not FS.h: the host tests
+// (tools/luasim/store_test.py, validate.py) compile this file against a
+// LittleFS.h stub that defines File, and the real one brings FS.h, whose File
+// is global as well (FS.h: using fs::File).
+#include <LittleFS.h>
 #include <stdint.h>
 
 #if defined(LUA_STORE_ENABLED) && !defined(LUA_EFFECTS_ENABLED)
@@ -143,6 +148,15 @@ uint32_t    luaStoreBytes(uint8_t i);
 // caller owns it and must pass it back to luaStoreRelease().
 char *luaStoreRead(uint8_t i, size_t *lenOut);
 void  luaStoreRelease(char *src);
+
+// The file behind script i, opened for reading and nothing read from it: for a
+// caller that sends the bytes on as they are, a piece at a time (GET
+// /api/lua/source), where luaStoreRead would hold the whole script at once.
+// A closed File when i is past the end or the file will not open. Call it on
+// loop()'s task, as the web routes are: an upload or a delete renumbers the
+// list, and they run there too, so an index looked up just before still means
+// the same script.
+File luaStoreOpen(uint8_t i);
 
 // Removing one. The three outcomes are kept apart because a caller answering
 // HTTP has to: a file that is not there is a 404, and one the filesystem would
