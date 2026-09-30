@@ -28,10 +28,18 @@
 -- palette: 8,192 samples of fractal noise that would take a Lua loop over
 -- 100 ms here take a few in C.
 --
+-- The time the gas boils along is the wall clock's, not the page's: px.t()
+-- over PERIOD = 3600 is the second of the hour, the same on every panel with
+-- NTP, so two panels show the same nebula at the same moment. Every motion
+-- makes a whole number of turns in the hour - the noise repeats every 256
+-- units, the ripple's phase every 2 pi - so the hour comes round without a
+-- seam. The mood is the count of presses since the page opened, so one press
+-- on each of two panels leaves them in the same mood.
+--
 -- Needs firmware 2.7.5 or later (px.field, px.noise; px.show and
 -- px.palette are 2.7.4).
 -- ============================================================
-PERIOD = 600.0
+PERIOD = 3600.0     -- px.t() * PERIOD is the second of the hour on the wall clock
 FPS = 15
 
 local W, H = px.size()
@@ -48,9 +56,16 @@ local MOODS = {
 }
 local PALS = {}
 for i, stops in ipairs(MOODS) do PALS[i] = px.palette(stops) end
-local mood = 1
-local T, tprev = 0, nil
-local lastClicks = rawget(px, "button") and px.button() or 0
+-- the presses before the page opened are not this page's
+local base = rawget(px, "button") and px.button() or 0
+-- whole turns in the hour, so the hour wraps without a jump: the noise
+-- repeats every 256 units, sin and the ripple's phase every 2 pi
+local HOUR = 3600
+local Z_RATE = 256 / HOUR                  -- the gas: one noise period an hour (was 0.07)
+local STAR_RATE = 11 * 256 / HOUR          -- the twinkle: 11 noise periods (was 0.8)
+local RIP_RATE = 516 * 2 * pi / HOUR       -- the ripple: 516 turns (was 0.9 rad/s)
+local W2 = 54 * 2 * pi / HOUR              -- the ripple's centre: 54 and 37 swings
+local W3 = 37 * 2 * pi / HOUR              -- (were 67 s and 97 s)
 
 local L = HAS and px.layer() or nil
 local NOISE = { "noise", 0.035, 0, 1.25, 3 }
@@ -69,27 +84,18 @@ local SX, SY = {}, {}
 for i = 1, 70 do SX[i], SY[i] = floor(rnd() * W), floor(rnd() * H) end
 
 function draw()
-  local t = px.t() * PERIOD
-  local dt = 1 / FPS
-  if tprev then
-    dt = t - tprev
-    if dt < 0 then dt = dt + PERIOD end
-    if dt > 0.5 then dt = 0.5 end
-  end
-  tprev = t
-  T = T + dt
-  if T > 3600 then T = T - 3600 end    -- a 32-bit float T, held under an hour
+  local T = px.t() * PERIOD                 -- the second of the hour, 0..3600
 
   local c = rawget(px, "button") and px.button() or 0
-  if c ~= lastClicks then lastClicks = c; mood = mood % #MOODS + 1 end
+  local mood = (c - base) % #MOODS + 1
 
-  local w2, w3 = sin(T * 2 * pi / 67), sin(T * 2 * pi / 97)
+  local w2, w3 = sin(T * W2), sin(T * W3)
   local pal = PALS[mood]
 
   if HAS then
-    NOISE[3] = T * 0.07                                  -- the gas boils along time
+    NOISE[3] = T * Z_RATE                                -- the gas boils along time
     RING[2], RING[3] = 64 + 40 * w2, 32 + 18 * w3        -- the ripple's centre wanders
-    RING[5] = -T * 0.9
+    RING[5] = -((T * RIP_RATE) % (2 * pi))              -- px.field holds a phase to +-1000 rad
     px.field(L, TERMS, 62)
     px.show(L, pal)
   else
@@ -99,7 +105,7 @@ function draw()
   -- the stars, over the gas, each twinkling by the noise at its place in time
   px.mode("add")
   for i = 1, #SX do
-    local k = HAS and px.noise(i * 7.3, T * 0.8) or 0.3 * sin(T * 1.7 + i)
+    local k = HAS and px.noise(i * 7.3, T * STAR_RATE) or 0.3 * sin(T * 1.7 + i)
     if k > 0 then
       local b = floor(60 + 400 * k)
       px.pixel(SX[i], SY[i], b, b, b)
