@@ -478,8 +478,15 @@ bool irSimulate(uint8_t slot, uint32_t holdMs) {
   return true;
 }
 
+// Until when the remote's events come from /api/ir/do rather than a remote:
+// the knob's queue marks them so (control.cpp), and the twin's sync reads who
+// made a change from that (src/sync/sync_events.h).
+static volatile uint32_t s_simUntilMs = 0;
+bool irSimulatedNow(uint32_t nowMs) { return s_simUntilMs && (int32_t)(s_simUntilMs - nowMs) > 0; }
+
 bool irSimulateFn(uint8_t fn, uint8_t arg, uint32_t holdMs) {
   if (fn >= ir::kFnCount) return false;
+  s_simUntilMs = (millis() + (fn == ir::kFnOk ? holdMs : 0) + 400) | 1;
   apply(millis(), nullptr, -1, fn == ir::kFnOk ? holdMs : 0, (int16_t)fn, arg);
   return true;
 }

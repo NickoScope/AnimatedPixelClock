@@ -47,6 +47,10 @@ enum CtrlEvent : uint8_t {
 void      controlBegin();
 void      controlLoop();          // poll; cheap, safe to call every frame
 CtrlEvent controlTake();          // pop one event, CTRL_NONE when the queue is empty
+// Who made the event controlTake() returned last: the knob, the remote, or
+// /api/ir/do pretending to be the remote. For the twin's sync (sync_events.h).
+enum CtrlSource : uint8_t { CTRL_SRC_KNOB = 0, CTRL_SRC_IR, CTRL_SRC_SIM };
+uint8_t   controlTakenSource();
 
 // True while the knob is held. Pages use it to show a hint before the long
 // press completes, so the gesture is discoverable rather than folklore.

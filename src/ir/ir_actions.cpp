@@ -18,6 +18,9 @@
 
 #if defined(IR_ENABLED)
 
+#if defined(SYNC_EVENTS_ENABLED)
+#include "../sync/sync_events.h"
+#endif
 #include "ir.h"
 
 #include <Arduino.h>
@@ -106,6 +109,10 @@ void irActionsTick() {
 
 void irRunAction(uint8_t fn, uint8_t arg) {
   if (!irActionBuilt(fn)) return;
+#if defined(SYNC_EVENTS_ENABLED)
+  // /api/ir/do has noted its request as the cause already (web.cpp)
+  if (!irSimulatedNow(millis())) syncNoteCause(SYNC_BY_IR);
+#endif
   switch (fn) {
     case ir::kFnPower:
       setDisplayForcedOff(!isDisplayForcedOff());

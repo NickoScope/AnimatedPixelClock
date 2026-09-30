@@ -547,7 +547,20 @@ def onscreen(addr, pan0, log, find, changed):
     if pr.get("source") != "demo" and (pr.get("subscribed") or pr.get("source") != "idle"):
         find("FAIL", f"the radar feed still runs off screen: source {pr.get('source')}, "
                      f"subscribed {pr.get('subscribed')}")
-    if cl and cl.get("state") not in ("off", "absent") and not cl.get("ha") and cl.get("idle") is not True:
+    # The clock page is not off screen for the sensor when its style is the
+    # weather clock (14) showing the room's climate beside the forecast
+    # (climateShow 1, split): clock_weather.cpp reads it there by design. The
+    # owner's panel was on exactly that on 2026-09-30 and this check cried FAIL.
+    now = (P.get(addr, "/api/panel").get("now") or {})
+    try:
+        split = P.get(addr, "/api/export").get("climateShow") == 1
+    except Exception:  # noqa: BLE001
+        split = False
+    weather_reads = now.get("style") == 14 and split
+    done["off_screen"]["weather_clock_reads"] = weather_reads
+    if weather_reads:
+        log("info", "the clock is the weather clock showing the room's climate: the sensor is read there by design")
+    elif cl and cl.get("state") not in ("off", "absent") and not cl.get("ha") and cl.get("idle") is not True:
         find("FAIL", f"the onboard sensor is read off screen: climate {cl}")
     radar = [pg for pg in pan0.get("pages") or []
              if pg.get("on") and pg.get("key") == "lua" and pg.get("name") in ("ROOM RADAR", "AQUARIUM")]

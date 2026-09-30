@@ -7,6 +7,9 @@
 
 // ========== User Configuration ==========
 // Edit src/config/user_config.h to configure WiFi and device options
+#if defined(SYNC_EVENTS_ENABLED)
+#include "sync/sync_events.h"
+#endif
 #include "config/user_config.h"
 
 #include <Adafruit_GFX.h>
@@ -1102,6 +1105,16 @@ void loop() {
     }
     if (ctrlPage >= ctrlPageCount()) { ctrlPage = PAGE_CLOCK; ctrlEntered = false; }  // card expired
 #endif
+#if defined(SYNC_EVENTS_ENABLED)
+    {
+      // Every gesture that reaches a page or an effect, out to the twin's sync
+      // before it acts (sync_events.h) - after the two that swallow it (the 3D
+      // scene, a notification). One made by /api/ir/do is that request's.
+      const uint8_t src = controlTakenSource();
+      const SyncBy by = src == CTRL_SRC_KNOB ? SYNC_BY_KNOB : src == CTRL_SRC_IR ? SYNC_BY_IR : syncSimulatedBy();
+      syncInput(e == CTRL_CW ? SYNC_IN_CW : e == CTRL_CCW ? SYNC_IN_CCW : SYNC_IN_PRESS, by);
+    }
+#endif
     if (e == CTRL_PRESS) {
 #if defined(LUA_EFFECTS_ENABLED)
       // An effect page has nothing to enter: its click belongs to the effect
@@ -1171,6 +1184,9 @@ void loop() {
   // Advance only when the knob has been quiet for a while, so the page you
   // chose stays where you left it until you have walked away from it.
   if (carouselDue(ctrlPageSeconds(ctrlPage))) {
+#if defined(SYNC_EVENTS_ENABLED)
+    syncNoteCause(SYNC_BY_CAROUSEL);
+#endif
     // With "walk every clock style" (CAROUSEL_ALL_STYLES by default, switchable
     // in the portal) each style takes a slot of its own on the clock page, and
     // the page moves on once the last style has had its turn.
@@ -1296,6 +1312,11 @@ void loop() {
       Serial.printf("[loop] web %s took %u ms\n", webLastUri(), (unsigned)((micros() - httpFromUs) / 1000UL));
   }
   loopMark("web server");
+#if defined(SYNC_EVENTS_ENABLED)
+  syncAfterHttp(webRequestCount());   // a request that changed the screen is its cause
+  syncEventsLoop();                    // and a changed screen goes out to the listeners
+  loopMark("sync events");
+#endif
   // The radio's reserve follows the same signal the portal's back-off does.
   if (netReserveWanted(allocFailWifiAgeMs())) netReserveTake();
   else netReserveRelease();

@@ -32,12 +32,16 @@ async function loadVersion() {
   return text;
 }
 
+// The image in its parts, each at its own offset, and nothing between them.
+// The NVS partition (settings, Wi-Fi, keys) sits at 0x9000-0xE000, in the gap
+// between the partition table and the OTA data; the merged Full.bin filled that
+// gap with 0xFF, so an install that did NOT erase still wiped the settings.
+// Written part by part, "don't erase" keeps them - and the uploaded effects and
+// animations in LittleFS, which no part reaches. release.py writes the files.
 function buildManifest(boardId, version) {
   const board = BOARDS[boardId];
-  const binUrl = new URL(
-    `firmware/latest/AnimatedPixelClock-${board.firmware}-${version}-Full.bin`,
-    location.href,
-  ).href;
+  const url = (name) => new URL(`firmware/latest/${name}`, location.href).href;
+  const part = (label) => url(`AnimatedPixelClock-${board.firmware}-${version}-${label}.bin`);
   return {
     name: 'AnimatedPixelClock',
     version,
@@ -50,7 +54,12 @@ function buildManifest(boardId, version) {
     new_install_improv_wait_time: 15,
     builds: [{
       chipFamily: board.chipFamily,
-      parts: [{ path: binUrl, offset: 0 }],
+      parts: [
+        { path: part('bootloader'), offset: 0x0 },
+        { path: part('partitions'), offset: 0x8000 },
+        { path: part('otadata'), offset: 0xE000 },   // boots the app written below
+        { path: url(`OTA_ONLY_firmware-${version}-${board.firmware}.bin`), offset: 0x10000 },
+      ],
     }],
   };
 }

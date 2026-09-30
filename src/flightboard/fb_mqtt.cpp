@@ -5,6 +5,7 @@
 #include <Arduino.h>
 #include <string.h>
 
+#include "../config/settings.h"   // settings.fbAskHa
 #include "../mqtt/mqtt_bus.h"
 #include "flightboard.h"
 
@@ -121,6 +122,10 @@ void fbMqttLoop() {
   // Nothing retained turned up for a half this page shows, or what did is a
   // fetch from hours ago. Ask once for each; the answers arrive on the
   // subscription already in place.
+  // settings.fbAskHa off (a twin with no AeroAPI key of its own, the owner's
+  // word 2026-09-30): Home Assistant is never asked - each ask is a call it
+  // pays for with its key. The retained boards still arrive, which is free.
+  if (s_graceUntil && (int32_t)(now - s_graceUntil) >= 0 && up && !settings.fbAskHa) s_graceUntil = 0;
   if (s_graceUntil && (int32_t)(now - s_graceUntil) >= 0 && up) {
     s_graceUntil = 0;
     for (uint8_t i = 0; i < 2; i++) {

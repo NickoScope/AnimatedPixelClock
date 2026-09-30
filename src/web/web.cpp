@@ -54,6 +54,9 @@ static void handlePanelJs();
 #include <esp_ota_ops.h>     // the running partition and its app descriptor: GET /api/firmware/image
 #include <esp_partition.h>
 #include "../clocks/cycle_config.h"
+#if defined(SYNC_EVENTS_ENABLED)
+#include "../sync/sync_events.h"
+#endif
 #include "web_heap_backoff.h"
 #include "../network/net_lock.h"
 #include "../network/net_turns.h"
@@ -170,12 +173,15 @@ public:
     (void)method;
     strncpy(last, uri.c_str(), sizeof(last) - 1);
     last[sizeof(last) - 1] = '\0';
+    count++;
     return false;
   }
   char last[64] = "";
+  uint32_t count = 0;                        // requests seen: the twin's sync reads who wrote (sync_events.h)
 };
 static UriRecorder s_uriRecorder;
 const char *webLastUri() { return s_uriRecorder.last; }
+uint32_t webRequestCount() { return s_uriRecorder.count; }
 
 void setupWebServer() {
  server.addHandler(&s_uriRecorder);   // first, so it sees every request
@@ -287,6 +293,9 @@ void setupWebServer() {
    if (!ir::fnByName(server.arg("fn").c_str(), &fn) || !irActionBuilt(fn)) { irBad("no such function in this build"); return; }
    const long page = server.arg("page").toInt();
    if (fn == ir::kFnPage && (page < 0 || page > 255)) { irBad("page must be 0..255"); return; }
+#if defined(SYNC_EVENTS_ENABLED)
+   syncNoteSimulated(syncHttpBy());   // what it does next is this request's doing, the twin's own or not
+#endif
    irSimulateFn(fn, (uint8_t)page, (uint32_t)server.arg("hold").toInt());
    sendIrTable();
  });
@@ -1150,6 +1159,13 @@ void handlePortalValues() {
   JsonDocument doc(webJsonAllocator());
   doc["ver"] = FIRMWARE_VERSION;
   doc["built"] = __DATE__;
+  // Which release images fit this board: the portal offers an update from the
+  // web flasher's site only when they do (the releases are built for this one).
+#if defined(BOARD_WAVESHARE_RGB_MATRIX)
+  doc["board"] = "waveshare";
+#else
+  doc["board"] = "other";
+#endif
   doc["ip"] = WiFi.localIP().toString();
   doc["freeHeap"] = ESP.getFreeHeap();
   doc["minBright"] = isZeroBrightnessAllowed() ? 0 : 1;
@@ -2617,6 +2633,7 @@ void handleExportConfig() {
  json += "\"climateRhFollowsT\":" + String(settings.climateRhFollowsT ? "true" : "false") + ",";
  json += "\"climateShow\":" + String(settings.climateShow) + ",";
  json += "\"climateHa\":" + String(settings.climateHa ? "true" : "false") + ",";
+ json += "\"fbAskHa\":" + String(settings.fbAskHa ? "true" : "false") + ",";
  json += "\"ambientEnabled\":" + String(settings.ambientEnabled ? "true" : "false") + ",";
  json += "\"ambientStyle\":" + String(settings.ambientStyle) + ",";
  json += "\"ambientStartHour\":" + String(settings.ambientStartHour) + ",";
@@ -2872,6 +2889,9 @@ void handleImportConfig() {
  if (!doc["climateRhFollowsT"].isNull()) settings.climateRhFollowsT = doc["climateRhFollowsT"];
  if (!doc["climateShow"].isNull()) settings.climateShow = climate::clampShow(doc["climateShow"].as<long>());
  if (!doc["climateHa"].isNull()) settings.climateHa = doc["climateHa"];
+ // Only through export and import, not the portal's form: a form that lacks the
+ // box would switch it off. The twin's sync sets it (tools/twin).
+ if (doc["fbAskHa"].is<bool>()) settings.fbAskHa = doc["fbAskHa"];
  if (!doc["ambientEnabled"].isNull()) settings.ambientEnabled = doc["ambientEnabled"];
  // Read as int and normalize so a retired slot (2, 4, 5) or a bad value maps
  // to 0 (Space Invaders) rather than wrapping into the uint8_t field.
