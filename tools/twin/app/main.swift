@@ -543,8 +543,10 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNav
         web.translatesAutoresizingMaskIntoConstraints = false
         root.addConstraints([web.widthAnchor.constraint(equalTo: root.widthAnchor)])
         window.contentView = root
-        window.center(); window.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        window.center()
+        // A test build never takes the focus: the owner may be working meanwhile (2026-09-30, a sync test's
+        // window taking the focus was closed by him). It opens behind the others, not activated.
+        if standard { window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true) } else { window.orderBack(nil) }
         say { L("Starting the twin…", "Запускаю двойника…") }
     }
 

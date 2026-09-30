@@ -25,8 +25,9 @@
 # the .dmg there, and TWIN_BUNDLE_ID=<id> gives it another bundle identifier - so another settings
 # domain (defaults), another data directory by default (~/Library/Application Support/<id>: its own
 # flash, MAC and sync state, never the installed app's, and nothing copied in from ~/twin/state), its
-# own key for the sync state in the Keychain, "TEST <id>" in its window's title, and no Dock icon (a
-# test build is quit by its PID when its test ends, never left beside the installed app). A test that syncs
+# own key for the sync state in the Keychain, "TEST <id>" in its window's title, no Dock icon (a
+# test build is quit by its PID when its test ends, never left beside the installed app), and a window that
+# opens behind the others without taking the focus (main.swift buildWindow). A test that syncs
 # with a twin playing the panel also passes -dataDir <dir> and -panelAddress 127.0.0.1:<port>: the
 # test switches hold for nothing else (SyncEngine.swift).
 set -euo pipefail
