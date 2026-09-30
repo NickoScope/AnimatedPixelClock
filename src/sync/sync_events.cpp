@@ -101,7 +101,9 @@ uint8_t causeNow(uint32_t nowMs) {
   // Signed: s_causeAt is millis() | 1 (0 means none), so it can be 1 ms ahead
   // of a nowMs read just after, and unsigned that is 49 days old - every cause
   // read as "auto" on the panel (2026-09-30).
-  return (s_causeAt && (int32_t)(nowMs - s_causeAt) <= (int32_t)kCauseMs) ? s_cause : (uint8_t)SYNC_BY_AUTO;
+  // And bounded below: a cause 24.8 days old would read negative again.
+  const int32_t d = (int32_t)(nowMs - s_causeAt);
+  return (s_causeAt && d >= -2 && d <= (int32_t)kCauseMs) ? s_cause : (uint8_t)SYNC_BY_AUTO;
 }
 
 Screen snapshot() {
