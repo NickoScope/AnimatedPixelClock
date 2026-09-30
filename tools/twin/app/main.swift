@@ -4,7 +4,9 @@
 // esp32sim engine, the ESP32-S3 mask ROM, the eFuse word, the firmware release and the web pages
 // (the panel page and the project's web flasher with its navigator.serial shim). No Python, no
 // repository. What the twin stores - its flash chip, the virtual access point, the home network it
-// may join - lives in ~/Library/Application Support/TWIN-NickoScopeMatrix-64x128.
+// may join - lives in ~/Library/Application Support/TWIN-NickoScopeMatrix-64x128; a build with another
+// bundle identifier (build.sh TWIN_BUNDLE_ID, a test build) keeps its own in
+// ~/Library/Application Support/<its bundle identifier>, so it never runs the installed app's twin.
 //
 // The interface is English, or Russian (the EN · RU switch; the owner, 2026-09-30); the choice goes
 // to the pages too (?lang=, localStorage twin-lang, window.twinSetLang).
@@ -19,7 +21,9 @@
 //
 // Sync with panel (SyncEngine.swift, the owner 2026-09-30): the twin and the physical panel mirror each
 // other - screen, settings, Lua effects, firmware - while the switch is on; firmware reaches the panel
-// only after a person's yes in "Update the panel too?". Off by default; the switch is remembered.
+// only after a person's yes in "Update the panel too?", whose default button is "Not now". Off by
+// default; the switch is remembered, and follows `defaults write <bundle id> syncEnabled -bool NO`
+// from a terminal as well (a session that is about to flash the panel can switch sync off first).
 //
 // Settings (defaults write com.nickoscope.TWIN-NickoScopeMatrix-64x128 KEY VALUE, or -KEY VALUE on the
 // command line): lang "en"|"ru",
@@ -27,8 +31,10 @@
 // (NO: never copy ~/twin/state in, for a test data directory);
 // syncEnabled (NO), panelAddress ("" = found over mDNS), panelMac, syncSettingsEveryS (60),
 // firmwareRepo ("NickoScope/AnimatedPixelClock": where releases and the gallery come from - the owner of
-// another panel names their own fork). Test-only switches, honoured only when the "panel" is itself a
-// twin: syncPanelMayBeTwinForTesting, syncAutoConfirmForTesting, syncAlignForTesting (SyncEngine.swift).
+// another panel names their own fork). Test-only switches, honoured only when the "panel" has a twin's
+// MAC and panelAddress names it by a loopback address: syncPanelMayBeTwinForTesting,
+// syncAutoConfirmForTesting, syncAlignForTesting, syncAnswerDelayForTesting, syncPressReturnForTesting
+// (SyncEngine.swift).
 
 import AppKit
 import CryptoKit
@@ -37,7 +43,11 @@ import WebKit
 // MARK: - language
 
 let APP_NAME = "TWIN-NickoScopeMatrix-64x128"
+let STANDARD_BUNDLE_ID = "com.nickoscope.TWIN-NickoScopeMatrix-64x128"
 var LANG = "en"
+
+/// syncEnabled as a key path, so the switch can follow a change made outside the app (KVO on defaults).
+extension UserDefaults { @objc dynamic var syncEnabled: Bool { bool(forKey: "syncEnabled") } }
 /// The English or the Russian text, by the EN · RU switch.
 func L(_ en: String, _ ru: String) -> String { LANG == "ru" ? ru : en }
 
@@ -349,9 +359,10 @@ enum GitHub {
         let assets = Dictionary((r["assets"] as? [[String: Any]] ?? []).compactMap { a in (a["name"] as? String).map { ($0, a) } },
                                 uniquingKeysWith: { a, _ in a })
         let name = "OTA_ONLY_firmware-\(tag)-waveshare.bin"
-        guard let ota = assets[name], let url = ota["browser_download_url"] as? String,
-              url.hasPrefix("https://github.com/\(repo)/releases/download/"),
-              let sums = assets["SHA256SUMS.txt"]?["browser_download_url"] as? String else { return nil }
+        // Both files from the repository's own releases: nothing else is downloaded.
+        let prefix = "https://github.com/\(repo)/releases/download/"
+        guard let ota = assets[name], let url = ota["browser_download_url"] as? String, url.hasPrefix(prefix),
+              let sums = assets["SHA256SUMS.txt"]?["browser_download_url"] as? String, sums.hasPrefix(prefix) else { return nil }
         return Release(tag: tag, notes: r["body"] as? String ?? "", asset: url, assetName: name, size: ota["size"] as? Int ?? -1, sums: sums)
     }
 
@@ -426,15 +437,20 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNav
     let syncStatus = NSTextField(labelWithString: "")
     var syncButtons: [(NSButton, () -> String)] = []
     var twinMac = ""
+    var syncSwitchWatch: NSKeyValueObservation?
 
     func applicationDidFinishLaunching(_ n: Notification) {
         let d = UserDefaults.standard
-        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent(APP_NAME)
+        // The installed app's data, or a test build's own (its bundle identifier): a test build never
+        // takes the installed app's flash, MAC and sync state, and so never its pair with the panel.
+        let bundleId = Bundle.main.bundleIdentifier ?? STANDARD_BUNDLE_ID
+        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent(bundleId == STANDARD_BUNDLE_ID ? APP_NAME : bundleId)
         d.register(defaults: ["port": 8790, "httpPort": 8080, "udpPort": 4210, "serialPort": 4000, "cpi": "2.45", "lang": "en",
-                              "lanSocket": "/var/run/socket_vmnet.bridged.en0", "dataDir": support.path, "migrate": true,
+                              "lanSocket": "/var/run/socket_vmnet.bridged.en0", "dataDir": support.path, "migrate": bundleId == STANDARD_BUNDLE_ID,
                               "syncEnabled": false, "panelAddress": "", "panelMac": "", "firmwareRepo": GitHub.defaultRepo,
                               "syncSettingsEveryS": 60, "syncPanelMayBeTwinForTesting": false, "syncAutoConfirmForTesting": false,
-                              "syncAlignForTesting": ""])
+                              "syncAlignForTesting": "", "syncAnswerDelayForTesting": 0, "syncPressReturnForTesting": false])
         LANG = d.string(forKey: "lang") == "ru" ? "ru" : "en"
         let paths = Paths(res: Bundle.main.resourceURL!, data: URL(fileURLWithPath: d.string(forKey: "dataDir")!))
         twin = Twin(paths: paths, defaults: d)
@@ -442,12 +458,26 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNav
         sync = SyncEngine(dataDir: paths.data)
         sync.setLanguage(LANG)
         sync.onStatus = { [weak self] in self?.showSyncStatus() }
-        sync.askDirection = { [weak self] s in self?.askDirection(s) }
-        sync.askFirmware = { [weak self] o in self?.askFirmware(o) }
+        // A question is a modal alert. It is opened from the run loop, not from a block on the main dispatch
+        // queue: runModal inside such a block holds that serial queue for as long as the question is open,
+        // and nothing else sent to it runs meanwhile - the status line, the switch followed from defaults,
+        // SIGTERM. In the default mode only: a second question waits until the first one is answered.
+        sync.askDirection = { [weak self] s in Controller.later { self?.askDirection(s) } }
+        sync.askResume = { [weak self] s in Controller.later { self?.askResume(s) } }
+        sync.askFirmware = { [weak self] o in Controller.later { self?.askFirmware(o) } }
+        sync.onPanelLost = { [weak self] in self?.finder.refresh() }
         finder.onChange = { [weak self] f in self?.sync.setFound(f) }
         buildMenu(); buildWindow()
         sync.start()
         if d.bool(forKey: "syncEnabled") { enableSync(true) } else { showSyncStatus() }
+        // The switch follows the setting when something else changes it (defaults write from a terminal).
+        syncSwitchWatch = d.observe(\.syncEnabled, options: [.new]) { [weak self] _, _ in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                let on = UserDefaults.standard.bool(forKey: "syncEnabled")
+                if on != self.sync.enabled { self.enableSync(on) }
+            }
+        }
         twin.answers { [weak self] up in DispatchQueue.main.async {
             guard let self else { return }
             if !up {
@@ -463,7 +493,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNav
                           styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         // A build with another bundle identifier (build.sh TWIN_BUNDLE_ID, for tests) says so in its title,
         // so its window is never taken for the installed app's twin.
-        let standard = Bundle.main.bundleIdentifier == "com.nickoscope.TWIN-NickoScopeMatrix-64x128"
+        let standard = Bundle.main.bundleIdentifier == STANDARD_BUNDLE_ID
         window.title = standard ? APP_NAME : "\(APP_NAME) — TEST \(Bundle.main.bundleIdentifier ?? "?") · \(twin.p.data.path)"
         window.setFrameAutosaveName("TwinPanelWindow")
         window.delegate = self
@@ -537,6 +567,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNav
         sm.addItem(withTitle: L("Firmware releases from…", "Выпуски прошивки из…"), action: #selector(chooseRepo), keyEquivalent: "")
         sm.addItem(.separator())
         sm.addItem(withTitle: L("The sync log", "Журнал синхронизации"), action: #selector(showSyncLog), keyEquivalent: "")
+        sm.addItem(withTitle: L("How sync works…", "Как работает синхронизация…"), action: #selector(syncHelp), keyEquivalent: "")
         syncItem.submenu = sm
         let editItem = NSMenuItem(); main.addItem(editItem)
         let e = NSMenu(title: L("Edit", "Правка"))
@@ -769,6 +800,10 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNav
         }
     }
     func refreshLater() { DispatchQueue.main.async { self.refresh() } }
+    static func later(_ f: @escaping () -> Void) {
+        RunLoop.main.perform(inModes: [.default], block: f)
+        CFRunLoopWakeUp(CFRunLoopGetMain())
+    }
 
     // MARK: Sync with panel (SyncEngine.swift)
 
@@ -795,41 +830,111 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNav
         syncStatus.stringValue = t; syncStatus.toolTip = t
     }
 
-    /// The first sync of a pair: which side is taken as it is.
+    func list(_ x: [String]) -> String { x.isEmpty ? "—" : x.prefix(12).joined(separator: ", ") + (x.count > 12 ? " … (\(x.count))" : "") }
+
+    /// The first sync of a pair, or after a massive change: which side is taken as it is.
     func askDirection(_ m: SyncEngine.Summary) {
         let a = NSAlert()
-        a.messageText = L("Sync with the panel: which way first?", "Синхронизация с панелью: в какую сторону сначала?")
-        func list(_ x: [String]) -> String { x.isEmpty ? "—" : x.prefix(12).joined(separator: ", ") + (x.count > 12 ? " …" : "") }
-        a.informativeText = L("The panel: \(m.panel), firmware \(m.panelFirmware), showing \(m.panelScreen).\nThe twin: \(m.twin), firmware \(m.twinFirmware), showing \(m.twinScreen).",
-                              "Панель: \(m.panel), прошивка \(m.panelFirmware), на экране \(m.panelScreen).\nДвойник: \(m.twin), прошивка \(m.twinFirmware), на экране \(m.twinScreen).")
-            + "\n\n" + L("Settings that differ (\(m.settings.count)): ", "Различаются настройки (\(m.settings.count)): ") + list(m.settings)
-            + "\n" + L("Effects only on the panel: ", "Эффекты только на панели: ") + list(m.onlyPanel)
-            + "\n" + L("Effects only on the twin: ", "Эффекты только на двойнике: ") + list(m.onlyTwin)
-            + "\n" + L("Effects that differ: ", "Эффекты с разным содержимым: ") + list(m.differ)
-            + "\n\n" + L("The side you pick is taken as it is: the other one gets its settings, effects (the extra ones are removed) and screen. Firmware goes to the twin by itself; to the panel only after a separate question. Later changes go both ways.",
-                          "Выбранная сторона берётся как есть: другая получает её настройки, эффекты (лишние удаляются) и экран. Прошивка на двойника уходит сама, на панель — только после отдельного вопроса. Дальнейшие изменения переносятся в обе стороны.")
+        a.messageText = L("Sync with the panel: which way?", "Синхронизация с панелью: в какую сторону?")
+        var t = m.why.map { $0.text(LANG) + "\n\n" } ?? ""
+        t += L("The panel: \(m.panel), firmware \(m.panelFirmware), showing \(m.panelScreen).\nThe twin: \(m.twin), firmware \(m.twinFirmware), showing \(m.twinScreen).",
+               "Панель: \(m.panel), прошивка \(m.panelFirmware), на экране \(m.panelScreen).\nДвойник: \(m.twin), прошивка \(m.twinFirmware), на экране \(m.twinScreen).")
+        t += "\n\n" + L("Settings that differ (\(m.settings.count)): ", "Различаются настройки (\(m.settings.count)): ") + list(m.settings)
+        if !m.hardware.isEmpty {
+            t += "\n" + L("The panel's hardware (microphones, knob) that differs - it goes from the panel to the twin only: ",
+                           "Различаются настройки железа панели (микрофон, ручка) — они идут только с панели на двойника: ") + list(m.hardware)
+        }
+        if m.effectsKnown {
+            t += "\n" + L("Effects only on the panel: ", "Эффекты только на панели: ") + list(m.onlyPanel)
+            t += "\n" + L("Effects only on the twin: ", "Эффекты только на двойнике: ") + list(m.onlyTwin)
+            t += "\n" + L("Effects that differ: ", "Эффекты с разным содержимым: ") + list(m.differ)
+            if m.bySize { t += "\n" + L("(effects compared by size: a firmware without /api/lua/source)", "(эффекты сравниваются по размеру: в прошивке нет /api/lua/source)") }
+        } else {
+            t += "\n" + L("Effects: one side's cannot be read now - they are compared later.", "Эффекты: у одной из сторон сейчас не прочитать — сравню позже.")
+        }
+        t += "\n\n" + L("The side you pick is taken as it is: the other one gets its settings, effects (the extra ones are removed) and screen. Firmware goes to the twin by itself; to the panel only after a separate question. Later changes go both ways. If anything listed here changes before you answer, you are asked again.",
+                         "Выбранная сторона берётся как есть: другая получает её настройки, эффекты (лишние удаляются) и экран. Прошивка на двойника уходит сама, на панель — только после отдельного вопроса. Дальнейшие изменения переносятся в обе стороны. Если до ответа изменится что-то из перечисленного, вопрос прозвучит снова.")
+        a.informativeText = t
         a.addButton(withTitle: L("From the panel to the twin", "С панели на двойника"))
         a.addButton(withTitle: L("From the twin to the panel", "С двойника на панель"))
         a.addButton(withTitle: L("Cancel", "Отмена"))
         switch a.runModal() {
-        case .alertFirstButtonReturn: sync.answerDirection(.fromPanel)
-        case .alertSecondButtonReturn: sync.answerDirection(.fromTwin)
-        default: enableSync(false)
+        case .alertFirstButtonReturn: sync.answerDirection(id: m.id, .fromPanel)
+        case .alertSecondButtonReturn: sync.answerDirection(id: m.id, .fromTwin)
+        case .abort: sync.answerDirection(id: m.id, nil)                 // the app is quitting: the switch stays as it is
+        default: sync.answerDirection(id: m.id, nil); enableSync(false)
         }
     }
 
-    /// The twin's firmware changed: the physical panel gets it only on this yes.
+    /// Sync switched on again, and the twin was changed while it was off: does that go to the panel?
+    func askResume(_ m: SyncEngine.ResumeSummary) {
+        let a = NSAlert()
+        a.messageText = L("The twin was changed while sync was off", "Двойник меняли без синхронизации")
+        var t = L("The panel: \(m.panel).\nThe twin: \(m.twin).", "Панель: \(m.panel).\nДвойник: \(m.twin).")
+        t += "\n\n" + L("Changed on the twin - settings: ", "Изменено на двойнике — настройки: ") + list(m.settings)
+        t += "\n" + L("effects: ", "эффекты: ") + list(m.effects.map { $0.text(LANG) })
+        if !m.conflicts.isEmpty { t += "\n" + L("Changed on both sides - the panel's is kept: ", "Изменено на обеих сторонах — останется как на панели: ") + list(m.conflicts) }
+        if !m.hardware.isEmpty { t += "\n" + L("The panel's hardware (not carried to the panel): ", "Железо панели (на панель не переносится): ") + list(m.hardware) }
+        if m.panelChanges > 0 { t += "\n" + L("The panel's own changes meanwhile (\(m.panelChanges)) come to the twin either way.", "Изменения самой панели за это время (\(m.panelChanges)) придут на двойника в любом случае.") }
+        t += "\n\n" + L("Carry to the panel: these changes are written to the panel. Give the twin the panel's state: the twin becomes what the panel is, the panel is not touched. Cancel: sync stays off.",
+                         "Перенести на панель: эти изменения запишутся на панель. Вернуть двойнику состояние панели: двойник станет таким, как панель, панель не трогаю. Отмена: синхронизация остаётся выключенной.")
+        a.informativeText = t
+        // Return is Cancel: nothing is written anywhere by accident.
+        let cancel = a.addButton(withTitle: L("Cancel", "Отмена"))
+        let back = a.addButton(withTitle: L("Give the twin the panel's state", "Вернуть двойнику состояние панели"))
+        let carry = a.addButton(withTitle: L("Carry to the panel", "Перенести на панель"))
+        cancel.keyEquivalent = "\r"; back.keyEquivalent = ""; carry.keyEquivalent = ""
+        switch a.runModal() {
+        case .alertSecondButtonReturn: sync.answerResume(id: m.id, .fromPanel)
+        case .alertThirdButtonReturn: sync.answerResume(id: m.id, .toPanel)
+        case .abort: sync.answerResume(id: m.id, nil)                    // the app is quitting: the switch stays as it is
+        default: sync.answerResume(id: m.id, nil); enableSync(false)
+        }
+    }
+
+    /// The twin's firmware changed: the physical panel gets it only on this yes. "Not now" is the default
+    /// button (Return), "Update the panel" has no key: the window comes by itself, maybe while someone is
+    /// typing on the twin's page, and a Return must never flash the panel.
     func askFirmware(_ o: SyncEngine.Offer) {
         let a = NSAlert()
+        a.alertStyle = o.downgrade ? .critical : .warning
         a.messageText = L("Update the panel too?", "Обновить и панель тоже?")
-        a.informativeText = L("The twin now runs \(o.version) (built \(o.build)). The panel runs \(o.panelVersion) (built \(o.panelBuild)).",
-                              "На двойнике теперь \(o.version) (сборка \(o.build)). На панели — \(o.panelVersion) (сборка \(o.panelBuild)).")
-            + "\n\n" + L("The image: ", "Образ: ") + o.source.text(LANG) + "."
-            + "\n\n" + L("The panel restarts; the new firmware confirms itself within about a minute, or the panel rolls back to the one it has now.",
-                          "Панель перезагрузится; новая прошивка подтверждает себя примерно за минуту, иначе панель откатится на нынешнюю.")
-        a.addButton(withTitle: L("Update the panel", "Обновить панель"))
-        a.addButton(withTitle: L("Not now", "Не сейчас"))
-        sync.answerFirmware(id: o.id, go: a.runModal() == .alertFirstButtonReturn)
+        var t = L("The panel: \(o.panelName), \(o.panelAddress), MAC \(o.panelMac).", "Панель: \(o.panelName), \(o.panelAddress), MAC \(o.panelMac).")
+        t += "\n" + L("On the panel now: \(o.panelVersion) (built \(o.panelBuild)).", "На панели сейчас: \(o.panelVersion) (сборка \(o.panelBuild)).")
+        t += "\n" + L("On the twin: \(o.version) (built \(o.build)).", "На двойнике: \(o.version) (сборка \(o.build)).")
+        if o.downgrade { t += "\n\n" + L("THIS IS A DOWNGRADE: the twin's version is lower than the panel's.", "ЭТО ПОНИЖЕНИЕ ВЕРСИИ: версия на двойнике ниже, чем на панели.") }
+        t += "\n\n" + L("The image: ", "Образ: ") + o.source.text(LANG) + "."
+        t += "\n\n" + L("The panel restarts; the new firmware confirms itself within about a minute, or the panel rolls back to the one it has now. If the panel or either firmware changes before you answer, nothing is sent and you are asked again.",
+                         "Панель перезагрузится; новая прошивка подтверждает себя примерно за минуту, иначе панель откатится на нынешнюю. Если до ответа сменится панель или прошивка на любой из сторон, ничего не отправлю и спрошу заново.")
+        a.informativeText = t
+        let later = a.addButton(withTitle: L("Not now", "Не сейчас"))
+        let update = a.addButton(withTitle: L("Update the panel", "Обновить панель"))
+        later.keyEquivalent = "\r"; update.keyEquivalent = ""
+        if o.pressReturnForTesting {
+            // A test: Return, as a person would press it by accident, once the window is up. Return presses
+            // the window's default button - AppKit's own notion of it, whether or not this app is active.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak a] in
+                guard let a, let b = a.window.defaultButtonCell?.controlView as? NSButton else { return }
+                b.performClick(nil)
+            }
+        }
+        sync.answerFirmware(id: o.id, go: a.runModal() == .alertSecondButtonReturn)
+    }
+
+    /// What sync does, how often it looks, and who wins when both sides changed one thing.
+    @objc func syncHelp() {
+        let every = max(15, UserDefaults.standard.integer(forKey: "syncSettingsEveryS") <= 0 ? 60 : UserDefaults.standard.integer(forKey: "syncSettingsEveryS"))
+        alert(L("How sync works", "Как работает синхронизация"),
+              L("While the switch is on, the twin and the panel mirror each other both ways: the screen (page, clock style, brightness, on/off), the settings, the Lua effects and the firmware. Switched off, everything stays as it is and nothing more is written - not even what was half done.",
+                "Пока переключатель включён, двойник и панель повторяют друг друга в обе стороны: экран (страница, стиль часов, яркость, вкл/выкл), настройки, Lua-эффекты и прошивку. Выключен — всё остаётся как есть, и больше ничего не пишется, даже начатое.")
+              + "\n\n" + L("How often: the screen every 3 s (5 s while the panel is under strain), effects when their list changes and every 60 s, settings every \(every) s.",
+                             "Как часто: экран — раз в 3 с (5 с, когда панель под нагрузкой), эффекты — при изменении их списка и раз в 60 с, настройки — раз в \(every) с.")
+              + "\n\n" + L("Changes at the same time: the devices keep no time of a change, so two changes of one thing within one of these periods - up to \(every) s for a setting - count as simultaneous, and the panel's is kept (the log says \"conflict: the panel's taken - <key>\"). Only the page has its own clock: the one changed later wins.",
+                             "Одновременные изменения: устройства не хранят время изменения, поэтому два изменения одного и того же в пределах одного такого периода — до \(every) с для настройки — считаются одновременными, и остаётся значение панели (в журнале: «конфликт: взята панель — <ключ>»). Только у страницы есть свои часы: побеждает изменённая позже.")
+              + "\n\n" + L("Only from the panel to the twin: the panel's hardware - the microphones (source, gain, gate, AGC) and the knob (direction, debounce, lockout, detent).",
+                             "Только с панели на двойника: железо панели — микрофон (источник, усиление, порог, АРУ) и ручка (направление, антидребезг, блокировка, щелчки).")
+              + "\n\n" + L("Firmware: to the twin by itself; to the panel only after your yes in \"Update the panel too?\" (Return there means Not now). More than \(SyncEngine.MASS_SETTINGS) settings or \(SyncEngine.MASS_DELETES) effect removals at once on either side stop sync until you say which way.",
+                             "Прошивка: на двойника — сама; на панель — только после вашего «да» в окне «Обновить и панель тоже?» (Return там означает «Не сейчас»). Больше \(SyncEngine.MASS_SETTINGS) настроек или \(SyncEngine.MASS_DELETES) удалений эффектов разом на любой стороне останавливают синхронизацию до вашего ответа, в какую сторону."))
     }
 
     /// Which panel: one found on the network (followed by its MAC), or an address typed in.
@@ -935,9 +1040,14 @@ let app = NSApplication.shared
 let controller = Controller()
 app.delegate = controller
 app.setActivationPolicy(.regular)
-// SIGTERM (kill, a logout) quits as the menu does, so the twin's engine is stopped, not orphaned.
+// SIGTERM (kill, a logout) quits as the menu does, so the twin's engine is stopped, not orphaned. An open
+// question is closed first - AppKit does not quit under a modal window - and a closed question is never a
+// yes: "Update the panel too?" answers Not now, the others Cancel.
 signal(SIGTERM, SIG_IGN)
 let termSource = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
-termSource.setEventHandler { NSApp.terminate(nil) }
+termSource.setEventHandler {
+    if NSApp.modalWindow != nil { NSApp.abortModal(); DispatchQueue.main.async { NSApp.terminate(nil) } }
+    else { NSApp.terminate(nil) }
+}
 termSource.resume()
 app.run()

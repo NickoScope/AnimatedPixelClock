@@ -23,7 +23,11 @@
 #
 # For a test build beside the installed app: APP_OUT=<dir> also leaves the .app there, DIST=<dir> puts
 # the .dmg there, and TWIN_BUNDLE_ID=<id> gives it another bundle identifier - so another settings
-# domain (defaults), and a test never writes the installed app's settings.
+# domain (defaults), another data directory by default (~/Library/Application Support/<id>: its own
+# flash, MAC and sync state, never the installed app's, and nothing copied in from ~/twin/state), its
+# own key for the sync state in the Keychain, and "TEST <id>" in its window's title. A test that syncs
+# with a twin playing the panel also passes -dataDir <dir> and -panelAddress 127.0.0.1:<port>: the
+# test switches hold for nothing else (SyncEngine.swift).
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 TWIN_DIR="$(cd "$HERE/.." && pwd)"
