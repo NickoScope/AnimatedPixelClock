@@ -4,16 +4,16 @@
 -- ============================================================
 -- @name.en Warp
 -- @name.ru Варп
--- @about.en Four scenes of 20 s that flow into each other: flying down a plasma tunnel, a planet turning
--- @about.en among stars, a neon road under a sunset, a whirlpool.
--- @about.ru Четыре сцены по 20 с, перетекающие друг в друга: полёт по плазменному туннелю, планета среди
--- @about.ru звёзд, неоновая дорога под закатом, водоворот.
--- @control.en knob press: Next scene now.
--- @control.ru knob press: Сразу следующая сцена.
--- @function.en 4 scenes, 20 s each
+-- @about.en Four scenes of 20 s by the clock, the same on every panel, flowing into each other: flying
+-- @about.en down a plasma tunnel, a planet turning among stars, a neon road under a sunset, a whirlpool.
+-- @about.ru Четыре сцены по 20 с по часам, одинаково на всех панелях, перетекающие друг в друга: полёт по
+-- @about.ru плазменному туннелю, планета среди звёзд, неоновая дорога под закатом, водоворот.
+-- @control.en knob press: Next scene now; it runs until the next change by the clock.
+-- @control.ru knob press: Сразу следующая сцена; она идёт до ближайшей смены по часам.
+-- @function.en 4 scenes, 20 s each, by the clock: the same on every panel
 -- @function.en No clock
 -- @function.en Needs firmware 2.7.7 or later
--- @function.ru 4 сцены по 20 с
+-- @function.ru 4 сцены по 20 с, по часам: одинаково на всех панелях
 -- @function.ru Часов нет
 -- @function.ru Нужна прошивка 2.7.7 или новее
 --
@@ -29,9 +29,18 @@
 -- The textures are 8-bit layers filled by px.field and coloured through
 -- drifting palettes; the maps are computed once at load.
 --
+-- The scene is read off the wall clock, so two panels (or a panel and its
+-- twin) show the same one at the same moment: px.t() is the phase of the
+-- 80 s PERIOD aligned to the epoch, and its 20 s quarters are the scenes. A
+-- press moves one scene on from the clock's (the presses are counted from
+-- the moment the effect opened); the scene it brings runs until the clock's
+-- next 20 s boundary, anything from 0 to 20 s. A change on the clock flows
+-- in from the boundary itself, so every panel is at the same point of the
+-- flow; a press flows in from the press.
+--
 -- Needs firmware 2.7.7 or later (px.uvmap, px.remap).
 -- ============================================================
-PERIOD = 600.0
+PERIOD = 80.0                 -- 4 scenes x 20 s: the scene is read off the clock
 FPS = 15
 
 local W, H = px.size()
@@ -39,10 +48,13 @@ local sin, floor, pi = math.sin, math.floor, math.pi
 local HAS = rawget(px, "remap") ~= nil
 
 local SCENES = { "tunnel", "planet", "road", "whirl" }
-local cur, SCENE, XF = 1, 20, 1.2
-local T, tprev, sceneAt, xfAt = 0, nil, 0, nil
+local cur, SCENE, XF = nil, 20, 1.2
+local T, tprev = 0, nil
+local xfAt = nil                      -- the clock's second (px.t() * PERIOD) the flow into this scene began
 local LINES_SLOT, FADE_SLOT = 3, 2
-local lastClicks = rawget(px, "button") and px.button() or 0
+-- px.button() counts from boot, not from here: the presses since the effect opened
+local base = rawget(px, "button") and px.button() or 0
+local seen = base
 
 local MAPS, TEX, PAL = {}, {}, {}
 if HAS then
@@ -97,7 +109,7 @@ function draw()
   end
   tprev = t
   T = T + dt
-  if T > 3600 then T = T - 3600; sceneAt = sceneAt - 3600; if xfAt then xfAt = xfAt - 3600 end end
+  if T > 3600 then T = T - 3600 end   -- a 32-bit float T, held under an hour
 
   if not HAS then
     px.clear(0, 0, 0)
@@ -105,14 +117,18 @@ function draw()
     return
   end
 
+  -- the scene: the clock's 20 s quarter of the PERIOD, moved on by the presses
   local c = rawget(px, "button") and px.button() or 0
-  if c ~= lastClicks or T - sceneAt > SCENE then
-    lastClicks = c
-    cur = cur % #SCENES + 1
-    sceneAt = T
+  local slot = floor(t / SCENE)                      -- 0..3, the same on every panel with NTP
+  local want = (slot + c - base) % #SCENES + 1
+  if not cur then
+    cur = want                                       -- opened: nothing to flow in from
+  elseif want ~= cur then
+    cur = want
     LINES_SLOT, FADE_SLOT = FADE_SLOT, LINES_SLOT
-    xfAt = T
+    xfAt = c ~= seen and t or slot * SCENE
   end
+  seen = c
 
   local s = SCENES[cur]
   local w1 = sin(T * 2 * pi / 31)
@@ -146,7 +162,7 @@ function draw()
   end
 
   if xfAt then
-    local u = (T - xfAt) / XF
+    local u = ((t - xfAt) % PERIOD) / XF             -- clock seconds, across the wrap
     if u >= 1 then xfAt = nil else px.mix(FADE_SLOT, 1 - u * u * (3 - 2 * u)) end
   end
   px.save(LINES_SLOT)

@@ -443,7 +443,7 @@ Every 20 seconds the solid on screen reshapes itself into the next one. All of t
 
 ![Warp](preview/warp.png)
 
-Four journeys, twenty seconds each, flowing into one another: down a tunnel of shifting plasma, round a planet of oceans and green land turning among twinkling stars, along a neon grid rushing toward a striped sunset, and into a whirlpool that draws its colours round and down. The button goes to the next one at once.
+Four journeys, twenty seconds each by the clock, the same on every panel, flowing into one another: down a tunnel of shifting plasma, round a planet of oceans and green land turning among twinkling stars, along a neon grid rushing toward a striped sunset, and into a whirlpool that draws its colours round and down. The button goes to the next one at once, and it runs until the clock's next change, anything up to twenty seconds.
 
 Each scene is a flat picture seen through a map: for every pixel of the screen the map says where in the picture its colour comes from and how bright it is. The maps are built once when the effect starts; after that, sliding the picture under the map a little each frame is what makes the tunnel fly, the planet turn and the road rush past, the demoscene's oldest trick. The tunnel's plasma and the whirlpool's clouds are recomputed every frame and coloured through a slowly drifting palette.
 
