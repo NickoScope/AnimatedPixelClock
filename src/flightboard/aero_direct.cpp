@@ -126,6 +126,7 @@ uint32_t    s_cfgDirtyAt = 0;
 fbs::Usage s_use = {};
 
 bool     s_keyStored = false;
+bool     s_keyDirty = false;            // the portal wrote or removed the key; applied when no call runs
 bool     s_begun = false;
 uint32_t s_lastStartMs = 0;
 bool     s_started = false;
@@ -616,6 +617,8 @@ void aeroDirectBegin() {
 
 bool aeroDirectHasKey() { return s_begun && s_keyStored; }
 
+void aeroDirectKeyChanged() { s_keyDirty = true; }
+
 // When this starter first stood aside for someone at the portal, 0 if it is not
 // waiting. File scope so the early returns above can clear it: the deadline
 // measures time since the FIRST standing aside, so a pass that left for another
@@ -682,6 +685,24 @@ void aeroDirectLoop(const AeroWant &w) {
   if (ready) { done = s_done; s_ready = false; }
   portEXIT_CRITICAL(&s_mux);
   if (ready) take(done, nowMs);
+
+  // A key written or removed on the portal's Keys page (aeroDirectKeyChanged).
+  // Applied only between calls: a call in flight read the old key, and its
+  // answer - a 401 for a key just replaced - is taken above first, so the wait
+  // it earned is cleared here with everything else the old key caused.
+  if (s_keyDirty && !running && !s_nbWaiting) {
+    s_keyDirty = false;
+    Preferences p;
+    s_keyStored = false;
+    if (p.begin(kKeyNs, true)) {
+      s_keyStored = p.isKey("key");
+      p.end();
+    }
+    s_authStepS = 0;
+    s_holdUntilMs = 0;
+    s_errStreak = 0;
+    s_blocked = ST_IDLE;
+  }
 
   const int64_t now = nowUtc();
   if (clockSet()) {

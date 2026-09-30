@@ -78,6 +78,7 @@
 #if defined(CONTROL_ENCODER_ENABLED)
 
 #include <ArduinoJson.h>
+#include <Preferences.h>
 #include <WebServer.h>
 #include <esp_heap_caps.h>
 #include <string.h>
@@ -98,6 +99,9 @@
 #include "../mqtt/mqtt_bus.h"
 #include "../panel/panel.h"
 #include "../railboard/railboard.h"
+#if defined(RAILBOARD_DIRECT_ENABLED)
+#include "../railboard/rtt_direct.h"   // rttDirectTokenChanged, for the Keys page
+#endif
 #include "../market/market.h"
 #include "../media/media.h"
 #include "../utils/utils.h"
@@ -272,6 +276,9 @@ String panelWebFeatures() {
 #endif
 #if defined(YACHTRADAR_ENABLED)
   f += " yachts";
+#endif
+#if defined(FLIGHTBOARD_DIRECT_ENABLED) || defined(RAILBOARD_DIRECT_ENABLED) || defined(YACHTRADAR_ENABLED)
+  f += " keys";                         // the Keys page (/api/keys)
 #endif
 #if defined(CLIPS_SD_ENABLED)
   f += " sdclips";
@@ -940,7 +947,6 @@ static void handleYachtradar() {
 }
 #endif
 
-#if defined(LUA_STORE_ENABLED)
 // Nothing on this panel is authenticated, and that has been an acceptable trade
 // while the worst an unauthenticated caller could do was change a setting.
 // Uploading a script is not that: it is code. The panel cannot grow a password
@@ -954,12 +960,153 @@ static void handleYachtradar() {
 // naming this panel is allowed, anything else is refused. This stops the
 // drive-by, not a caller already on the network - that one is the standing
 // posture, written down rather than fixed here.
-static bool originIsForeign() {
+// The same door guards the Keys page (/api/keys): a key written there is a
+// service account's credential.
+static bool __attribute__((unused)) originIsForeign() {
   if (!server.hasHeader("Origin")) return false;
   const String o = server.header("Origin");
   if (!o.length() || o == "null") return false;
   const String host = server.hostHeader();
   return !(host.length() && o.endsWith(host));
+}
+
+// ---------------------------------------------------------------- /api/keys
+// The services' keys, entered on the portal's Keys page instead of only by
+// flashing env:provision (bringup/provision.cpp): the owner's word, 2026-09-30.
+// Each goes where that image puts it, into the namespace its module reads:
+//
+//   aero  NVS aero/key            FlightAware AeroAPI (src/flightboard/aero_direct.cpp)
+//   rtt   NVS rb/token, rb/kind   Realtime Trains     (src/railboard/rtt_direct.cpp)
+//   ais   NVS yr/ais              aisstream.io        (src/yachtradar/yachtradar.cpp)
+//
+// Write-only. GET says only whether each key is stored, never its value or its
+// length, and nothing here logs one. POST {"id", "value"} stores a key (and for
+// rtt "kind": "auto" | "refresh" | "access"), POST {"id", "clear": true}
+// removes it. The module is told at once and takes the new key between
+// fetches, so neither a reboot nor the provisioning image is needed.
+//
+// A value is 1 to its module's limit of printable ASCII, no space, no quote and
+// no backslash: the AIS key goes into a JSON string (yachtradar.cpp
+// subscribe()) and the others into an HTTP header, and a key needs none of
+// those characters. A request from another site's page is refused
+// (originIsForeign) - the rest of the network is the standing posture of this
+// unauthenticated portal (see above).
+#if defined(FLIGHTBOARD_DIRECT_ENABLED) || defined(RAILBOARD_DIRECT_ENABLED) || defined(YACHTRADAR_ENABLED)
+#define PANEL_KEYS_ENABLED 1
+
+struct KeySpec {
+  const char *id, *ns, *key;
+  size_t      maxLen;                  // characters, the module's buffer less its NUL
+};
+static const KeySpec kKeys[] = {
+#if defined(FLIGHTBOARD_DIRECT_ENABLED)
+  {"aero", "aero", "key", 255},        // aero_direct.cpp kKeyMax = 256
+#endif
+#if defined(RAILBOARD_DIRECT_ENABLED)
+  {"rtt", "rb", "token", 2047},        // rtt_direct.cpp kTokenMax = 2048
+#endif
+#if defined(YACHTRADAR_ENABLED)
+  {"ais", "yr", "ais", 128},           // a String there; 128 is our room, aisstream's keys are 40
+#endif
+};
+// The body: the longest key, the JSON around it and some room.
+static const size_t KEYS_BODY_MAX = 2048 + 256;
+
+static const KeySpec *keySpec(const char *id) {
+  if (!id) return nullptr;
+  for (const KeySpec &k : kKeys)
+    if (!strcmp(k.id, id)) return &k;
+  return nullptr;
+}
+
+static bool keyValid(const char *v, size_t maxLen) {
+  const size_t n = v ? strlen(v) : 0;
+  if (n < 1 || n > maxLen) return false;
+  for (size_t i = 0; i < n; i++) {
+    const unsigned char c = (unsigned char)v[i];
+    if (c < 0x21 || c > 0x7E || c == '"' || c == '\\') return false;
+  }
+  return true;
+}
+
+static bool keyStored(const KeySpec &k) {
+  Preferences p;
+  bool have = false;
+  if (p.begin(k.ns, true)) {           // read-only; isKey() logs nothing for a missing key
+    have = p.isKey(k.key);
+    p.end();
+  }
+  return have;
+}
+
+static void keyTell(const KeySpec &k) {
+#if defined(FLIGHTBOARD_DIRECT_ENABLED)
+  if (!strcmp(k.id, "aero")) aeroDirectKeyChanged();
+#endif
+#if defined(RAILBOARD_DIRECT_ENABLED)
+  if (!strcmp(k.id, "rtt")) rttDirectTokenChanged();
+#endif
+#if defined(YACHTRADAR_ENABLED)
+  if (!strcmp(k.id, "ais")) yachtRadarKeyChanged();
+#endif
+}
+
+static void handleKeys() {
+  if (isPost()) {
+    if (originIsForeign()) REJECT(403, "refused: this request came from another origin");
+    JsonDocument in(&s_alloc);
+    if (!readBody(in, KEYS_BODY_MAX)) return;
+    const KeySpec *k = keySpec(in["id"] | (const char *)nullptr);
+    if (!k) REJECT(400, "id must be one of the keys this panel has");
+    const bool clear = in["clear"].is<bool>() && in["clear"].as<bool>();
+    const char *value = in["value"] | (const char *)nullptr;
+    if (clear == (value != nullptr)) REJECT(400, "send value to store a key, or clear:true to remove it");
+    const char *kind = in["kind"] | (const char *)nullptr;
+    if (kind && strcmp(k->id, "rtt")) REJECT(400, "kind is only for the rtt token");
+    if (kind && strcmp(kind, "auto") && strcmp(kind, "refresh") && strcmp(kind, "access"))
+      REJECT(400, "kind must be auto, refresh or access");
+    if (!clear && !keyValid(value, k->maxLen))
+      REJECT(400, "a key is printable ASCII without spaces, quotes or backslashes, and not too long");
+    Preferences p;
+    if (!p.begin(k->ns, false)) REJECT(500, "the settings store would not open");
+    bool ok = true;
+    if (clear) {
+      if (p.isKey(k->key)) ok = p.remove(k->key);   // remove() logs an error for a key that is not there
+      if (!strcmp(k->id, "rtt") && p.isKey("kind")) ok &= p.remove("kind");
+    } else {
+      ok = p.putString(k->key, value) == strlen(value);
+      if (ok && kind) {
+        if (!strcmp(kind, "auto")) { if (p.isKey("kind")) ok = p.remove("kind"); }
+        else ok = p.putString("kind", kind) == strlen(kind);
+      }
+      // The document's copy of the key, now that it is in NVS. The request's
+      // own copies inside WebServer are out of reach from here.
+      memset(const_cast<char *>(value), 0, strlen(value));
+    }
+    p.end();
+    keyTell(*k);                        // even after a failure: what is stored now is what counts
+    if (!ok) REJECT(500, "the settings store refused the write");
+  }
+  JsonDocument doc(&s_alloc);
+  doc["success"] = true;
+  JsonArray list = doc["keys"].to<JsonArray>();
+  for (const KeySpec &k : kKeys) {
+    JsonObject o = list.add<JsonObject>();
+    o["id"] = k.id;
+    o["stored"] = keyStored(k);
+    o["maxLen"] = (uint32_t)k.maxLen;
+    if (!strcmp(k.id, "rtt")) {
+      // Not secret: which of RTT's two tokens the owner said it is.
+      char kindBuf[12] = "";
+      Preferences p;
+      if (p.begin(k.ns, true)) {
+        if (p.isKey("kind")) p.getString("kind", kindBuf, sizeof(kindBuf));
+        p.end();
+      }
+      o["kind"] = kindBuf[0] ? kindBuf : "auto";
+    }
+  }
+  sendDoc(doc);
 }
 #endif
 
@@ -1414,6 +1561,9 @@ void panelWebBegin() {
 #endif
 #if defined(YACHTRADAR_ENABLED)
   route("/api/yachtradar", handleYachtradar);
+#endif
+#if defined(PANEL_KEYS_ENABLED)
+  route("/api/keys", handleKeys);
 #endif
 #if defined(LUA_EFFECTS_ENABLED)
   route("/api/lua", handleLua);

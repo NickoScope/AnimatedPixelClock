@@ -37,6 +37,7 @@ bool rttDirectLoop(const char *crs, rtt::Lists *out, int64_t *fetchedAt);
 void rttDirectStationChanged();        // fetch the new station now
 void rttDirectOnScreen(bool onScreen); // page up: poll every 30 s; otherwise every 5 min
 bool rttDirectHasToken();
+void rttDirectTokenChanged();          // the portal wrote or removed NVS rb/token: re-read, forget the old token
 bool rttDirectAuthRefused();           // RTT refused the stored token
 
 // Diagnostics: "DIRECT OK 200" / "DIRECT AUTH 401" / "HA ONLY", and the day's

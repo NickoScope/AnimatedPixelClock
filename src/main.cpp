@@ -1272,6 +1272,7 @@ void loop() {
   // Same gating fx34 uses on the NickoScope32 side.
   {
     static bool yrWasOn = false;
+    yachtRadarKeyPoll(httpForceYachtRadar);   // a key changed on the portal (Keys page)
     if (httpForceYachtRadar != yrWasOn) {
       if (httpForceYachtRadar) yachtRadarBegin();
       else                     yachtRadarStop();

@@ -166,6 +166,7 @@ char     s_taskCrs[4]  = "";
 
 // Loop-only.
 bool     s_tokenStored = false;
+bool     s_tokenDirty  = false;     // the portal wrote or removed the token; applied when no fetch runs
 bool     s_begun       = false;
 uint32_t s_nextAtMs    = 0;
 uint32_t s_authStepS   = 0;
@@ -683,6 +684,8 @@ void rttDirectBegin() {
 
 bool rttDirectHasToken() { return s_tokenStored; }
 
+void rttDirectTokenChanged() { s_tokenDirty = true; }
+
 bool rttDirectAuthRefused() { return s_haveOutcome && s_last.kind == KIND_REFUSED; }
 
 void rttDirectStationChanged() {
@@ -699,7 +702,36 @@ void rttDirectOnScreen(bool onScreen) {
 }
 
 bool rttDirectLoop(const char *crs, rtt::Lists *out, int64_t *fetchedAt) {
-  if (!s_begun || !s_tokenStored || !s_result) return false;
+  if (!s_begun || !s_result) return false;
+  // A token written or removed on the portal's Keys page (rttDirectTokenChanged).
+  // Applied only while no fetch runs: s_access and s_kind are the fetch's own
+  // until it ends, and a fetch in flight carries the old token. What the old
+  // token taught - an exchanged access token, its kind, a refusal and the wait
+  // it earned - is forgotten, and the new one is tried at once.
+  if (s_tokenDirty) {
+    bool busy;
+    portENTER_CRITICAL(&s_mux);
+    busy = s_running || s_ready;
+    portEXIT_CRITICAL(&s_mux);
+    if (!busy) {
+      s_tokenDirty = false;
+      Preferences p;
+      s_tokenStored = false;
+      if (p.begin(kNvsNs, true)) {
+        s_tokenStored = p.isKey("token");
+        p.end();
+      }
+      wipeAccess();
+      s_accessUntil = 0;
+      s_kind        = KIND_UNKNOWN;
+      s_authStepS   = 0;
+      s_errStreak   = 0;
+      s_haveOutcome = false;
+      s_blocked     = ST_IDLE;
+      s_nextAtMs    = millis();
+    }
+  }
+  if (!s_tokenStored) return false;
   const uint32_t nowMs = millis();
   bool handed = false;
 

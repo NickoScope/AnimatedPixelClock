@@ -606,6 +606,13 @@ change: `/api/worldclock`, `/api/flightboard`, `/api/market`, `/api/yachtradar`,
 `/api/media`, `/api/lua`, `/api/fx3d`, `/api/knob`, `/api/notify`,
 `/api/anim/*`, `/api/clips/*`, `/api/ir/*`.
 
+`/api/keys` (2.7.9) holds the services' keys - `aero` (FlightAware AeroAPI),
+`rtt` (Realtime Trains, with `kind` auto/refresh/access) and `ais`
+(aisstream.io). `GET` answers only whether each is stored; `POST
+{"id","value"}` stores one and `{"id","clear":true}` removes it. It never
+returns a key. **An agent does not write keys** unless the owner hands one over
+for that purpose, and never prints or logs one.
+
 **Do not guess payload keys.** Read the handler. Every route is registered in
 `src/web/web.cpp` or through the `route()` helper in `src/web/web_panel.cpp` -
 and grepping only for `server.on` misses half of them, which has cost two wasted

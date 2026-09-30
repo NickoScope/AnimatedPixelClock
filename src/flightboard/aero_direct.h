@@ -14,7 +14,7 @@
 // loop task starts it and takes the result.
 //
 // NVS:
-//   "aero"   key    string   the AeroAPI key, written by env:provision; never
+//   "aero"   key    string   the AeroAPI key, written by env:provision or the portal's Keys page (/api/keys); never
 //                            logged, printed, published or returned by the portal
 //   "fbuse"  u      blob     the call counters (fbs::Usage), written before each call
 //   "fbcfg"  floor, day, mon   u16  the budget; absent = the defaults
@@ -54,6 +54,7 @@ void aeroDirectBegin();                  // setup(): reads the key's presence, t
 void aeroDirectLoop(const AeroWant &w);  // loop task, every pass
 
 bool aeroDirectHasKey();                 // a key is stored: the page's source is AeroAPI, not Home Assistant
+void aeroDirectKeyChanged();             // the portal wrote or removed NVS aero/key: re-read it, forget the old key's waits
 
 // The lists for w.icao as last fetched; nullptr when not fetched since the
 // airport was selected. *ageS: seconds since that fetch.

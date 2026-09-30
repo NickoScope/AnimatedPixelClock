@@ -198,6 +198,12 @@ Once on WiFi, open the device's IP address or `http://pixelclock.local` in a bro
 - **PC monitor layout**: which metrics are visible and where, 5-row / 6-row / large
   text modes, progress bars, drag-and-drop placement on a live preview
 - **Config export/import** as JSON (includes the color palette)
+- **Keys** (Panel group): the FlightAware AeroAPI key, the Realtime Trains token and
+  the aisstream.io key the flight board, rail board and yacht radar fetch with.
+  Write-only: the portal shows whether each is stored, never the key, and the
+  settings export leaves them out. A new key is taken at the page's next fetch,
+  without a restart. The `env:provision` image still works for a board with no
+  network yet.
 - **Firmware update**: upload a `.bin` over the air
 
 ### Time servers (NTP)

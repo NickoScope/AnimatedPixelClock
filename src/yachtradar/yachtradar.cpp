@@ -93,6 +93,12 @@ static uint8_t      s_scroll   = 0;      // first table row shown
 // knob and the portal can still switch to range.
 static bool         s_bySize   = true;    // false = by range
 static String       s_key;
+// The key on the portal's Keys page (yachtRadarKeyChanged): s_key is read by
+// the stream task when it subscribes, so it is only replaced once that task is
+// gone - yachtRadarKeyPoll waits for it, then reopens if the page still wants.
+static bool         s_keyDirty = false;
+static bool         s_reopen   = false;
+static int8_t       s_keyKnown = -1;       // keyStored(): -1 not read yet
 static WebSocketsClient s_ws;             // touched only by the stream task
 
 // The websocket runs on a task of its own (wsTask, below). Pumped from loop(),
@@ -373,8 +379,8 @@ static void wsTask(void *) {
 bool yachtRadarBegin() {
   if (s_open) return !s_noKey;
   if (s_key.isEmpty()) {
-    // Read once: the key changes only by flashing the provisioning image, which
-    // reboots, and the stream task reads s_key when it subscribes.
+    // Read once, and again after the portal's Keys page changes it
+    // (yachtRadarKeyPoll): the stream task reads s_key when it subscribes.
     Preferences p;
     if (p.begin("yr", true)) {          // read-only
       // isKey first: getString() logs an error for a missing key, and the
@@ -721,21 +727,43 @@ void yachtRadarSetSortBySize(bool bySize) {
   if (bySize != s_bySize) yachtRadarToggleSort();
 }
 
-// Whether NVS holds a key. Read once and remembered: the key only changes by
-// flashing the provisioning image, which reboots. isKey() rather than
-// getString(), which logs an error for a missing key.
+// Whether NVS holds a key. Read once and remembered until the portal's Keys
+// page changes it (yachtRadarKeyChanged). isKey() rather than getString(),
+// which logs an error for a missing key.
 static bool keyStored() {
-  static int8_t known = -1;
   if (s_open) return true;                   // begin() opens only with a key
-  if (known < 0) {
-    known = 0;
+  if (s_keyKnown < 0) {
+    s_keyKnown = 0;
     Preferences p;
     if (p.begin("yr", true)) {
-      known = p.isKey("ais") ? 1 : 0;
+      s_keyKnown = p.isKey("ais") ? 1 : 0;
       p.end();
     }
   }
-  return known == 1 && !s_noKey;             // stored but empty: begin() said so
+  return s_keyKnown == 1 && !s_noKey;        // stored but empty: begin() said so
+}
+
+void yachtRadarKeyChanged() {
+  s_keyDirty = true;
+  s_keyKnown = -1;
+  if (s_open) { s_reopen = true; yachtRadarStop(); }
+}
+
+void yachtRadarKeyPoll(bool wanted) {
+  if (!s_keyDirty) return;
+  bool busy;
+  portENTER_CRITICAL(&s_taskMux);
+  busy = s_task != nullptr;
+  portEXIT_CRITICAL(&s_taskMux);
+  if (busy) return;                          // the stream task may still read s_key
+  s_keyDirty = false;
+  if (s_key.length()) memset(const_cast<char *>(s_key.c_str()), 0, s_key.length());
+  s_key = String();                          // yachtRadarBegin() reads NVS again
+  s_noKey = false;
+  s_keyKnown = -1;
+  const bool again = s_reopen && wanted;
+  s_reopen = false;
+  if (again) yachtRadarBegin();
 }
 
 void yachtRadarStatusJson(JsonObject out) {
