@@ -1,1 +1,2 @@
-267196ff3d9fd2629f83c14c4e703510b3b1cf930ea42e28c09606b99a5ea5b8  AnimatedPixelClock-waveshare-v2.7.10-Full.bin
+cda06e1411fdb8e0baaf0ff96fefe388ebb0b840fc63c75a77801c4e577c6a48  AnimatedPixelClock-waveshare-v2.7.11-Full.bin
+f65e07051d871f3976b54319c07bc1fcefd49e61b2b5c57ad66ec5bc93374024  OTA_ONLY_firmware-v2.7.11-waveshare.bin
