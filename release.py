@@ -195,6 +195,8 @@ def prepare_parts(env: str, version: str) -> dict:
     firmware = (bd / "firmware.bin").read_bytes()
     segments.append((app_offset, firmware))
     parts = dict(segments)
+    if len(parts) != len(segments):
+        raise ValueError(f"Duplicate flash offset in {env}")
     if set(parts) != {BOOTLOADER_OFFSET, PARTITIONS_OFFSET, OTA_DATA_OFFSET, FIRMWARE_OFFSET}:
         raise ValueError(f"Unexpected flash layout for {env}")
     for data in (parts[BOOTLOADER_OFFSET], firmware):
@@ -265,8 +267,8 @@ def find_old_full_bins(version: str):
     """List Full.bin files in docs/firmware/latest/ not for this version."""
     if not DOCS_LATEST.exists():
         return []
-    pats = (re.compile(r"^AnimatedPixelClock-(.+)-(v[^-]+)-(?:Full|bootloader|partitions|otadata)\.bin$"),
-            re.compile(r"^OTA_ONLY_firmware-()(v[^-]+)-.+\.bin$"))
+    pats = (re.compile(r"^AnimatedPixelClock-(.+)-(v\d+\.\d+\.\d+(?:-[A-Za-z0-9.]+)?)-(?:Full|bootloader|partitions|otadata)\.bin$"),
+            re.compile(r"^OTA_ONLY_firmware-()(v\d+\.\d+\.\d+(?:-[A-Za-z0-9.]+)?)-[^-]+\.bin$"))
     old = []
     for f in DOCS_LATEST.iterdir():
         for pat in pats:
