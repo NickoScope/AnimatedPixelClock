@@ -33,7 +33,7 @@ cd ~/twin/esp32sim && cargo build --release
 ```
 
 - **The ESP32-S3 mask ROM** comes from Espressif's esp-rom-elfs releases: `esp32s3_rev0_rom.elf` into `~/twin/rom/`.
-- **The firmware:** a new chip is written with the release in `docs/firmware/latest` (the one the flasher offers), or with `TWIN_IMAGE`. The chip's own flash file wins over any image after that, so an OTA or a flash stays.
+- **The firmware:** a new chip is written with the release in `docs/firmware/latest` (its merged Full.bin; the flasher page offers the same release in its four parts), or with `TWIN_IMAGE`. The chip's own flash file wins over any image after that, so an OTA or a flash stays.
 - **Symbols** (names in traces and crash reports): each build's `firmware.elf` goes to `~/twin/fw/<build>/`. `run` takes the one whose SHA-256 the booted app carries in its descriptor (`esp_app_desc_t.app_elf_sha256`), so a rebuild of the same version is never mistaken for it. Without a match the run goes on with addresses only and says so; `TWIN_ELF` names one by hand.
 - **eFuse:** `~/twin/efuse-opi.txt` holds one line, `0x6000703c: 00000200`. That is FLASH_TYPE = 1 (octal flash), as fused in the WROOM-2 module, from `EFUSE_RD_REPEAT_DATA3_REG` bit 9 in `soc/esp32s3/register/soc/efuse_reg.h`.
 
@@ -134,12 +134,20 @@ defaults write com.nickoscope.twinpanel port -int 8791   # другой порт
 через настоящий ROM двойника и его USB-Serial/JTAG.
 
 - **Как устроено.** `twin.py run --web PORT` при каждом запуске собирает `state/web/`: страницы
-  движка и `flasher/`. `flasher/` — копия `docs/` (index.html, flasher.js, styles.css, img/,
-  образ из `docs/firmware/latest`). В `index.html` четыре правки, каждая по якорю, который обязан
-  найтись ровно один раз:
+  движка и `flasher/`. `flasher/` — копия `docs/` (index.html, flasher.js, styles.css, img/), а в
+  `flasher/firmware/latest/` лежат части выпуска, которые пишет страница: загрузчик (0x0), таблица
+  разделов (0x8000), otadata (0xE000) и приложение `OTA_ONLY_…` (0x10000), с `VERSION` и
+  `SHA256SUMS.txt`. Имена и адреса те же, что в манифесте `flasher.js`; если `flasher.js` попросит
+  другие файлы, сборка остановится (`FLASHER_PARTS` в `twin.py`), а не отдаст странице 404. Каждая
+  часть сверяется с `SHA256SUMS.txt` выпуска и с тем же куском его Full.bin, так что прошивальщик
+  и новый чип движка получают одну и ту же прошивку. Сам Full.bin в копию не кладётся: страница
+  его больше не пишет (его 0xFF поверх NVS стирали настройки и при установке без стирания), он
+  нужен только движку для нового чипа. В `index.html` четыре правки, каждая по якорю, который
+  обязан найтись ровно один раз:
   - первым в `<head>` подключается шим `flasher/twin-serial.js`, за ним `flasher/twin-lang.js` —
     язык страниц двойника;
-  - ESP Web Tools закреплён на 10.4.0 (в `docs/` стоит `@10`);
+  - ESP Web Tools закреплён на 10.4.0: в `docs/` стоит `@10` или, с main c9acf5f, `@10.4.0`; любая
+    другая 10.x тоже заменяется на 10.4.0, другая старшая версия останавливает сборку;
   - к заголовку добавлено «Twin · » или «Двойник · », по языку;
   - сверху строка о том, чья это страница, с переключателем EN · RU и ссылкой на панель
     (`../panel.html?lang=…`).
@@ -172,7 +180,10 @@ python3 tools/twin/flasher/check_flasher.py --port 8790   # без челове�
 `flasher/selftest.html`. Самотест сверяет шим со спецификацией Web Serial и прогоняет esptool-js:
 сброс, stub, flash ID, сброс в прошивку. Flash он не пишет. Самотест можно открыть и руками,
 кнопка «Запустить» (Run).
-`--flasher-image FILE --flasher-version VER` предлагает на странице другой merged-образ.
+`--flasher-image FILE --flasher-version VER` предлагает на странице другой merged-образ: `twin.py` режет
+его на те же четыре части (длины загрузчика и приложения — по заголовкам их образов, otadata — по
+таблице разделов) и отказывается, если раскладка не та, что пишет страница.
+`check_flasher.py` проверяет и это: каждая часть из манифеста отдаётся (HTTP 200).
 
 Проверено 2026-09-29 во встроенном браузере приложения (Chromium 152), движок `nickoscope/usj`,
 `--cpi 2.45`:
@@ -182,11 +193,24 @@ python3 tools/twin/flasher/check_flasher.py --port 8790   # без челове�
   сетей была NickoTwin, итог «Device connected to the network!». В консоли прошивки:
   `WiFi Connected!`, IP 10.0.2.15, NTP. Портал ответил через проброс `--http`.
   `verify`: вне data-разделов flash совпадает с образом.
-- **B. Поверх прошивки, без стирания.** Запись и `verify` прошли. Но Wi-Fi пришлось вводить
-  заново: Full.bin закрывает NVS (0x9000–0xDFFF) байтами 0xFF, а stub пишет все байты образа.
-  LittleFS (с 0x910000) и app1 лежат вне образа и сохраняются. На плате должно быть так же:
-  это вывод из байтов образа, на плате не проверено.
+- **B. Поверх прошивки, без стирания** (тогда страница ещё писала Full.bin с 0x0). Запись и
+  `verify` прошли. Но Wi-Fi пришлось вводить заново: Full.bin закрывает NVS (0x9000–0xDFFF)
+  байтами 0xFF, а stub пишет все байты образа. LittleFS (с 0x910000) и app1 лежат вне образа и
+  сохраняются. Исправлено в main 76c5ebd: страница пишет части, см. D.
 - **C. «Logs & Console» → «Reset Device».** Сброс 0x15 без флага, прошивка стартует.
+
+Проверено 2026-10-01 на частях 2.7.13 (копия из `build_web`, движок приложения 1.3, headless Chrome
+154, ESP Web Tools 10.4.0; щелчки мышью, порт перехвачен и разобран по командам esptool):
+- **D. Поверх 2.7.11 (работала из app1), без стирания.** Ровно четыре `FLASH_DEFL_BEGIN`: 0x0 на
+  14 064 байта, 0x8000 на 3 072, 0xE000 на 8 192, 0x10000 на 2 207 520; команд стирания нет,
+  распакованные данные побайтно равны частям. После перезагрузки 2.7.13 из app0, Wi-Fi без Improv,
+  имя, эффекты FLOW и NEBULA, свой город и настройки карусели на месте; в NVS те же 183 ключа, и
+  значения совпали, кроме калибровки радио `phy/cal_*`: она привязана к MAC, а экземпляр шёл с
+  другим MAC, чем снимок. app1 и LittleFS не тронуты.
+- **E. Новый чип (весь flash 0xFF), со стиранием.** `ERASE_FLASH` и те же четыре части. 2.7.13
+  из app0, NVS по умолчанию (60 ключей), LittleFS отформатирована, Improv отвечает «готов принять
+  Wi-Fi» под именем по умолчанию. Вне NVS flash совпадает с Full.bin — тем, с чего стартует новый
+  чип движка.
 - **Чужая вкладка.** Пока порт открыт, вторая вкладка получает NetworkError, первая работает
   дальше. `panel.html` показывает «USB занят прошивальщиком».
 - **Вкладка закрыта при удержании в сбросе** (RTS=1, DTR=0). Движок отпускает чип, прошивка

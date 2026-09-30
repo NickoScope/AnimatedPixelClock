@@ -13,8 +13,10 @@ as on the panel.
       that flashes the twin over its USB-Serial/JTAG (tools/twin/flasher/); without --web the run
       is headless and as fast as the Mac allows. --fresh starts from an erased chip written with
       the image, like a new board; --blank from an erased chip with nothing on it, as it comes
-      from the factory, for the flasher to write. The flasher offers docs/firmware/latest, or
-      --flasher-image FILE (a merged image) under --flasher-version VER.
+      from the factory, for the flasher to write. The flasher offers docs/firmware/latest, in the
+      parts the page writes (bootloader, partition table, otadata, app; nothing over NVS or
+      LittleFS), or --flasher-image FILE (a merged image, cut into those parts) under
+      --flasher-version VER.
   twin.py flash IMAGE [--at OFFSET]
       write an image into the twin's flash, as `pio run -t upload` would: a full image
       (firmware-vX-waveshare.bin) at 0x0; an app image (firmware.bin, OTA_ONLY_...) at 0x10000 with
@@ -314,11 +316,37 @@ def cmd_lan_setup(a, _):
 
 
 # ---- the web flasher's copy for the twin ----------------------------------------------------------
-# ESP Web Tools pinned to the version the shim was written against (twin-serial.js); docs/index.html
-# asks unpkg for @10, whatever 10.x is current.
+# ESP Web Tools pinned to the version the shim was written against (twin-serial.js). docs/index.html
+# asks unpkg for a 10.x: @10 (whatever 10.x is current) before main c9acf5f, @10.4.0 since; the twin's
+# copy asks for this one either way (FLASHER_EDITS), and a page that moves to another major version
+# stops the build.
 EWT_VERSION = "10.4.0"
-# docs/flasher.js:15 and :38: the image is firmware/latest/AnimatedPixelClock-<firmware>-<VERSION>-Full.bin
+EWT_SCRIPT = re.compile(r"https://unpkg\.com/esp-web-tools@10(?:\.\d+){0,2}/")
+# docs/flasher.js BOARDS.waveshare.firmware: the <firmware> in the names of the files the page asks for
 FIRMWARE_ID = "waveshare"
+# The parts the page writes, each at its own offset and nothing between them (docs/flasher.js
+# buildManifest, since main 76c5ebd): the bootloader, the partition table, the OTA data that boots the
+# app written, and the app itself, the OTA image. release.py puts them in docs/firmware/latest
+# (write_flasher_parts, copy_ota_bin) beside the merged Full.bin, which the page no longer writes:
+# its 0xFF over NVS (0x9000-0xDFFF) wiped the settings on an install without erase.
+# Each: the offset, the file's name in firmware/latest/, and the words of its line in buildManifest.
+FLASHER_PARTS = (
+    (0x0, "AnimatedPixelClock-{fid}-{version}-bootloader.bin", "{ path: part('bootloader'), offset: 0x0 }"),
+    (0x8000, "AnimatedPixelClock-{fid}-{version}-partitions.bin", "{ path: part('partitions'), offset: 0x8000 }"),
+    (0xE000, "AnimatedPixelClock-{fid}-{version}-otadata.bin", "{ path: part('otadata'), offset: 0xE000 }"),
+    (0x10000, "OTA_ONLY_firmware-{version}-{fid}.bin",
+     "{ path: url(`OTA_ONLY_firmware-${version}-${board.firmware}.bin`), offset: 0x10000 }"),
+)
+# What must stand in docs/flasher.js, once each, for FLASHER_PARTS to be the files it asks for: the
+# board's firmware id, the directory, how part() names the first three, and each part's line. A
+# flasher.js that asks for other files stops the build (flasher_js_check), as FLASHER_EDITS does for
+# index.html, instead of a copy whose page gets 404 for a part.
+FLASHER_JS_ANCHORS = (
+    f"firmware: '{FIRMWARE_ID}',",
+    "const url = (name) => new URL(`firmware/latest/${name}`, location.href).href;",
+    "const part = (label) => url(`AnimatedPixelClock-${board.firmware}-${version}-${label}.bin`);",
+    *(line for _, _, line in FLASHER_PARTS),
+)
 GENERATED = ".twin-generated"
 # The twin's own files beside the public page, from tools/twin/flasher/
 FLASHER_FILES = ("twin-serial.js", "twin-lang.js", "selftest.html")
@@ -387,14 +415,15 @@ def _banner() -> str:
 
 
 BANNER = _banner()
-# (anchor, replacement): each anchor must occur exactly once in docs/index.html, so a change to the
-# public page that moves one stops the build instead of leaving a half-made copy.
+# (anchor, replacement): each anchor - a string, or a pattern - must occur exactly once in
+# docs/index.html, so a change to the public page that moves one stops the build instead of leaving a
+# half-made copy.
 FLASHER_EDITS = (
     # first in <head>, a classic script: it must run before ESP Web Tools' module (twin-serial.js);
     # then the language of the twin's note and chooser (twin-lang.js)
     ('<meta charset="utf-8">', '<meta charset="utf-8">\n  <script src="twin-serial.js"></script>\n'
                                '  <script src="twin-lang.js"></script>'),
-    ("https://unpkg.com/esp-web-tools@10/", f"https://unpkg.com/esp-web-tools@{EWT_VERSION}/"),
+    (EWT_SCRIPT, f"https://unpkg.com/esp-web-tools@{EWT_VERSION}/"),
     # English until the note's script puts the title in the page's language
     ("<title>", "<title>" + BANNER_TEXT["en"]["title"]),
     ("<body>", "<body>\n" + BANNER),
@@ -404,28 +433,122 @@ FLASHER_EDITS = (
 def flasher_index(html: str) -> str:
     """docs/index.html as the twin serves it: the navigator.serial shim, the twin's language, ESP Web
     Tools pinned, a title and a note that say whose page it is (the note in English or Russian, with
-    its EN · RU switch). Nothing else changes; flasher.js is copied as is."""
+    its EN · RU switch). Nothing else changes; flasher.js is copied as is (flasher_js_check)."""
     for old, new in FLASHER_EDITS:
-        n = html.count(old)
+        if isinstance(old, re.Pattern):
+            html, n = old.subn(lambda _m: new, html)
+            what = old.pattern
+        else:
+            n = html.count(old)
+            html = html.replace(old, new)
+            what = old
         if n != 1:
-            raise ValueError(f"docs/index.html: {old!r} occurs {n} times, not once; the twin's copy of the page "
+            raise ValueError(f"docs/index.html: {what!r} occurs {n} times, not once; the twin's copy of the page "
                              "would be wrong, so update FLASHER_EDITS in tools/twin/twin.py")
-        html = html.replace(old, new)
     return html
 
 
+def flasher_js_check(js: str) -> None:
+    """docs/flasher.js must ask for the files FLASHER_PARTS names, at their offsets, and for nothing else."""
+    for anchor in FLASHER_JS_ANCHORS:
+        n = js.count(anchor)
+        if n != 1:
+            raise ValueError(f"docs/flasher.js: {anchor!r} occurs {n} times, not once; the page would ask for files "
+                             "the twin's copy does not have, so update FLASHER_PARTS in tools/twin/twin.py")
+    n = js.count("offset: 0x")
+    if n != len(FLASHER_PARTS):
+        raise ValueError(f"docs/flasher.js: {n} parts with an offset, FLASHER_PARTS has {len(FLASHER_PARTS)}; "
+                         "update FLASHER_PARTS in tools/twin/twin.py")
+
+
+def image_length(data: bytes, at: int = 0):
+    """The length of the ESP32-S3 image (a bootloader or an app) at AT in DATA, read the way esptool 4.9.0
+    reads one (esptool/bin_image.py, ESP32FirmwareImage.__init__ and read_checksum): the 8-byte header
+    (magic 0xE9, the number of segments), the 16-byte extended header (chip id at +12, 9 for the ESP32-S3:
+    targets/esp32s3.py IMAGE_CHIP_ID; its last byte 1 when a SHA-256 digest follows), each segment (an
+    8-byte header - load address, length - and its bytes), the padding and the checksum byte that end on
+    a 16-byte boundary (align_file_position), then the 32-byte digest. None if DATA has no such image at
+    AT or it runs past DATA's end."""
+    if len(data) < at + 24 or data[at] != 0xE9 or int.from_bytes(data[at + 12:at + 14], "little") != 9:
+        return None
+    pos = at + 24
+    for _ in range(data[at + 1]):
+        if pos + 8 > len(data):
+            return None
+        pos += 8 + int.from_bytes(data[pos + 4:pos + 8], "little")
+    pos += 16 - (pos - at) % 16
+    if data[at + 23] == 1:
+        pos += 32
+    return pos - at if pos <= len(data) else None
+
+
+def merged_parts(img: bytes, what: str) -> list:
+    """The parts of the merged image IMG (named WHAT in messages), in FLASHER_PARTS' order, as release.py
+    writes them from the build: the bootloader to its image's end; the partition table, 0xC00 bytes
+    (ESP_PARTITION_TABLE_MAX_LEN, the size of the release's partitions.bin); the otadata partition; the
+    app to its image's end. release.py's Full.bin is these four at their offsets with 0xFF between them
+    (merge_segments), so they come back byte for byte. Exits when IMG is laid out otherwise than the
+    page writes it: the page's offsets are fixed."""
+    boot = image_length(img, 0)
+    table = partitions(img)
+    ota = next((p for p in table if p[0] == 1 and p[1] == 0), None)
+    apps = app_partitions(table)
+    app = image_length(img, APP0)
+    if boot is None or boot > 0x8000:
+        sys.exit(f"{what}: no ESP32-S3 bootloader image at 0x0 that ends before the partition table at 0x8000")
+    if ota is None or (ota[2], ota[3]) != (0xE000, 0x2000):
+        sys.exit(f"{what}: no otadata partition of 8 KiB at 0xe000, where the page writes the OTA data")
+    if not apps or apps[0][2] != APP0:
+        sys.exit(f"{what}: no ota_0 partition at {APP0:#x}, where the page writes the app")
+    if app is None or app > apps[0][3]:
+        sys.exit(f"{what}: no whole ESP32-S3 app image at {APP0:#x} that fits {apps[0][4]}")
+    return [img[:boot], img[0x8000:0x8C00], img[0xE000:0x10000], img[APP0:APP0 + app]]
+
+
+def release_sums(latest: str) -> dict:
+    """{name: sha256 hex} from LATEST/SHA256SUMS.txt (release.py write_checksums: `<hex>  <name>`)."""
+    path = os.path.join(latest, "SHA256SUMS.txt")
+    if not os.path.exists(path):
+        sys.exit(f"{path} is missing: the release's files cannot be checked")
+    sums = {}
+    with open(path) as f:
+        for line in f:
+            if line.strip():
+                h, name = line.split(None, 1)
+                sums[name.strip().lstrip("*")] = h.lower()
+    return sums
+
+
+def checked(latest: str, name: str, sums: dict) -> bytes:
+    """LATEST/NAME, whose SHA-256 must be the one SHA256SUMS.txt gives it."""
+    import hashlib
+    path = os.path.join(latest, name)
+    if not os.path.exists(path):
+        sys.exit(f"{path} is missing: docs/firmware/latest does not hold the release the page offers")
+    with open(path, "rb") as f:
+        data = f.read()
+    if name not in sums:
+        sys.exit(f"{path}: not in SHA256SUMS.txt")
+    if hashlib.sha256(data).hexdigest() != sums[name]:
+        sys.exit(f"{path}: not the checksum in SHA256SUMS.txt")
+    return data
+
+
 def flasher_firmware(image=None, version=None):
-    """(image, version) the twin's flasher offers: the release in docs/firmware/latest, or IMAGE under
-    VERSION. The page writes it at 0x0 (docs/flasher.js:53), so it has to be a merged image."""
+    """(image, version): the merged image of what the twin's flasher offers - the release in
+    docs/firmware/latest (its Full.bin, checked against SHA256SUMS.txt), or IMAGE under VERSION. A new
+    chip starts from it (run, --flash-image); the page writes it in parts (flasher_parts)."""
     if image is None:
         if version is not None:
             sys.exit("--flasher-version goes with --flasher-image")
         latest = os.path.join(DOCS, "firmware", "latest")
         with open(os.path.join(latest, "VERSION")) as f:
             version = f.read().strip()
-        image = os.path.join(latest, f"AnimatedPixelClock-{FIRMWARE_ID}-{version}-Full.bin")
+        name = f"AnimatedPixelClock-{FIRMWARE_ID}-{version}-Full.bin"
+        image = os.path.join(latest, name)
         if not os.path.exists(image):
             sys.exit(f"{image} is missing: docs/firmware/latest has VERSION {version} but not its image")
+        checked(latest, name, release_sums(latest))
         return image, version
     if not version:
         sys.exit("--flasher-image needs --flasher-version (the name the page shows and builds the file name from)")
@@ -434,17 +557,44 @@ def flasher_firmware(image=None, version=None):
     with open(image, "rb") as f:
         head = f.read(0x8002)
     if head[:1] != b"\xe9" or head[0x8000:0x8002] != b"\xaa\x50":
-        sys.exit(f"{image}: not a merged image (bootloader at 0x0, partition table at 0x8000); the page writes it at 0x0")
+        sys.exit(f"{image}: not a merged image (bootloader at 0x0, partition table at 0x8000); the page's parts "
+                 "are cut from one")
     return image, version
+
+
+def flasher_parts(image=None, version=None):
+    """(version, [(name, bytes)]): the files the twin's flasher page writes (FLASHER_PARTS), in its order.
+    The release: docs/firmware/latest's own part files, each checked against SHA256SUMS.txt and against
+    the same part cut from the release's Full.bin (merged_parts), so the page writes byte for byte what
+    the public flasher writes and a new chip of the engine (--flash-image) starts from the same firmware.
+    IMAGE: a merged image under VERSION, cut into its parts."""
+    release = image is None
+    image, version = flasher_firmware(image, version)
+    with open(image, "rb") as f:
+        cut = merged_parts(f.read(), image)
+    names = [name.format(fid=FIRMWARE_ID, version=version) for _, name, _ in FLASHER_PARTS]
+    if release:
+        latest = os.path.dirname(image)
+        sums = release_sums(latest)
+        for (offset, _, _), name, part in zip(FLASHER_PARTS, names, cut):
+            if checked(latest, name, sums) != part:
+                sys.exit(f"{os.path.join(latest, name)} is not the part at {offset:#x} of {image}: the release's files "
+                         "disagree, so the page and a new chip would get different firmware")
+    return version, list(zip(names, cut))
 
 
 def build_web(dest, image=None, version=None):
     """Make DEST: the engine's web/ (panel.html and the rest), screens.json beside panel.html (SCREENS),
-    and flasher/ with the page from docs/ (flasher_index), flasher.js, styles.css, img/, the twin's own
-    files (FLASHER_FILES: the shim, the language, the self-test page) and the firmware in
-    firmware/latest/. Made again on every run; DEST must be absent or made by this function.
-    Returns the firmware version offered."""
-    image, version = flasher_firmware(image, version)
+    and flasher/ with the page from docs/ (flasher_index), flasher.js (flasher_js_check), styles.css,
+    img/, the twin's own files (FLASHER_FILES: the shim, the language, the self-test page) and in
+    firmware/latest/ the parts the page writes (flasher_parts), VERSION and SHA256SUMS.txt of the parts.
+    Everything is read and checked before DEST is touched. Made again on every run; DEST must be absent
+    or made by this function. Returns the firmware version offered."""
+    version, parts = flasher_parts(image, version)
+    with open(os.path.join(DOCS, "index.html"), encoding="utf-8") as f:
+        page = flasher_index(f.read())
+    with open(os.path.join(DOCS, "flasher.js"), encoding="utf-8") as f:
+        flasher_js_check(f.read())
     if os.path.lexists(dest):
         if not os.path.exists(os.path.join(dest, GENERATED)):
             sys.exit(f"{dest} exists and was not made by twin.py; move it away (it is rebuilt on every run)")
@@ -456,8 +606,6 @@ def build_web(dest, image=None, version=None):
     fl = os.path.join(dest, "flasher")
     fw = os.path.join(fl, "firmware", "latest")
     os.makedirs(fw)
-    with open(os.path.join(DOCS, "index.html"), encoding="utf-8") as f:
-        page = flasher_index(f.read())
     with open(os.path.join(fl, "index.html"), "w", encoding="utf-8") as f:
         f.write(page)
     for name in ("flasher.js", "styles.css"):
@@ -465,9 +613,14 @@ def build_web(dest, image=None, version=None):
     shutil.copytree(os.path.join(DOCS, "img"), os.path.join(fl, "img"))
     for name in FLASHER_FILES:
         shutil.copy2(os.path.join(FLASHER_SRC, name), fl)
-    shutil.copy2(image, os.path.join(fw, f"AnimatedPixelClock-{FIRMWARE_ID}-{version}-Full.bin"))
+    import hashlib
+    for name, data in parts:
+        with open(os.path.join(fw, name), "wb") as f:
+            f.write(data)
     with open(os.path.join(fw, "VERSION"), "w") as f:
         f.write(version + "\n")
+    with open(os.path.join(fw, "SHA256SUMS.txt"), "w") as f:     # as release.py writes it: sorted, LF
+        f.write("".join(f"{hashlib.sha256(data).hexdigest()}  {name}\n" for name, data in sorted(parts)))
     return version
 
 
@@ -664,7 +817,8 @@ def main():
                    "slowest on text; validate.py: 3 held-out effects within about 16%%); 1 = the engine's full speed")
     r.add_argument("--fresh", action="store_true", help="a new chip written with the image")
     r.add_argument("--blank", action="store_true", help="a new chip with nothing on it, for the web flasher")
-    r.add_argument("--flasher-image", help="with --web: the merged image the flasher offers (default docs/firmware/latest)")
+    r.add_argument("--flasher-image", help="with --web: a merged image the flasher offers, cut into the parts the page "
+                   "writes (default: the release's parts in docs/firmware/latest)")
     r.add_argument("--flasher-version", help="with --flasher-image: its version, as the page shows it")
     r.add_argument("--provision", action="store_true", help="send the Wi-Fi pair over Improv at boot")
     r.add_argument("--http", type=int, default=8080, help="the twin's port 80 on 127.0.0.1 (default 8080)")

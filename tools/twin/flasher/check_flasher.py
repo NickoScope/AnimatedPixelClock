@@ -7,7 +7,8 @@ protocol, standard library only:
 
   1. the page: /flasher/index.html?twin=auto - navigator.serial is the shim, ESP Web Tools 10.4.0
      renders its install button (not the "unsupported" or "not allowed" slot), flasher.js shows the
-     firmware version, and nothing throws;
+     firmware version, every part its manifest names (bootloader, partition table, otadata, app) is
+     served, and nothing throws;
   2. the port: /flasher/selftest.html?twin=auto&run=1 - the shim against the Web Serial draft, then
      esptool-js 0.6.0 (the one inside ESP Web Tools 10.4.0) through it: reset into download mode,
      stub, flash ID, the hard reset ESP Web Tools does after flashing. Nothing is written to flash;
@@ -197,6 +198,18 @@ def page(c, base):
     check("page: ESP Web Tools renders the install button (slot 'activate')", slot == "activate", f"slots: {slot}")
     ewt = c.eval("[...document.scripts].map(s => s.src).filter(s => s.includes('esp-web-tools')).join(' ')")
     check("page: ESP Web Tools pinned to 10.4.0", "esp-web-tools@10.4.0/" in (ewt or ""), ewt)
+    # Every file the manifest names is served (twin.py build_web puts the release's parts there): a missing
+    # part would only show as a failed install, after the person has chosen the port and the erase.
+    parts = c.eval("""(async () => { const b = document.querySelector('esp-web-install-button');
+        const m = b && b.getAttribute('manifest'); if (!m) return null;
+        const man = await (await fetch(m)).json(); const out = [];
+        for (const p of man.builds[0].parts) {
+          const r = await fetch(p.path, { cache: 'no-store' }); const n = r.ok ? (await r.arrayBuffer()).byteLength : 0;
+          out.push({ file: p.path.split('/').pop(), offset: '0x' + p.offset.toString(16), status: r.status, bytes: n });
+        }
+        return out; })()""", timeout=60) if slot == "activate" else None
+    check("page: every part of the manifest is served", bool(parts) and all(p["status"] == 200 and p["bytes"] for p in parts),
+          "; ".join(f"{p['offset']} {p['file']} {p['status']} {p['bytes']} B" for p in parts or []))
     time.sleep(1.0)
     bad = c.problems(since)
     check("page: no exceptions or console errors", not bad, "; ".join(bad))

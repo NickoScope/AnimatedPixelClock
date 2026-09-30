@@ -13,6 +13,7 @@ import io
 import json
 import os
 import re
+import shutil
 import sys
 import tempfile
 import unittest
@@ -247,24 +248,70 @@ def tree_digest(root):
     return out
 
 
+LATEST = os.path.join(T.DOCS, "firmware", "latest")
+
+
+def esp_image(segments, digest=True, chip=9):
+    """An ESP32 image as esptool 4.9.0 writes one (bin_image.py ESP32FirmwareImage.save): the header
+    (magic, segment count, flash mode, size/freq, entry), the extended header (WP pin, drive settings,
+    chip id, revisions, reserved, the digest flag), the segments, padding with the checksum byte in the
+    last of 16 (align_file_position), and the SHA-256 digest of all that."""
+    out = bytearray(b"\xe9" + bytes([len(segments), 2, 0x2F]) + (0x40375000).to_bytes(4, "little"))
+    out += bytes([0xEE, 0, 0, 0]) + chip.to_bytes(2, "little") + b"\0" * 9 + bytes([1 if digest else 0])
+    checksum = 0xEF
+    for addr, data in segments:
+        out += addr.to_bytes(4, "little") + len(data).to_bytes(4, "little") + data
+        for b in data:
+            checksum ^= b
+    out += b"\0" * (15 - len(out) % 16) + bytes([checksum])
+    if digest:
+        out += hashlib.sha256(out).digest()
+    return bytes(out)
+
+
+def merged(boot, table, ota, app, app_at=0x10000):
+    """A merged image as release.py merge_segments makes one: the parts at their offsets, 0xFF between."""
+    img = bytearray(b"\xff" * (app_at + len(app)))
+    for at, part in ((0, boot), (0x8000, table), (0xE000, ota), (app_at, app)):
+        img[at:at + len(part)] = part
+    return bytes(img)
+
+
 class TwinFlasherPage(unittest.TestCase):
     """The twin's copy of the web flasher (twin.py build_web): docs/ is only read."""
 
+    # docs/index.html since main c9acf5f: ESP Web Tools pinned to 10.4.0 (before it: @10/)
     PAGE = ('<!doctype html>\n<html>\n<head>\n  <meta charset="utf-8">\n  <title>Flasher</title>\n'
-            '  <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>\n'
+            '  <script type="module" src="https://unpkg.com/esp-web-tools@10.4.0/dist/web/install-button.js?module"></script>\n'
             '</head>\n<body>\n<p>x</p>\n</body>\n</html>\n')
+    BOOT = esp_image([(0x403C9000, b"boot" * 1000), (0x3FCE3000, b"data" * 17)])
+    APP_IMAGE = esp_image([(0x3C000020, APP[0x20:0x120]), (0x42000020, b"text" * 5000)])
+    PARTS = (BOOT, PARTITIONS.ljust(0xC00, b"\xff"), T.BOOT_APP0, APP_IMAGE)
 
     def test_the_four_edits(self):
         out = T.flasher_index(self.PAGE)
         self.assertIn('<meta charset="utf-8">\n  <script src="twin-serial.js"></script>\n'
                       '  <script src="twin-lang.js"></script>', out)
         self.assertIn("esp-web-tools@10.4.0/dist/web/install-button.js", out)
-        self.assertNotIn("esp-web-tools@10/", out)
+        self.assertEqual(out.count("esp-web-tools@"), 1)
         self.assertIn("<title>Twin · Flasher</title>", out)          # English until the note's script runs
         self.assertIn("<body>\n" + T.BANNER, out)
         # the shim and the language are classic scripts ahead of the ESP Web Tools module
         self.assertLess(out.index('src="twin-serial.js"'), out.index('type="module"'))
         self.assertLess(out.index('src="twin-lang.js"'), out.index('type="module"'))
+
+    def test_esp_web_tools_is_the_shims_whatever_10_x_the_page_asks_for(self):
+        # @10/ before main c9acf5f, @10.4.0/ since; another 10.x as well: the shim is checked against 10.4.0
+        for asked in ("@10/", "@10.4.0/", "@10.5/", "@10.12.3/"):
+            out = T.flasher_index(self.PAGE.replace("@10.4.0/", asked))
+            self.assertIn("https://unpkg.com/esp-web-tools@10.4.0/dist/web/install-button.js?module", out)
+            self.assertEqual(out.count("esp-web-tools@"), 1)
+        # another major version, a version that is not one, two scripts: the build stops
+        for asked in ("@11/", "@11.0.0/", "@1/", "@10.4.0.1/", "@latest/", "@10.4.0-beta/"):
+            with self.assertRaises(ValueError, msg=asked):
+                T.flasher_index(self.PAGE.replace("@10.4.0/", asked))
+        with self.assertRaises(ValueError):
+            T.flasher_index(self.PAGE.replace("</head>", '<script src="https://unpkg.com/esp-web-tools@10/x.js"></script></head>'))
 
     def test_the_note_speaks_both_languages(self):
         en, ru = T.BANNER_TEXT["en"], T.BANNER_TEXT["ru"]
@@ -287,7 +334,10 @@ class TwinFlasherPage(unittest.TestCase):
         # no anchor of a later edit inside an earlier replacement
         for i, (_, new) in enumerate(T.FLASHER_EDITS):
             for old, _ in T.FLASHER_EDITS[i + 1:]:
-                self.assertNotIn(old, new)
+                if isinstance(old, re.Pattern):
+                    self.assertIsNone(old.search(new))
+                else:
+                    self.assertNotIn(old, new)
 
     def test_the_chooser_names_what_the_note_names(self):
         with open(os.path.join(T.FLASHER_SRC, "twin-serial.js"), encoding="utf-8") as f:
@@ -301,7 +351,7 @@ class TwinFlasherPage(unittest.TestCase):
 
     def test_an_anchor_missing_or_twice_stops_the_build(self):
         for page in (self.PAGE.replace("<title>", "<title lang=en>"),
-                     self.PAGE.replace("@10/", "@11/"),
+                     self.PAGE.replace("@10.4.0/", "@11.0.0/"),
                      self.PAGE.replace("<body>", "<body><body>"),
                      self.PAGE + '<meta charset="utf-8">'):
             with self.assertRaises(ValueError):
@@ -342,10 +392,19 @@ class TwinFlasherPage(unittest.TestCase):
             for name in ("twin-serial.js", "twin-lang.js", "selftest.html"):
                 self.assertEqual(get(os.path.join(fl, name)), get(os.path.join(T.FLASHER_SRC, name)))
             self.assertEqual(tree_digest(os.path.join(fl, "img")), tree_digest(os.path.join(T.DOCS, "img")))
-            bin_name = f"AnimatedPixelClock-{T.FIRMWARE_ID}-{version}-Full.bin"
-            self.assertEqual(get(os.path.join(fl, "firmware", "latest", bin_name)),
-                             get(os.path.join(T.DOCS, "firmware", "latest", bin_name)))
-            self.assertEqual(get(os.path.join(fl, "firmware", "latest", "VERSION")).decode().strip(), version)
+            fw = os.path.join(fl, "firmware", "latest")
+            names = [f"AnimatedPixelClock-waveshare-{version}-bootloader.bin", f"AnimatedPixelClock-waveshare-{version}-partitions.bin",
+                     f"AnimatedPixelClock-waveshare-{version}-otadata.bin", f"OTA_ONLY_firmware-{version}-waveshare.bin"]
+            # the files the page asks for (docs/flasher.js buildManifest), as the release has them; no Full.bin
+            self.assertEqual(sorted(os.listdir(fw)), sorted(names + ["SHA256SUMS.txt", "VERSION"]))
+            for name in names:
+                self.assertEqual(get(os.path.join(fw, name)), get(os.path.join(LATEST, name)), name)
+            sums = dict(reversed(line.split("  ")) for line in get(os.path.join(fw, "SHA256SUMS.txt")).decode().splitlines())
+            self.assertEqual(sorted(sums), sorted(names))
+            release = T.release_sums(LATEST)
+            for name in names:
+                self.assertEqual(sums[name], release[name])
+            self.assertEqual(get(os.path.join(fw, "VERSION")).decode().strip(), version)
             self.assertEqual(get(os.path.join(fl, "index.html")).decode("utf-8"), T.flasher_index(get(DOCS_INDEX).decode("utf-8")))
             self.assertEqual(get(os.path.join(dest, "screens.json")), get(T.SCREENS))   # beside panel.html
 
@@ -360,24 +419,121 @@ class TwinFlasherPage(unittest.TestCase):
 
     def test_another_image(self):
         with tempfile.TemporaryDirectory() as d:
-            img = bytearray(b"\xff" * 0x9000)
-            img[0] = 0xE9
-            img[0x8000:0x8000 + len(TABLE)] = TABLE
+            img = merged(*self.PARTS)
             good = os.path.join(d, "merged.bin")
-            put(good, bytes(img))
+            put(good, img)
             self.assertEqual(T.flasher_firmware(good, "v9.9.9-test"), (good, "v9.9.9-test"))
             dest = os.path.join(d, "web")
             with mock.patch.object(T, "ENGINE", self.make_engine(d)):
                 T.build_web(dest, good, "v9.9.9-test")
             self.assertEqual(get(os.path.join(dest, "screens.json")), get(T.SCREENS))
             latest = os.path.join(dest, "flasher", "firmware", "latest")
-            self.assertEqual(get(os.path.join(latest, "AnimatedPixelClock-waveshare-v9.9.9-test-Full.bin")), bytes(img))
+            names = ["AnimatedPixelClock-waveshare-v9.9.9-test-bootloader.bin", "AnimatedPixelClock-waveshare-v9.9.9-test-partitions.bin",
+                     "AnimatedPixelClock-waveshare-v9.9.9-test-otadata.bin", "OTA_ONLY_firmware-v9.9.9-test-waveshare.bin"]
+            self.assertEqual(sorted(os.listdir(latest)), sorted(names + ["SHA256SUMS.txt", "VERSION"]))
+            for name, part in zip(names, self.PARTS):
+                self.assertEqual(get(os.path.join(latest, name)), part, name)
             self.assertEqual(get(os.path.join(latest, "VERSION")), b"v9.9.9-test\n")
+            self.assertIn(f"{hashlib.sha256(self.APP_IMAGE).hexdigest()}  OTA_ONLY_firmware-v9.9.9-test-waveshare.bin\n",
+                          get(os.path.join(latest, "SHA256SUMS.txt")).decode())
             app = os.path.join(d, "firmware.bin")
             put(app, APP)
             for image, version in ((good, None), (good, "v1/../x"), (good, "v 1"), (app, "v1"), (None, "v1")):
                 with self.assertRaises(SystemExit):
                     T.flasher_firmware(image, version)
+
+    def test_image_length_is_esptools(self):
+        # the checksum byte closes a 16-byte block, a whole block of padding when the segments end on one
+        for n in range(0, 40):
+            for digest in (True, False):
+                image = esp_image([(0x40370000, bytes(range(n % 256)) * 1)] * 2, digest=digest)
+                self.assertEqual(T.image_length(image + b"\xff" * 64), len(image), (n, digest))
+                self.assertEqual(len(image) % 16, 0)
+                self.assertIsNone(T.image_length(image[:-1]))                   # runs past the end
+        self.assertEqual(T.image_length(b"\xff" * 16 + self.APP_IMAGE, 16), len(self.APP_IMAGE))
+        self.assertIsNone(T.image_length(esp_image([(0, b"x")], chip=0)))     # an ESP32, not an ESP32-S3
+        self.assertIsNone(T.image_length(APP))                                  # no chip id
+        self.assertIsNone(T.image_length(b"\xff" * 64))
+
+    def test_merged_parts_refuses_another_layout(self):
+        self.assertEqual(T.merged_parts(merged(*self.PARTS), "x"), list(self.PARTS))
+        other_ota = TABLE.replace((0xE000).to_bytes(4, "little"), (0xD000).to_bytes(4, "little"))
+        big_boot = esp_image([(0x403C9000, b"b" * 0x8000)])
+        for img in (merged(self.PARTS[0], other_ota, *self.PARTS[2:]),              # otadata elsewhere
+                    merged(b"\xe9" + b"\0" * 100, *self.PARTS[1:]),               # no bootloader image
+                    merged(big_boot, *self.PARTS[1:])[:0x8000] + merged(*self.PARTS)[0x8000:],   # into the table
+                    merged(*self.PARTS)[:-1],                                         # the app cut short
+                    merged(*self.PARTS[:3], esp_image([(0, b"a" * 0x480001)]))):      # bigger than app0
+            with self.assertRaises(SystemExit):
+                T.merged_parts(img, "x")
+
+    @unittest.skipUnless(os.path.exists(os.path.join(LATEST, "VERSION")), "no docs/firmware/latest")
+    def test_the_release_parts_are_its_full_image_cut(self):
+        # what the page writes (the release's part files) is what a new chip of the engine starts from
+        version = get(os.path.join(LATEST, "VERSION")).decode().strip()
+        full = get(os.path.join(LATEST, f"AnimatedPixelClock-waveshare-{version}-Full.bin"))
+        v, parts = T.flasher_parts()
+        self.assertEqual(v, version)
+        self.assertEqual([p[0] for p in T.FLASHER_PARTS], [0x0, 0x8000, 0xE000, T.APP0])
+        for (offset, _, _), (name, data) in zip(T.FLASHER_PARTS, parts):
+            self.assertEqual(data, get(os.path.join(LATEST, name)), name)
+            self.assertEqual(full[offset:offset + len(data)], data, name)
+        # and nothing else of Full.bin is lost: between the parts it is blank
+        covered = bytearray(len(full))
+        for (offset, _, _), (_, data) in zip(T.FLASHER_PARTS, parts):
+            covered[offset:offset + len(data)] = b"\1" * len(data)
+        self.assertEqual({b for b, c in zip(full, covered) if not c}, {0xFF})
+
+    @unittest.skipUnless(os.path.exists(os.path.join(LATEST, "VERSION")), "no docs/firmware/latest")
+    def test_a_release_file_not_its_checksum_stops_the_build_before_the_copy_changes(self):
+        with tempfile.TemporaryDirectory() as d:
+            docs = os.path.join(d, "docs")
+            shutil.copytree(T.DOCS, docs, ignore=shutil.ignore_patterns("oceanarium", "*.md", "*.svg"))
+            latest = os.path.join(docs, "firmware", "latest")
+            version = get(os.path.join(latest, "VERSION")).decode().strip()
+            dest = os.path.join(d, "web")
+            with mock.patch.object(T, "DOCS", docs), mock.patch.object(T, "ENGINE", self.make_engine(d)):
+                T.build_web(dest)
+                before = tree_digest(dest)
+                ota = os.path.join(latest, f"AnimatedPixelClock-waveshare-{version}-otadata.bin")
+                good = get(ota)
+                bad = bytearray(good)
+                bad[5] ^= 1
+                put(ota, bytes(bad))
+                with self.assertRaises(SystemExit) as e:                    # not its checksum
+                    T.build_web(dest)
+                self.assertIn("not the checksum in SHA256SUMS.txt", str(e.exception.code))
+                sums = get(os.path.join(latest, "SHA256SUMS.txt")).decode()
+                put(os.path.join(latest, "SHA256SUMS.txt"),
+                    sums.replace(hashlib.sha256(good).hexdigest(), hashlib.sha256(bytes(bad)).hexdigest()))
+                with self.assertRaises(SystemExit) as e:                    # its checksum, not Full.bin's part
+                    T.build_web(dest)
+                self.assertIn("the release's files disagree", str(e.exception.code))
+                put(os.path.join(latest, "SHA256SUMS.txt"), sums)
+                put(ota, good)
+                os.remove(os.path.join(latest, f"OTA_ONLY_firmware-{version}-waveshare.bin"))
+                with self.assertRaises(SystemExit) as e:                    # a part missing
+                    T.build_web(dest)
+                self.assertIn("is missing", str(e.exception.code))
+                self.assertEqual(tree_digest(dest), before)                 # the copy made before is untouched
+                full = os.path.join(latest, f"AnimatedPixelClock-waveshare-{version}-Full.bin")
+                put(full, get(full)[:-1] + b"\0")
+                with self.assertRaises(SystemExit):                         # a new chip's image: its checksum too
+                    T.flasher_firmware()
+
+    def test_flasher_js_asks_for_the_parts_the_twin_serves(self):
+        js = get(os.path.join(T.DOCS, "flasher.js")).decode("utf-8")
+        T.flasher_js_check(js)
+        for changed in (js.replace("part('otadata')", "part('ota_data')"),                       # another name
+                        js.replace("offset: 0xE000", "offset: 0xD000"),                          # another offset
+                        js.replace("{ path: part('otadata'), offset: 0xE000 },", ""),            # a part fewer
+                        js.replace("{ path: part('bootloader'), offset: 0x0 },",                 # a part more
+                                   "{ path: part('bootloader'), offset: 0x0 },\n{ path: part('nvs'), offset: 0x9000 },"),
+                        js.replace("firmware: 'waveshare',", "firmware: 'waveshare-s3',"),        # another firmware id
+                        js.replace("-${label}.bin", "_${label}.bin"),                              # names made otherwise
+                        js.replace("`firmware/latest/${name}`", "`firmware/${name}`")):           # another directory
+            with self.assertRaises(ValueError):
+                T.flasher_js_check(changed)
 
     def run_args(self, d, **kw):
         flash = os.path.join(d, "flash.bin")

@@ -8,7 +8,11 @@
 # Everything the twin needs goes inside the bundle (Contents/Resources): the esp32sim engine, the
 # ESP32-S3 mask ROM, the eFuse word, the firmware release of docs/firmware/latest and the web pages
 # (the engine's panel page, the project's web flasher with the twin's shim, as twin.py build_web makes
-# them). Build-time inputs, as tools/twin/README.md sets them up: the engine checkout (TWIN_ENGINE,
+# them). The release goes in twice, every file checked against its SHA256SUMS.txt: its merged Full.bin
+# as firmware/merged.bin, which a new chip starts from (the engine's --flash-image), and its parts -
+# bootloader, partition table, otadata, OTA_ONLY - in web/flasher/firmware/latest, the files the
+# flasher page writes (docs/flasher.js buildManifest; twin.py flasher_parts checks each against
+# Full.bin too, so both carry the same firmware). Build-time inputs, as tools/twin/README.md sets them up: the engine checkout (TWIN_ENGINE,
 # default ~/twin/esp32sim, built with cargo build --release), ~/twin/rom/esp32s3_rev0_rom.elf and
 # ~/twin/efuse-opi.txt. Python and swiftc are needed only here, not by the app.
 #
@@ -43,7 +47,7 @@ DIST="${DIST:-$TWIN_HOME/dist}"
 NOTARY_PROFILE="${NOTARY_PROFILE:-twin-notary}"
 INSTALL=1; [ "${1:-}" = "--no-install" ] && INSTALL=0
 
-VERSION="$(tr -d '[:space:]' < "$LATEST/VERSION")"                     # v2.7.7
+VERSION="$(tr -d '[:space:]' < "$LATEST/VERSION")"                     # v2.7.13
 IMAGE="$LATEST/AnimatedPixelClock-waveshare-$VERSION-Full.bin"
 APP_VERSION="1.3"
 NAME="TWIN-NickoScopeMatrix-64x128"
@@ -56,7 +60,7 @@ TEST_KEYS=""
 for f in "$ENGINE/target/release/esp32sim" "$ROM" "$EFUSE" "$IMAGE"; do
     [ -f "$f" ] || { echo "missing: $f (see tools/twin/README.md, Setup)" >&2; exit 1; }
 done
-(cd "$LATEST" && shasum -a 256 -c SHA256SUMS.txt >/dev/null) || { echo "$IMAGE: not the checksum in SHA256SUMS.txt" >&2; exit 1; }
+(cd "$LATEST" && shasum -a 256 -c --quiet SHA256SUMS.txt >&2) || { echo "$LATEST: not the checksums in its SHA256SUMS.txt" >&2; exit 1; }
 
 BUILD="$(mktemp -d)"; trap 'rm -rf "$BUILD"' EXIT
 APP="$BUILD/$NAME.app"; RES="$APP/Contents/Resources"
@@ -78,9 +82,11 @@ cp "$HERE/NOTICE.md" "$RES/NOTICE.md"                             # the bundled 
 mkdir -p "$RES/en.lproj" "$RES/ru.lproj"
 printf '"NSLocalNetworkUsageDescription" = "Sync with panel finds the LED panel on your network (Bonjour) and talks to it and to the twin.";\n' > "$RES/en.lproj/InfoPlist.strings"
 printf '"NSLocalNetworkUsageDescription" = "Синхронизация с панелью находит LED-панель в вашей сети (Bonjour) и обменивается данными с ней и с двойником.";\n' > "$RES/ru.lproj/InfoPlist.strings"
-# The web pages, made by twin.py's own build_web, so the page and the flasher are the ones twin.py serves.
+# The web pages, made by twin.py's own build_web, so the page and the flasher are the ones twin.py serves:
+# the flasher's copy holds the release's parts, not Full.bin.
 TWIN_HOME="$TWIN_HOME" TWIN_ENGINE="$ENGINE" python3 -c "import sys; sys.path.insert(0, '$TWIN_DIR'); import twin; twin.build_web('$BUILD/web')" >/dev/null
 cp -R "$BUILD/web" "$RES/web"
+echo "   flasher: $(cd "$RES/web/flasher/firmware/latest" && ls *.bin | tr '\n' ' ')"
 
 echo "== the icon"
 swift "$HERE/icon.swift" "$BUILD/icon.png"
