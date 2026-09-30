@@ -64,7 +64,11 @@
 // timestamp on the device, so the order is known only to within a poll period - 3 s for the screen,
 // 60 s for effects, syncSettingsEveryS for settings - and a tie goes to the panel ("conflict: the
 // panel's taken - <key>" in the log). A page or style change made by the carousel itself
-// (carousel.running, carousel.cpp:25-27) is not mirrored: two carousels would fight. The bases of
+// (carousel.running, carousel.cpp:25-27) is not mirrored: two carousels would fight. Nor is what a
+// carousel shows written to the other side by anything else - the twin taking the panel's screen after
+// it restarted or after a firmware sync, an alignment: written, a style is saved there as a person's
+// choice and that side's carousel is held (Screen.walked). A screen write whose answer was lost may
+// still land; the side showing it later is sync's own write, not a person's change (wrote). The bases of
 // settings, effects and firmware are kept in <dataDir>/sync-state.json - the settings as HMAC-SHA-256
 // digests whose key is in the login Keychain, not in the file, so no value can be guessed from the
 // file - and a restart of the app resumes where it stopped: what the panel changed meanwhile comes to
@@ -490,6 +494,14 @@ struct Screen {
     /// device's own notifications and stay out.
     var shown: String { key == "cards" ? "cards" : "\(key)/\(name)" }
     var fields: [String: String] { ["page": shown, "style": "\(style)", "bright": "\(bright)", "off": off ? "1" : "0"] }
+    /// The fields the carousel walks right now (carousel.running, carousel.cpp:25-27): the page, and with "walk
+    /// every clock style" the style too - each style a slot of its own, and the first style put back when the
+    /// lap ends (main.cpp:1173-1180; clockStyleCarouselNext, clock_style.cpp:64-78). The carousel only shows a
+    /// style (showStyle, clock_style.cpp:52-62: not saved); nobody chose it. So these are never a change of
+    /// this side's, and never written to the other side: there a style is saved to NVS as a person's choice
+    /// 2.5 s later ("[style] saved style N", clock_style.cpp:136-142) and its own carousel is held for the idle
+    /// time (panelShowStyle -> panelShowPage -> carouselNote, main.cpp:883-909).
+    var walked: Set<String> { running ? (allStyles ? ["page", "style"] : ["page"]) : [] }
     /// The Lua pages and their walk switches: when this changes, the effects are read.
     var luaSig: String {
         pages.filter { $0.s("key") == "lua" && !($0.s("name") ?? "").isEmpty }
@@ -838,6 +850,11 @@ final class SyncEngine {
     private var base: [Side: [String: [String: String]]] = [:]    // side -> "screen"|"settings"|"effects" -> field -> value
     private var firmwareBase: [Side: String] = [:]
     private var screen: [Side: Screen] = [:], screenAt: [Side: Date] = [:]
+    /// Screen fields sync wrote to a side and has not read back from it yet: a write whose answer was lost -
+    /// the Panel group's 503 comes after the work was done (failOom, web_panel.cpp:145-160), a timeout - may
+    /// still have landed. When the side shows that value later, it is sync's own write, not a person's change,
+    /// and it does not go back (SyncEngine.screenChanges).
+    private var wrote: [Side: [String: String]] = [:]
     private var effects: [Side: Effects] = [:]
     private var docs: [Side: [String: J]] = [:]
     private var fw: [Side: Firmware] = [:]
@@ -992,7 +1009,7 @@ final class SyncEngine {
         saveState()
         dev = [:]; pairKey = ""; consented = false; aligned = false; resumed = false; needDirection = false; question = nil; holdWhy = nil
         heldReply = nil; alignRetry = .distantPast; fxWaitSince = nil; fxAbsent = [:]; fxAlignFrom = nil; imageCache = nil
-        base = [:]; firmwareBase = [:]; screen = [:]; screenAt = [:]; effects = [:]; docs = [:]; fw = [:]; caps = [:]; hashes = [:]
+        base = [:]; firmwareBase = [:]; screen = [:]; screenAt = [:]; wrote = [:]; effects = [:]; docs = [:]; fw = [:]; caps = [:]; hashes = [:]
         pendingFx = [:]; noted = []; offer = nil; declined = []; wantPanel = nil; wantTwin = nil; inFlight = nil
         carry = (0, .distantPast); fwWatch = nil; fwWatchSince = [:]; slowRounds = 0; down = []; failures = [:]; load = nil; strainedUntil = nil
         nextFast = .distantPast; nextSlow = .distantPast; nextEffects = .distantPast; nextVerify = .distantPast; verifyNow = false
@@ -1049,7 +1066,7 @@ final class SyncEngine {
         }
         let key = "\(fw[.panel]!.mac)|\(fw[.twin]!.mac)"
         if key != pairKey {
-            base = [:]; firmwareBase = [:]; pendingFx = [:]; noted = []; resumed = false; needDirection = false; question = nil
+            base = [:]; firmwareBase = [:]; pendingFx = [:]; noted = []; resumed = false; needDirection = false; question = nil; wrote = [:]
             wantPanel = nil; wantTwin = nil; inFlight = nil; heldReply = nil; fxAlignFrom = nil; imageCache = nil
             pairKey = key; consented = false; aligned = false; loadState()
             nextVerify = Date().addingTimeInterval(SyncEngine.verifyEvery)
@@ -1373,7 +1390,7 @@ final class SyncEngine {
                                      "эффекты одной из сторон с её прошивкой не прочитать: не выравниваю; когда станут видны на обеих, спрошу направление"))
         }
         try readAll()
-        try mirrorScreen(from: from, fields: ["page", "style", "bright", "off"])
+        try mirrorScreen(from: from, fields: SyncEngine.screenFields)
         try readAll()
         // The effects' bases only when both are known now; else none, so no round takes both as they are.
         let fxBoth = fxLater == nil && effects[.panel] != nil && effects[.twin] != nil
@@ -1504,7 +1521,7 @@ final class SyncEngine {
         try settingsPass(allowMass: true)
         if let p = effects[.panel], let t = effects[.twin] { try effectsPass([.panel: p, .twin: t], allowMass: true) }
         else { for s in sides { base[s]?["effects"] = nil }; fxAlignFrom = nil }
-        try mirrorScreen(from: .panel, fields: ["page", "style", "bright", "off"])
+        try mirrorScreen(from: .panel, fields: SyncEngine.screenFields)
         rebaseScreen(.panel); rebaseScreen(.twin)
         aligned = true; resumed = true; stateDirty = true; fxWaitSince = nil
         retryPending()
@@ -1514,6 +1531,8 @@ final class SyncEngine {
     // MARK: the screen
 
     private func rebaseScreen(_ s: Side) { if let x = screen[s] { base[s, default: [:]]["screen"] = x.fields } }
+    /// The whole screen, as a side takes the other's (Screen.fields); what a carousel walks is left out when written.
+    static let screenFields: Set<String> = ["page", "style", "bright", "off"]
 
     private func fastRound() throws {
         var fresh: [Side: Screen] = [:]
@@ -1534,11 +1553,8 @@ final class SyncEngine {
         if base[.panel]?["screen"] == nil || base[.twin]?["screen"] == nil { rebaseScreen(.panel); rebaseScreen(.twin); return }
         var changed: [Side: Set<String>] = [:]
         for s in sides {
-            let b = base[s]!["screen"]!, f = cur[s]!.fields
-            var c = Set(f.keys.filter { f[$0] != b[$0] })
-            // A page or style the carousel put there is its own walk, not a person's choice.
-            if cur[s]!.running { c.remove("page"); if cur[s]!.allStyles { c.remove("style") } }
-            changed[s] = c
+            let r = SyncEngine.screenChanges(cur[s]!, base: base[s]!["screen"]!, wrote: wrote[s])
+            changed[s] = r.changed; wrote[s] = r.waiting
         }
         // Both changed one field: the page to the one changed last (smaller pageS), the rest to the panel.
         for f in changed[.panel]!.intersection(changed[.twin]!).sorted() where cur[.panel]!.fields[f] != cur[.twin]!.fields[f] {
@@ -1558,6 +1574,19 @@ final class SyncEngine {
             }
             rebaseScreen(s)
         }
+    }
+
+    /// The screen fields side CUR changed since its BASE, as a person's change to carry: not the page or the
+    /// style its carousel walks now (Screen.walked), and not what sync itself wrote there (WROTE) once the side
+    /// shows it. Also what of WROTE still waits: a field the side still shows as it was (the write may land
+    /// yet). A field that shows a third value is the side's own change, and nothing waits for it any more.
+    static func screenChanges(_ cur: Screen, base: [String: String], wrote: [String: String]?) -> (changed: Set<String>, waiting: [String: String]?) {
+        let f = cur.fields
+        var c = Set(f.keys.filter { f[$0] != base[$0] }).subtracting(cur.walked)
+        guard let w = wrote else { return (c, nil) }
+        for (k, v) in w where f[k] == v { c.remove(k) }
+        let rest = w.filter { f[$0.key] != $0.value && f[$0.key] == base[$0.key] }
+        return (c, rest.isEmpty ? nil : rest)
     }
 
     /// A write that failed is tried again in the next rounds, three times at most; true while it may be.
@@ -1583,53 +1612,73 @@ final class SyncEngine {
     }
 
     private func rebooted(_ s: Side, _ x: Screen) {
-        log("note", "reboot", M("\(s.word.en) restarted (uptime \(x.uptime) s): its reset screen is not mirrored",
+        // What the panel's carousel walks now is not copied: the twin has the same carousel and walks by itself.
+        let walk = s == .twin ? (screen[.panel]?.walked ?? []) : []
+        let en = walk.isEmpty ? "it takes the panel's screen" : "it takes the panel's screen but the \(walk.count > 1 ? "page and style" : "page") the panel's carousel walks now: the twin's carousel walks by itself"
+        let ru = walk.isEmpty ? "он повторяет экран панели"
+            : "он повторяет экран панели, кроме \(walk.count > 1 ? "страницы и стиля" : "страницы"), которые сейчас ведёт карусель панели: у двойника своя карусель"
+        log("note", "reboot", M("\(s.word.en) restarted (uptime \(x.uptime) s): " + (s == .panel ? "its reset screen is not mirrored" : en),
                                 s == .panel ? "панель перезагрузилась (uptime \(x.uptime) с): её сброшенный экран не переношу"
-                                            : "двойник перезагрузился (uptime \(x.uptime) с): он повторяет экран панели"))
-        screen[s] = x; rebaseScreen(s)
+                                            : "двойник перезагрузился (uptime \(x.uptime) с): " + ru))
+        screen[s] = x; rebaseScreen(s); wrote[s] = nil               // what it shows now is its reset screen
         fwWatch = Date().addingTimeInterval(5)
         caps[s] = nil
-        if s == .twin, aligned { try? mirrorScreen(from: .panel, fields: ["page", "style", "bright", "off"]) }  // the twin follows the panel
+        if s == .twin, aligned { twinFollowsPanel() }
     }
 
-    /// Makes the other side's screen show FIELDS of side S's, then reads it again as its base.
-    private func mirrorScreen(from s: Side, fields: Set<String>) throws {
+    /// The twin takes the panel's screen (after the twin restarted, after a firmware sync sent it was confirmed).
+    /// A failure is said, not thrown: the twin keeps its own screen until the next change on either side.
+    private func twinFollowsPanel() {
+        do { try mirrorScreen(from: .panel, fields: SyncEngine.screenFields) }
+        catch is SyncStopped {}
+        catch { log("note", "screen", M("the twin did not take the panel's screen: " + describe(error).en, "двойник не принял экран панели: " + describe(error).ru)) }
+    }
+
+    /// Makes the other side's screen show FIELDS of side S's, then reads it again as its base. What S's carousel
+    /// walks now is left out, whoever asks (Screen.walked); what is written is kept in `wrote` until it is read back.
+    private func mirrorScreen(from s: Side, fields asked: Set<String>) throws {
         let o = s.other
         guard let src = screen[s] else { return }
+        let fields = asked.subtracting(src.walked)
+        guard !fields.isEmpty else { return }
         var dst = try readScreen(o)
-        var body: J = [:], did: [String] = []
+        var body: J = [:], did: [String] = [], expect: [String: String] = [:]
         if fields.contains("page"), src.shown != dst.shown {
             if src.key == "cards" {
             } else if o == .twin && (src.key == "trains" || src.key == "flights") {
                 noteOnce("page-\(src.key)", M("the \(src.name) page is not shown on the twin (the owner's override)", "страницу \(src.name) на двойнике не показываю (переопределение владельца)"))
             } else if let i = dst.index(key: src.key, name: src.name) {
-                body["show"] = ["page": i]; did.append(M("page \(src.name)", "страница \(src.name)").text(lang))
+                body["show"] = ["page": i]; expect["page"] = src.shown; did.append(M("page \(src.name)", "страница \(src.name)").text(lang))
             } else {
                 noteOnce("nopage-\(o)-\(src.shown)", M("\(o.word.en) has no page \(src.name)", "\(o.on) нет страницы \(src.name)"))
             }
         }
         if fields.contains("style"), src.style != dst.style {
             if dst.styles.contains(src.style) {
-                body["style"] = src.style; did.append(M("clock style \(src.style)", "стиль часов \(src.style)").text(lang))
-                // style moves to the clock page (panelShowStyle, main.cpp:906-909): keep the page meant.
-                if body["show"] == nil, src.key != "clock", dst.key != "cards" { body["show"] = ["page": dst.page] }
+                body["style"] = src.style; expect["style"] = "\(src.style)"; did.append(M("clock style \(src.style)", "стиль часов \(src.style)").text(lang))
+                // style moves to the clock page (panelShowStyle, main.cpp:906-909): keep the page meant - the
+                // target's own when the page is not written.
+                if body["show"] == nil, src.key != "clock" || !fields.contains("page"), dst.key != "cards" { body["show"] = ["page": dst.page] }
             } else {
                 noteOnce("style-\(o)-\(src.style)", M("\(o.word.en) has no clock style \(src.style)", "\(o.at) нет стиля часов \(src.style)"))
             }
         }
-        if !body.isEmpty { try device(o).post("/api/panel", body) }
+        // Kept before each write: its answer may be lost after the work was done.
+        if !body.isEmpty { wrote[o, default: [:]].merge(expect) { $1 }; try device(o).post("/api/panel", body) }
         var offNow = dst.off
         if fields.contains("bright"), src.bright != dst.bright {
+            wrote[o, default: [:]]["bright"] = "\(src.bright)"
             try device(o).action("/api/display/brightness", [("value", "\(src.bright)")])
             offNow = src.bright == 0                                   // display.cpp:193
             did.append(M("brightness \(src.bright)%", "яркость \(src.bright)%").text(lang))
         }
         if fields.contains("off") || fields.contains("bright"), src.off != offNow {
+            wrote[o, default: [:]]["off"] = src.off ? "1" : "0"
             try device(o).action(src.off ? "/api/display/off" : "/api/display/on")
             did.append(src.off ? M("screen off", "экран выключен").text(lang) : M("screen on", "экран включён").text(lang))
         }
         guard !did.isEmpty else { return }
-        dst = try readScreen(o); screen[o] = dst; screenAt[o] = Date(); rebaseScreen(o)
+        dst = try readScreen(o); screen[o] = dst; screenAt[o] = Date(); rebaseScreen(o); wrote[o] = nil
         log(s.arrow, "screen", M(did.joined(separator: ", "), did.joined(separator: ", ")))
     }
 
@@ -2206,7 +2255,7 @@ final class SyncEngine {
             imageCache = nil
             log(o.arrow, "firmware", M("\(s.word.en) runs \(n.id): confirmed", "\(s.on) \(n.id): подтверждена"))
             retryPending()
-            if s == .twin { try? mirrorScreen(from: .panel, fields: ["page", "style", "bright", "off"]) }
+            if s == .twin { twinFollowsPanel() }
             saveState()
             return
         }
