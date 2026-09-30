@@ -45,6 +45,7 @@ Thank you to [Waveshare](https://www.waveshare.com/) for the beautiful panels an
 | LA GIOCONDA | Hans Petter Jansson, [chafa](https://github.com/hpjansson/chafa) (LGPL-3.0) | the tool whose output the script carries (no chafa code in the firmware) |
 | LA GIOCONDA, early versions | [asciicker](https://github.com/msokalski/asciicker) (MIT) for the idea; [libtcod](https://github.com/libtcod/libtcod) `generate_quadrant_graphic` (BSD-3-Clause; notice in `tools/luasim/quad.py`), credited there to Jeff Lait | idea; code transcribed into a tool |
 | fx3d brightness table | mrcodetastic, ESP32-HUB75-MatrixPanel-DMA 3.0.14 (MIT) | the CIE 1931 table `lumConvTab_8bit` |
+| world clock | Apple, the clocks of [StandBy](https://support.apple.com/guide/iphone/use-standby-iph878d77632/ios) on iPhone (on its side while charging), the owner's reference | the look (drawn here from scratch) |
 | cards and notifications from Home Assistant | Blueforcer, [AWTRIX 3](https://github.com/Blueforcer/awtrix3) | the idea of the architecture |
 | oscilloscope-music clips | Jerobeam Fenderson, [Oscilloscope Music](https://oscilloscopemusic.com/watch/oscilloscope_music) (2016) | his audio as the clips' source (not in this repository) |
 
