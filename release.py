@@ -235,12 +235,14 @@ def find_old_full_bins(version: str):
     """List Full.bin files in docs/firmware/latest/ not for this version."""
     if not DOCS_LATEST.exists():
         return []
-    pat = re.compile(r"^AnimatedPixelClock-(.+)-(v[^-]+)-Full\.bin$")
+    pats = (re.compile(r"^AnimatedPixelClock-(.+)-(v[^-]+)-Full\.bin$"),
+            re.compile(r"^OTA_ONLY_firmware-()(v[^-]+)-.+\.bin$"))
     old = []
     for f in DOCS_LATEST.iterdir():
-        m = pat.match(f.name)
-        if m and m.group(2) != version:
-            old.append(f.name)
+        for pat in pats:
+            m = pat.match(f.name)
+            if m and m.group(2) != version:
+                old.append(f.name)
     return sorted(old)
 
 
@@ -297,12 +299,18 @@ def main():
         print(f"  Full: {full_out.relative_to(REPO_ROOT)} ({full_out.stat().st_size / 1024:.1f} KB)")
         # OTA-only image for existing devices (web UI update).
         copy_ota_bin(env, ota_dir / f"OTA_ONLY_firmware-{version}-{fid}.bin")
+        # And beside the flasher's image on GitHub Pages, which serves it to any
+        # page: the portal's "Update now" downloads it from there (web_pages.h,
+        # FW_LATEST) - a release asset's download has no CORS header.
+        copy_ota_bin(env, DOCS_LATEST / f"OTA_ONLY_firmware-{version}-{fid}.bin")
 
     shutil.copy2(args.companion, ota_dir / COMPANION_EXE.name)
     release_names = [name for _, fid, _ in VARIANTS
                      for name in (f"firmware-{version}-{fid}.bin", f"OTA_ONLY_firmware-{version}-{fid}.bin")]
     write_checksums(ota_dir, release_names + [COMPANION_EXE.name])
-    write_checksums(DOCS_LATEST, [f"AnimatedPixelClock-{fid}-{version}-Full.bin" for _, fid, _ in VARIANTS])
+    write_checksums(DOCS_LATEST, [name for _, fid, _ in VARIANTS
+                                  for name in (f"AnimatedPixelClock-{fid}-{version}-Full.bin",
+                                               f"OTA_ONLY_firmware-{version}-{fid}.bin")])
     write_version_file(version)
     # Stamp what these images were built FROM, not only what they are called.
     # tools/firmware_stamp.py --check reads it in the pre-commit hook and
@@ -318,7 +326,7 @@ def main():
 
     old = find_old_full_bins(version)
     if old:
-        print("\nOlder Full.bin files still in docs/firmware/latest/ "
+        print("\nOlder Full.bin and OTA_ONLY files still in docs/firmware/latest/ "
               "(remove with `git rm` when no longer needed):")
         for name in old:
             print(f"  {name}")

@@ -1150,6 +1150,13 @@ void handlePortalValues() {
   JsonDocument doc(webJsonAllocator());
   doc["ver"] = FIRMWARE_VERSION;
   doc["built"] = __DATE__;
+  // Which release images fit this board: the portal offers an update from the
+  // web flasher's site only when they do (the releases are built for this one).
+#if defined(BOARD_WAVESHARE_RGB_MATRIX)
+  doc["board"] = "waveshare";
+#else
+  doc["board"] = "other";
+#endif
   doc["ip"] = WiFi.localIP().toString();
   doc["freeHeap"] = ESP.getFreeHeap();
   doc["minBright"] = isZeroBrightnessAllowed() ? 0 : 1;
