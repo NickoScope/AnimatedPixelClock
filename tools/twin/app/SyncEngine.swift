@@ -10,7 +10,14 @@
 // where releases and the gallery come from.
 // The owner, 2026-09-30, after two reviews: switched on, sync is full, both ways; switched off, all
 // stays as it is - nothing is rolled back, and nothing more is written, not even what was half done.
-// The panel's hardware settings (the microphones, the knob) go from the panel to the twin only.
+// The settings that describe the panel's own hardware go from the panel to the twin only (Settings.hardware).
+// The owner, 2026-09-30 11:19, "SYNC with two confirmations": switching sync on takes two answers - "Enable
+// sync with the panel <name, address, MAC>? From now on changes go both ways: settings, effects, screen"
+// [Enable / Cancel], then the alignment with the list of differences [From the panel to the twin / From the
+// twin to the panel / Cancel] - and until both are given, sync does nothing: it reads who the two devices
+// are and what differs, and writes nothing. Flashing the panel takes two as well: "Update the panel too?"
+// and "Really flash the physical panel <name> with <version>?". Cancel, or Not now, is the default button
+// (Return) in each of these windows, and the buttons that write have no key.
 //
 // The firmware has no push channel - no WebSocket, no event stream, no MQTT topic with the screen's
 // state - so both devices are polled over HTTP, one request at a time: the firmware's WebServer serves
@@ -62,9 +69,14 @@
 // digests whose key is in the login Keychain, not in the file, so no value can be guessed from the
 // file - and a restart of the app resumes where it stopped: what the panel changed meanwhile comes to
 // the twin; what the twin changed meanwhile is shown first, and the person says whether it goes to the
-// panel, or the twin takes the panel's state back, or sync stays off. The first time a pair is synced,
-// the person picks the direction. A question is answered for what it showed: after the answer both
-// sides are read again, and if anything it listed changed meanwhile, the question comes again.
+// panel, or the twin takes the panel's state back, or sync stays off - that is the second window then. The
+// first time a pair is synced, the person picks the direction. A question is answered for what it showed:
+// after the answer both sides are read again, and if anything it listed changed meanwhile, the question
+// comes again. The effects are part of what a question shows: while a side's cannot be known now (its
+// /api/lua/source probe got no answer), the question waits for them, a minute at most (our choice); then
+// the direction is asked, and effects that could not be read are aligned in the chosen direction once
+// both sides' can - with the MASS_DELETES threshold, past which the direction is asked again. Effects
+// that have never been aligned are never merged by themselves: the direction is asked.
 //
 // How each thing is written:
 //   page      POST /api/panel {"show":{"page":i}}, i looked up by key and name on the target
@@ -91,29 +103,37 @@
 //             {"delete":stem} (web_panel.cpp:994-1012). The walk switch: POST /api/lua
 //             {"walk":{"i","on","name"}} (web_panel.cpp:976-993). Without /api/lua/source a script is
 //             known by its size only, and an edit that keeps the length is not seen: the log says so.
-//   firmware  the image of the side that changed: for the panel, the release of firmwareRepo with that
-//             version when it is that very build (the X-App-Elf-Sha256 of HEAD /api/firmware/image equal
-//             to the release image's bytes 0xB0-0xCF, esp_app_desc_t.app_elf_sha256) - reading the image
-//             out of the panel holds its loop() for the whole transfer - else GET /api/firmware/image,
-//             once, never repeated (feat/sync-routes, web.cpp handleFirmwareImage), checked against
-//             X-Firmware-Version, the size /api/info gives and X-App-Elf-Sha256; where the firmware
-//             has no such route, the release with that version whose OTA_ONLY image has the same size,
-//             checked against SHA256SUMS.txt. Always the ESP image's own checks (magic 0xE9, chip id 9,
-//             the appended SHA-256, which must be there). Then POST /update, multipart (web.cpp:336-393),
-//             and the target is watched until /api/info says that version - that build, or for a
-//             release that size - settled (not "pending" or "new": update.py:257-264) after a restart,
-//             or that it rolled back; five minutes at most. Both sides' bases then take what they run,
-//             so a release that stood in for a local build of the same version is not offered back.
-//             The build each side should get is kept apart (sync-state.json): a failed transfer to the
-//             twin is tried again after 1, 5, 15, 30, then every 60 min (our choice), and the question
-//             for the panel comes again on "Sync now" and at the next start, as long as they differ.
+//   firmware  the image of the side that changed, when it fits the target's OTA slot (/api/info
+//             otaFreeBytes, compared before anything is read): for the panel, the release of firmwareRepo
+//             with that version when it is that very build (the X-App-Elf-Sha256 of HEAD
+//             /api/firmware/image equal to the release image's bytes 0xB0-0xCF,
+//             esp_app_desc_t.app_elf_sha256) - reading the image out of the panel holds its loop() for
+//             the whole transfer - else GET /api/firmware/image, one attempt (feat/sync-routes, web.cpp
+//             handleFirmwareImage), checked against X-Firmware-Version, the size /api/info gives, the
+//             X-App-Elf-Sha256 it came with and the one HEAD gave; where the firmware has no such route,
+//             the release with that version whose OTA_ONLY image has the same size, checked against
+//             SHA256SUMS.txt. Always the ESP image's own checks (magic 0xE9, chip id 9, the appended
+//             SHA-256, which must be there). An image read is kept (by the source's firmware and ELF
+//             SHA-256) until it is confirmed on the target or the source runs another, so a transfer
+//             tried again does not read it again. Right before POST /update the pair and the firmware on
+//             both sides are read again: for the panel they must be what the person said yes to (Offer),
+//             for the twin what the image was read for - else nothing is sent. Then POST /update,
+//             multipart (web.cpp:336-393), and the target is watched until /api/info says that version -
+//             that build, or for a release that size - settled (not "pending" or "new":
+//             update.py:257-264) after a restart, or that it rolled back; five minutes at most. Both
+//             sides' bases then take what they run, so a release that stood in for a local build of the
+//             same version is not offered back. The build each side should get is kept apart
+//             (sync-state.json): a failed transfer to the twin is tried again after 1, 5 and 15 min, and
+//             after CARRY_TRIES failures in a row not until "Sync now" (our choice); the question for the
+//             panel comes again on "Sync now" and at the next start, as long as they differ.
 //
 // Never written: /reset (a GET wipes everything, web.cpp:182, 2266-2285), /api/reboot, /api/rename,
-// deviceName, the network fields, weatherApiKey (only "set" is ever compared, never the key), metric
-// names, counters, caches, the remote's learned codes. Never written to the panel: its hardware
-// settings - the microphones (audioSource, micGainDb, micGateDb, micAgc: config.h:182-186) and the knob
-// (/api/knob reverse, lockoutMs, debounceMs, detent: web_panel.cpp:870-900) - which go from the panel
-// to the twin only. The owner's overrides on the twin: climateHa off, the trains and flights pages out
+// deviceName, the network fields, weatherApiKey (neither compared nor sent: left out of both the
+// export's and the form's keys), metric names, counters, caches, the remote's learned codes. Never
+// written to the panel: the settings that describe its own hardware (Settings.hardware) - the
+// microphones, the knob, how the presence radar is set up, whether the climate sensor and the remote's
+// receiver are used and how the sensor is calibrated - which go from the panel to the twin only. The
+// owner's overrides on the twin: climateHa off, the trains and flights pages out
 // of the walk, the flight board on the custom airport ZZZZ "NO REQUESTS" (sync.py OVERRIDES); they are
 // left out of what is compared, put back on the twin whenever they drift, and the trains and flights
 // pages are not shown on the twin by sync either.
@@ -125,20 +145,26 @@
 // the person is asked for the direction instead (a device whose flash was erased looks like that); an
 // effects list that cannot be read (/api/lua 404, no "uploaded", LittleFS not mounted) is unknown, not
 // empty. Switching sync off (or choosing another panel) stops every write at once: each request that
-// writes asks first, and one that is under way - an upload, the firmware - is cut off.
+// writes asks first, and one that is under way - an upload, the firmware - is cut off; so is a read of
+// the sync routes (a script's source, the firmware image), which holds the panel's loop() while it runs.
+// A new pair, or the pair changing (a MAC that is not the pair's), takes both confirmations again.
 //
 // Settings (defaults): syncEnabled (off by default; the switch - `defaults write <bundle id> syncEnabled
-// -bool NO` from a terminal switches it too), panelAddress (host[:port]; empty: found over mDNS, and
-// looked for again when the panel stops answering), panelMac (the panel picked from the found ones),
-// firmwareRepo (owner/name, default NickoScope/AnimatedPixelClock), syncSettingsEveryS (60, at least 15).
+// -bool NO` from a terminal switches it too, at once, whatever window is open), panelAddress (host[:port];
+// empty: found over mDNS, and looked for again when the panel stops answering), panelMac (the panel picked
+// from the found ones), firmwareRepo (owner/name, default NickoScope/AnimatedPixelClock),
+// syncSettingsEveryS (60, at least 15).
 // For tests only: honoured only when the "panel" has a twin's MAC (02:54:57:49:*) and panelAddress names
 // it by a loopback address (127.0.0.1 or localhost) - a real panel has neither, whatever it is called -
-// and syncPanelMayBeTwinForTesting (accept a twin as the panel) is on: syncAutoConfirmForTesting (answer
-// "Update the panel" by itself), syncAlignForTesting ("panel" | "twin": answer the direction question
-// by itself - "twin" also carries the twin's changes at a resume, "panel" gives the twin the panel's
-// state back), syncAnswerDelayForTesting (seconds before that answer), syncPressReturnForTesting (press
-// Return in "Update the panel too?", as a person would by accident). All off by default.
-// syncAnswerDelayForTesting delays syncAutoConfirmForTesting's answer too.
+// and syncPanelMayBeTwinForTesting (accept a twin as the panel) is on: syncConsentForTesting (answer
+// "Enable sync with the panel?" Enable by itself), syncAlignForTesting ("panel" | "twin": answer the
+// direction question by itself - "twin" also carries the twin's changes at a resume, "panel" gives the
+// twin the panel's state back), syncAutoConfirmForTesting (answer both firmware windows yes by itself),
+// syncAnswerDelayForTesting (seconds before these answers), syncEnableReturnForTesting (1: press Return
+// in "Enable sync with the panel?"; 2: press its Enable, then Return in the alignment window - as a
+// person would by accident), syncPressReturnForTesting (1: Return in "Update the panel too?"; 2: its
+// Update, then Return in "Really flash the physical panel?"), syncImageHoldForTesting (seconds to wait
+// after the image is read, before the last look and POST /update). All off by default.
 
 import AppKit
 import CryptoKit
@@ -303,11 +329,18 @@ final class Device {
     // The GETs that change something, each with the only parameters it may carry.
     static let actions: [String: Set<String>] = ["/api/display/on": [], "/api/display/off": [], "/api/display/brightness": ["value"],
                                                  "/api/ir/fn": ["btn", "fn", "page"], "/api/log": ["on"]]
-    /// The sync routes (feat/sync-routes) answer only a request with X-Twin-Sync: 1 - a header no web
-    /// page can send to another address without a preflight, which the firmware does not answer.
+    /// The sync routes (feat/sync-routes). GET|HEAD /api/firmware/image answers only a request with
+    /// X-Twin-Sync: 1, else 403 before the image is touched (web.cpp handleFirmwareImage) - a header no web
+    /// page can send to another address without a preflight, which the firmware does not answer. GET
+    /// /api/lua/source needs no header and answers any page, with Access-Control-Allow-Origin: *
+    /// (web_panel.cpp handleLuaSource: the twin's panel page reads a script's header from it). The header
+    /// is sent on both. Each read of them holds the panel's loop() while it runs, so switching sync off
+    /// cuts them off as it cuts off a write, and none is started while it is off.
     static let syncRoutes: Set<String> = ["/api/lua/source", "/api/firmware/image"]
 
     func writes(_ method: String, _ path: String) -> Bool { !(method == "GET" || method == "HEAD") || Device.actions[path] != nil }
+    /// Stopped by the switch: every write, and the reads of the sync routes.
+    func stoppable(_ method: String, _ path: String) -> Bool { writes(method, path) || Device.syncRoutes.contains(path) }
 
     /// One request. 503 with Retry-After is asked again (the firmware stood aside before doing anything);
     /// 503 without it is the answer. A transport fault is retried for a request that only reads, up to
@@ -317,16 +350,16 @@ final class Device {
         var c = URLComponents(string: "http://\(address)\(path)")!
         if !query.isEmpty { c.queryItems = query.map { URLQueryItem(name: $0.0, value: $0.1) } }
         guard let url = c.url else { throw SyncError(M("bad address \(address)", "неверный адрес \(address)")) }
-        let write = writes(method, path), allowed = mayWrite
+        let write = writes(method, path), stop = stoppable(method, path), allowed = mayWrite
         var attempt = 0
         while true {
             attempt += 1
-            if write && !allowed() { throw SyncStopped() }
+            if stop && !allowed() { throw SyncStopped() }
             var req = URLRequest(url: url, timeoutInterval: timeout)
             req.httpMethod = method; req.httpBody = body
             if let type { req.setValue(type, forHTTPHeaderField: "Content-Type") }
             if Device.syncRoutes.contains(path) { req.setValue("1", forHTTPHeaderField: "X-Twin-Sync") }
-            let (a, err, stopped) = Device.exchange(req, limit: limit, cancel: write ? { !allowed() } : nil)
+            let (a, err, stopped) = Device.exchange(req, limit: limit, cancel: stop ? { !allowed() } : nil)
             if stopped { throw SyncStopped() }
             if pace > 0 { Thread.sleep(forTimeInterval: pace) }
             if let a, a.status == 503, let wait = a.retryAfter, attempt < 6 {
@@ -528,15 +561,33 @@ enum Settings {
     static let railKeys = ["rows", "switch_s", "level", "stale_s", "due_min", "clock_seconds", "row_color", "head_color", "due_color"]
     static let budgetKeys = ["floor_min", "day_cap", "month_cap"]
     static let noAsk = (icao: "ZZZZ", name: "NO REQUESTS")      // sync.py NO_ASK
-    /// The panel's hardware, not the owner's taste (the owner, 2026-09-30): from the panel to the twin
-    /// only, never to the panel. The microphones - where the sound comes from, the ES7210's gain and
-    /// gate, the AGC (config.h:182-186; the only mic fields there are: web.cpp /api/export 2337-2340,
-    /// /save 1809-1815, /api/import 2593-2596) - which the owner keeps off on the panel since
-    /// 2026-09-15, until its hangs are explained; and the knob, all of /api/knob (web_panel.cpp:870-900):
-    /// lockout, debounce and detent calibrate its contacts, and reverse stands in for its wiring
-    /// ("instead of swapping A and B", control.h:24).
-    static let hardware: Set<String> = ["x.audioSource", "x.micGainDb", "x.micGateDb", "x.micAgc",
-                                        "f.audioSource", "f.micGainDb", "f.micGateDb", "f.micAgc", "knob"]
+    /// The panel's own hardware, not the owner's taste (the owner, 2026-09-30): from the panel to the twin
+    /// only, never to the panel. Checked against the settings the firmware gives out (feat/sync-routes
+    /// e3f6445: config.h:143-186, web.cpp handlePortalValues 1245-1293, handleSave 1925-2012,
+    /// handleExportConfig 2516-2539, handleImportConfig 2758-2795; web_panel.cpp /api/knob):
+    ///  - the microphones: where the sound comes from, the ES7210's gain and gate, the AGC
+    ///    (config.h:182-186) - which the owner keeps off on the panel since 2026-09-15;
+    ///  - the knob, all of /api/knob: lockout, debounce and detent calibrate its contacts, and reverse
+    ///    stands in for its wiring ("instead of swapping A and B", control.h:24);
+    ///  - how the presence radar is set up: presenceScaleM (the metres its fan covers in this room),
+    ///    presenceMirrorX (which way +X points, as the radar is mounted), presenceSource (the radar, or
+    ///    the scripted story where there is none) - config.h:154-159, only in the form (/save);
+    ///  - the board's climate sensor: climateEnabled (read it), and its calibration - climateTempOffset,
+    ///    climateHumOffset and climateRhFollowsT, the steps of climate::correct() (climate_model.h; the
+    ///    measurement plan that finds them on this board, KB docs/21 §5.3-5.4) - config.h:143-150;
+    ///  - irEnabled: listen to the remote's receiver (config.h:161-163, the form and /api/import).
+    /// Not hardware, and mirrored: climateIntervalS (how often it is read, 5-300 s), climateShow (the
+    /// weather screen's split), the remote's button functions (what a button does, by the owner's taste;
+    /// its learned codes are never written at all).
+    static let hardware: Set<String> = {
+        let mine = ["audioSource", "micGainDb", "micGateDb", "micAgc", "presenceScaleM", "presenceMirrorX", "presenceSource",
+                    "climateEnabled", "climateTempOffset", "climateHumOffset", "climateRhFollowsT", "irEnabled"]
+        // Each under the name it has where it is read: "x." from the export, "f." from the form.
+        return Set(mine.flatMap { ["x." + $0, "f." + $0] } + ["knob"])
+    }()
+    /// How a person reads them: "microphones, knob, presence radar, climate sensor, remote".
+    static let hardwareWords = M("microphones, knob, presence radar, climate sensor and its calibration, the remote's receiver",
+                                 "микрофон, ручка, радар присутствия, датчик климата и его калибровка, приёмник пульта")
 
     static func pick(_ d: J?, _ keys: [String]) -> J { var o: J = [:]; for k in keys { if let v = d?[k] { o[k] = v } }; return o }
     /// A custom city as compared: coordinates to 4 places, since they come back through a float (sync.py city_key).
@@ -681,20 +732,27 @@ final class SyncEngine {
     /// At a resume, when the twin was changed while sync was off: its changes go to the panel, or the
     /// twin takes the panel's state back.
     enum ResumeChoice { case toPanel, fromPanel }
-    enum Reply { case direction(Direction), resume(ResumeChoice), cancel }
+    enum Reply { case consent(Bool), direction(Direction), resume(ResumeChoice), cancel }
+    /// The first window of switching sync on: "Enable sync with the panel <name, address, MAC>?".
+    /// pressForTesting: 1 presses Return in it, 2 presses Enable and then Return in the second window.
+    struct Consent { var id = "", panelName = "", panelAddress = "", panelMac = "", twin = "", pressForTesting = 0 }
+    /// The second window: the alignment, with what differs. pressReturnForTesting presses Return in it.
     struct Summary {
         var id = "", sig = "", panel = "", twin = "", panelFirmware = "", twinFirmware = "", settings: [String] = [], hardware: [String] = []
         var onlyPanel: [String] = [], onlyTwin: [String] = [], differ: [String] = [], effectsKnown = true, bySize = false
-        var panelScreen = "", twinScreen = "", why: Msg?
+        var panelScreen = "", twinScreen = "", why: Msg?, pressReturnForTesting = false
     }
+    /// The second window when sync resumes with a pair it knows: what each side changed while it was off.
     struct ResumeSummary { var id = "", panel = "", twin = "", settings: [String] = [], effects: [Msg] = [], conflicts: [String] = [],
-                           hardware: [String] = [], panelChanges = 0 }
-    /// "Update the panel too?": what the yes is for - this panel (its MAC), this firmware on it, the
-    /// twin's firmware - kept with the question and checked again when it is answered.
+                           hardware: [String] = [], panelSettings: [String] = [], panelEffects: [Msg] = [], pressReturnForTesting = false }
+    /// "Update the panel too?" and "Really flash the physical panel?": what the yes is for - this panel
+    /// (its MAC), this firmware on it, the twin's firmware - kept with the question, checked again when it
+    /// is answered and once more right before the image is sent. pressForTesting: 1 presses Return in the
+    /// first window, 2 presses Update in it and then Return in the second.
     struct Offer {
         let id: String, pair: String, panelName: String, panelAddress: String, panelMac: String
         let panelVersion: String, panelBuild: String, panelId: String, twinId: String, version: String, build: String
-        let source: Msg, downgrade: Bool, pressReturnForTesting: Bool
+        let source: Msg, downgrade: Bool, pressForTesting: Int
     }
     struct Status { var phase = M("off", "выключена"); var peer = ""; var last: (Date, Msg)?; var problem: (Date, Msg)?; var sticky = false }
 
@@ -708,7 +766,12 @@ final class SyncEngine {
     // since each read holds its loop(); the twin's every round. Our choice.
     static let hashAge: [Side: TimeInterval] = [.panel: 300, .twin: 20]
     static let fwWatchMax: TimeInterval = 300, confirmWithin: TimeInterval = 300
-    static let carryBackoff: [TimeInterval] = [60, 300, 900, 1800, 3600]
+    // A failed transfer to the twin: tried again after these pauses, and after CARRY_TRIES failures in a row
+    // not until "Sync now" - each one may read the whole image out of the panel. Our choice.
+    static let carryBackoff: [TimeInterval] = [60, 300, 900], CARRY_TRIES = 4
+    // Effects that cannot be known now (the /api/lua/source probe got no answer): a question waits for them
+    // this long, reading them again every fxRetry. Our choice.
+    static let fxWaitMax: TimeInterval = 60, fxRetry: TimeInterval = 10
 
     let dataDir: URL
     var logFile: URL { dataDir.appendingPathComponent("sync.log") }
@@ -722,7 +785,9 @@ final class SyncEngine {
     private var _status = Status()
     /// Called on the main thread when the status changed.
     var onStatus: (() -> Void)?
-    /// The main thread asks the person; the answers come back through answerDirection / answerResume / answerFirmware.
+    /// The main thread asks the person; the answers come back through answerConsent / answerDirection /
+    /// answerResume / answerFirmware.
+    var askConsent: ((Consent) -> Void)?
     var askDirection: ((Summary) -> Void)?
     var askResume: ((ResumeSummary) -> Void)?
     var askFirmware: ((Offer) -> Void)?
@@ -741,12 +806,13 @@ final class SyncEngine {
     func syncNow() { locked { _syncNow = true } }
     /// The panel's address or the repository changed: find the panel again.
     func reconnect() { locked { _reset = true } }
+    func answerConsent(id: String, _ yes: Bool?) { locked { _reply = (id, yes.map { .consent($0) } ?? .cancel) } }
     func answerDirection(id: String, _ d: Direction?) { locked { _reply = (id, d.map { .direction($0) } ?? .cancel) } }
     func answerResume(id: String, _ c: ResumeChoice?) { locked { _reply = (id, c.map { .resume($0) } ?? .cancel) } }
     func answerFirmware(id: String, go: Bool) { locked { _fwReply = (id, go) } }
 
     // The worker's own.
-    private enum QKind { case direction, resume }
+    private enum QKind { case consent, direction, resume }
     private struct Question { let id: String, kind: QKind, sig: String }
     private struct Caps { var id = ""; var lua: Bool?; var image: Bool?; var elf: String? }
     /// A firmware sent by sync and not confirmed yet (kept in sync-state.json).
@@ -754,8 +820,21 @@ final class SyncEngine {
     private var thread: Thread?
     private var dev: [Side: Device] = [:]
     private var pairKey = ""
-    private var aligned = false, resumed = false, needDirection = false
+    /// consented: the first window was answered Enable for this pair since the switch went on; aligned: the
+    /// second one too, and the sides were aligned. Nothing is written before both.
+    private var consented = false, aligned = false, resumed = false, needDirection = false
     private var question: Question?
+    /// An answer that waits for the effects of both sides to be known before it is checked and done.
+    private var heldReply: (id: String, reply: Reply)?
+    private var alignRetry = Date.distantPast, fxWaitSince: Date?
+    /// A side whose effects cannot be read at all with its firmware (no Lua, no script store, no filesystem):
+    /// not waited for. The rest of "unknown" is the /api/lua/source probe without an answer, which is.
+    private var fxAbsent: [Side: Bool] = [:]
+    /// The effects were not aligned with the rest (a side's could not be read): the direction the person
+    /// chose, done once both sides' can be read (effectsPass).
+    private var fxAlignFrom: Side?
+    /// The image last read for a transfer, by the source's firmware id and ELF SHA-256.
+    private var imageCache: (key: String, data: Data, fromRelease: Bool)?
     private var base: [Side: [String: [String: String]]] = [:]    // side -> "screen"|"settings"|"effects" -> field -> value
     private var firmwareBase: [Side: String] = [:]
     private var screen: [Side: Screen] = [:], screenAt: [Side: Date] = [:]
@@ -832,17 +911,29 @@ final class SyncEngine {
 
     private func step() {
         let (on, reset) = locked { () -> (Bool, Bool) in let r = _reset; _reset = false; return (_enabled, r) }
-        if reset || !on { if !dev.isEmpty || aligned || question != nil || offer != nil { forget() } }
+        if reset || !on {
+            if !dev.isEmpty || consented || aligned || question != nil || offer != nil {
+                if !on && (consented || aligned || question != nil) {
+                    log("note", "off", aligned ? M("sync switched off: nothing more is written; switching it on asks both questions again",
+                                                   "синхронизацию выключили: больше ничего не пишу; при включении снова задам оба вопроса")
+                                               : M("sync switched off before both questions were answered: nothing was written",
+                                                   "синхронизацию выключили до ответа на оба вопроса: ничего не записано"))
+                }
+                forget()
+            }
+        }
         guard on else { phase(M("off", "выключена")); return }
         stopLogged = false
         do {
             try connect()
             try verifyIfDue()
+            // The owner's two confirmations: until both are given, nothing is written.
+            guard consented else { try consentFirst(); return }
             guard aligned else { try align(); return }
             if let (id, go) = locked({ () -> (String, Bool)? in let a = _fwReply; _fwReply = nil; return a }) { try answeredFirmware(id: id, go: go) }
             let now = Date()
             let forced = locked { () -> Bool in let f = _syncNow; _syncNow = false; return f }
-            if forced { declined = []; carry.next = .distantPast; retryPending() }
+            if forced { declined = []; carry = (0, .distantPast); retryPending() }
             let strained = strainedUntil.map { now < $0 } ?? false
             if now >= nextFast || forced {
                 try fastRound(); nextFast = Date().addingTimeInterval(strained ? SyncEngine.strainedFastEvery : SyncEngine.fastEvery)
@@ -899,7 +990,8 @@ final class SyncEngine {
 
     private func forget() {
         saveState()
-        dev = [:]; pairKey = ""; aligned = false; resumed = false; needDirection = false; question = nil; holdWhy = nil
+        dev = [:]; pairKey = ""; consented = false; aligned = false; resumed = false; needDirection = false; question = nil; holdWhy = nil
+        heldReply = nil; alignRetry = .distantPast; fxWaitSince = nil; fxAbsent = [:]; fxAlignFrom = nil; imageCache = nil
         base = [:]; firmwareBase = [:]; screen = [:]; screenAt = [:]; effects = [:]; docs = [:]; fw = [:]; caps = [:]; hashes = [:]
         pendingFx = [:]; noted = []; offer = nil; declined = []; wantPanel = nil; wantTwin = nil; inFlight = nil
         carry = (0, .distantPast); fwWatch = nil; fwWatchSince = [:]; slowRounds = 0; down = []; failures = [:]; load = nil; strainedUntil = nil
@@ -919,6 +1011,7 @@ final class SyncEngine {
     }
     private var testing: Bool { guard let p = fw[.panel], let d = dev[.panel] else { return false }; return testGate(mac: p.mac, address: d.address) }
     private func testSwitch(_ key: String) -> Bool { testing && UserDefaults.standard.bool(forKey: key) }
+    private func testInt(_ key: String) -> Int { testing ? UserDefaults.standard.integer(forKey: key) : 0 }
     private func testAlign() -> String? {
         guard testing, let a = UserDefaults.standard.string(forKey: "syncAlignForTesting"), a == "panel" || a == "twin" else { return nil }
         return a
@@ -957,8 +1050,8 @@ final class SyncEngine {
         let key = "\(fw[.panel]!.mac)|\(fw[.twin]!.mac)"
         if key != pairKey {
             base = [:]; firmwareBase = [:]; pendingFx = [:]; noted = []; resumed = false; needDirection = false; question = nil
-            wantPanel = nil; wantTwin = nil; inFlight = nil
-            pairKey = key; aligned = false; loadState()
+            wantPanel = nil; wantTwin = nil; inFlight = nil; heldReply = nil; fxAlignFrom = nil; imageCache = nil
+            pairKey = key; consented = false; aligned = false; loadState()
             nextVerify = Date().addingTimeInterval(SyncEngine.verifyEvery)
         }
     }
@@ -1042,9 +1135,11 @@ final class SyncEngine {
     /// luaStoreFreeBytes, lua_store.cpp:126), or whether the scripts can be read is not known yet.
     /// Unknown is never taken for "no effects".
     private func readEffects(_ s: Side) throws -> Effects? {
-        guard let lua = try device(s).get("/api/lua"), let up = lua.o("uploaded") else { return nil }
+        // Absent for good with this firmware, and not waited for; only the probe below can be "not now".
+        guard let lua = try device(s).get("/api/lua"), let up = lua.o("uploaded") else { fxAbsent[s] = true; return nil }
         let scripts = (up["scripts"] as? [J]) ?? []
-        if scripts.isEmpty && (up.i("count") ?? 0) == 0 && (up.i("fsFree") ?? 0) == 0 { return nil }
+        if scripts.isEmpty && (up.i("count") ?? 0) == 0 && (up.i("fsFree") ?? 0) == 0 { fxAbsent[s] = true; return nil }
+        fxAbsent[s] = false
         var e = Effects()
         e.names = lua["effects"] as? [String] ?? []
         let walk = (lua["inWalk"] as? [Any] ?? []).map { ($0 as? NSNumber)?.boolValue ?? true }
@@ -1094,63 +1189,138 @@ final class SyncEngine {
 
     // MARK: the questions
 
-    private func autoReply(_ id: String, _ r: Reply) {
+    private func autoReply(_ id: String, _ r: Reply, _ key: String) {
         let delay = max(0, UserDefaults.standard.double(forKey: "syncAnswerDelayForTesting"))
-        log("note", "ask", M("answered by itself in \(Int(delay)) s (syncAlignForTesting)", "ответ дам сам через \(Int(delay)) с (syncAlignForTesting)"))
+        log("note", "ask", M("answered by itself in \(Int(delay)) s (\(key))", "ответ дам сам через \(Int(delay)) с (\(key))"))
         DispatchQueue.global().asyncAfter(deadline: .now() + delay) { [weak self] in self?.locked { self?._reply = (id, r) } }
+    }
+
+    /// The main thread's answer, taken once; an answer held back for the effects comes first.
+    private func takeReply() -> (String, Reply)? {
+        if let h = heldReply { heldReply = nil; return (h.id, h.reply) }
+        return locked { () -> (String, Reply)? in let x = _reply; _reply = nil; return x.map { ($0.id, $0.reply) } }
+    }
+
+    private static let waitingForEffects = M("waiting until the effects of both sides can be read", "жду, когда станут видны эффекты обеих сторон")
+
+    /// The first of the owner's two windows: "Enable sync with the panel <name, address, MAC>?". When it is
+    /// asked, nothing has been read but who the two devices are (/api/info); nothing is written until it and
+    /// the second window are answered. Cancel is its default button, and the main thread switches sync off.
+    private func consentFirst() throws {
+        if let (id, r) = takeReply() {
+            guard let q = question, q.id == id, q.kind == .consent else { return }   // an answer to a question no longer open
+            question = nil
+            guard case .consent(true) = r else { return }                           // Cancel: the main thread switched sync off
+            consented = true
+            let p = fw[.panel]!
+            log("note", "consent", M("sync with the panel \(p.name) (\(device(.panel).address), \(p.mac)) enabled by the person: the differences come next",
+                                     "синхронизацию с панелью \(p.name) (\(device(.panel).address), \(p.mac)) включили: дальше — список различий и направление"))
+            return
+        }
+        let waiting = SyncWait(M("waiting for your answer: enable sync with the panel?", "жду ответа: включать ли синхронизацию с панелью"))
+        if question != nil { throw waiting }
+        let p = fw[.panel]!, t = fw[.twin]!
+        let c = Consent(id: UUID().uuidString, panelName: p.name, panelAddress: device(.panel).address, panelMac: p.mac,
+                        twin: "\(t.name) (\(device(.twin).address), \(t.mac))", pressForTesting: testInt("syncEnableReturnForTesting"))
+        question = Question(id: c.id, kind: .consent, sig: "")
+        log("note", "ask", M("asking whether to enable sync with the panel \(p.name) (\(c.panelAddress), \(p.mac)); nothing is written until both questions are answered",
+                             "спрашиваю, включать ли синхронизацию с панелью \(p.name) (\(c.panelAddress), \(p.mac)); пока нет ответа на оба вопроса, ничего не пишу"))
+        if c.pressForTesting == 0 && testSwitch("syncConsentForTesting") { autoReply(c.id, .consent(true), "syncConsentForTesting") }
+        else { DispatchQueue.main.async { self.askConsent?(c) } }
+        throw waiting
     }
 
     private func askDirectionNow(_ why: Msg? = nil) {
         var sum = summary(); sum.id = UUID().uuidString; sum.why = why
+        sum.pressReturnForTesting = testInt("syncEnableReturnForTesting") == 2
         question = Question(id: sum.id, kind: .direction, sig: sum.sig)
-        log("note", "ask", M("asking which way first", "спрашиваю, в какую сторону сначала"))
-        if let a = testAlign() { autoReply(sum.id, .direction(a == "panel" ? .fromPanel : .fromTwin)); return }
+        log("note", "ask", M("asking which way to align, with what differs", "спрашиваю, в какую сторону выровнять, со списком различий"))
+        if !sum.pressReturnForTesting, let a = testAlign() { autoReply(sum.id, .direction(a == "panel" ? .fromPanel : .fromTwin), "syncAlignForTesting"); return }
         DispatchQueue.main.async { self.askDirection?(sum) }
     }
 
+    private func effectWords(_ s: Side, _ keys: [String]) -> [Msg] {
+        keys.map { k in
+            let n = String(k.dropFirst(2)), e = effects[s]
+            if k.hasPrefix("w.") { return e?.walk[n] ?? true ? M("\(n): into the walk", "\(n): в обход") : M("\(n): out of the walk", "\(n): из обхода") }
+            if e?.bytes[n] == nil { return M("\(n): removed", "\(n): удалён") }
+            return base[s]?["effects"]?[k] == nil ? M("\(n): new", "\(n): новый") : M("\(n): changed", "\(n): изменён")
+        }
+    }
+
+    /// The second window when sync resumes with a pair it has saved bases for: what each side changed while
+    /// it was off. Asked every time, also when the twin changed nothing - the second of the two confirmations.
     private func askResumeNow(_ plan: Plan) {
         var r = ResumeSummary(id: UUID().uuidString)
         r.panel = "\(fw[.panel]!.name) (\(device(.panel).address), \(fw[.panel]!.mac))"; r.twin = "\(fw[.twin]!.name) (\(device(.twin).address))"
         r.settings = plan.settings[.twin, default: []].map(Settings.shown)
-        r.effects = plan.effects[.twin, default: []].map { k in
-            let n = String(k.dropFirst(2)), t = effects[.twin]
-            if k.hasPrefix("w.") { return t?.walk[n] ?? true ? M("\(n): into the walk", "\(n): в обход") : M("\(n): out of the walk", "\(n): из обхода") }
-            if t?.bytes[n] == nil { return M("\(n): removed", "\(n): удалён") }
-            return base[.twin]?["effects"]?[k] == nil ? M("\(n): new", "\(n): новый") : M("\(n): changed", "\(n): изменён")
-        }
+        r.effects = effectWords(.twin, plan.effects[.twin, default: []])
+        r.panelSettings = plan.settings[.panel, default: []].map(Settings.shown)
+        r.panelEffects = effectWords(.panel, plan.effects[.panel, default: []])
         r.conflicts = plan.conflicts.map(Settings.shown); r.hardware = plan.hardware.map(Settings.shown)
-        r.panelChanges = plan.settings[.panel, default: []].count + plan.effects[.panel, default: []].count
+        r.pressReturnForTesting = testInt("syncEnableReturnForTesting") == 2
         question = Question(id: r.id, kind: .resume, sig: plan.sig)
-        log("note", "ask", M("the twin was changed while sync was off: asking whether that goes to the panel",
-                             "двойник меняли без синхронизации: спрашиваю, переносить ли это на панель"))
-        if let a = testAlign() { autoReply(r.id, .resume(a == "twin" ? .toPanel : .fromPanel)); return }
+        log("note", "ask", M("sync resumes with a panel it knows: asking which way, with what each side changed while it was off",
+                             "синхронизация продолжается с известной панелью: спрашиваю направление, со списком того, что каждая сторона меняла без неё"))
+        if !r.pressReturnForTesting, let a = testAlign() { autoReply(r.id, .resume(a == "twin" ? .toPanel : .fromPanel), "syncAlignForTesting"); return }
         DispatchQueue.main.async { self.askResume?(r) }
     }
 
     // MARK: alignment
 
+    /// Whether the effects of both sides are known, or cannot be with their firmware (fxAbsent). While a
+    /// side's are only not known now - the /api/lua/source probe got no answer (a 503, the twin just
+    /// started, the panel busy) - a question waits for them: fxRetry between reads, fxWaitMax at most.
+    private func effectsReady() -> Bool {
+        let unknown = sides.filter { effects[$0] == nil && fxAbsent[$0] == false }
+        guard !unknown.isEmpty else { fxWaitSince = nil; return true }
+        if fxWaitSince == nil {
+            let who = unknown.map { $0.word.en }.joined(separator: " and "), кто = unknown.map { $0.of }.joined(separator: " и ")
+            log("note", "effects", M("the effects of \(who) cannot be read just now: the question waits for them, \(Int(SyncEngine.fxWaitMax)) s at most",
+                                     "эффекты \(кто) сейчас не прочитать: вопрос ждёт их, не дольше \(Int(SyncEngine.fxWaitMax)) с"))
+        }
+        let since = fxWaitSince ?? Date(); fxWaitSince = since
+        if Date().timeIntervalSince(since) >= SyncEngine.fxWaitMax { return true }
+        alignRetry = Date().addingTimeInterval(SyncEngine.fxRetry)
+        return false
+    }
+    /// Effects not known just now, on either side (not the ones a firmware cannot give at all).
+    private var fxUnknownNow: Bool { sides.contains { effects[$0] == nil && fxAbsent[$0] == false } }
+    /// A side's effects base: what they were after the last alignment or round ("mode" is always in one).
+    private func hasFxBase(_ s: Side) -> Bool { base[s]?["effects"]?["mode"] != nil }
+
     private func align() throws {
-        if let (id, r) = locked({ () -> (String, Reply)? in let x = _reply; _reply = nil; return x.map { ($0.id, $0.reply) } }) {
-            guard let q = question, q.id == id else { return }           // an answer to a question no longer open
-            question = nil
-            if case .cancel = r { return }                              // the main thread switched sync off
+        if Date() < alignRetry { throw SyncWait(SyncEngine.waitingForEffects) }
+        if let (id, r) = takeReply() {
+            guard let q = question, q.id == id, q.kind != .consent else { return }  // an answer to a question no longer open
+            if case .cancel = r { question = nil; return }                        // the main thread switched sync off
             do { try answered(q, r) }
             catch let e where !(e is SyncWait) {
-                question = nil                                           // asked again, with what holds then
+                question = nil                                                   // asked again, with what holds then
                 throw e
             }
             return
         }
         if question != nil { throw SyncWait(M("waiting for your answer", "жду ответа")) }
-        try readAll()
-        if resumed && !needDirection { try resume() } else { askDirectionNow(holdWhy) }
+        // Waiting for the effects: they alone are read again, not the rest - then everything, for the question.
+        let waited = fxWaitSince != nil
+        if waited { for s in sides where effects[s] == nil && fxAbsent[s] == false { effects[s] = try readEffects(s) } }
+        else { try readAll() }
+        guard effectsReady() else { throw SyncWait(SyncEngine.waitingForEffects) }
+        if waited { try readAll() }
+        if resumed && !needDirection {
+            if let why = resumeNeedsDirection() { needDirection = true; holdWhy = why; askDirectionNow(why) } else { try resume() }
+        } else { askDirectionNow(holdWhy) }
         if !aligned { throw SyncWait(M("waiting for your answer", "жду ответа")) }
     }
 
-    /// The answer, done for exactly what was shown: both sides are read again first, and if anything the
-    /// question listed changed meanwhile, it is asked again with the fresh list.
+    /// The answer, done for exactly what was shown: both sides are read again first - after the effects
+    /// of both, if a side's are not known just now (the answer is held until they are, fxWaitMax at most) -
+    /// and if anything the question listed changed meanwhile, it is asked again with the fresh list.
     private func answered(_ q: Question, _ r: Reply) throws {
         try readAll()
+        guard effectsReady() else { heldReply = (q.id, r); throw SyncWait(SyncEngine.waitingForEffects) }
+        question = nil
         switch (q.kind, r) {
         case (.direction, .direction(let d)):
             let sum = summary()
@@ -1161,12 +1331,12 @@ final class SyncEngine {
             }
             try alignFrom(d == .fromPanel ? .panel : .twin)
         case (.resume, .resume(let c)):
+            if let why = resumeNeedsDirection() { needDirection = true; holdWhy = why; askDirectionNow(why); throw SyncWait(why) }
             let plan = resumePlan()
-            if let m = plan.mass { needDirection = true; log("note", "hold", m, problem: true); askDirectionNow(m); throw SyncWait(m) }
+            if let m = plan.mass { needDirection = true; holdWhy = m; log("note", "hold", m, problem: true); askDirectionNow(m); throw SyncWait(m) }
             guard plan.sig == q.sig else {
                 log("note", "ask", M("something the question listed changed while it was open: asking again", "пока вопрос был открыт, изменилось то, что в нём перечислено: спрашиваю снова"))
-                if plan.twinEmpty { try finishResume() } else { askResumeNow(plan); throw SyncWait(M("waiting for your answer", "жду ответа")) }
-                return
+                askResumeNow(plan); throw SyncWait(M("waiting for your answer", "жду ответа"))
             }
             switch c {
             case .toPanel: try carryResume()
@@ -1177,7 +1347,9 @@ final class SyncEngine {
     }
 
     /// Side FROM taken as it is: the other side gets its settings, effects and screen; the firmware is
-    /// carried to the twin, or offered to the panel.
+    /// carried to the twin, or offered to the panel. Effects that cannot be read now on a side are aligned in
+    /// this direction once both sides' can (effectsPass); where a side's firmware cannot give them at all,
+    /// the direction is asked again the day it can.
     private func alignFrom(_ from: Side) throws {
         let to = from.other
         phase(M("first alignment: \(from.arrow)", "первое выравнивание: \(from.arrow)"))
@@ -1185,15 +1357,27 @@ final class SyncEngine {
         let keys = settingsDiff(from: from)
         if !keys.isEmpty { try applySettings(from: from, keys: keys) }
         if to == .twin { try enforceOverrides() }
+        var fxLater: Side?
         if let a = effects[from], let b = effects[to] { try convergeEffects(from: from, a, b) }
-        else { noteOnce("fx-unknown-align", M("the effects of one side cannot be read now: they are compared from the next round on", "эффекты одной из сторон сейчас не прочитать: сравню их со следующего круга")) }
+        else if fxUnknownNow {
+            fxLater = from
+            log("note", "effects", M("the effects of one side cannot be read now: they are aligned \(from.arrow) once both can be (more than \(SyncEngine.MASS_DELETES) removals ask again)",
+                                     "эффекты одной из сторон сейчас не прочитать: выровняю их \(from.arrow), когда прочитаются обе (если удалять придётся больше \(SyncEngine.MASS_DELETES), спрошу снова)"))
+        } else {
+            log("note", "effects", M("the effects of one side cannot be read with its firmware: not aligned; the direction is asked the day both can be",
+                                     "эффекты одной из сторон с её прошивкой не прочитать: не выравниваю; когда станут видны на обеих, спрошу направление"))
+        }
         try readAll()
         try mirrorScreen(from: from, fields: ["page", "style", "bright", "off"])
         try readAll()
+        // The effects' bases only when both are known now; else none, so no round takes both as they are.
+        let fxBoth = fxLater == nil && effects[.panel] != nil && effects[.twin] != nil
+        if fxLater == nil && !fxBoth && fxUnknownNow { fxLater = from }             // converged, but not readable just now
+        fxAlignFrom = fxLater
         for s in sides {
             rebaseScreen(s)
             base[s, default: [:]]["settings"] = digests(flat(s))
-            base[s, default: [:]]["effects"] = effects[s]?.fields
+            base[s, default: [:]]["effects"] = fxBoth ? effects[s]!.fields : nil
             firmwareBase[s] = fw[s]!.id
         }
         // The firmware last: to the twin by itself (firmwareDue, with retries), to the panel after a question.
@@ -1201,7 +1385,7 @@ final class SyncEngine {
             if from == .panel { wantTwin = fw[.panel]!.id; wantPanel = nil; carry = (0, .distantPast) }
             else { wantPanel = fw[.twin]!.id; wantTwin = nil }
         }
-        aligned = true; resumed = true; needDirection = false; holdWhy = nil; stateDirty = true
+        aligned = true; resumed = true; needDirection = false; holdWhy = nil; stateDirty = true; fxWaitSince = nil
         if fw[.panel]!.mac != normMac(UserDefaults.standard.string(forKey: "panelMac")),
            (UserDefaults.standard.string(forKey: "panelAddress") ?? "").isEmpty {
             UserDefaults.standard.set(fw[.panel]!.mac, forKey: "panelMac")     // from now on this panel, by its MAC
@@ -1245,7 +1429,20 @@ final class SyncEngine {
     private struct Plan {
         var settings: [Side: [String]] = [:], effects: [Side: [String]] = [:], conflicts: [String] = [], hardware: [String] = []
         var mass: Msg?, sig = ""
-        var twinEmpty: Bool { settings[.twin, default: []].isEmpty && effects[.twin, default: []].isEmpty }
+    }
+
+    /// Why a resume cannot go by the saved bases and the direction is asked instead: a side's effects are
+    /// still not known after the wait (what either side changed in them cannot be shown), or the effects
+    /// have no base (they were never aligned) - never merged by themselves either way. nil: it can.
+    private func resumeNeedsDirection() -> Msg? {
+        if fxUnknownNow {
+            return M("The effects of one side still cannot be read, so what changed in them cannot be shown: which way? They are aligned in that direction once they can be read.",
+                     "Эффекты одной из сторон всё ещё не прочитать, и что в них меняли, не показать: в какую сторону? Эффекты выровняю в эту сторону, когда они прочитаются.")
+        }
+        if effects[.panel] != nil && effects[.twin] != nil && !(hasFxBase(.panel) && hasFxBase(.twin)) {
+            return M("The effects of the panel and the twin have not been aligned yet: which way?", "Эффекты панели и двойника ещё не выровнены: в какую сторону?")
+        }
+        return nil
     }
 
     private func resumePlan() -> Plan {
@@ -1262,7 +1459,7 @@ final class SyncEngine {
         p.hardware = twinKeys.filter { Settings.hardware.contains($0) }
         twinKeys.removeAll { Settings.hardware.contains($0) }
         p.settings[.twin] = twinKeys
-        if let pe = effects[.panel], let te = effects[.twin] {
+        if let pe = effects[.panel], let te = effects[.twin], hasFxBase(.panel), hasFxBase(.twin) {
             let ch = effectChanges([.panel: pe, .twin: te])
             p.effects = ch.changed
             p.conflicts += ch.conflicts
@@ -1282,32 +1479,29 @@ final class SyncEngine {
         return p
     }
 
+    /// Sync switched on again with a pair it knows: the second window lists what each side changed while it
+    /// was off, whatever that is - even nothing.
     private func resume() throws {
         let plan = resumePlan()
-        if let m = plan.mass { needDirection = true; log("note", "hold", M("\(m.en): which way?", "\(m.ru): в какую сторону?"), problem: true); askDirectionNow(m); return }
-        if plan.twinEmpty { try finishResume(); return }
+        if let m = plan.mass {
+            needDirection = true; holdWhy = m
+            log("note", "hold", M("\(m.en): which way?", "\(m.ru): в какую сторону?"), problem: true); askDirectionNow(m); return
+        }
         askResumeNow(plan)
     }
 
-    /// Nothing changed on the twin meanwhile: the rounds carry what the panel changed; the twin shows the panel's screen.
-    private func finishResume() throws {
-        try mirrorScreen(from: .panel, fields: ["page", "style", "bright", "off"])
-        rebaseScreen(.panel); rebaseScreen(.twin)
-        aligned = true; resumed = true
-        retryPending()
-        log("note", "resume", M("resumed with \(fw[.panel]!.name): what the panel changed meanwhile comes to the twin now",
-                                "продолжаю с \(fw[.panel]!.name): изменения панели, сделанные без синхронизации, переношу сейчас"))
-    }
-
-    /// "Carry to the panel": the changes of both sides since the saved bases, as the rounds would carry
-    /// them, with no threshold - the person has seen the list.
+    /// "From the twin to the panel" at a resume: the changes of both sides since the saved bases, as the
+    /// rounds would carry them, with no threshold - the person has seen the list. Effects that a side's
+    /// firmware cannot give out are left without a base: the direction is asked the day they can be read.
     private func carryResume() throws {
-        log("twin→panel", "resume", M("the twin's changes made while sync was off go to the panel", "изменения двойника, сделанные без синхронизации, переношу на панель"))
+        log("twin→panel", "resume", M("the changes made while sync was off: the twin's go to the panel, the panel's to the twin",
+                                      "изменения, сделанные без синхронизации: двойника переношу на панель, панели — на двойника"))
         try settingsPass(allowMass: true)
         if let p = effects[.panel], let t = effects[.twin] { try effectsPass([.panel: p, .twin: t], allowMass: true) }
+        else { for s in sides { base[s]?["effects"] = nil }; fxAlignFrom = nil }
         try mirrorScreen(from: .panel, fields: ["page", "style", "bright", "off"])
         rebaseScreen(.panel); rebaseScreen(.twin)
-        aligned = true; resumed = true; stateDirty = true
+        aligned = true; resumed = true; stateDirty = true; fxWaitSince = nil
         retryPending()
         saveState()
     }
@@ -1469,8 +1663,13 @@ final class SyncEngine {
         var cur: [Side: Effects] = [:]
         for s in sides {
             guard let e = try readEffects(s) else {
-                noteOnce("fx-unknown-\(s)", M("the effects of \(s.word.en) cannot be read now (no /api/lua or no script store): not compared",
-                                              "эффекты \(s.of) сейчас не прочитать (нет /api/lua или хранилища скриптов): не сравниваю"))
+                if fxAbsent[s] == true {
+                    noteOnce("fx-absent-\(s)", M("the effects of \(s.word.en) cannot be read with its firmware (no /api/lua, no script store or no filesystem): not compared",
+                                                 "эффекты \(s.of) не прочитать с этой прошивкой (нет /api/lua, хранилища скриптов или файловой системы): не сравниваю"))
+                } else {
+                    noteOnce("fx-unknown-\(s)", M("the effects of \(s.word.en) cannot be read just now (/api/lua/source did not answer): compared when they can be",
+                                                  "эффекты \(s.of) сейчас не прочитать (/api/lua/source не ответил): сравню, когда прочитаются"))
+                }
                 return
             }
             cur[s] = e
@@ -1484,10 +1683,7 @@ final class SyncEngine {
     }
 
     private func effectsPass(_ cur: [Side: Effects], allowMass: Bool) throws {
-        guard base[.panel]?["effects"] != nil, base[.twin]?["effects"] != nil else {
-            for s in sides { base[s, default: [:]]["effects"] = cur[s]!.fields }
-            return
-        }
+        guard hasFxBase(.panel), hasFxBase(.twin) else { try alignEffectsLate(cur); return }
         for s in sides where base[s]!["effects"]!["mode"] != cur[s]!.fields["mode"] {
             log("note", "effects", M("the effects of \(s.word.en) are compared by \(cur[s]!.byHash ? "content" : "size") from now on", "эффекты \(s.of) теперь сравниваются \(cur[s]!.byHash ? "по содержимому" : "по размеру")"))
         }
@@ -1509,6 +1705,30 @@ final class SyncEngine {
         }
         for (s, keys, e) in failed { revert("effects", s, keys, old[s]!, e) }
         if let e = failed.first(where: { $0.2 is SyncStopped })?.2 ?? failed.first?.2 { throw e }
+    }
+
+    /// The effects have no base: they were not aligned with the rest, since a side's could not be read then.
+    /// Now both can be: aligned in the direction the person chose then (fxAlignFrom), unless that would
+    /// remove more than MASS_DELETES on the other side - then, or when no direction was chosen for them,
+    /// the direction is asked. Never both taken as they are: whatever differs would stay so for good.
+    private func alignEffectsLate(_ cur: [Side: Effects]) throws {
+        guard let from = fxAlignFrom else {
+            try massChange(.panel, M("the effects of the panel and the twin have not been aligned", "эффекты панели и двойника ещё не выровнены"))
+        }
+        let to = from.other, a = cur[from]!, b = cur[to]!
+        let removals = b.bytes.keys.filter { a.bytes[$0] == nil }.count
+        if removals > SyncEngine.MASS_DELETES {
+            fxAlignFrom = nil
+            try massChange(to, M("aligning the effects \(from.arrow), as you chose, would remove \(removals) on \(to.word.en)",
+                                 "выравнивание эффектов \(from.arrow), как вы выбрали, удалило бы \(to.on) эффектов: \(removals)"))
+        }
+        log(from.arrow, "effects", M("the effects, which could not be read at the alignment, are aligned now: \(from.word.en) as it is",
+                                     "эффекты, которые при выравнивании было не прочитать, выравниваю сейчас: берётся \(from.word.ru) как есть"))
+        effects = cur
+        try convergeEffects(from: from, a, b)
+        guard let pe = effects[.panel], let te = effects[.twin] else { return }
+        base[.panel, default: [:]]["effects"] = pe.fields; base[.twin, default: [:]]["effects"] = te.fields
+        fxAlignFrom = nil; stateDirty = true
     }
 
     private func convergeEffects(from s: Side, _ a: Effects, _ b: Effects) throws {
@@ -1938,7 +2158,7 @@ final class SyncEngine {
             guard f.settled else { watch(s, f); continue }
             fwWatchSince[s] = nil
             firmwareBase[s] = f.id; stateDirty = true
-            caps[s] = nil; hashes[s] = [:]
+            caps[s] = nil; hashes[s] = [:]; imageCache = nil
             log("note", "firmware", M("\(s.word.en) now runs \(f.id)", "\(s.on) теперь \(f.id)"))
             retryPending()
             // The later change wins: a new firmware on one side replaces what was waiting for the other.
@@ -1965,7 +2185,11 @@ final class SyncEngine {
             firmwareBase[s] = n.id
             if fw[o]?.id == fl.fromId { firmwareBase[o] = fl.fromId }   // both sides now hold what they run: no echo
             caps[s] = nil; hashes[s] = [:]; stateDirty = true
-            if s == .twin { wantTwin = nil; carry = (0, .distantPast) } else { wantPanel = nil }
+            // What is wanted is let go only when it is what was confirmed: a newer build that came to the
+            // source meanwhile (firmwareRound, the later change wins) is still wanted, and is carried next.
+            if s == .twin { wantTwin = SyncEngine.stillWanted(wantTwin, confirmed: fl.fromId); carry = (0, .distantPast) }
+            else { wantPanel = SyncEngine.stillWanted(wantPanel, confirmed: fl.fromId) }
+            imageCache = nil
             log(o.arrow, "firmware", M("\(s.word.en) runs \(n.id): confirmed", "\(s.on) \(n.id): подтверждена"))
             retryPending()
             if s == .twin { try? mirrorScreen(from: .panel, fields: ["page", "style", "bright", "off"]) }
@@ -1985,14 +2209,23 @@ final class SyncEngine {
         fwWatch = Date().addingTimeInterval(10)
     }
 
-    /// What is wanted and due: the panel's firmware to the twin (tried again after a pause when it fails),
-    /// the twin's to the panel as a question (again on "Sync now" and at the next start).
+    /// The build still wanted once CONFIRMED was confirmed on the target: none if it was that one.
+    static func stillWanted(_ want: String?, confirmed: String) -> String? { want == confirmed ? nil : want }
+
+    /// Whether a failed transfer to the twin is tried again, and after how long: nil after CARRY_TRIES
+    /// failures in a row - then only "Sync now" tries again.
+    static func carryWait(afterFailures n: Int) -> TimeInterval? {
+        n >= CARRY_TRIES ? nil : carryBackoff[min(max(n, 1) - 1, carryBackoff.count - 1)]
+    }
+
+    /// What is wanted and due: the panel's firmware to the twin (tried again after a pause when it fails,
+    /// CARRY_TRIES times at most), the twin's to the panel as a question (again on "Sync now" and at the next start).
     private func firmwareDue() throws {
         guard inFlight == nil else { return }
         if let w = wantTwin {
             if fw[.panel]?.id != w || fw[.twin]?.id == w { wantTwin = nil; stateDirty = true }
-            else if Date() >= carry.next {
-                do { try updateFirmware(from: .panel) }
+            else if carry.tries < SyncEngine.CARRY_TRIES, Date() >= carry.next {
+                do { try updateFirmware(from: .panel, offer: nil) }
                 catch let e where e is SyncStopped || e is SyncWait { throw e }
                 catch { failedCarry(.twin, error) }
             }
@@ -2006,7 +2239,13 @@ final class SyncEngine {
     private func failedCarry(_ to: Side, _ e: Error) {
         if to == .twin {
             carry.tries += 1
-            let wait = SyncEngine.carryBackoff[min(carry.tries - 1, SyncEngine.carryBackoff.count - 1)]
+            guard let wait = SyncEngine.carryWait(afterFailures: carry.tries) else {
+                carry.next = .distantFuture
+                log("error", "firmware", M("the panel's firmware is not on the twin: \(describe(e).en) - \(carry.tries) attempts failed: not tried again until Sync now",
+                                           "прошивка панели не перенесена на двойника: \(describe(e).ru) — неудачных попыток \(carry.tries): больше не пробую до «Синхронизировать сейчас»"),
+                    problem: true, sticky: true)
+                return
+            }
             carry.next = Date().addingTimeInterval(wait)
             log("error", "firmware", M("the panel's firmware is not on the twin: \(describe(e).en) - tried again in \(Int(wait / 60)) min",
                                        "прошивка панели не перенесена на двойника: \(describe(e).ru) — повторю через \(Int(wait / 60)) мин"), problem: true)
@@ -2025,12 +2264,12 @@ final class SyncEngine {
         let downgrade = versionNumbers(t.version).flatMap { a in versionNumbers(p.version).map { a.lexicographicallyPrecedes($0) } } ?? false
         let o = Offer(id: UUID().uuidString, pair: pairKey, panelName: p.name, panelAddress: device(.panel).address, panelMac: p.mac,
                       panelVersion: p.version, panelBuild: p.build, panelId: p.id, twinId: t.id, version: t.version, build: t.build,
-                      source: source, downgrade: downgrade, pressReturnForTesting: testSwitch("syncPressReturnForTesting"))
+                      source: source, downgrade: downgrade, pressForTesting: testInt("syncPressReturnForTesting"))
         offer = o
-        if testSwitch("syncAutoConfirmForTesting") {
+        if o.pressForTesting == 0 && testSwitch("syncAutoConfirmForTesting") {
             let delay = max(0, UserDefaults.standard.double(forKey: "syncAnswerDelayForTesting"))
-            log("note", "firmware", M("the panel is a twin and syncAutoConfirmForTesting is on: Update is answered by itself in \(Int(delay)) s",
-                                      "«панель» — двойник, и включён syncAutoConfirmForTesting: ответ «Обновить» дам сам через \(Int(delay)) с"))
+            log("note", "firmware", M("the panel is a twin and syncAutoConfirmForTesting is on: both windows are answered yes by itself in \(Int(delay)) s",
+                                      "«панель» — двойник, и включён syncAutoConfirmForTesting: «да» в обоих окнах дам сам через \(Int(delay)) с"))
             DispatchQueue.global().asyncAfter(deadline: .now() + delay) { [weak self] in self?.locked { self?._fwReply = (o.id, true) } }
             return
         }
@@ -2039,9 +2278,10 @@ final class SyncEngine {
         DispatchQueue.main.async { self.askFirmware?(o) }
     }
 
-    /// The person's answer to "Update the panel too?". A yes counts only for what it was given for: the
-    /// same panel (MAC), the same firmware on it, the same on the twin - read again now. Otherwise the
-    /// question is asked again, with what holds now.
+    /// The person's answer to "Update the panel too?" and "Really flash the physical panel?" (yes only when
+    /// both were yes). A yes counts only for what it was given for: the same panel (MAC), the same firmware
+    /// on it, the same on the twin - read again now, and once more right before the image is sent
+    /// (updateFirmware). Otherwise nothing is sent and the question is asked again, with what holds then.
     private func answeredFirmware(id: String, go: Bool) throws {
         guard let o = offer, o.id == id else { return }
         offer = nil
@@ -2052,30 +2292,57 @@ final class SyncEngine {
             return
         }
         try verifyIdentity()                                                  // the MACs, and fw[] read again
-        let p = fw[.panel]!, t = fw[.twin]!
-        guard pairKey == o.pair, p.mac == o.panelMac, p.id == o.panelId, t.id == o.twinId else {
-            log("note", "firmware", M("changed while the question was open (the panel runs \(p.id), the twin \(t.id)): not sent - asked again if they still differ",
-                                      "пока вопрос был открыт, изменилось (на панели \(p.id), на двойнике \(t.id)): не отправляю — если прошивки всё ещё различаются, спрошу заново"), problem: true)
-            nextSlow = .distantPast                                          // the change is looked at first, then asked about
-            return
-        }
-        do { try updateFirmware(from: .twin) }
+        guard offerHolds(o) else { return }
+        do { try updateFirmware(from: .twin, offer: o) }
         catch let e where e is SyncStopped || e is SyncWait { throw e }
         catch { failedCarry(.panel, error) }
     }
 
+    /// Whether the pair and both firmwares are still what the person said yes to (fw[] just read). If not,
+    /// nothing is sent: the change is looked at first, and the question comes again if they still differ.
+    private func offerHolds(_ o: Offer) -> Bool {
+        let p = fw[.panel]!, t = fw[.twin]!
+        if pairKey == o.pair, p.mac == o.panelMac, p.id == o.panelId, t.id == o.twinId { return true }
+        log("note", "firmware", M("changed since the yes (the panel runs \(p.id), the twin \(t.id)): the panel is not flashed - asked again if they still differ",
+                                  "с момента «да» изменилось (на панели \(p.id), на двойнике \(t.id)): панель не прошиваю — если прошивки всё ещё различаются, спрошу заново"), problem: true)
+        nextSlow = .distantPast                                              // the change is looked at first, then asked about
+        return false
+    }
+
     /// The image of side S's firmware, sent to the other side; its confirmation is watched by firmwareRound.
-    private func updateFirmware(from s: Side) throws {
-        let f = fw[s]!, o = s.other
+    /// To the panel only with OFFER, the person's yes, which must still hold right before the image goes.
+    private func updateFirmware(from s: Side, offer yes: Offer?) throws {
+        let f = fw[s]!, o = s.other, targetWas = fw[o]!.id
+        precondition(o == .twin || yes != nil, "the panel is flashed only on a person's yes")
+        // Whether it fits the target's OTA slot, from the size /api/info gives - before anything is read.
+        let free = fw[o]?.otaFree ?? 0
+        guard free == 0 || f.bytes <= free else {
+            throw SyncError(M("the image (\(f.bytes) B) does not fit \(o.word.en)'s OTA slot (\(free) B)", "образ (\(f.bytes) Б) не помещается в OTA-раздел \(o.of) (\(free) Б)"))
+        }
         phase(M("updating the firmware of \(o.word.en) to \(f.version)", "обновляю прошивку \(o.of) до \(f.version)"))
         let (image, fromRelease) = try firmwareImage(from: s, f)
-        let free = fw[o]?.otaFree ?? 0
         guard free == 0 || image.count <= free else {
             throw SyncError(M("the image (\(image.count) B) does not fit \(o.word.en)'s OTA slot (\(free) B)", "образ (\(image.count) Б) не помещается в OTA-раздел \(o.of) (\(free) Б)"))
         }
-        // The last look before the firmware goes: the switch, and the target is still the pair's.
+        let hold = testInt("syncImageHoldForTesting")
+        if hold > 0 {
+            log("note", "firmware", M("image read: holding \(hold) s before the last look (syncImageHoldForTesting)", "образ прочитан: жду \(hold) с до последней проверки (syncImageHoldForTesting)"))
+            let until = Date().addingTimeInterval(TimeInterval(hold))
+            while Date() < until { guard writesAllowed else { throw SyncStopped() }; Thread.sleep(forTimeInterval: 0.5) }
+        }
+        // The last look before the firmware goes: the switch, the pair, and the firmware on both sides - for
+        // the panel what the person said yes to, for the twin what the image was read for. The image took
+        // time to read (up to 180 s from the twin or GitHub), and the panel may have been flashed meanwhile.
         guard writesAllowed else { throw SyncStopped() }
         try verifyIdentity()
+        if let yes {
+            guard offerHolds(yes) else { return }
+        } else if fw[s]!.id != f.id || fw[o]!.id != targetWas {
+            log("note", "firmware", M("changed while the image was read (\(s.word.en) runs \(fw[s]!.id), \(o.word.en) \(fw[o]!.id)): not sent - the change is looked at first",
+                                      "пока читался образ, изменилось (\(s.on) \(fw[s]!.id), \(o.on) \(fw[o]!.id)): не отправляю — сначала разберу изменение"))
+            nextSlow = .distantPast
+            return
+        }
         inFlight = InFlight(to: o, from: s, version: f.version, bytes: image.count, build: fromRelease ? nil : f.build, fromId: f.id,
                             oldId: fw[o]?.id ?? "", sent: Date())
         saveState()
@@ -2089,11 +2356,24 @@ final class SyncEngine {
                                    "\(f.id)\(fromRelease ? " (выпуск)" : "") отправлена \(o == .panel ? "на панель: она перезагружается и подтверждает" : "двойнику: он перезагружается и подтверждает") образ примерно за минуту"))
     }
 
-    /// The image, and whether it is the release (confirmed then by version and size, not build).
+    /// The image, and whether it is the release (confirmed then by version and size, not build). One read
+    /// is kept, by the source's firmware and its ELF SHA-256, until it is confirmed on the target or the
+    /// source runs another: a transfer tried again does not read the panel again.
     private func firmwareImage(from s: Side, _ f: Firmware) throws -> (Data, Bool) {
         guard let cap = imageCap(s) else {
             throw SyncError(M("whether \(s.word.en) gives out its image is not known now", "отдаёт ли \(s.word.ru) свой образ, сейчас не узнать"))
         }
+        let key = "\(s)|\(f.id)|\(cap.elf ?? "-")"
+        if let c = imageCache, c.key == key {
+            log("note", "firmware", M("the image of \(f.id) read before is used again: not read again", "образ \(f.id), прочитанный раньше, беру снова: повторно не читаю"))
+            return (c.data, c.fromRelease)
+        }
+        let (d, rel) = try readImage(from: s, f, cap)
+        imageCache = (key, d, rel)
+        return (d, rel)
+    }
+
+    private func readImage(from s: Side, _ f: Firmware, _ cap: (has: Bool, elf: String?)) throws -> (Data, Bool) {
         // Reading the panel holds its loop() for the whole transfer: the release is taken when it is that build.
         if s == .panel || !cap.has {
             var rel: GitHub.Release?
@@ -2123,6 +2403,12 @@ final class SyncEngine {
         try checkImage(a.data)
         guard let elf = a.header("X-App-Elf-Sha256")?.lowercased(), appElfSha256(a.data) == elf else {
             throw SyncError(M("the image's ELF SHA-256 is not the X-App-Elf-Sha256 it came with", "ELF SHA-256 в образе не совпадает с X-App-Elf-Sha256 ответа"))
+        }
+        // The build HEAD named when the source's firmware was looked at: another one now is another image.
+        if let e = cap.elf, e != elf {
+            caps[s] = nil
+            throw SyncError(M("the image read is another build than HEAD named (ELF SHA-256 \(elf.prefix(12))…, not \(e.prefix(12))…): not taken",
+                              "прочитанный образ — другая сборка, чем назвал HEAD (ELF SHA-256 \(elf.prefix(12))…, а не \(e.prefix(12))…): не беру"))
         }
         return (a.data, false)
     }
