@@ -1,1 +1,1 @@
-202c95d2ec417de961a04868326eb541cbb663413456538c344f06d783d7a5cb  AnimatedPixelClock-waveshare-v2.7.7-Full.bin
+78def7e1fe24f105a21db1efa6869be00b7ba007fd53e8deb7b401d252d82a15  AnimatedPixelClock-waveshare-v2.7.8-Full.bin
