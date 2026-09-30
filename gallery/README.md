@@ -382,7 +382,7 @@ The palette is Inigo Quilez's cosine palette, rebuilt every frame while its para
 
 Light poured into a whirlpool that never ends. A few bright shapes are drawn at the middle of the screen each frame: a ring of dots, a figure-of-eight, a star, spokes, or a spiral arm. Everything already on the screen streams outward in spirals and fades at the edges. One shape becomes a tunnel, a flower, a galaxy.
 
-It does not repeat. The zoom, the twist and the drift of the centre each follow their own slow wave, with periods of 17, 29, 43 and 61 seconds that do not divide into each other. The colours come from Inigo Quilez's cosine palette, drifting the same way. Every 30 seconds the shape at the middle changes, and the button changes it at once.
+It does not repeat. The zoom, the twist and the drift of the centre each follow their own slow wave, with periods of 17, 29, 43 and 61 seconds that do not divide into each other. The colours come from Inigo Quilez's cosine palette, drifting the same way. Every 30 seconds by the clock the shape at the middle changes, the same on every panel. The button changes it at once, and the new shape holds until the clock's next change, anything up to 30 seconds.
 
 **How it is drawn.** It is the trick behind MilkDrop. Each frame px.feedback resamples the whole picture a little larger, a little turned and a little darker, in one call of about 6.5 ms on the panel, and then the new shape is drawn over it. It needs firmware 2.7.5 or later for px.feedback; on older firmware it only leaves fading trails in place. On the panel it runs at 15 fps, about 9 ms a frame.
 
