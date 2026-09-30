@@ -376,7 +376,7 @@ The panel pretends to be a mechanical flip board. Every digit is seven segments 
 - a turning cube;
 - on the dot board, a wire cube and a wire ball that fly, spin and bounce off the edges by physics, shimmering like the plasma, the ball with four laser beams.
 
-A change of grid goes out as a wave and comes back in, and the scene's name shows for a second before the board fills.
+A change of scene flows: the new board starts at once and flips in from dark while the old picture dissolves over it in two seconds. A scene picked by hand flows in half a second, and its name shows for a second before the board fills. On firmware before 2.7.5 the board goes out as a wave first instead.
 
 **The button.** The knob's click or the remote's OK on this page picks a scene: one press the next scene, two the one before. A chosen scene stays until three presses hand the board back to the program.
 

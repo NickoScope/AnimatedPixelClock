@@ -39,6 +39,13 @@
 -- OCEANARIUM counts them: one press the next scene, two the one before, and a
 -- chosen scene stays until three presses hand the board back to the program.
 -- The scene's name shows for a second on the dark board before it fills.
+--
+-- A change of scene flows (firmware 2.7.5+, px.mix): the new board starts at
+-- once and flips in from dark while the old picture dissolves over it in two
+-- seconds (half a second when picked by hand, so its name reads clearly). The new scene draws into its own canvas, kept in snapshot slot 3,
+-- because a board redraws only what flips and needs its last frame intact;
+-- the old picture waits in slot 2. On older firmware the board goes out as a
+-- wave first, as before.
 
 PERIOD = 600.0
 FPS = 15
@@ -1609,6 +1616,7 @@ local function draw_active(style)
 end
 
 -- ── the program ─────────────────────────────────────────────────────────────
+local BTN = { last = nil, n = 0, at = 0, title = false }
 local nextScene = 2
 local hold = false                  -- a scene picked by hand stays
 local titleUntil = -1
@@ -1632,8 +1640,30 @@ local function start_scene(k, title)
   end
 end
 
--- the board goes out as a wave; when it is dark the chosen scene comes in
+-- The flow from one scene into the next (px.mix, 2.7.5+): the picture on
+-- screen is put aside in slot 2, the new scene starts at once, and for XF
+-- seconds each frame it draws on its own canvas (slot 3) with the old
+-- picture mixed over it, less and less.
+-- (one table: the main chunk is at Lua's 200 locals)
+-- A change by hand flows in half a second: the scene's name has to read
+-- clearly in its one second on the dark board.
+local FL = { mix = rawget(px, "mix") ~= nil, secs = 2.0, auto = 2.0, hand = 0.5, at = nil, old = 2, new = 3 }
+
+-- the board goes out as a wave; when it is dark the chosen scene comes in.
+-- With px.mix it does not wait: the scene flows in over the old picture.
 local function go_to(k)
+  if FL.mix then
+    local title = BTN.title
+    BTN.title = false
+    local kk = (k - 1) % #SHOW + 1
+    if title == true then title = scene_name(SHOW[kk]) end
+    px.save(FL.old)
+    start_scene(kk, title or nil)
+    px.save(FL.new)
+    FL.at = T
+    FL.secs = title and FL.hand or FL.auto
+    return
+  end
   if going then nextScene = k; return end
   going = T
   nextScene = k
@@ -1650,7 +1680,6 @@ end
 -- The effect's button (px.button, firmware 2.7.3+), presses grouped over
 -- 0.45 s - what worked with the remote on OCEANARIUM: the remote holds the
 -- switch 250 ms after its last frame, so its clicks come ~0.4 s apart.
-local BTN = { last = nil, n = 0, at = 0, title = false }
 local MULTI = 0.45
 local function buttons()
   local btn = rawget(px, "button")
@@ -1687,6 +1716,23 @@ function draw()
   buttons()
   local sc = SHOW[scene]
   if not going and not hold and T - sceneAt > sc.secs and T > titleUntil then go_to(scene + 1) end
+  local flowing = FL.at ~= nil
+  if flowing then px.restore(FL.new) end
+  FL.frame(SHOW[scene])
+  if flowing then
+    local u = (T - FL.at) / FL.secs
+    if u >= 1 then
+      FL.at = nil
+      px.forget(FL.old)
+      px.forget(FL.new)
+    else
+      px.save(FL.new)
+      px.mix(FL.old, 1 - ease(u))
+    end
+  end
+end
+
+FL.frame = function(sc)
   if going then
     if T - going > FLIP + 0.5 then
       local title = BTN.title

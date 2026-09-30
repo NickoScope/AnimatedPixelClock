@@ -98,7 +98,7 @@
       "name": "KINETIC_DIGITS_LED",
       "file": "kinetic_digits_led.lua",
       "line": "a flip board of seven-segment digits made of the panel's LEDs.",
-      "bytes": 70047,
+      "bytes": 71801,
       "preview": "preview/kinetic_digits_led.png"
     },
     {
