@@ -4,16 +4,17 @@
 -- ============================================================
 -- @name.en Flow
 -- @name.ru Потоки
--- @about.en Hundreds of particles on currents that never repeat. Three scenes of 40 s each: glowing
--- @about.en currents, a fountain of sparks bouncing off the walls, snow blown by the wind.
--- @about.ru Сотни частиц на течениях, которые не повторяются. Три сцены по 40 с: светящиеся течения,
--- @about.ru фонтан искр, отскакивающих от стен, снег на ветру.
--- @control.en knob press: Next scene now: currents, fountain, snow.
--- @control.ru knob press: Сразу следующая сцена: течения, фонтан, снег.
--- @function.en 3 scenes, 40 s each
+-- @about.en Hundreds of particles on currents that never repeat. Three scenes of 40 s each, by the
+-- @about.en clock, the same on every panel: glowing currents, a fountain of sparks bouncing off the
+-- @about.en walls, snow blown by the wind.
+-- @about.ru Сотни частиц на течениях, которые не повторяются. Три сцены по 40 с по часам, одинаково на
+-- @about.ru всех панелях: светящиеся течения, фонтан искр, отскакивающих от стен, снег на ветру.
+-- @control.en knob press: Next scene now (currents, fountain, snow); it runs until the next change by the clock.
+-- @control.ru knob press: Сразу следующая сцена (течения, фонтан, снег); она идёт до ближайшей смены по часам.
+-- @function.en 3 scenes, 40 s each, by the clock: the same on every panel
 -- @function.en No clock
 -- @function.en Needs firmware 2.7.5 or later
--- @function.ru 3 сцены по 40 с
+-- @function.ru 3 сцены по 40 с, по часам: одинаково на всех панелях
 -- @function.ru Часов нет
 -- @function.ru Нужна прошивка 2.7.5 или новее
 --
@@ -31,10 +32,19 @@
 -- The field itself drifts along time, so the currents change and the
 -- pictures they draw never come back the same.
 --
+-- The scene is read off the wall clock, so two panels (or a panel and its
+-- twin) show the same scene at the same moment: px.t() is the phase of the
+-- 120 s PERIOD aligned to the epoch, and its 40 s thirds are the scenes. A
+-- press moves one scene on from the clock's (the presses are counted from
+-- the moment the effect opened); the scene it brings runs until the clock's
+-- next 40 s boundary, anything from 0 to 40 s. The palette drifts on the
+-- clock too (periods of 40 and 60 s), so the colours match as well; the
+-- particles themselves are each panel's own.
+--
 -- Needs firmware 2.7.5 or later (px.particles; px.palette and px.fade are
 -- 2.7.4).
 -- ============================================================
-PERIOD = 600.0
+PERIOD = 120.0                -- 3 scenes x 40 s: the scene is read off the clock
 FPS = 15
 
 local W, H = px.size()
@@ -44,8 +54,9 @@ local HAS = rawget(px, "particles") ~= nil
 local SCENES = { "flow", "fountain", "snow" }
 local scene = 1
 local SCENE = 40
-local T, tprev, sceneAt = 0, nil, 0
-local lastClicks = rawget(px, "button") and px.button() or 0
+local T, tprev = 0, nil
+-- px.button() counts from boot, not from here: the presses since the effect opened
+local base = rawget(px, "button") and px.button() or 0
 
 local P = HAS and px.particles(1200, 20260929) or nil
 local A_, B_, C_, D_ = { 0.5, 0.5, 0.5 }, { 0.5, 0.5, 0.5 }, { 1, 1, 1 }, { 0, 0.33, 0.67 }
@@ -72,12 +83,12 @@ function draw()
   end
   tprev = t
   T = T + dt
-  if T > 3600 then T = T - 3600; sceneAt = sceneAt - 3600 end   -- a 32-bit float T, held under an hour
+  if T > 3600 then T = T - 3600 end   -- a 32-bit float T, held under an hour
 
-  local c = rawget(px, "button") and px.button() or 0
-  local change = c ~= lastClicks or T - sceneAt > SCENE
-  if c ~= lastClicks then lastClicks = c end
-  if change then scene = scene % #SCENES + 1; sceneAt = T end
+  -- the scene: the clock's 40 s third of the PERIOD, moved on by the presses
+  local k = (rawget(px, "button") and px.button() or 0) - base
+  local slot = floor(t / SCENE)                      -- 0..2, the same on every panel with NTP
+  scene = (slot + k) % #SCENES + 1
 
   if not HAS then
     px.clear(0, 0, 0)
@@ -85,7 +96,7 @@ function draw()
     return
   end
 
-  local w1, w2 = sin(T * 2 * pi / 37), sin(T * 2 * pi / 53)
+  local w1, w2 = sin(t * 2 * pi / 40), sin(t * 2 * pi / 60)   -- whole times into PERIOD: no jump at the wrap
   for i = 1, 3 do D_[i] = (i - 1) * 0.33 + 0.2 * w1 + 0.05 * i * w2 end
   local pal = px.palette(SPEC)
   local s = SCENES[scene]

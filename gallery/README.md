@@ -404,12 +404,12 @@ The button changes the mood: violet and rose, teal and ice, ember, aurora.
 
 ![Flow](preview/flow.png)
 
-Hundreds of particles on currents that never repeat. It has three scenes, 40 seconds each, and the button moves to the next:
+Hundreds of particles on currents that never repeat. It has three scenes, 40 seconds each by the clock, so every panel shows the same scene at the same moment. The button moves to the next at once, and that scene runs until the clock's next change, anything up to 40 seconds:
 - **flow:** seven hundred motes carried by a flow field, the curl of Perlin noise, so they swirl along its contour lines and never pool. They leave glowing trails in colours from a drifting palette;
 - **fountain:** sparks thrown up from the middle of the floor, falling back and bouncing off the walls;
 - **snow:** flakes falling slowly, blown about by a soft wind.
 
-The field drifts along time, so the currents change and the pictures they draw never come back the same.
+The field drifts along time, so the currents change and the pictures they draw never come back the same. The palette drifts by the clock, so two panels side by side also share their colours; the particles are each panel's own.
 
 **How it is drawn.** A particle system in the firmware, px.particles, does the moving and the drawing; the script only says where the particles come from and what pulls them. Trails are one px.fade a frame. It needs firmware 2.7.5 or later. On the panel it runs at 15 fps, about 7 ms a frame.
 
