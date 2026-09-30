@@ -170,7 +170,7 @@
       "name": "SNOOKER_CLOCK",
       "file": "snooker_clock.lua",
       "line": "a snooker table that plays frames by itself, with the time in the corner.",
-      "bytes": 42666,
+      "bytes": 47345,
       "preview": "preview/snooker_clock.png"
     },
     {
