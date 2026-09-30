@@ -2,6 +2,9 @@
 # Build "TWIN-NickoScopeMatrix-64x128.app": the virtual twin as a self-contained Mac app, and a .dmg of it.
 #   tools/twin/app/build.sh [--no-install]
 #
+# The app is every .swift file here but icon.swift (a script of its own): main.swift (the window, the
+# twin, top-level code - Swift allows it in main.swift only) and SyncEngine.swift (Sync with panel).
+#
 # Everything the twin needs goes inside the bundle (Contents/Resources): the esp32sim engine, the
 # ESP32-S3 mask ROM, the eFuse word, the firmware release of docs/firmware/latest and the web pages
 # (the engine's panel page, the project's web flasher with the twin's shim, as twin.py build_web makes
@@ -17,6 +20,10 @@
 #
 # The result: /Applications/TWIN-NickoScopeMatrix-64x128.app (unless --no-install) and
 # ~/twin/dist/TWIN-NickoScopeMatrix-64x128-<app>-firmware-<ver>.dmg.
+#
+# For a test build beside the installed app: APP_OUT=<dir> also leaves the .app there, DIST=<dir> puts
+# the .dmg there, and TWIN_BUNDLE_ID=<id> gives it another bundle identifier - so another settings
+# domain (defaults), and a test never writes the installed app's settings.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 TWIN_DIR="$(cd "$HERE/.." && pwd)"
@@ -32,8 +39,10 @@ INSTALL=1; [ "${1:-}" = "--no-install" ] && INSTALL=0
 
 VERSION="$(tr -d '[:space:]' < "$LATEST/VERSION")"                     # v2.7.7
 IMAGE="$LATEST/AnimatedPixelClock-waveshare-$VERSION-Full.bin"
-APP_VERSION="1.2"
+APP_VERSION="1.3"
 NAME="TWIN-NickoScopeMatrix-64x128"
+BUNDLE_ID="${TWIN_BUNDLE_ID:-com.nickoscope.TWIN-NickoScopeMatrix-64x128}"
+APP_OUT="${APP_OUT:-}"
 for f in "$ENGINE/target/release/esp32sim" "$ROM" "$EFUSE" "$IMAGE"; do
     [ -f "$f" ] || { echo "missing: $f (see tools/twin/README.md, Setup)" >&2; exit 1; }
 done
@@ -44,7 +53,9 @@ APP="$BUILD/$NAME.app"; RES="$APP/Contents/Resources"
 mkdir -p "$APP/Contents/MacOS" "$RES/engine" "$RES/rom" "$RES/firmware"
 
 echo "== the app (swiftc)"
-swiftc -O -o "$APP/Contents/MacOS/TwinPanel" "$HERE/TwinApp.swift" -framework AppKit -framework WebKit
+SOURCES=()
+for f in "$HERE"/*.swift; do [ "$(basename "$f")" = icon.swift ] || SOURCES+=("$f"); done
+swiftc -O -o "$APP/Contents/MacOS/TwinPanel" "${SOURCES[@]}" -framework AppKit -framework WebKit
 
 echo "== the twin inside it: engine $(git -C "$ENGINE" rev-parse --short HEAD 2>/dev/null || echo '?'), firmware $VERSION"
 cp "$ENGINE/target/release/esp32sim" "$RES/engine/esp32sim"
@@ -53,6 +64,10 @@ cp "$EFUSE" "$RES/efuse-opi.txt"
 cp "$IMAGE" "$RES/firmware/merged.bin"
 echo "$VERSION" > "$RES/firmware/VERSION"
 cp "$HERE/NOTICE.md" "$RES/NOTICE.md"                             # the bundled works' licenses
+# The local-network question macOS asks for Sync with panel, in both languages of the app.
+mkdir -p "$RES/en.lproj" "$RES/ru.lproj"
+printf '"NSLocalNetworkUsageDescription" = "Sync with panel finds the LED panel on your network (Bonjour) and talks to it and to the twin.";\n' > "$RES/en.lproj/InfoPlist.strings"
+printf '"NSLocalNetworkUsageDescription" = "Синхронизация с панелью находит LED-панель в вашей сети (Bonjour) и обменивается данными с ней и с двойником.";\n' > "$RES/ru.lproj/InfoPlist.strings"
 # The web pages, made by twin.py's own build_web, so the page and the flasher are the ones twin.py serves.
 TWIN_HOME="$TWIN_HOME" TWIN_ENGINE="$ENGINE" python3 -c "import sys; sys.path.insert(0, '$TWIN_DIR'); import twin; twin.build_web('$BUILD/web')" >/dev/null
 cp -R "$BUILD/web" "$RES/web"
@@ -71,7 +86,7 @@ cat > "$APP/Contents/Info.plist" <<EOF
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>CFBundleIdentifier</key><string>com.nickoscope.TWIN-NickoScopeMatrix-64x128</string>
+  <key>CFBundleIdentifier</key><string>$BUNDLE_ID</string>
   <key>CFBundleName</key><string>$NAME</string>
   <key>CFBundleDisplayName</key><string>$NAME</string>
   <key>CFBundleExecutable</key><string>TwinPanel</string>
@@ -85,6 +100,8 @@ cat > "$APP/Contents/Info.plist" <<EOF
   <key>LSMinimumSystemVersion</key><string>13.0</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSHumanReadableCopyright</key><string>Firmware: NickoScope/AnimatedPixelClock. Engine: esp32sim (MIT), fork NickoScope/TWIN-NickoScopeMatrix-64x128.</string>
+  <key>NSLocalNetworkUsageDescription</key><string>Sync with panel finds the LED panel on your network (Bonjour) and talks to it and to the twin.</string>
+  <key>NSBonjourServices</key><array><string>_http._tcp</string></array>
   <key>NSAppTransportSecurity</key>
   <dict>
     <key>NSAllowsLocalNetworking</key><true/>
@@ -115,6 +132,10 @@ codesign --force --sign "$SIGN" $RT $TS --entitlements "$BUILD/engine.entitlemen
 codesign --force --sign "$SIGN" $RT $TS "$APP"
 codesign --verify --deep --strict "$APP"
 echo "signed with: ${SIGN/(*)/(…)}"
+if [ -n "$APP_OUT" ]; then
+    mkdir -p "$APP_OUT"; rm -rf "$APP_OUT/$NAME.app"; cp -R "$APP" "$APP_OUT/$NAME.app"
+    echo "$APP_OUT/$NAME.app"
+fi
 
 if [ "$INSTALL" = 1 ]; then
     echo "== installing"

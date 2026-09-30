@@ -17,10 +17,18 @@
 // guard for the bridge (socket_vmnet, ADR-TWIN-02), Improv provisioning on a new chip. On the first
 // start the twin of ~/twin/state (twin.py's) is copied in, so the app's twin continues from it.
 //
+// Sync with panel (SyncEngine.swift, the owner 2026-09-30): the twin and the physical panel mirror each
+// other - screen, settings, Lua effects, firmware - while the switch is on; firmware reaches the panel
+// only after a person's yes in "Update the panel too?". Off by default; the switch is remembered.
+//
 // Settings (defaults write com.nickoscope.TWIN-NickoScopeMatrix-64x128 KEY VALUE, or -KEY VALUE on the
 // command line): lang "en"|"ru",
 // port 8790, httpPort 8080, udpPort 4210, serialPort 4000, cpi "2.45", lanSocket, dataDir, migrate
-// (NO: never copy ~/twin/state in, for a test data directory).
+// (NO: never copy ~/twin/state in, for a test data directory);
+// syncEnabled (NO), panelAddress ("" = found over mDNS), panelMac, syncSettingsEveryS (60),
+// firmwareRepo ("NickoScope/AnimatedPixelClock": where releases and the gallery come from - the owner of
+// another panel names their own fork). Test-only switches, honoured only when the "panel" is itself a
+// twin: syncPanelMayBeTwinForTesting, syncAutoConfirmForTesting, syncAlignForTesting (SyncEngine.swift).
 
 import AppKit
 import CryptoKit
@@ -319,7 +327,13 @@ func fetch(_ url: String, limit: Int, timeout: TimeInterval = 30) throws -> Data
 }
 
 enum GitHub {
-    static let repo = "NickoScope/AnimatedPixelClock"
+    static let defaultRepo = "NickoScope/AnimatedPixelClock"
+    /// Where releases and the gallery come from: the owner's fork by default, another owner's own fork
+    /// by the setting firmwareRepo (menu Sync: "Firmware releases from...").
+    static var repo: String {
+        let r = (UserDefaults.standard.string(forKey: "firmwareRepo") ?? "").trimmingCharacters(in: .whitespaces)
+        return validRepo(r) ? r : defaultRepo
+    }
     struct Release { let tag: String, notes: String, asset: String, assetName: String, size: Int, sums: String }
 
     static func ver(_ tag: String) -> [Int] {
@@ -328,23 +342,38 @@ enum GitHub {
         return parts.count == 3 && !parts.contains(-1) ? parts : []
     }
 
+    /// A published release that carries the board's OTA image and its checksums, or nil.
+    static func parse(_ r: [String: Any]) -> Release? {
+        guard r["draft"] as? Bool != true, r["prerelease"] as? Bool != true,
+              let tag = r["tag_name"] as? String, !ver(tag).isEmpty else { return nil }
+        let assets = Dictionary((r["assets"] as? [[String: Any]] ?? []).compactMap { a in (a["name"] as? String).map { ($0, a) } },
+                                uniquingKeysWith: { a, _ in a })
+        let name = "OTA_ONLY_firmware-\(tag)-waveshare.bin"
+        guard let ota = assets[name], let url = ota["browser_download_url"] as? String,
+              url.hasPrefix("https://github.com/\(repo)/releases/download/"),
+              let sums = assets["SHA256SUMS.txt"]?["browser_download_url"] as? String else { return nil }
+        return Release(tag: tag, notes: r["body"] as? String ?? "", asset: url, assetName: name, size: ota["size"] as? Int ?? -1, sums: sums)
+    }
+
     /// The newest published release of the fork that carries the board's OTA image and its checksums.
     static func latest() throws -> Release? {
         let list = try JSONSerialization.jsonObject(with: try fetch("https://api.github.com/repos/\(repo)/releases?per_page=100", limit: 4 << 20)) as? [[String: Any]] ?? []
         var best: Release?
         for r in list {
-            guard r["draft"] as? Bool != true, r["prerelease"] as? Bool != true,
-                  let tag = r["tag_name"] as? String, !ver(tag).isEmpty else { continue }
-            let assets = Dictionary((r["assets"] as? [[String: Any]] ?? []).compactMap { a in (a["name"] as? String).map { ($0, a) } },
-                                    uniquingKeysWith: { a, _ in a })
-            let name = "OTA_ONLY_firmware-\(tag)-waveshare.bin"
-            guard let ota = assets[name], let url = ota["browser_download_url"] as? String,
-                  url.hasPrefix("https://github.com/\(repo)/releases/download/"),
-                  let sums = assets["SHA256SUMS.txt"]?["browser_download_url"] as? String else { continue }
-            let rel = Release(tag: tag, notes: r["body"] as? String ?? "", asset: url, assetName: name, size: ota["size"] as? Int ?? -1, sums: sums)
-            if best == nil || ver(tag).lexicographicallyPrecedes(ver(best!.tag)) == false { best = rel }
+            guard let rel = parse(r) else { continue }
+            if best == nil || ver(rel.tag).lexicographicallyPrecedes(ver(best!.tag)) == false { best = rel }
         }
         return best
+    }
+
+    /// The release with this tag ("v2.7.7"), or nil when the fork has none (Sync with panel: the image of a
+    /// device whose firmware cannot give out its own).
+    static func release(tag: String) throws -> Release? {
+        guard tag.range(of: #"^v[0-9]+\.[0-9]+\.[0-9]+$"#, options: .regularExpression) != nil else { return nil }
+        let d: Data
+        do { d = try fetch("https://api.github.com/repos/\(repo)/releases/tags/\(tag)", limit: 4 << 20) }
+        catch let f as Failure where f.description.hasSuffix("HTTP 404") { return nil }
+        return parse(try JSONSerialization.jsonObject(with: d) as? [String: Any] ?? [:])
     }
 
     static func image(_ r: Release) throws -> Data {
@@ -360,6 +389,7 @@ enum GitHub {
         guard got == want else { throw Failure(L("SHA-256 mismatch: \(got), the release says \(want)", "SHA-256 не совпадает: \(got) против \(want)")) }
         guard data.first == 0xE9 else { throw Failure(L("not an ESP application image", "это не образ приложения ESP")) }
         guard data.count > 14, Int(data[12]) | Int(data[13]) << 8 == 9 else { throw Failure(L("the image is not for the ESP32-S3", "образ не для ESP32-S3")) }
+        do { try checkImage(data) } catch let e as SyncError { throw Failure(L(e.msg.en, e.msg.ru)) }   // its own appended SHA-256
         return data
     }
 
@@ -374,7 +404,7 @@ enum GitHub {
         URLSession.shared.uploadTask(with: req, from: body) { _, r, e in err = e; status = (r as? HTTPURLResponse)?.statusCode ?? 0; sem.signal() }.resume()
         sem.wait()
         if let err { throw err }
-        guard status == 200 else { throw Failure(L("the twin answered /update with HTTP \(status)", "двойник ответил на /update: HTTP \(status)")) }
+        guard status == 200 else { throw Failure(L("\(addr) answered /update with HTTP \(status)", "\(addr) ответил на /update: HTTP \(status)")) }
     }
 }
 
@@ -389,17 +419,35 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNav
     var twin: Twin!
     var shown = false, polls = 0
     var lastStatus: () -> String = { "" }
+    // Sync with panel
+    var sync: SyncEngine!
+    let finder = PanelFinder()
+    let syncToggle = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+    let syncStatus = NSTextField(labelWithString: "")
+    var syncButtons: [(NSButton, () -> String)] = []
+    var twinMac = ""
 
     func applicationDidFinishLaunching(_ n: Notification) {
         let d = UserDefaults.standard
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent(APP_NAME)
         d.register(defaults: ["port": 8790, "httpPort": 8080, "udpPort": 4210, "serialPort": 4000, "cpi": "2.45", "lang": "en",
-                              "lanSocket": "/var/run/socket_vmnet.bridged.en0", "dataDir": support.path, "migrate": true])
+                              "lanSocket": "/var/run/socket_vmnet.bridged.en0", "dataDir": support.path, "migrate": true,
+                              "syncEnabled": false, "panelAddress": "", "panelMac": "", "firmwareRepo": GitHub.defaultRepo,
+                              "syncSettingsEveryS": 60, "syncPanelMayBeTwinForTesting": false, "syncAutoConfirmForTesting": false,
+                              "syncAlignForTesting": ""])
         LANG = d.string(forKey: "lang") == "ru" ? "ru" : "en"
         let paths = Paths(res: Bundle.main.resourceURL!, data: URL(fileURLWithPath: d.string(forKey: "dataDir")!))
         twin = Twin(paths: paths, defaults: d)
         twin.onChange = { [weak self] in self?.refresh() }
+        sync = SyncEngine(dataDir: paths.data)
+        sync.setLanguage(LANG)
+        sync.onStatus = { [weak self] in self?.showSyncStatus() }
+        sync.askDirection = { [weak self] s in self?.askDirection(s) }
+        sync.askFirmware = { [weak self] o in self?.askFirmware(o) }
+        finder.onChange = { [weak self] f in self?.sync.setFound(f) }
         buildMenu(); buildWindow()
+        sync.start()
+        if d.bool(forKey: "syncEnabled") { enableSync(true) } else { showSyncStatus() }
         twin.answers { [weak self] up in DispatchQueue.main.async {
             guard let self else { return }
             if !up {
@@ -413,7 +461,10 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNav
     func buildWindow() {
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1180, height: 820),
                           styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
-        window.title = APP_NAME
+        // A build with another bundle identifier (build.sh TWIN_BUNDLE_ID, for tests) says so in its title,
+        // so its window is never taken for the installed app's twin.
+        let standard = Bundle.main.bundleIdentifier == "com.nickoscope.TWIN-NickoScopeMatrix-64x128"
+        window.title = standard ? APP_NAME : "\(APP_NAME) — TEST \(Bundle.main.bundleIdentifier ?? "?") · \(twin.p.data.path)"
         window.setFrameAutosaveName("TwinPanelWindow")
         window.delegate = self
         web = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
@@ -434,7 +485,17 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNav
         bar.orientation = .horizontal; bar.spacing = 8
         bar.edgeInsets = NSEdgeInsets(top: 6, left: 10, bottom: 6, right: 10)
         status.lineBreakMode = .byTruncatingTail; status.textColor = .secondaryLabelColor
-        let root = NSStackView(views: [bar, web])
+        // The second row: Sync with panel - the switch, which panel, what it did last.
+        syncToggle.title = L("Sync with panel", "Синхронизация с панелью")
+        syncToggle.target = self; syncToggle.action = #selector(syncSwitched)
+        let which = NSButton(title: L("Which panel…", "Какая панель…"), target: self, action: #selector(choosePanel)); which.bezelStyle = .rounded
+        syncButtons = [(which, { L("Which panel…", "Какая панель…") })]
+        syncStatus.lineBreakMode = .byTruncatingTail; syncStatus.textColor = .secondaryLabelColor
+        syncStatus.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let syncBar = NSStackView(views: [syncToggle, which, syncStatus])
+        syncBar.orientation = .horizontal; syncBar.spacing = 8
+        syncBar.edgeInsets = NSEdgeInsets(top: 0, left: 10, bottom: 6, right: 10)
+        let root = NSStackView(views: [bar, syncBar, web])
         root.orientation = .vertical; root.spacing = 0; root.alignment = .leading
         web.translatesAutoresizingMaskIntoConstraints = false
         root.addConstraints([web.widthAnchor.constraint(equalTo: root.widthAnchor)])
@@ -465,6 +526,18 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNav
         m.addItem(withTitle: L("Hide", "Скрыть"), action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         m.addItem(withTitle: L("Quit and stop the twin", "Выйти и остановить двойника"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = m
+        let syncItem = NSMenuItem(); main.addItem(syncItem)
+        let sm = NSMenu(title: L("Sync", "Синхронизация"))
+        let on = NSMenuItem(title: L("Sync with panel", "Синхронизация с панелью"), action: #selector(toggleSync), keyEquivalent: "y")
+        on.state = UserDefaults.standard.bool(forKey: "syncEnabled") ? .on : .off
+        sm.addItem(on)
+        sm.addItem(withTitle: L("Sync now", "Синхронизировать сейчас"), action: #selector(syncNow), keyEquivalent: "")
+        sm.addItem(.separator())
+        sm.addItem(withTitle: L("Which panel…", "Какая панель…"), action: #selector(choosePanel), keyEquivalent: "")
+        sm.addItem(withTitle: L("Firmware releases from…", "Выпуски прошивки из…"), action: #selector(chooseRepo), keyEquivalent: "")
+        sm.addItem(.separator())
+        sm.addItem(withTitle: L("The sync log", "Журнал синхронизации"), action: #selector(showSyncLog), keyEquivalent: "")
+        syncItem.submenu = sm
         let editItem = NSMenuItem(); main.addItem(editItem)
         let e = NSMenu(title: L("Edit", "Правка"))
         e.addItem(withTitle: L("Copy", "Копировать"), action: #selector(NSText.copy(_:)), keyEquivalent: "c")
@@ -489,9 +562,12 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNav
         LANG = lang
         UserDefaults.standard.set(lang, forKey: "lang")
         langSwitch.selectedSegment = lang == "ru" ? 1 : 0
-        for (b, label) in buttons { b.title = label() }
+        for (b, label) in buttons + syncButtons { b.title = label() }
+        syncToggle.title = L("Sync with panel", "Синхронизация с панелью")
+        sync.setLanguage(lang)
         buildMenu()
         say(lastStatus)
+        showSyncStatus()
         web.evaluateJavaScript("try{localStorage.setItem('twin-lang','\(lang)')}catch(e){}; window.twinSetLang && window.twinSetLang('\(lang)')", completionHandler: nil)
     }
 
@@ -536,6 +612,10 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNav
     }
 
     func refresh() {
+        // Sync talks to the twin only when this app runs it and its page is up (the engine checks the rest:
+        // the TWIN- name and this twin's MAC).
+        if twinMac.isEmpty { twinMac = (read(twin.p.mac) ?? "").trimmingCharacters(in: .whitespacesAndNewlines) }
+        sync?.setTwin(address: shown && twin.ours ? twin.apiAddress : nil, mac: twinMac)
         guard shown || twin.ours else { return }
         if let p = twin.process, !p.isRunning, shown { say { L("The twin is stopped", "Двойник остановлен") }; return }
         say { [twin] in
@@ -690,6 +770,127 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNav
     }
     func refreshLater() { DispatchQueue.main.async { self.refresh() } }
 
+    // MARK: Sync with panel (SyncEngine.swift)
+
+    @objc func syncSwitched() { enableSync(syncToggle.state == .on) }
+    @objc func toggleSync() { enableSync(!UserDefaults.standard.bool(forKey: "syncEnabled")) }
+    @objc func syncNow() { sync.syncNow() }
+
+    /// The person's switch, remembered. Off by default: turning it on is always somebody's act.
+    func enableSync(_ on: Bool) {
+        UserDefaults.standard.set(on, forKey: "syncEnabled")
+        syncToggle.state = on ? .on : .off
+        if on && (UserDefaults.standard.string(forKey: "panelAddress") ?? "").isEmpty { finder.start() }
+        sync.setEnabled(on)
+        buildMenu(); showSyncStatus()
+    }
+
+    func showSyncStatus() {
+        let s = sync.status
+        let f = DateFormatter(); f.dateFormat = "HH:mm:ss"
+        var t = L("Sync: ", "Синхронизация: ") + s.phase.text(LANG)
+        if sync.enabled && !s.peer.isEmpty { t += L(" · with ", " · с ") + s.peer }
+        if let (d, m) = s.last { t += " · " + f.string(from: d) + " " + m.text(LANG) }
+        if let (d, m) = s.problem { t += " · " + L("attention", "внимание") + " " + f.string(from: d) + ": " + m.text(LANG) }
+        syncStatus.stringValue = t; syncStatus.toolTip = t
+    }
+
+    /// The first sync of a pair: which side is taken as it is.
+    func askDirection(_ m: SyncEngine.Summary) {
+        let a = NSAlert()
+        a.messageText = L("Sync with the panel: which way first?", "Синхронизация с панелью: в какую сторону сначала?")
+        func list(_ x: [String]) -> String { x.isEmpty ? "—" : x.prefix(12).joined(separator: ", ") + (x.count > 12 ? " …" : "") }
+        a.informativeText = L("The panel: \(m.panel), firmware \(m.panelFirmware), showing \(m.panelScreen).\nThe twin: \(m.twin), firmware \(m.twinFirmware), showing \(m.twinScreen).",
+                              "Панель: \(m.panel), прошивка \(m.panelFirmware), на экране \(m.panelScreen).\nДвойник: \(m.twin), прошивка \(m.twinFirmware), на экране \(m.twinScreen).")
+            + "\n\n" + L("Settings that differ (\(m.settings.count)): ", "Различаются настройки (\(m.settings.count)): ") + list(m.settings)
+            + "\n" + L("Effects only on the panel: ", "Эффекты только на панели: ") + list(m.onlyPanel)
+            + "\n" + L("Effects only on the twin: ", "Эффекты только на двойнике: ") + list(m.onlyTwin)
+            + "\n" + L("Effects that differ: ", "Эффекты с разным содержимым: ") + list(m.differ)
+            + "\n\n" + L("The side you pick is taken as it is: the other one gets its settings, effects (the extra ones are removed) and screen. Firmware goes to the twin by itself; to the panel only after a separate question. Later changes go both ways.",
+                          "Выбранная сторона берётся как есть: другая получает её настройки, эффекты (лишние удаляются) и экран. Прошивка на двойника уходит сама, на панель — только после отдельного вопроса. Дальнейшие изменения переносятся в обе стороны.")
+        a.addButton(withTitle: L("From the panel to the twin", "С панели на двойника"))
+        a.addButton(withTitle: L("From the twin to the panel", "С двойника на панель"))
+        a.addButton(withTitle: L("Cancel", "Отмена"))
+        switch a.runModal() {
+        case .alertFirstButtonReturn: sync.answerDirection(.fromPanel)
+        case .alertSecondButtonReturn: sync.answerDirection(.fromTwin)
+        default: enableSync(false)
+        }
+    }
+
+    /// The twin's firmware changed: the physical panel gets it only on this yes.
+    func askFirmware(_ o: SyncEngine.Offer) {
+        let a = NSAlert()
+        a.messageText = L("Update the panel too?", "Обновить и панель тоже?")
+        a.informativeText = L("The twin now runs \(o.version) (built \(o.build)). The panel runs \(o.panelVersion) (built \(o.panelBuild)).",
+                              "На двойнике теперь \(o.version) (сборка \(o.build)). На панели — \(o.panelVersion) (сборка \(o.panelBuild)).")
+            + "\n\n" + L("The image: ", "Образ: ") + o.source.text(LANG) + "."
+            + "\n\n" + L("The panel restarts; the new firmware confirms itself within about a minute, or the panel rolls back to the one it has now.",
+                          "Панель перезагрузится; новая прошивка подтверждает себя примерно за минуту, иначе панель откатится на нынешнюю.")
+        a.addButton(withTitle: L("Update the panel", "Обновить панель"))
+        a.addButton(withTitle: L("Not now", "Не сейчас"))
+        sync.answerFirmware(id: o.id, go: a.runModal() == .alertFirstButtonReturn)
+    }
+
+    /// Which panel: one found on the network (followed by its MAC), or an address typed in.
+    @objc func choosePanel() {
+        finder.start()
+        let d = UserDefaults.standard
+        let found = finder.found.values.sorted { $0.name < $1.name }
+        let a = NSAlert()
+        a.messageText = L("Which panel", "Какая панель")
+        a.informativeText = L("The panel the twin is synced with. Twins (TWIN-…, MAC 02:54:57:49:…) are not panels. Panels found so far: \(found.count).",
+                              "Панель, с которой синхронизируется двойник. Двойники (TWIN-…, MAC 02:54:57:49:…) панелями не считаются. Найдено панелей: \(found.count).")
+        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 32, width: 440, height: 26), pullsDown: false)
+        popup.addItem(withTitle: L("Found on the network by itself (mDNS)", "Найти в сети автоматически (mDNS)"))
+        for f in found {
+            let twinMark = twinLike(name: f.name, mac: f.mac) ? L(" (a twin)", " (двойник)") : ""
+            popup.addItem(withTitle: "\(f.name) — \(f.address) — \(f.mac) — \(f.version)\(twinMark)")
+        }
+        if let i = found.firstIndex(where: { $0.mac == normMac(d.string(forKey: "panelMac")) }) { popup.selectItem(at: i + 1) }
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 440, height: 24))
+        field.placeholderString = L("or its address, e.g. 192.168.1.50", "или её адрес, например 192.168.1.50")
+        field.stringValue = d.string(forKey: "panelAddress") ?? ""
+        let v = NSView(frame: NSRect(x: 0, y: 0, width: 440, height: 60)); v.addSubview(popup); v.addSubview(field)
+        a.accessoryView = v
+        a.addButton(withTitle: "OK"); a.addButton(withTitle: L("Cancel", "Отмена"))
+        guard a.runModal() == .alertFirstButtonReturn else { return }
+        let addr = field.stringValue.trimmingCharacters(in: .whitespaces)
+        if !addr.isEmpty {
+            guard validAddress(addr) else {
+                alert(L("Not an address", "Это не адрес"), L("A host name or an IP address, with a port if needed: 192.168.1.50 or panel.local:80.",
+                                                              "Имя или IP-адрес, при необходимости с портом: 192.168.1.50 или panel.local:80.")); return
+            }
+            d.set(addr, forKey: "panelAddress"); d.set("", forKey: "panelMac")
+        } else {
+            let i = popup.indexOfSelectedItem
+            d.set("", forKey: "panelAddress"); d.set(i >= 1 && i <= found.count ? found[i - 1].mac : "", forKey: "panelMac")
+        }
+        sync.reconnect()
+    }
+
+    /// Other owners work in their own forks: releases and the gallery come from the repository named here.
+    @objc func chooseRepo() {
+        let a = NSAlert()
+        a.messageText = L("Firmware releases from…", "Выпуски прошивки из…")
+        a.informativeText = L("The GitHub repository (owner/name) whose releases and gallery the app uses: updates of the twin, and firmware or effects that sync fetches. The default is \(GitHub.defaultRepo); the owner of another panel names their own fork.",
+                              "Репозиторий GitHub (владелец/имя), из выпусков и галереи которого приложение берёт прошивку и эффекты: обновления двойника и то, что докачивает синхронизация. По умолчанию \(GitHub.defaultRepo); владелец другой панели указывает свой форк.")
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 360, height: 24))
+        field.stringValue = GitHub.repo
+        a.accessoryView = field
+        a.addButton(withTitle: "OK"); a.addButton(withTitle: L("Cancel", "Отмена"))
+        guard a.runModal() == .alertFirstButtonReturn else { return }
+        let r = field.stringValue.trimmingCharacters(in: .whitespaces)
+        guard validRepo(r) else { alert(L("Not a repository", "Это не репозиторий"), L("owner/name, e.g. \(GitHub.defaultRepo)", "владелец/имя, например \(GitHub.defaultRepo)")); return }
+        UserDefaults.standard.set(r, forKey: "firmwareRepo")
+        sync.syncNow()
+    }
+
+    @objc func showSyncLog() {
+        if !exists(sync.logFile) { write("", sync.logFile) }
+        NSWorkspace.shared.open(sync.logFile)
+    }
+
     @objc func showData() { NSWorkspace.shared.activateFileViewerSelecting([twin.p.data]) }
     @objc func showLog() { NSWorkspace.shared.open(twin.p.log) }
     @objc func about() {
@@ -727,11 +928,16 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNav
 
     func windowWillClose(_ n: Notification) { NSApp.terminate(nil) }
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { true }
-    func applicationWillTerminate(_ n: Notification) { twin.stop() }
+    func applicationWillTerminate(_ n: Notification) { sync?.setEnabled(false); twin.stop() }
 }
 
 let app = NSApplication.shared
 let controller = Controller()
 app.delegate = controller
 app.setActivationPolicy(.regular)
+// SIGTERM (kill, a logout) quits as the menu does, so the twin's engine is stopped, not orphaned.
+signal(SIGTERM, SIG_IGN)
+let termSource = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+termSource.setEventHandler { NSApp.terminate(nil) }
+termSource.resume()
 app.run()
