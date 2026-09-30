@@ -3,6 +3,14 @@
   "maxBytes": 524288,
   "effects": [
     {
+      "stem": "WARP",
+      "name": "WARP",
+      "file": "WARP.lua",
+      "line": "a tunnel, a planet, a neon road and a whirlpool",
+      "bytes": 5285,
+      "preview": "preview/WARP.png"
+    },
+    {
       "stem": "aquarium",
       "name": "AQUARIUM",
       "file": "aquarium.lua",
