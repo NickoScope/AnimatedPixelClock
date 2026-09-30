@@ -21,8 +21,11 @@
 // for a built-in airport's board (fb_mqtt.cpp:103-136; once per airport and half in 15 min, 12 an hour at
 // most, :24-45), and HA fetches it with the owner's AeroAPI key. The owner, 2026-09-30 22:40: a twin without
 // a key of its own must not ask. Since firmware 2.7.13 fbAskHa off stops the asking (the retained boards
-// still come, free), and sync keeps it off on the twin, an override like climateHa (enforceOverrides); a
-// twin whose firmware has no fbAskHa yet and would ask is said in the log and the status (asksHa).
+// still come, free), and sync keeps it off on the twin, an override like climateHa (enforceOverrides); fbAskHa
+// is compared on neither side and carried neither way. A twin whose firmware has no fbAskHa yet, with a broker
+// set and no AeroAPI key of its own, has its board held on the custom airport ZZZZ "NO REQUESTS", which is never
+// asked for (fb_mqtt.cpp mayAsk), and the panel's airport is not carried to it - nor its ZZZZ to the panel -
+// until it has a key or fbAskHa; then it takes the panel's airport and ZZZZ goes (holdsNoAsk, Settings.residue).
 // The owner, 2026-09-30 19:13: "if the panel runs the carousel, the twin runs it too, with the same
 // screens, in step - and the other way round". How: "One carousel for both" below.
 // The owner, 2026-09-30, after two reviews: switched on, sync is full, both ways; switched off, all
@@ -35,6 +38,15 @@
 // are and what differs, and writes nothing. Flashing the panel takes two as well: "Update the panel too?"
 // and "Really flash the physical panel <name> with <version>?". Cancel, or Not now, is the default button
 // (Return) in each of these windows, and the buttons that write have no key.
+// The consent is remembered (the owner's item 15, 2026-10-01; app 1.4): once both windows are answered, it is kept
+// in sync-state.json with the pair's state, as an HMAC of the pair (the two MACs) under the sync state's key in the
+// Keychain - so it cannot be written in for another pair - for as long as the switch stays on. The app quitting
+// and starting again with the switch on asks nothing: sync resumes by itself, the panel's changes made meanwhile
+// go to the twin; only if the twin changed meanwhile is the direction asked, as ever (resume, quietResume). The
+// switch turned off - the window, the menu, `defaults write` - forgets it: switching on asks both questions again.
+// So does a new pair, or a start with the switch off. The first start of 1.4 over app 1.3's state: 1.3 kept no
+// consent, so with the switch on and an aligned state of this very pair in the file (sync-state.json v2), the
+// consent counts as given (keptConsent). Where the Keychain gives no key, nothing is kept and each start asks both.
 //
 // The firmware has no push channel - no WebSocket, no event stream, no MQTT topic with the screen's
 // state - so both devices are polled over HTTP, one request at a time: the firmware's WebServer serves
@@ -62,7 +74,11 @@
 //                         (web_panel.cpp:968-1062; slow, about 0.5 s on the twin); where the firmware
 //                         gives out the scripts (GET /api/lua/source), each one's SHA-256, read again
 //                         when its size changes, or on the panel every 5 min, on the twin every round
-//                         (our choice: each read holds the panel's loop())
+//                         (our choice: each read holds the panel's loop()). A script is asked for by its
+//                         file's name, exactly as GET /api/lua lists it (uploaded.scripts[].name). One a
+//                         side lists but answers 404 for (NoSuchScript: the panel's LA_GIOCONDA, 30.09 21:23 -
+//                         22:58, a 404 in every round, which the round then failed on) is said once and not
+//                         asked for again until its size changes (noSource); it is compared by size meanwhile
 //   settings  every syncSettingsEveryS (60 s): /api/info, /api/portal, /api/export, /api/knob,
 //             /api/worldclock, /api/railboard, /api/flightboard, /api/media, /api/ir; /api/market (30 KB)
 //             every fifth time. /api/info also carries the firmware: version, build, firmwareBytes,
@@ -136,7 +152,10 @@
 // value goes back to it (twinLost, settingsChanges). Whatever else differs on it is its own change, carried as
 // ever - a person's choice saved before the restart. Sync switched off: nothing is rolled back, and each
 // carousel walks by itself once the twin's hold ends. The panel leads: a write to it that moves its page (a
-// renumbered effect list) is not undone - the twin follows its page (putBack).
+// renumbered effect list) is not undone - the twin follows its page (putBack). A page is matched by its key and
+// the name its effect's banner shows, never by its number: an effect uploaded on the twin by a person renumbers
+// its list, and the index it shows then names another effect - that move is nobody's choice, is not carried to
+// the panel, and the twin shows the panel's page again (renumbered, shifted).
 //
 // How each thing is written:
 //   page      POST /api/panel {"show":{"page":i}}, i looked up by key and name on the target
@@ -166,6 +185,18 @@
 //             {"delete":stem} (web_panel.cpp:994-1012). The walk switch: POST /api/lua
 //             {"walk":{"i","on","name"}} (web_panel.cpp:976-993). Without /api/lua/source a script is
 //             known by its size only, and an edit that keeps the length is not seen: the log says so.
+//             An effect is one on both sides by the name its banner shows (a device takes no two scripts
+//             whose names read the same), and its file's name is compared exactly: where the two differ
+//             only in case (flow.lua on the twin, FLOW.lua on the panel), the twin's file takes the panel's
+//             name - removed and uploaded again with its own bytes, its walk switch put back - so its list,
+//             in the files' order, is the panel's (caseRenames, renameTwinFiles; the panel's never).
+//             A script the other side refuses - its upload answers 400 for the script itself: the checks,
+//             the trial run ("too slow for the panel: 4 of 4 frames over 500 ms"), no room - is left out,
+//             said once, and the rest goes on: the alignment is done, the direction question lists it as
+//             "not carried"; it is sent again only when its content on the source changes (or, refused for
+//             room, when the other side has fewer scripts) - refusedFx, kept in sync-state.json.
+//   header    every request that writes carries X-Twin-Sync: 1 (Device.send): firmware 2.7.13 puts what it
+//             changes down to "sync" in its events, not to a person.
 //   firmware  the image of the side that changed, when it fits the target's OTA slot (/api/info
 //             otaFreeBytes, compared before anything is read): for the panel, the release of firmwareRepo
 //             with that version when it is that very build (the X-App-Elf-Sha256 of HEAD
@@ -260,6 +291,13 @@ struct SyncStopped: Error {}
 /// Whatever the round was about to do was decided on the side as it was before, so the round stops there,
 /// and the restart is dealt with first (SyncEngine.restarts).
 struct SyncRestart: Error { let side: Side }
+/// GET /api/lua/source?name= answered 404 for a script GET /api/lua lists (the panel, 30.09 21:23-22:58:
+/// LA_GIOCONDA, "no uploaded script by that name", every round).
+struct NoSuchScript: Error { let side: Side, stem: String, why: String }
+/// POST /api/lua/upload answered 400 for the script itself: its checks (lua_store.cpp luaStoreValidate), its
+/// trial run (lua_effects.cpp runTrial: "does not load", "frame N fails", "too slow for the panel"), a name that
+/// reads as another effect's - or the device has no room for it (ROOM: all slots used, the filesystem full).
+struct UploadRefused: Error { let why: String, room: Bool }
 
 enum Side: String, Codable {
     case panel, twin
@@ -417,6 +455,11 @@ final class Device {
     /// (web_panel.cpp handleLuaSource: the twin's panel page reads a script's header from it). The header
     /// is sent on both. Each read of them holds the panel's loop() while it runs, so switching sync off
     /// cuts them off as it cuts off a write, and none is started while it is off.
+    /// Every request that writes carries X-Twin-Sync: 1 as well - each POST (/save, /api/import, /api/panel,
+    /// /api/lua, /api/lua/upload, /update, ...) and each GET that acts (/api/display/*, /api/ir/fn, /api/log):
+    /// firmware 2.7.13 puts what such a request changes down to "sync" in its events and in /api/panel?input=
+    /// (sync_events.cpp syncHttpBy, syncAfterHttp), so sync's own writes are told from a person's. The reads
+    /// carry nothing: the firmware counts no read as a cause (syncAfterHttp).
     static let syncRoutes: Set<String> = ["/api/lua/source", "/api/firmware/image"]
 
     func writes(_ method: String, _ path: String) -> Bool { !(method == "GET" || method == "HEAD") || Device.actions[path] != nil }
@@ -440,7 +483,7 @@ final class Device {
             var req = URLRequest(url: url, timeoutInterval: timeout)
             req.httpMethod = method; req.httpBody = body
             if let type { req.setValue(type, forHTTPHeaderField: "Content-Type") }
-            if Device.syncRoutes.contains(path) { req.setValue("1", forHTTPHeaderField: "X-Twin-Sync") }
+            if write || Device.syncRoutes.contains(path) { req.setValue("1", forHTTPHeaderField: "X-Twin-Sync") }
             if pace > 0 { let wait = lastEnd.addingTimeInterval(pace).timeIntervalSinceNow; if wait > 0 { Thread.sleep(forTimeInterval: wait) } }
             let (a, err, stopped) = Device.exchange(req, limit: limit, cancel: stop ? { !allowed() } : nil)
             lastEnd = Date()
@@ -549,8 +592,11 @@ final class Device {
         return a.status == 404 ? (false, nil) : nil
     }
 
+    /// A script's bytes by its file's name - exactly as GET /api/lua lists it (uploaded.scripts[].name), never
+    /// the name its banner shows. A 404 for a script the list has (NoSuchScript): the device will not give it out.
     func luaSource(_ stem: String) throws -> Data {
         let a = try send("GET", "/api/lua/source", query: [("name", stem)], timeout: 30, limit: 1 << 20)
+        if a.status == 404 { throw NoSuchScript(side: side, stem: stem, why: a.why) }
         guard a.status == 200, a.header("X-Lua-Name") == stem else { throw refused("GET /api/lua/source?name=\(stem)", a) }
         return a.data
     }
@@ -866,14 +912,18 @@ final class SyncEngine {
     /// pressForTesting: 1 presses Return in it, 2 presses Enable and then Return in the second window.
     struct Consent { var id = "", panelName = "", panelAddress = "", panelMac = "", twin = "", pressForTesting = 0 }
     /// The second window: the alignment, with what differs. pressReturnForTesting presses Return in it.
+    /// notCarried: the effects a side refused to take ("AUTUMN DAWN to the twin: too slow…"), left out of the alignment;
+    /// renames: the twin's files named as the panel's but for case ("flow → FLOW"), which take the panel's names.
     struct Summary {
         var id = "", sig = "", panel = "", twin = "", panelFirmware = "", twinFirmware = "", settings: [String] = [], hardware: [String] = []
         var onlyPanel: [String] = [], onlyTwin: [String] = [], differ: [String] = [], effectsKnown = true, bySize = false
+        var notCarried: [Msg] = [], renames: [String] = []
         var panelScreen = "", twinScreen = "", why: Msg?, pressReturnForTesting = false
     }
     /// The second window when sync resumes with a pair it knows: what each side changed while it was off.
     struct ResumeSummary { var id = "", panel = "", twin = "", settings: [String] = [], effects: [Msg] = [], conflicts: [String] = [],
-                           hardware: [String] = [], panelSettings: [String] = [], panelEffects: [Msg] = [], pressReturnForTesting = false }
+                           hardware: [String] = [], panelSettings: [String] = [], panelEffects: [Msg] = [], notCarried: [Msg] = [],
+                           pressReturnForTesting = false }
     /// "Update the panel too?" and "Really flash the physical panel?": what the yes is for - this panel
     /// (its MAC), this firmware on it, the twin's firmware - kept with the question, checked again when it
     /// is answered and once more right before the image is sent. pressForTesting: 1 presses Return in the
@@ -923,6 +973,10 @@ final class SyncEngine {
     private let lock = NSLock()
     private var _enabled = false, _twinAddress: String?, _twinMac = "", _found: [PanelFinder.Found] = []
     private var _lang = "en", _syncNow = false, _reset = false
+    /// The switch was on when the app started and has not been switched off since (markLaunch, setEnabled): only
+    /// then does a saved consent count (keptConsent). A switch-off forgets the consent (_dropConsent); quitting
+    /// the app does not (quit).
+    private var _launchOn = false, _dropConsent = false, _quitting = false
     private var _reply: (id: String, reply: Reply)?, _fwReply: (id: String, go: Bool)?
     private var _status = Status()
     /// Called on the main thread when the status changed.
@@ -941,7 +995,13 @@ final class SyncEngine {
     var status: Status { locked { _status } }
     /// Writes go on only while the switch is on and no new pair is being looked for.
     var writesAllowed: Bool { locked { _enabled && !_reset } }
-    func setEnabled(_ on: Bool) { locked { _enabled = on; if !on { _reset = true } } }
+    /// The person's switch (the window, the menu, `defaults write`): switched off, it also forgets the consent kept
+    /// in sync-state.json - switching it on again asks both questions.
+    func setEnabled(_ on: Bool) { locked { _enabled = on; if !on { _reset = true; _launchOn = false; _dropConsent = true } } }
+    /// Before start(): whether the switch is on as the app starts (a saved consent counts only then).
+    func markLaunch(on: Bool) { locked { _launchOn = on } }
+    /// The app quits: nothing more is written, as when switched off, but the consent stays for the next start.
+    func quit() { locked { _enabled = false; _reset = true; _quitting = true } }
     func setTwin(address: String?, mac: String) { locked { _twinAddress = address; _twinMac = normMac(mac) } }
     func setFound(_ f: [PanelFinder.Found]) { locked { _found = f } }
     func setLanguage(_ l: String) { locked { _lang = l } }
@@ -962,9 +1022,10 @@ final class SyncEngine {
     private var thread: Thread?
     private var dev: [Side: Device] = [:]
     private var pairKey = ""
-    /// consented: the first window was answered Enable for this pair since the switch went on; aligned: the
-    /// second one too, and the sides were aligned. Nothing is written before both.
-    private var consented = false, aligned = false, resumed = false, needDirection = false
+    /// consented: the first window was answered Enable for this pair since the switch went on - or its answer was
+    /// kept from the run before (consentKept, keptConsent); aligned: the second one too, and the sides were
+    /// aligned. Nothing is written before both.
+    private var consented = false, aligned = false, resumed = false, needDirection = false, consentKept = false
     private var question: Question?
     /// An answer that waits for the effects of both sides to be known before it is checked and done.
     private var heldReply: (id: String, reply: Reply)?
@@ -992,6 +1053,18 @@ final class SyncEngine {
     /// and it does not go back (SyncEngine.screenChanges).
     private var wrote: [Side: [String: String]] = [:]
     private var effects: [Side: Effects] = [:]
+    /// Effects a side refused to take (UploadRefused), by that side and effect: not sent to it again while the source
+    /// holds the same content - and, refused for want of room, while the side has no fewer scripts (stillRefused).
+    /// Said once when refused, and in the direction question ("not carried"); kept in sync-state.json.
+    private var refusedFx: [Side: [String: Refusal]] = [:]
+    /// Scripts a side lists and does not give out (NoSuchScript), with their size then: not asked for again until
+    /// the size changes, the script leaves the list or the side runs another firmware.
+    private var noSource: [Side: [String: Int]] = [:]
+    /// The page a side shows after its effect list was renumbered under it (renumbered): nobody's choice.
+    private var shifted: [Side: String] = [:]
+    /// Renames the twin refused (renameTwinFiles), with the twin's content then: not tried again in this run while
+    /// it holds that content.
+    private var renameRefused: [String: String] = [:]
     private var docs: [Side: [String: J]] = [:]
     private var fw: [Side: Firmware] = [:]
     private var caps: [Side: Caps] = [:]
@@ -1092,17 +1165,21 @@ final class SyncEngine {
     // MARK: the loop
 
     private func step() {
-        let (on, reset) = locked { () -> (Bool, Bool) in let r = _reset; _reset = false; return (_enabled, r) }
+        let (on, reset, drop, quitting) = locked { () -> (Bool, Bool, Bool, Bool) in
+            let r = _reset, d = _dropConsent; _reset = false; _dropConsent = false; return (_enabled, r, d, _quitting)
+        }
         if reset || !on {
             if !dev.isEmpty || consented || aligned || question != nil || offer != nil {
-                if !on && (consented || aligned || question != nil) {
+                if !on && !quitting && (consented || aligned || question != nil) {
                     log("note", "off", aligned ? M("sync switched off: nothing more is written; switching it on asks both questions again",
                                                    "синхронизацию выключили: больше ничего не пишу; при включении снова задам оба вопроса")
                                                : M("sync switched off before both questions were answered: nothing was written",
                                                    "синхронизацию выключили до ответа на оба вопроса: ничего не записано"))
                 }
+                if drop { consented = false }                          // not kept in the state saved now
                 forget()
             }
+            if drop { dropSavedConsent() }                             // whatever the file holds: a switch-off forgets it
         }
         guard on else { phase(M("off", "выключена")); return }
         stopLogged = false
@@ -1204,8 +1281,9 @@ final class SyncEngine {
 
     private func forget() {
         saveState()
-        dev = [:]; pairKey = ""; consented = false; aligned = false; resumed = false; needDirection = false; question = nil; holdWhy = nil
+        dev = [:]; pairKey = ""; consented = false; consentKept = false; aligned = false; resumed = false; needDirection = false; question = nil; holdWhy = nil
         heldReply = nil; alignRetry = .distantPast; fxWaitSince = nil; fxAbsent = [:]; fxAlignFrom = nil; imageCache = nil
+        refusedFx = [:]; noSource = [:]; shifted = [:]; renameRefused = [:]
         base = [:]; firmwareBase = [:]; screen = [:]; screenAt = [:]; pageReadAt = [:]; wrote = [:]; effects = [:]; docs = [:]; fw = [:]; caps = [:]; hashes = [:]
         stepWin = nil; stepAt = nil; stepTries = 0; quietSince = nil; walkHeld = false; twinTouch = nil; twinHoldSeen = nil; twinWroteAt = .distantPast; personSaid = false
         uptimeSeen = [:]; restartSeen = [:]; needScreenRound = false; twinWrote = [:]; twinLost = nil
@@ -1273,7 +1351,8 @@ final class SyncEngine {
             stepWin = nil; stepAt = nil; stepTries = 0; twinTouch = nil; twinHoldSeen = nil
             uptimeSeen = [:]; restartSeen = [:]; twinWrote = [:]; twinLost = nil
             wantPanel = nil; wantTwin = nil; inFlight = nil; heldReply = nil; fxAlignFrom = nil; imageCache = nil
-            pairKey = key; consented = false; aligned = false; loadState()
+            refusedFx = [:]; noSource = [:]; shifted = [:]; renameRefused = [:]
+            pairKey = key; consented = false; consentKept = false; aligned = false; loadState()
             nextVerify = Date().addingTimeInterval(SyncEngine.verifyEvery)
         }
     }
@@ -1430,20 +1509,37 @@ final class SyncEngine {
             guard let stem = sc.s("name"), let b = sc.i("bytes") else { continue }
             e.bytes[shownName(stem)] = b; e.stem[shownName(stem)] = stem
         }
+        noSource[s] = noSource[s]?.filter { e.stem.values.contains($0.key) }            // left the list: asked again if it comes back
         guard let byHash = luaCap(s) else { return nil }
         e.byHash = byHash
         if byHash { for (n, stem) in e.stem { e.hash[n] = try scriptHash(s, stem: stem, bytes: e.bytes[n]!) } }
         return e
     }
 
-    /// A script's SHA-256 (16 hex digits), read again when its size changed or every hashAge.
-    private func scriptHash(_ s: Side, stem: String, bytes: Int) throws -> String {
-        if let c = hashes[s]?[stem], c.bytes == bytes, Date().timeIntervalSince(c.at) < SyncEngine.hashAge[s]! { return c.hash }
-        let d = try device(s).luaSource(stem)
+    /// A script's SHA-256 (16 hex digits), read again when its size changed or every hashAge. A script the side lists
+    /// and does not give out (NoSuchScript: the panel's LA_GIOCONDA, 30.09 21:23-22:58, a 404 in every round) is
+    /// asked for once: then its last hash of that size, or none - compared by size - until its size changes.
+    private func scriptHash(_ s: Side, stem: String, bytes: Int) throws -> String? {
+        let c = hashes[s]?[stem], old = c?.bytes == bytes ? c?.hash : nil
+        if let c, c.bytes == bytes, Date().timeIntervalSince(c.at) < SyncEngine.hashAge[s]! { return c.hash }
+        if noSource[s]?[stem] == bytes { return old }
+        let d: Data
+        do { d = try device(s).luaSource(stem) } catch let e as NoSuchScript {
+            noSource[s, default: [:]][stem] = bytes
+            noteOnce("nosrc-\(s)-\(stem)-\(bytes)", M("\(s.word.en) lists the script \(stem) (\(bytes) B), but GET /api/lua/source?name=\(stem) answers 404 (\(e.why)): it is compared by size, and not asked for again until its size changes",
+                                                       "\(s.word.ru) перечисляет скрипт \(stem) (\(bytes) Б), но GET /api/lua/source?name=\(stem) отвечает 404 («\(e.why)»): сравниваю его по размеру и не запрашиваю снова, пока размер не изменится"))
+            return old
+        }
         guard d.count == bytes else { throw SyncError(M("\(stem): \(d.count) bytes read, the list says \(bytes)", "\(stem): прочитано \(d.count) байт, в списке \(bytes)")) }
         let h = String(sha256Hex(d).prefix(16))
         hashes[s, default: [:]][stem] = (bytes, h, Date())
         return h
+    }
+
+    /// The effects of side S as they are now; an error when they cannot be known.
+    private func readEffectsNow(_ s: Side) throws -> Effects {
+        guard let e = try readEffects(s) else { throw SyncError(M("the effects of \(s.word.en) cannot be read now", "эффекты \(s.of) сейчас не прочитать")) }
+        return e
     }
 
     private static let settingsRoutes = ["/api/info", "/api/portal", "/api/export", "/api/panel", "/api/knob", "/api/worldclock",
@@ -1461,7 +1557,15 @@ final class SyncEngine {
         docs[s] = d
     }
 
-    private func flat(_ s: Side) -> J { Settings.flat(docs[s] ?? [:]) }
+    /// A side's settings as compared. While the twin holds its flight board on ZZZZ (holdsNoAsk), the airport selected
+    /// is compared on neither side - neither carried to the twin nor from it; once the hold ends, the twin's base has
+    /// no such key and it still shows ZZZZ, so the panel's airport goes to it (Settings.residue).
+    private func flat(_ s: Side) -> J {
+        var f = Settings.flat(docs[s] ?? [:])
+        if holdingNoAsk { f["flightboard.selection"] = nil }
+        return f
+    }
+    private var holdingNoAsk: Bool { SyncEngine.holdsNoAsk(export: docs[.twin]?["/api/export"], board: docs[.twin]?["/api/flightboard"]) }
     private func digests(_ f: J) -> [String: String] { f.mapValues { digest($0) } }
 
     private func readAll() throws {
@@ -1543,6 +1647,7 @@ final class SyncEngine {
         r.panelSettings = plan.settings[.panel, default: []].map(Settings.shown)
         r.panelEffects = effectWords(.panel, plan.effects[.panel, default: []])
         r.conflicts = plan.conflicts.map(Settings.shown); r.hardware = plan.hardware.map(Settings.shown)
+        r.notCarried = notCarried()
         r.pressReturnForTesting = testInt("syncEnableReturnForTesting") == 2
         question = Question(id: r.id, kind: .resume, sig: plan.sig)
         log("note", "ask", M("sync resumes with a panel it knows: asking which way, with what each side changed while it was off",
@@ -1651,7 +1756,7 @@ final class SyncEngine {
         }
         if to == .twin { try enforceOverrides() }
         var fxLater: Side?
-        if let a = effects[from], let b = effects[to] { try convergeEffects(from: from, a, b) }
+        if let a = effects[from], let b = effects[to] { try convergeEffects(from: from, a, b); try renameTwinFiles() }
         else if fxUnknownNow {
             fxLater = from
             log("note", "effects", M("the effects of one side cannot be read now: they are aligned \(from.arrow) once both can be (more than \(SyncEngine.MASS_DELETES) removals ask again)",
@@ -1708,6 +1813,8 @@ final class SyncEngine {
             m.onlyTwin = t.bytes.keys.filter { p.bytes[$0] == nil }.sorted()
             m.differ = p.bytes.keys.filter { t.bytes[$0] != nil && !Effects.same(p, t, $0) }.sorted()
             m.bySize = !(p.byHash && t.byHash)
+            m.notCarried = notCarried()
+            m.renames = SyncEngine.caseRenames(panel: p, twin: t).map { "\($0.from) → \($0.to)" }
             for s in sides { sig += effects[s]!.fields.map { "\(s).\($0.key)=\($0.value)" }.sorted() }
         } else { m.effectsKnown = false; sig.append("effects unknown") }
         sig.append("fw \(m.panelFirmware) / \(m.twinFirmware)")
@@ -1773,14 +1880,31 @@ final class SyncEngine {
     }
 
     /// Sync switched on again with a pair it knows: the second window lists what each side changed while it
-    /// was off, whatever that is - even nothing.
+    /// was off, whatever that is - even nothing. Unless the consent was kept from the run before (consentKept: the
+    /// switch stayed on, the app restarted) and the twin changed nothing meanwhile: then the panel's changes go to
+    /// the twin by themselves, with no window (the owner's item 15, 2026-10-01).
     private func resume() throws {
         let plan = resumePlan()
         if let m = plan.mass {
             needDirection = true; holdWhy = m
             log("note", "hold", M("\(m.en): which way?", "\(m.ru): в какую сторону?"), problem: true); askDirectionNow(m); return
         }
+        if consentKept && SyncEngine.quietResume(twinSettings: plan.settings[.twin, default: []], twinEffects: plan.effects[.twin, default: []],
+                                                  hardware: plan.hardware, conflicts: plan.conflicts) {
+            log("note", "resume", M("sync resumes by itself: the switch stayed on, the consent for this pair is kept from before the restart, and the twin changed nothing meanwhile - the panel's changes go to the twin (settings \(plan.settings[.panel, default: []].count), effects \(plan.effects[.panel, default: []].count))",
+                                    "синхронизация продолжается сама: переключатель не выключали, согласие для этой пары сохранено с прошлого запуска, двойник за это время не менялся — изменения панели переношу на двойника (настроек \(plan.settings[.panel, default: []].count), эффектов \(plan.effects[.panel, default: []].count))"))
+            try carryResume(); return
+        }
+        if consentKept {
+            log("note", "resume", M("the consent for this pair is kept from before the restart, but the twin changed while sync was off: which way - asked as ever",
+                                    "согласие для этой пары сохранено с прошлого запуска, но двойник менялся, пока синхронизации не было: направление спрашиваю, как и раньше"))
+        }
         askResumeNow(plan)
+    }
+    /// Whether a resume with a kept consent goes on without the second window: nothing changed on the twin while
+    /// sync was off - no setting, no effect, no setting of the panel's hardware, nothing changed on both sides.
+    static func quietResume(twinSettings: [String], twinEffects: [String], hardware: [String], conflicts: [String]) -> Bool {
+        twinSettings.isEmpty && twinEffects.isEmpty && hardware.isEmpty && conflicts.isEmpty
     }
 
     /// "From the twin to the panel" at a resume: the changes of both sides since the saved bases, as the
@@ -1790,7 +1914,7 @@ final class SyncEngine {
         log("twin→panel", "resume", M("the changes made while sync was off: the twin's go to the panel, the panel's to the twin",
                                       "изменения, сделанные без синхронизации: двойника переношу на панель, панели — на двойника"))
         try settingsPass(allowMass: true)
-        if let p = effects[.panel], let t = effects[.twin] { try effectsPass([.panel: p, .twin: t], allowMass: true) }
+        if let p = effects[.panel], let t = effects[.twin] { try effectsPass([.panel: p, .twin: t], allowMass: true); try renameTwinFiles() }
         else { for s in sides { base[s]?["effects"] = nil }; fxAlignFrom = nil }
         try mirrorScreen(from: .panel, fields: SyncEngine.screenFields)
         rebaseScreen(.panel); rebaseScreen(.twin)
@@ -1949,11 +2073,24 @@ final class SyncEngine {
     /// that choice (it holds the panel's carousel); the step would have written over it.
     private func twinChosen() throws -> Bool {
         guard var t = screen[.twin], let b = base[.twin]?["screen"], let tp = try device(.twin).get("/api/panel") else { return false }
+        let prev = t
         t.apply(panel: tp)
         docs[.twin, default: [:]]["/api/panel"] = tp
         screen[.twin] = t; pageReadAt[.twin] = Date()
         sawTwin(t, at: Date())
+        // A page its renumbered effect list moved is nobody's choice (renumbered): the screen round says so and puts
+        // the panel's back; the step waits for it.
+        if SyncEngine.renumbered(prev: prev, now: t) { shifted[.twin] = t.shown; return true }
         return personAtTwin || !SyncEngine.screenChanges(t, base: b, wrote: wrote[.twin]).changed.isDisjoint(with: ["page", "style"])
+    }
+
+    /// A Lua page that moved with nobody choosing it: the effect list was renumbered under it - an effect uploaded or
+    /// removed, and the page index shown stays while another effect now sits at it ("an upload can add a slot and
+    /// renumber the ones above it, so the index on screen may already mean a different file", web_panel.cpp
+    /// handleLuaUploadChunk). The same page index, another effect at it, another effect list. A person's choice
+    /// moves the index.
+    static func renumbered(prev: Screen, now: Screen) -> Bool {
+        prev.key == "lua" && now.key == "lua" && prev.page == now.page && prev.name != now.name && prev.luaSig != now.luaSig
     }
 
     /// The twin as the panel leads it (twinMove): the panel's page and style written to it - sync's own write
@@ -1998,6 +2135,7 @@ final class SyncEngine {
             guard let prev = screen[s], let at = screenAt[s] else { continue }
             let x = fresh[s]!
             if prev.luaSig != x.luaSig { fxDue = true }
+            if SyncEngine.renumbered(prev: prev, now: x) { shifted[s] = x.shown }
             if x.uptime > prev.uptime + Int(Date().timeIntervalSince(at)) + 30 { jumped = true }   // 30 s of slack: our choice
         }
         if jumped { try verifyIdentity() }
@@ -2021,6 +2159,17 @@ final class SyncEngine {
             let r = SyncEngine.screenChanges(cur[s]!, base: base[s]!["screen"]!, wrote: wrote[s])
             changed[s] = r.changed; wrote[s] = r.waiting
         }
+        // The twin's page moved by its effect list renumbered under it (an effect uploaded there by a person): nobody
+        // chose it - not carried; the twin shows the panel's page again below. The panel's own screen, whatever moved
+        // it, is what the twin shows.
+        var backToPanel = false
+        if let sh = shifted[.twin], sh == cur[.twin]!.shown, changed[.twin]!.contains("page") {
+            changed[.twin]!.remove("page")
+            backToPanel = cur[.panel]!.shown != sh && cur[.twin]!.index(key: cur[.panel]!.key, name: cur[.panel]!.name) != nil
+            log("note", "screen", M("the twin's effect list was renumbered and its page moved to \(cur[.twin]!.name) by itself: nobody chose it - not carried to the panel\(backToPanel ? "; the twin shows the panel's \(cur[.panel]!.name) again" : "")",
+                                    "список эффектов двойника перенумеровался, и его страница сама сдвинулась на \(cur[.twin]!.name): это не выбор человека — на панель не переношу\(backToPanel ? "; двойнику возвращаю страницу панели \(cur[.panel]!.name)" : "")"))
+        }
+        shifted = [:]
         // Both changed one field: the page to the one changed last (smaller pageS), the rest to the panel.
         for f in changed[.panel]!.intersection(changed[.twin]!).sorted() where cur[.panel]!.fields[f] != cur[.twin]!.fields[f] {
             if f == "page" && cur[.twin]!.pageS < cur[.panel]!.pageS {
@@ -2039,6 +2188,7 @@ final class SyncEngine {
             }
             rebaseScreen(s)
         }
+        if backToPanel { try mirrorScreen(from: .panel, fields: ["page"]) }
         // Said once a round has read the twin's uptime too: a restart also starts its carousel's hold afresh.
         if personAtTwin != personSaid {
             personSaid = personAtTwin
@@ -2231,6 +2381,8 @@ final class SyncEngine {
                                                          "эффекты \(s.of) сравниваются по размеру: в прошивке \(s.of) нет /api/lua/source, и правку, не меняющую длину скрипта, не видно"))
         }
         try effectsPass(cur, allowMass: false)
+        pruneRefusals()
+        try renameTwinFiles()
     }
 
     private func effectsPass(_ cur: [Side: Effects], allowMass: Bool) throws {
@@ -2290,6 +2442,7 @@ final class SyncEngine {
         guard let pe = effects[.panel], let te = effects[.twin] else { return }
         base[.panel, default: [:]]["effects"] = pe.fields; base[.twin, default: [:]]["effects"] = te.fields
         fxAlignFrom = nil; stateDirty = true
+        try renameTwinFiles()
     }
 
     private func convergeEffects(from s: Side, _ a: Effects, _ b: Effects) throws {
@@ -2300,16 +2453,15 @@ final class SyncEngine {
     }
 
     /// Carries effect changes of side S to the other side: removals, then new and replaced scripts, then walk switches.
+    /// A script the other side refuses (UploadRefused) is left out and said once: the rest goes on (refusedFx).
     private func applyEffects(from s: Side, keys: [String]) throws {
         let o = s.other
-        guard let src = effects[s], var dst = try readEffects(o) else {
-            throw SyncError(M("the effects of \(o.word.en) cannot be read now", "эффекты \(o.of) сейчас не прочитать"))
+        guard let src = effects[s] else {
+            throw SyncError(M("the effects of \(s.word.en) cannot be read now", "эффекты \(s.of) сейчас не прочитать"))
         }
+        var dst = try readEffectsNow(o)
         var wrote = false
-        func again() throws -> Effects {
-            guard let e = try readEffects(o) else { throw SyncError(M("the effects of \(o.word.en) cannot be read now", "эффекты \(o.of) сейчас не прочитать")) }
-            return e
-        }
+        func again() throws -> Effects { try readEffectsNow(o) }
         for k in keys where k.hasPrefix("s.") && src.bytes[String(k.dropFirst(2))] == nil {
             let name = String(k.dropFirst(2))
             pendingFx[s]?[name] = nil
@@ -2331,14 +2483,27 @@ final class SyncEngine {
         for k in keys where k.hasPrefix("s.") {
             let name = String(k.dropFirst(2))
             guard let bytes = src.bytes[name], let stem = src.stem[name], !knownSame(name) else { continue }
+            // Refused before, and the source still holds what was refused: not sent again (said then, once).
+            let content = src.fields["s." + name] ?? "\(bytes)"
+            if SyncEngine.stillRefused(refusedFx[o]?[name], content: content, targetScripts: dst.bytes.count) { continue }
             guard let script = try script(from: s, name: name, stem: stem, bytes: bytes, hash: src.hash[name]) else {
                 pendingFx[s, default: [:]][name] = bytes
-                noteOnce("fx-\(s)-\(name)-\(bytes)", M("\(name) is not carried to \(o.word.en): the firmware of \(s.word.en) has no /api/lua/source, and the gallery of \(repo) has no such file",
-                                                        "\(name) не перенести на \(o.to): в прошивке \(s.of) нет /api/lua/source, а в галерее \(repo) такого файла нет"))
+                noteOnce("fx-\(s)-\(name)-\(bytes)", M("\(name) is not carried to \(o.word.en): \(s.word.en) does not give out its script (no /api/lua/source, or a 404 for it), and the gallery of \(repo) has no such file",
+                                                        "\(name) не перенести на \(o.to): \(s.word.ru) не отдаёт его скрипт (нет /api/lua/source или 404 на него), а в галерее \(repo) такого файла нет"))
                 continue
             }
-            let target = dst.stem[name] ?? stem                               // the same effect keeps the target's file name
-            try uploadEffect(o, stem: target, data: script)
+            // The same effect keeps the target's file name here; a name that differs only in case is the rename's
+            // (renameTwinFiles: the twin's takes the panel's, with the content it has then).
+            let target = dst.stem[name] ?? stem
+            do { try uploadEffect(o, stem: target, data: script) } catch let r as UploadRefused {
+                refusedFx[o, default: [:]][name] = Refusal(content: content, why: r.why, room: r.room ? dst.bytes.count : nil)
+                pendingFx[s]?[name] = nil; stateDirty = true
+                log(s.arrow, "effect", M("\(name) is not carried: \(o.word.en) refuses it - \(r.why). It is sent again when it changes on \(s.word.en)\(r.room ? ", or when \(o.word.en) has fewer scripts" : "")",
+                                         "\(name) не переносится: \(o.word.ru) его не принимает — \(r.why). Отправлю снова, когда он изменится \(s.on)\(r.room ? " или когда \(o.at) станет меньше скриптов" : "")"),
+                    problem: true)
+                continue
+            }
+            refusedFx[o]?[name] = nil
             hashes[o]?[target] = nil
             pendingFx[s]?[name] = nil
             wrote = true
@@ -2369,8 +2534,21 @@ final class SyncEngine {
             let a = try device(o).upload("/api/lua/upload", query: [("name", stem)], field: "script", filename: "\(stem).lua", data: data, timeout: 90)
             if a.status == 200, a.object?.b("success") == true { return }
             if a.why.contains("another upload"), attempt < 4 { Thread.sleep(forTimeInterval: 2); continue }
+            if let r = SyncEngine.uploadRefusal(status: a.status, why: a.why) { throw r }
             throw device(o).refused("POST /api/lua/upload?name=\(stem)", a)
         }
+    }
+
+    /// Whether an upload's answer refuses the script for good (UploadRefused) or only this time (nil: an error as
+    /// ever). Every refusal of the upload is a 400 (handleLuaUploadDone; 403 only for a foreign origin); these of
+    /// its words are the transfer's or the filesystem's, not the script's, and are tried again as before
+    /// (web_panel.cpp handleLuaUploadChunk, lua_store.cpp luaStoreBegin/Finish, firmware 2.7.13).
+    static let uploadTransient = ["another upload", "cut short", "carried no file", "nothing was uploaded", "could not",
+                                  "would not take the write", "no filesystem", "no PSRAM"]
+    static let uploadNoRoom = ["uploaded slots are used", "filesystem is full", "does not fit"]
+    static func uploadRefusal(status: Int, why: String) -> UploadRefused? {
+        guard status == 400, !uploadTransient.contains(where: { why.contains($0) }) else { return nil }
+        return UploadRefused(why: why, room: uploadNoRoom.contains { why.contains($0) })
     }
 
     /// The script's bytes: from the device itself where it has /api/lua/source, else the gallery file with
@@ -2378,11 +2556,15 @@ final class SyncEngine {
     private func script(from s: Side, name: String, stem: String, bytes: Int, hash: String?) throws -> Data? {
         switch luaCap(s) {
         case true?:
-            let d = try device(s).luaSource(stem)
-            guard d.count == bytes, hash == nil || sha256Hex(d).hasPrefix(hash!) else {
-                throw SyncError(M("\(name) changed while it was read: carried next time", "\(name) изменился, пока читался: перенесу в следующий раз"))
-            }
-            return d
+            // By its file's name on S, exactly; one S lists and does not give out (NoSuchScript) is not asked for again.
+            guard noSource[s]?[stem] != bytes else { break }
+            do {
+                let d = try device(s).luaSource(stem)
+                guard d.count == bytes, hash == nil || sha256Hex(d).hasPrefix(hash!) else {
+                    throw SyncError(M("\(name) changed while it was read: carried next time", "\(name) изменился, пока читался: перенесу в следующий раз"))
+                }
+                return d
+            } catch is NoSuchScript { noSource[s, default: [:]][stem] = bytes }
         case nil:
             throw SyncError(M("whether \(s.word.en) gives out its scripts is not known now: tried again", "отдаёт ли \(s.word.ru) скрипты, сейчас не узнать: повторю"))
         case false?:
@@ -2419,6 +2601,103 @@ final class SyncEngine {
         if c.image == nil, let r = device(s).probeImage() { c.image = r.has; c.elf = r.elf }
         caps[s] = c
         return c.image.map { ($0, c.elf) }
+    }
+
+    /// A script a side refused (UploadRefused): the source's content then (its "s." field: "h<sha256>" or the size),
+    /// the side's words, and for a refusal for want of room the number of scripts the side had.
+    struct Refusal: Codable, Equatable { var content: String, why: String, room: Int? }
+    /// Whether a refusal still stands (the owner, 2026-09-30 20:45: autumn_dawn, "too slow… 4 of 4 frames over 500 ms",
+    /// failed the whole alignment and the direction was asked four times): the source holds the content refused, and
+    /// a side refused for room has no fewer scripts than it had. Sent again only when that changes.
+    static func stillRefused(_ r: Refusal?, content: String, targetScripts: Int) -> Bool {
+        guard let r, r.content == content else { return false }
+        return r.room.map { targetScripts >= $0 } ?? true
+    }
+    /// The refusals that no longer stand: the source holds other content now, or the target the same.
+    private func pruneRefusals() {
+        for o in sides {
+            guard let r = refusedFx[o], let src = effects[o.other], let dst = effects[o] else { continue }
+            let keep = r.filter { n, x in src.fields["s." + n] == x.content && !Effects.same(src, dst, n) }
+            if keep.count != r.count { refusedFx[o] = keep; stateDirty = true }
+        }
+    }
+    /// "AUTUMN DAWN to the twin: too slow…": what the direction question shows as not carried.
+    private func notCarried() -> [Msg] {
+        var out: [Msg] = []
+        for o in sides {
+            guard let src = effects[o.other] else { continue }
+            for (n, r) in (refusedFx[o] ?? [:]).sorted(by: { $0.key < $1.key }) where src.fields["s." + n] == r.content {
+                out.append(M("\(n) to \(o.word.en): \(r.why)", "\(n) на \(o.to): \(r.why)"))
+            }
+        }
+        return out
+    }
+
+    /// An effect is one on both sides by the name its banner shows - FLOW for flow.lua and FLOW.lua alike: a device
+    /// takes no two scripts whose names read the same ("an effect called FLOW is already on the panel",
+    /// web_panel.cpp handleLuaUploadChunk) - and its file's name, GET /api/lua's uploaded.scripts[].name, is
+    /// compared exactly. Where the two differ only in case, the twin's file takes the panel's name (the owner,
+    /// 2026-09-30 20:45: FLOW, KALEIDOSCOPE, NEBULA on the panel, flow, kaleidoscope, nebula on the twin, the same
+    /// bytes - and the list is in the files' order, so WARP was page 29 on one and 26 on the other). The panel's
+    /// never: the panel leads.
+    static func caseRenames(panel p: Effects, twin t: Effects) -> [(name: String, from: String, to: String)] {
+        p.stem.compactMap { n, ps -> (name: String, from: String, to: String)? in
+            guard let ts = t.stem[n], ts != ps else { return nil }
+            return (name: n, from: ts, to: ps)
+        }.sorted { $0.name < $1.name }
+    }
+
+    /// The twin's files named as the panel's but for case take the panel's names (caseRenames): each is removed and
+    /// uploaded again under the panel's name with its own bytes - its content stays the twin's; a difference in it is
+    /// the content's, carried as ever - and its walk switch is put back (a removal forgets it, panelEffectsPrune).
+    /// The upload refused: the old file back under its old name. The page it moved (a removal shows the clock,
+    /// web_panel.cpp handleLua) is put back as after any write (afterWrite).
+    private func renameTwinFiles() throws {
+        guard let p = effects[.panel], let t = effects[.twin] else { return }
+        let todo = SyncEngine.caseRenames(panel: p, twin: t)
+        guard !todo.isEmpty else { return }
+        try noRestartPending()
+        var cur = t, wrote = false, did: [String] = []
+        for r in todo {
+            guard let bytes = cur.bytes[r.name], cur.stem[r.name] == r.from else { continue }
+            if let c = renameRefused[r.name], c == cur.fields["s." + r.name] { continue }        // said when refused
+            guard let data = try script(from: .twin, name: r.name, stem: r.from, bytes: bytes, hash: cur.hash[r.name]) else {
+                noteOnce("rename-\(r.from)-\(bytes)", M("\(r.name): the twin's file \(r.from) is named as the panel's \(r.to) but for case, and its bytes cannot be read to upload them again: left as it is",
+                                                         "\(r.name): файл двойника \(r.from) отличается от панельного \(r.to) только регистром, но его байты не прочитать, чтобы загрузить заново: оставляю как есть"))
+                continue
+            }
+            let walkOff = cur.walk[r.name] == false
+            try device(.twin).post("/api/lua", ["delete": r.from])
+            hashes[.twin]?[r.from] = nil; hashes[.twin]?[r.to] = nil; wrote = true
+            did.append(r.name)
+            do {
+                try uploadEffect(.twin, stem: r.to, data: data)
+                log("panel→twin", "effect", M("\(r.name): the twin's file \(r.from) is named \(r.to) now, as on the panel", "\(r.name): файл двойника \(r.from) теперь называется \(r.to), как на панели"))
+            } catch let e as UploadRefused {
+                renameRefused[r.name] = cur.fields["s." + r.name]
+                let back = (try? uploadEffect(.twin, stem: r.from, data: data)) != nil
+                log("panel→twin", "effect", M("\(r.name): the twin's file \(r.from) was not renamed \(r.to) - the twin refused the upload (\(e.why)); \(back ? "its old name is back" : "its old name could not be put back either: it is carried from the panel as a new effect")",
+                                              "\(r.name): файл двойника \(r.from) не переименован в \(r.to) — двойник не принял загрузку (\(e.why)); \(back ? "прежнее имя возвращено" : "прежнее имя тоже вернуть не удалось: перенесу его с панели как новый эффект")"),
+                    problem: true)
+            }
+            cur = try readEffectsNow(.twin)
+            if walkOff, cur.bytes[r.name] != nil, cur.walk[r.name] != false, let i = cur.names.firstIndex(of: r.name) {
+                try device(.twin).post("/api/lua", ["walk": ["i": i, "on": false, "name": r.name] as J])
+                cur = try readEffectsNow(.twin)
+            }
+        }
+        guard wrote else { return }
+        effects[.twin] = cur
+        // The renamed effects' base only: their content and walk are what they were; anything else is the next pass's.
+        // One the twin lost (refused, and not put back) is not the twin's removal: the panel's goes to it as new.
+        if base[.twin]?["effects"] != nil {
+            for n in did {
+                for k in ["s." + n, "w." + n] { base[.twin]!["effects"]![k] = cur.fields[k] }
+                if cur.bytes[n] == nil { base[.panel]?["effects"]?["s." + n] = nil }
+            }
+        }
+        stateDirty = true
+        try afterWrite(.twin, from: .panel)
     }
 
     /// Effects that could not be carried: tried again when the source side's firmware or the repository changed.
@@ -2523,8 +2802,8 @@ final class SyncEngine {
                                                           "\(Settings.shown(k)): настройка железа панели — с двойника на панель не переношу"))
         }
         if !ch.residue.isEmpty {
-            log("override", "twin", M("no longer overridden on the twin (the owner, 2026-09-30 19:35): the panel's \(ch.residue.map(Settings.shown).joined(separator: ", "))",
-                                      "переопределения двойника сняты (владелец, 30.09 19:35): беру с панели \(ch.residue.map(Settings.shown).joined(separator: ", "))"))
+            log("override", "twin", M("no longer held on the twin (the overrides of 2026-09-29, dropped 2026-09-30 19:35; ZZZZ while the twin had no key or fbAskHa): the panel's \(ch.residue.map(Settings.shown).joined(separator: ", "))",
+                                      "двойник больше не удерживает своё (переопределения 29.09, снятые 30.09 19:35; ZZZZ, пока у двойника не было ключа или fbAskHa): беру с панели \(ch.residue.map(Settings.shown).joined(separator: ", "))"))
         }
         if !allowMass {
             // Each side's own: the twin's lost writes are the twin's (an erased flash is many at once).
@@ -2753,11 +3032,21 @@ final class SyncEngine {
             try tw.post("/api/import", ["fbAskHa": false]); did.append("fbAskHa false")        // 2.7.13: web.cpp handleImportConfig
             if !routes.contains("/api/export") { routes.append("/api/export") }
         }
-        if SyncEngine.asksHa(export: d["/api/export"], board: d["/api/flightboard"]) {
-            noteOnce("askha-\(fw[.twin]?.id ?? "")", M("the twin has an MQTT broker and no AeroAPI key, and its firmware \(fw[.twin]?.version ?? "") has no fbAskHa (2.7.13): its flight board asks Home Assistant for a built-in airport's board, and HA pays for it with its key - update the twin's firmware, or remove the broker from its settings",
-                                                        "у двойника задан брокер MQTT и нет ключа AeroAPI, а в его прошивке \(fw[.twin]?.version ?? "") нет fbAskHa (2.7.13): табло рейсов двойника просит у Home Assistant табло встроенного аэропорта, и HA платит за это своим ключом — обновите прошивку двойника или уберите брокер из его настроек"))
-        }
-        if let fb = d["/api/flightboard"],
+        if SyncEngine.holdsNoAsk(export: d["/api/export"], board: d["/api/flightboard"]), let fb = d["/api/flightboard"] {
+            // A firmware without fbAskHa cannot be told not to ask; a custom airport is never asked for (fb_mqtt.cpp
+            // mayAsk): the twin's board stays on ZZZZ "NO REQUESTS" until it has a key of its own or fbAskHa.
+            noteOnce("noask-hold-\(fw[.twin]?.id ?? "")", M("the twin has an MQTT broker and no AeroAPI key, and its firmware \(fw[.twin]?.version ?? "") has no fbAskHa (2.7.13): its flight board is held on \(Settings.noAsk.icao) \"\(Settings.noAsk.name)\", which Home Assistant is never asked for, and the panel's airport is not carried to it until it has a key of its own or a firmware with fbAskHa",
+                                                            "у двойника задан брокер MQTT и нет ключа AeroAPI, а в его прошивке \(fw[.twin]?.version ?? "") нет fbAskHa (2.7.13): табло рейсов двойника держу на \(Settings.noAsk.icao) «\(Settings.noAsk.name)» — его у Home Assistant не запрашивают, — а аэропорт панели не переношу, пока у двойника нет своего ключа или прошивки с fbAskHa"))
+            if let body = SyncEngine.noAskHold(board: fb, panelBoard: docs[.panel]?["/api/flightboard"]) {
+                do {
+                    try tw.post("/api/flightboard", body); did.append("\(Settings.noAsk.icao) \"\(Settings.noAsk.name)\" selected")
+                    routes.append("/api/flightboard")
+                } catch let e where e is SyncStopped || e is SyncDown || e is SyncRestart { throw e }
+                catch { noteOnce("noask-fail-\(describe(error).en)", M("\(Settings.noAsk.icao) could not be selected on the twin's flight board: " + describe(error).en, "\(Settings.noAsk.icao) не удалось выбрать на табло рейсов двойника: " + describe(error).ru)) }
+            } else if !fb.a("airports").contains(where: { $0.s("kind") == "custom" && $0.s("code") == Settings.noAsk.icao }) {
+                noteOnce("noask-full", M("the twin's custom airports are all used: \(Settings.noAsk.icao) cannot be added - remove one on the twin", "у двойника заняты все свои аэропорты: \(Settings.noAsk.icao) не добавить — удалите один на двойнике"))
+            }
+        } else if let fb = d["/api/flightboard"],
            let z = fb.a("airports").first(where: { $0.s("kind") == "custom" && $0.s("code") == Settings.noAsk.icao && $0.s("name") == Settings.noAsk.name }),
            let id = z.i("id"), fb.i("airport") != id,
            let panelApts = docs[.panel]?["/api/flightboard"]?.a("airports"), !panelApts.contains(where: { $0.s("code") == Settings.noAsk.icao }) {
@@ -2769,15 +3058,31 @@ final class SyncEngine {
         log("override", "twin", M("the owner's override on the twin: " + did.joined(separator: ", "), "переопределение владельца на двойнике: " + did.joined(separator: ", ")))
     }
 
-    /// Whether a twin would ask Home Assistant for flight boards and nothing here can stop it: its firmware has
-    /// no fbAskHa (before 2.7.13: absent from /api/export), a broker is set (mqtt.configured: NVS fb/host,
-    /// mqtt_bus.cpp:171-186), it has no AeroAPI key (direct.key, or no direct fetch built), and the airport shown
-    /// is a built-in one - the only kind HA serves (fb_mqtt.cpp mayAsk).
-    static func asksHa(export: J?, board: J?) -> Bool {
+    /// Whether the twin's flight board is held on ZZZZ "NO REQUESTS" (the owner, 2026-09-30 22:40: a twin without a
+    /// key of its own does not ask Home Assistant): its firmware has no fbAskHa to stop the asking (before 2.7.13:
+    /// absent from /api/export), a broker is set (mqtt.configured: NVS fb/host, mqtt_bus.cpp:171-186), and it has no
+    /// AeroAPI key (direct.key; or no direct fetch built) - so any built-in airport it showed would be asked for, and
+    /// HA would fetch it with the owner's key (fb_mqtt.cpp:24-45 mayAsk, 103-136). The key itself is never read:
+    /// /api/flightboard says only whether one is stored.
+    static func holdsNoAsk(export: J?, board: J?) -> Bool {
         guard let export, export["fbAskHa"] == nil, let fb = board, fb.o("mqtt")?.b("configured") == true else { return false }
         let direct = fb.o("direct") ?? [:]
-        guard direct.b("built") == false || direct.b("key") != true else { return false }
-        return fb.a("airports").first { $0.i("id") == fb.i("airport") }?.s("kind") == "builtin"
+        return direct.b("built") == false || direct.b("key") != true
+    }
+    /// What puts the twin's board on ZZZZ (BOARD: its /api/flightboard): nil when it is there already, or when it has
+    /// no ZZZZ and no room for one (limits.custom, 6). Selected if the twin has it; else added with the time zone of
+    /// the panel's airport (PANEL_BOARD) and selected (web_panel.cpp:517-586, the add's "select"), as the override of
+    /// 2026-09-29 did (sync.py until c578579).
+    static func noAskHold(board fb: J, panelBoard: J?) -> J? {
+        let apts = fb.a("airports")
+        if let z = apts.first(where: { $0.s("kind") == "custom" && $0.s("code") == Settings.noAsk.icao }), let id = z.i("id") {
+            return fb.i("airport") == id ? nil : ["airport": id]
+        }
+        let customs = apts.filter { $0.s("kind") == "custom" }.count
+        guard customs < (fb.o("limits")?.i("custom") ?? 6) else { return nil }
+        let panelApt = panelBoard?.a("airports").first { $0.i("id") == panelBoard?.i("airport") }
+        return ["add": ["icao": Settings.noAsk.icao, "iata": "", "name": Settings.noAsk.name,
+                        "tz": panelApt?.s("tz") ?? "Europe/Paris", "select": true] as J]
     }
 
     /// After writing to side O: its screen as it is now becomes its base (a new home city, a removed
@@ -2814,7 +3119,7 @@ final class SyncEngine {
             guard f.settled else { watch(s, f); continue }
             fwWatchSince[s] = nil
             firmwareBase[s] = f.id; stateDirty = true
-            caps[s] = nil; hashes[s] = [:]; imageCache = nil
+            caps[s] = nil; hashes[s] = [:]; noSource[s] = nil; imageCache = nil
             log("note", "firmware", M("\(s.word.en) now runs \(f.id)", "\(s.on) теперь \(f.id)"))
             retryPending()
             // The later change wins: a new firmware on one side replaces what was waiting for the other.
@@ -2840,7 +3145,7 @@ final class SyncEngine {
             inFlight = nil; fwWatchSince[s] = nil
             firmwareBase[s] = n.id
             if fw[o]?.id == fl.fromId { firmwareBase[o] = fl.fromId }   // both sides now hold what they run: no echo
-            caps[s] = nil; hashes[s] = [:]; stateDirty = true
+            caps[s] = nil; hashes[s] = [:]; noSource[s] = nil; stateDirty = true
             // What is wanted is let go only when it is what was confirmed: a newer build that came to the
             // source meanwhile (firmwareRound, the later change wins) is still wanted, and is carried next.
             if s == .twin { wantTwin = SyncEngine.stillWanted(wantTwin, confirmed: fl.fromId); carry = (0, .distantPast) }
@@ -3074,7 +3379,7 @@ final class SyncEngine {
     // MARK: kept between runs
 
     private struct Saved: Codable {
-        var v: Int?                                   // 2: settings as HMAC digests under StateKey
+        var v: Int?                                   // 2 (app 1.3): settings as HMAC digests under StateKey; 3 (1.4): and the consent
         var key: String?                              // StateKey.tag of the key they were made with
         var pair: String
         var settings: [String: [String: String]]
@@ -3083,21 +3388,53 @@ final class SyncEngine {
         var pending: [String: [String: Int]]?        // effects not carried yet, by the side that has them
         var wantPanel: String?, wantTwin: String?     // a firmware one side should get
         var inFlight: InFlight?
+        var consent: String?                          // consentToken(pair): both windows answered, the switch not off since
+        var refused: [String: [String: Refusal]]?     // effects a side refused, by that side (refusedFx)
+    }
+
+    /// The consent kept for PAIR: an HMAC under StateKey, like the settings' digests - so it cannot be written into
+    /// the file for another pair, or by anything without the Keychain's key.
+    static func consentToken(_ pair: String) -> String {
+        hex(HMAC<SHA256>.authenticationCode(for: Data("consent|\(pair)".utf8), using: StateKey.key).prefix(16))
+    }
+    /// Whether a saved state of this very pair (its MACs; loadState checks) gives the first window's answer (the owner's
+    /// item 15, 2026-10-01): only when the switch was on as the app started and has stayed on (LAUNCH_ON), and the pair
+    /// was aligned (ALIGNED: the saved state has its settings). Then either the state is app 1.3's (VERSION 2, which
+    /// kept no consent: its first start of 1.4 over it), or it carries this pair's consent (TOKEN, written by 1.4 while
+    /// the switch was on and removed when it was switched off).
+    static func keptConsent(version: Int?, token: String?, pair: String, launchOn: Bool, aligned: Bool) -> Bool {
+        guard launchOn, aligned else { return false }
+        if version == 2 { return true }
+        return version == 3 && token != nil && token == consentToken(pair)
     }
 
     private func saveState() {
         guard StateKey.kept, aligned, !pairKey.isEmpty else { return }
-        var s = Saved(v: 2, key: StateKey.tag, pair: pairKey, settings: [:], effects: [:], firmware: [:], pending: [:],
-                      wantPanel: wantPanel, wantTwin: wantTwin, inFlight: inFlight)
+        var s = Saved(v: 3, key: StateKey.tag, pair: pairKey, settings: [:], effects: [:], firmware: [:], pending: [:],
+                      wantPanel: wantPanel, wantTwin: wantTwin, inFlight: inFlight,
+                      consent: consented ? SyncEngine.consentToken(pairKey) : nil, refused: [:])
         for side in sides {
             s.settings[side.rawValue] = base[side]?["settings"] ?? [:]
             s.effects[side.rawValue] = base[side]?["effects"] ?? [:]
             s.firmware[side.rawValue] = firmwareBase[side] ?? ""
             s.pending?[side.rawValue] = pendingFx[side] ?? [:]
+            s.refused?[side.rawValue] = refusedFx[side] ?? [:]
         }
         let enc = JSONEncoder(); enc.outputFormatting = [.sortedKeys]; enc.dateEncodingStrategy = .iso8601
         if let d = try? enc.encode(s), d != lastSaved { try? d.write(to: stateFile, options: .atomic); lastSaved = d }
         stateDirty = false
+    }
+
+    /// Sync switched off: the consent in sync-state.json is forgotten, whatever pair it is for - the next switch-on
+    /// asks both questions. The rest of the state stays (a resume shows what changed meanwhile).
+    private func dropSavedConsent() {
+        let dec = JSONDecoder(); dec.dateDecodingStrategy = .iso8601
+        guard let d = try? Data(contentsOf: stateFile), var s = try? dec.decode(Saved.self, from: d), s.consent != nil else { return }
+        s.consent = nil
+        let enc = JSONEncoder(); enc.outputFormatting = [.sortedKeys]; enc.dateEncodingStrategy = .iso8601
+        if let out = try? enc.encode(s) { try? out.write(to: stateFile, options: .atomic); lastSaved = out }
+        log("note", "consent", M("the consent kept in sync-state.json is forgotten: switching sync on asks both questions",
+                                 "согласие, сохранённое в sync-state.json, забыто: при включении синхронизации задам оба вопроса"))
     }
 
     private func loadState() {
@@ -3108,7 +3445,7 @@ final class SyncEngine {
         }
         let dec = JSONDecoder(); dec.dateDecodingStrategy = .iso8601
         guard let d = try? Data(contentsOf: stateFile), let s = try? dec.decode(Saved.self, from: d), s.pair == pairKey else { return }
-        guard s.v == 2, s.key == StateKey.tag else {
+        guard s.v == 2 || s.v == 3, s.key == StateKey.tag else {
             log("note", "state", M("sync-state.json was written by an earlier version or with another key: not used - the direction is asked",
                                    "sync-state.json записан прежней версией или другим ключом: не использую — спрошу направление"))
             return
@@ -3118,9 +3455,18 @@ final class SyncEngine {
             base[side, default: [:]]["effects"] = s.effects[side.rawValue] ?? [:]
             if let f = s.firmware[side.rawValue], !f.isEmpty { firmwareBase[side] = f }
             if let p = s.pending?[side.rawValue], !p.isEmpty { pendingFx[side] = p }
+            if let r = s.refused?[side.rawValue], !r.isEmpty { refusedFx[side] = r }
         }
         wantPanel = s.wantPanel; wantTwin = s.wantTwin; inFlight = s.inFlight
         resumed = !(s.settings["panel"] ?? [:]).isEmpty
+        if SyncEngine.keptConsent(version: s.v, token: s.consent, pair: pairKey, launchOn: locked({ _launchOn }), aligned: resumed) {
+            consented = true; consentKept = true
+            log("note", "consent", s.v == 2
+                ? M("the switch was on as the app started, and sync-state.json holds this pair's aligned state from app 1.3 (\(pairKey)): its consent counts as given - no \"Enable sync?\" window; the direction is asked only if the twin changed meanwhile",
+                    "переключатель был включён при запуске, а в sync-state.json — выровненное состояние этой пары от версии 1.3 (\(pairKey)): согласие считается данным — окна «Включить синхронизацию?» нет; направление спрошу, только если двойник за это время менялся")
+                : M("the switch stayed on, and the consent for this pair (\(pairKey)) is kept from before the restart: no \"Enable sync?\" window; the direction is asked only if the twin changed meanwhile",
+                    "переключатель не выключали, согласие для этой пары (\(pairKey)) сохранено с прошлого запуска: окна «Включить синхронизацию?» нет; направление спрошу, только если двойник за это время менялся"))
+        }
     }
 }
 

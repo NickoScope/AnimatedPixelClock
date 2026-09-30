@@ -25,7 +25,9 @@
 // MAC>?", then the alignment with the list of differences; until both are given nothing is written.
 // Firmware reaches the panel only after two more: "Update the panel too?" and "Really flash the physical
 // panel <name> with <version>?". Cancel or Not now is the default button (Return) of all four; the
-// buttons that write have no key. Off by default; the switch is remembered, and follows `defaults write
+// buttons that write have no key. The consent is remembered with the pair's state while the switch stays on
+// (1.4): a restart with the switch on asks nothing unless the twin changed meanwhile; switching off forgets it,
+// quitting does not (SyncEngine.swift, markLaunch, quit). Off by default; the switch is remembered, and follows `defaults write
 // <bundle id> syncEnabled -bool NO` from a terminal as well, at once, whatever window is open (a session
 // that is about to flash the panel can switch sync off first). No window blocks the main dispatch queue:
 // each is opened from the run loop (Controller.later), so the switch, SIGTERM and the status line are
@@ -478,6 +480,9 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNav
         sync.onPanelLost = { [weak self] in self?.finder.refresh() }
         finder.onChange = { [weak self] f in self?.sync.setFound(f) }
         buildMenu(); buildWindow()
+        // Whether the switch is on as the app starts: only then does a consent kept in sync-state.json count (the
+        // owner's item 15, 2026-10-01: a restart with the switch on asks nothing, unless the twin changed meanwhile).
+        sync.markLaunch(on: d.bool(forKey: "syncEnabled"))
         sync.start()
         if d.bool(forKey: "syncEnabled") { enableSync(true) } else { showSyncStatus() }
         // The switch follows the setting when something else changes it (defaults write from a terminal).
@@ -928,6 +933,14 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNav
             t += "\n" + L("Effects only on the twin: ", "Эффекты только на двойнике: ") + list(m.onlyTwin)
             t += "\n" + L("Effects that differ: ", "Эффекты с разным содержимым: ") + list(m.differ)
             if m.bySize { t += "\n" + L("(effects compared by size: a firmware without /api/lua/source)", "(эффекты сравниваются по размеру: в прошивке нет /api/lua/source)") }
+            if !m.notCarried.isEmpty {
+                t += "\n" + L("Not carried - the other side refuses them (sent again when they change): ", "Не переносится — другая сторона не принимает (отправлю снова, когда эффект изменится): ")
+                    + list(m.notCarried.map { $0.text(LANG) })
+            }
+            if !m.renames.isEmpty {
+                t += "\n" + L("The twin's effect files named as the panel's but for case - they take the panel's names: ",
+                              "Файлы эффектов двойника отличаются от панели только регистром — получат имена как на панели: ") + list(m.renames)
+            }
         } else {
             t += "\n" + L("Effects: one side's cannot be read now. They are aligned in the direction you choose once both sides' can be; if that would remove more than \(SyncEngine.MASS_DELETES), you are asked again.",
                            "Эффекты: у одной из сторон сейчас не прочитать. Выровняю их в выбранную сторону, когда прочитаются на обеих; если придётся удалить больше \(SyncEngine.MASS_DELETES), спрошу снова.")
@@ -958,6 +971,10 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNav
         t += "; " + L("effects: ", "эффекты: ") + list(m.panelEffects.map { $0.text(LANG) })
         if !m.conflicts.isEmpty { t += "\n" + L("Changed on both sides - the panel's is kept: ", "Изменено на обеих сторонах — останется как на панели: ") + list(m.conflicts) }
         if !m.hardware.isEmpty { t += "\n" + L("The panel's hardware changed on the twin (not carried to the panel): ", "Железо панели, изменённое на двойнике (на панель не переносится): ") + list(m.hardware) }
+        if !m.notCarried.isEmpty {
+            t += "\n" + L("Not carried - the other side refuses them (sent again when they change): ", "Не переносится — другая сторона не принимает (отправлю снова, когда эффект изменится): ")
+                + list(m.notCarried.map { $0.text(LANG) })
+        }
         t += "\n\n" + L("Return the twin to the panel: the twin becomes what the panel is; its own changes above are undone, the panel is not touched. Carry the twin's changes to the panel: the twin's changes above are written to the panel, and the panel's come to the twin. Cancel: sync stays off, nothing is written.",
                          "Вернуть двойнику состояние панели: двойник станет таким, как панель; его изменения выше пропадут, панель не трогаю. Перенести изменения двойника на панель: изменения двойника выше запишутся на панель, а изменения панели придут на двойника. Отмена: синхронизация остаётся выключенной, ничего не записано.")
         a.informativeText = t
@@ -1008,6 +1025,10 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNav
                 "Пока переключатель включён, двойник и панель повторяют друг друга в обе стороны: экран (страница, стиль часов, яркость, вкл/выкл), настройки, Lua-эффекты и прошивку. Выключен — всё остаётся как есть, и больше ничего не пишется, даже начатое.")
               + "\n\n" + L("Switching it on asks twice: \"Enable sync with the panel …?\", then the list of what differs and which way to align. Until both are answered, nothing is written. Return means Cancel in both.",
                              "Включение спрашивает дважды: «Включить синхронизацию с панелью …?», затем список различий и направление выравнивания. Пока нет ответа на оба вопроса, ничего не пишется. Return в обоих окнах означает «Отмена».")
+              + "\n\n" + L("The answer is remembered for this pair while the switch stays on: the app restarted with the switch on asks nothing, and the panel's changes made meanwhile come to the twin; only if the twin changed meanwhile is the direction asked. Switching sync off forgets it.",
+                             "Ответ запоминается для этой пары, пока переключатель включён: после перезапуска приложения с включённым переключателем окон нет, изменения панели за это время приходят на двойника; только если за это время менялся двойник, будет вопрос о направлении. Выключение синхронизации это забывает.")
+              + "\n\n" + L("An effect the other side refuses (its checks or its trial run, e.g. too slow) is left out: said once in the log and listed as \"not carried\"; it is sent again when it changes. Effect files named alike but for case take the panel's names on the twin.",
+                             "Эффект, который другая сторона не принимает (проверки или пробный прогон, например слишком медленный), пропускается: одна запись в журнале и строка «Не переносится»; снова он отправится, когда изменится. Файлы эффектов, отличающиеся только регистром, на двойнике получают имена как на панели.")
               + "\n\n" + L("How often: the screen every 3 s (5 s while the panel is under strain), and while the panel's carousel walks, once more just after each of its steps (not under strain); effects when their list changes and every 60 s, settings every \(every) s. A device that does not answer, or a round that failed: the next look in 5 s.",
                              "Как часто: экран — раз в 3 с (5 с, когда панель под нагрузкой), а пока карусель панели идёт — ещё раз сразу после каждого её шага (не под нагрузкой); эффекты — при изменении их списка и раз в 60 с, настройки — раз в \(every) с. Устройство не ответило или раунд не удался — следующий взгляд через 5 с.")
               + "\n\n" + L("Changes at the same time: the devices keep no time of a change, so two changes of one thing within one of these periods - up to \(every) s for a setting - count as simultaneous, and the panel's is kept (the log says \"conflict: the panel's taken - <key>\"). Only the page has its own clock: the one changed later wins.",
@@ -1118,7 +1139,9 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNav
 
     func windowWillClose(_ n: Notification) { NSApp.terminate(nil) }
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { true }
-    func applicationWillTerminate(_ n: Notification) { sync?.setEnabled(false); twin.stop() }
+    /// Quitting stops sync's writes as a switch-off would, but it is not one: the switch stays on, and so does the
+    /// consent kept for the pair - the next start resumes without the two windows.
+    func applicationWillTerminate(_ n: Notification) { sync?.quit(); twin.stop() }
 }
 
 let app = NSApplication.shared

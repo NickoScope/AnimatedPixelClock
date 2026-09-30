@@ -115,6 +115,7 @@ class Fake:
         self.buttons = [{"n": n, "fn": "none", "bound": True, "proto": "NEC", "code": f"0xFF{n:04X}"}
                         for n in range(1, 11)]
         self.requests = []                    # (method, path with query, body)
+        self.marks = []                       # (method, path, X-Twin-Sync) of every request
         self.ignore = set()                   # routes whose POST answers 200 and changes nothing
 
     # -- reads ----------------------------------------------------------------------------------
@@ -350,13 +351,14 @@ class Net:
     def __init__(self, *devices):
         self.by = {d.ip: d for d in devices}
 
-    def http(self, method, url, body=None, ctype=None, timeout=20.0, tries=6):
+    def http(self, method, url, body=None, ctype=None, timeout=20.0, tries=6, headers=None):
         u = urllib.parse.urlsplit(url)
         dev = self.by.get(u.netloc)
         if dev is None:
             raise S.SyncError(f"{method} {url}: no answer (no such host)")
         query = dict(urllib.parse.parse_qsl(u.query, keep_blank_values=True))
         dev.requests.append((method, u.path + (f"?{u.query}" if u.query else ""), body))
+        dev.marks.append((method, u.path, (headers or {}).get("X-Twin-Sync")))
         return dev.handle(method, u.path, query, body, ctype)
 
 
@@ -689,18 +691,56 @@ class AskHa(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertIn("requests to the twin: none", out)
 
-    def test_a_twin_that_cannot_be_stopped_is_warned_about(self):
+    def test_a_twin_that_cannot_be_stopped_is_held_on_no_ask(self):
         p, t = panel_and_twin()
         t.mqtt_configured = True                          # a broker, no key, firmware without fbAskHa, LFMN built in
-        code, out = run_sync(Net(p, t), "--dry-run")
+        p.airport, p.dir = 3, "dep"                        # the panel's airport: London, whose zone ZZZZ takes
+        code, out = run_sync(Net(p, t), "--apply")
         self.assertEqual(code, 0, out)
         self.assertIn("has no fbAskHa (2.7.13)", out)
-        t.fb_ask_ha = True                                 # 2.7.13: the override stops it, no warning
-        code, out = run_sync(Net(p, t), "--dry-run")
+        self.assertEqual(t.apt(t.airport)["code"], "ZZZZ")    # held, not the panel's EGLL
+        self.assertEqual(t.apt(t.airport)["name"], "NO REQUESTS")
+        self.assertNotIn(("EGLL", "dep"), t.selections)       # never shown on the way, never asked of HA
+        self.assertEqual(p.apt(p.airport)["code"], "EGLL")    # the panel is only read
+        code, out = run_sync(Net(p, t), "--apply")            # a second run: held, nothing to send
+        self.assertEqual(code, 0, out)
+        self.assertIn("requests to the twin: none", out)
+        t.fb_ask_ha = True                                 # 2.7.13: the override stops the asking - the panel's airport
+        code, out = run_sync(Net(p, t), "--apply")
+        self.assertEqual(code, 0, out)
         self.assertNotIn("has no fbAskHa (2.7.13)", out)
-        t.fb_ask_ha, t.aero_key = None, True               # a key of its own: the board is the direct fetch's
-        code, out = run_sync(Net(p, t), "--dry-run")
+        self.assertEqual((t.apt(t.airport)["code"], t.dir), ("EGLL", "dep"))
+        self.assertFalse([a for a in t.airports() if a["code"] == "ZZZZ"])   # and ZZZZ goes
+        self.assertIs(t.fb_ask_ha, False)
+
+    def test_a_key_of_its_own_ends_the_hold(self):
+        p, t = panel_and_twin()
+        t.mqtt_configured, t.aero_key = True, True         # a key of its own: the board is the direct fetch's
+        code, out = run_sync(Net(p, t), "--apply")
+        self.assertEqual(code, 0, out)
         self.assertNotIn("has no fbAskHa (2.7.13)", out)
+        self.assertEqual(t.apt(t.airport)["code"], p.apt(p.airport)["code"])
+
+
+class SyncHeader(unittest.TestCase):
+    """Every write to the twin carries X-Twin-Sync: 1 (firmware 2.7.13 marks it "by":"sync"); no read does."""
+
+    def test_every_write_is_marked_and_no_read(self):
+        p, t = panel_and_twin()
+        code, out = run_sync(Net(p, t), "--apply")
+        self.assertEqual(code, 0, out)
+        w = [m for m in t.marks if m[0] == "POST" or m[1] in ("/api/log", "/api/ir/fn")]
+        self.assertTrue(len(w) > 5, w)
+        self.assertEqual({m[2] for m in w}, {"1"}, w)
+        self.assertEqual({m[2] for m in t.marks + p.marks if m not in w}, {None})
+
+    def test_case_only_names_are_said(self):
+        p, t = panel_and_twin()
+        p.scripts = ["AQUARIUM", "CANNES", "FLOW"]
+        t.scripts = ["AQUARIUM", "CANNES", "flow"]
+        code, out = run_sync(Net(p, t), "--diff")
+        self.assertEqual(code, 0, out)
+        self.assertIn("named the same but for case (the twin's file takes the panel's name): flow -> FLOW", out)
 
 
 class Afterwards(unittest.TestCase):

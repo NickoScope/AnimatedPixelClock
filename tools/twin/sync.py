@@ -60,7 +60,13 @@ does it have one made for it: a board with a broker and no AeroAPI key asks Home
 airport's board over MQTT (fb_mqtt.cpp:103-136, at most once per airport and half in 15 min and 12 an hour,
 fb_mqtt.cpp:24-45), and HA fetches it with the owner's key. The owner, 2026-09-30 22:40: a twin without a key
 of its own must not ask. Firmware 2.7.13 has the switch (fbAskHa, /api/export and /api/import only), and it
-is an override here; a twin whose firmware has no such switch and would ask is warned about.
+is an override here, never copied; a twin whose firmware has no such switch, with a broker and no key of its own,
+has its board held on NO_ASK, a custom airport HA is never asked for, and the panel's airport is not copied to it
+(holds_no_ask) until it has a key or fbAskHa - then the airport is copied and NO_ASK removed, as above.
+
+Every request that writes to the twin carries X-Twin-Sync: 1 (SYNC_HEADER), as the app's sync does: firmware 2.7.13
+puts what it changes down to "sync" in its events, not to a person. Lua scripts are not copied here (the app does):
+the note on lua.scripts compares the file names exactly, and names that differ only in case are said as such.
 
 Tests: python3 -m unittest tools/twin/test_sync.py -v   (fake devices, no network)
 """
@@ -87,6 +93,7 @@ POST_ROUTES = ("/save", "/api/import", "/api/panel", "/api/knob", "/api/lua", "/
                "/api/railboard", "/api/flightboard", "/api/market", "/api/media")
 ACTIONS = {"/api/log": ("on",), "/api/ir/fn": ("btn", "fn", "page")}
 BODY_MAX = 1024                       # the panel group's JSON bodies (web_panel.cpp:136, 165)
+SYNC_HEADER = {"X-Twin-Sync": "1"}    # on every write to the twin (Twin._send), never on a read
 BODY_MAX_MARKET = 8192                # /api/market (web_panel.cpp:841)
 SETTLE_S = 3.0   # NVS catches up 2.5 s after a module's change (panel.cpp markDirty, railboard RB_SETTLE_MS)
 
@@ -137,14 +144,16 @@ class SyncError(Exception):
 
 # ---- HTTP -----------------------------------------------------------------------------------------
 
-def http(method, url, body=None, ctype=None, timeout=20.0, tries=6):
+def http(method, url, body=None, ctype=None, timeout=20.0, tries=6, headers=None):
     """(status, text) of one request. 503 is the firmware standing aside - a fetch holds the network or
     the heap is short (webBusyRefuse, webRefuseBig; tools/agent/panel.py) - and nothing was done, so it
     is asked again. A POST is never repeated after a transport fault: it may have landed."""
     last = None
+    hdrs = dict(headers or {})
+    if ctype:
+        hdrs["Content-Type"] = ctype
     for attempt in range(tries):
-        req = urllib.request.Request(url, data=body, method=method,
-                                     headers={"Content-Type": ctype} if ctype else {})
+        req = urllib.request.Request(url, data=body, method=method, headers=hdrs)
         try:
             with urllib.request.urlopen(req, timeout=timeout) as r:
                 return r.status, r.read().decode("utf-8", "replace")
@@ -257,7 +266,9 @@ class Twin(Source):
         return self._send("GET", f"{path}?{urllib.parse.urlencode(params)}", parse=path != "/api/log")
 
     def _send(self, method, path, data=None, ctype=None, parse=True):
-        status, text = http(method, f"http://{self.address}{path}", data, ctype)
+        # Every write carries X-Twin-Sync: 1, as the app's sync does: firmware 2.7.13 puts what such a request
+        # changes down to "sync" in its events, not to a person (sync_events.cpp syncHttpBy).
+        status, text = http(method, f"http://{self.address}{path}", data, ctype, headers=SYNC_HEADER)
         if status != 200:
             raise SyncError(f"HTTP {status} {_error_text(text)}".strip())
         if not parse:       # /api/log answers with the log itself; its state rides in headers
@@ -476,8 +487,14 @@ class Plan:
         if n == "lua.scripts":
             only_p = sorted(set(a if a is not MISSING else []) - set(b if b is not MISSING else []))
             only_t = sorted(set(b if b is not MISSING else []) - set(a if a is not MISSING else []))
-            return (f"only on the panel: {', '.join(only_p) or '-'}; only on the twin: {', '.join(only_t) or '-'}. "
-                    "No route gives a script's source (web_panel.cpp:968-1230): upload from the gallery")
+            # The file names, exactly: flow on one and FLOW on the other are one effect (the banner shows FLOW
+            # for both, and a device takes no two such), named differently - the twin's is renamed as the panel's.
+            case = sorted(f"{t} -> {q}" for q in only_p for t in only_t if q != t and q.lower() == t.lower())
+            return (f"only on the panel: {', '.join(only_p) or '-'}; only on the twin: {', '.join(only_t) or '-'}"
+                    + (f"; named the same but for case (the twin's file takes the panel's name): {', '.join(case)}"
+                       if case else "") + ". "
+                    "This tool copies no script (the app's Sync with panel does, by /api/lua/source): "
+                    "upload from the gallery")
         if k == MANUAL:
             return (f"panel {show(a)}, twin {show(b)}: learned from a real frame; "
                     "on the twin: tools/twin/learn_remote.txt")
@@ -638,7 +655,13 @@ def plan_railboard(p):
 
 def plan_flightboard(p):
     fb = p.dsnap.get("/api/flightboard") or {}
+    hold = holds_no_ask(p.dsnap)
     sel = p.src.get("flightboard.selection") if p.both("flightboard.selection") else None
+    if hold and "flightboard.selection" in p.todo:
+        p.note("flightboard.selection", COPY, f"held on {NO_ASK['icao']} \"{NO_ASK['name']}\": the twin has a broker, no "
+               "AeroAPI key and a firmware without fbAskHa (2.7.13), so a built-in airport would be asked of Home "
+               "Assistant; the panel's airport is copied once it has a key or fbAskHa")
+        sel = None
     if p.both("flightboard.custom"):
         have = {a[0] for a in p.view["flightboard.custom"]}
         want = {a[0] for a in p.src["flightboard.custom"]}
@@ -665,11 +688,13 @@ def plan_flightboard(p):
             p.step(f"POST /api/flightboard  select {icao} ({apt.get('id')}), dir {direction}", "json", "/api/flightboard",
                    {"airport": apt.get("id"), "dir": direction}, ["flightboard.selection"])
     # What the old override added: gone from the twin once another airport is selected there, unless the panel
-    # has one such itself.
+    # has one such itself - or the twin is held on it (hold).
     old = next((a for a in fb.get("airports") or [] if a.get("kind") == "custom" and a.get("code") == NO_ASK["icao"]
                 and a.get("name") == NO_ASK["name"]), None)
     panel_has = any(a.get("code") == NO_ASK["icao"] for a in (p.ssnap.get("/api/flightboard") or {}).get("airports") or [])
-    if old is not None and not panel_has and (p.src.get("flightboard.selection") or [None])[0] != NO_ASK["icao"]:
+    if hold:
+        plan_no_ask_hold(p, fb, old)
+    elif old is not None and not panel_has and (p.src.get("flightboard.selection") or [None])[0] != NO_ASK["icao"]:
         p.step(f"POST /api/flightboard  remove {NO_ASK['icao']} \"{NO_ASK['name']}\" ({old.get('id')}), the old override's "
                "airport", "json", "/api/flightboard", {"remove": old.get("id")}, [])
     if p.both("flightboard.budget"):
@@ -686,6 +711,25 @@ def plan_flightboard(p):
             if ident not in have:
                 p.step(f"POST /api/flightboard  track {ident}", "json", "/api/flightboard", {"track": ident},
                        ["flightboard.tracked"])
+
+
+def plan_no_ask_hold(p, fb, mine):
+    """The twin's board onto NO_ASK (holds_no_ask): selected if the twin has it, else added and selected with the
+    zone of the panel's airport, as the override of 2026-09-29 did - when a custom slot is free."""
+    if mine is not None:
+        if fb.get("airport") != mine.get("id"):
+            p.step(f"POST /api/flightboard  select {NO_ASK['icao']} ({mine.get('id')}): the board held on it",
+                   "json", "/api/flightboard", {"airport": mine.get("id")}, [])
+        return
+    customs = [a for a in fb.get("airports") or [] if a.get("kind") == "custom"]
+    planned = sum(1 for s in p.steps if s.path == "/api/flightboard" and "add" in (s.body or {}))
+    if len(customs) + planned >= (fb.get("limits") or {}).get("custom", 6):
+        p.warnings.append(f"the twin's custom airports are all used: {NO_ASK['icao']} cannot be added - remove one on the twin")
+        return
+    sfb = p.ssnap.get("/api/flightboard") or {}
+    tz = next((a.get("tz") for a in sfb.get("airports") or [] if a.get("id") == sfb.get("airport")), None) or "Europe/Paris"
+    p.step(f"POST /api/flightboard  add {NO_ASK['icao']} \"{NO_ASK['name']}\" ({tz}) and select it: the board held on it",
+           "json", "/api/flightboard", {"add": dict(NO_ASK, tz=tz, select=True)}, [])
 
 
 def plan_market(p):
@@ -750,18 +794,17 @@ def plan_overrides(p):
             p.step("POST /api/import  {\"fbAskHa\":false}", "json", "/api/import", {"fbAskHa": False}, [name], True)
 
 
-def asks_ha(dsnap):
-    """Whether the twin would ask Home Assistant for flight boards and nothing can stop it: its firmware has no
-    fbAskHa, a broker is set (mqtt.configured), it has no AeroAPI key (or no direct fetch built), and the airport
-    shown is a built-in one - the only kind HA serves (fb_mqtt.cpp mayAsk)."""
-    exp, fb = dsnap.get("/api/export") or {}, dsnap.get("/api/flightboard") or {}
-    if "fbAskHa" in exp or not (fb.get("mqtt") or {}).get("configured"):
+def holds_no_ask(dsnap):
+    """Whether the twin's flight board is held on NO_ASK (the owner, 2026-09-30 22:40, as the app's
+    SyncEngine.holdsNoAsk): its firmware has no fbAskHa to stop the asking (before 2.7.13), a broker is set
+    (mqtt.configured) and it has no AeroAPI key (or no direct fetch built) - so any built-in airport it showed
+    would be asked of Home Assistant, which fetches it with the owner's key (fb_mqtt.cpp mayAsk). A custom airport
+    is never asked for: the panel's airport is not copied, and the twin shows NO_ASK."""
+    exp, fb = dsnap.get("/api/export"), dsnap.get("/api/flightboard") or {}
+    if exp is None or "fbAskHa" in exp or not (fb.get("mqtt") or {}).get("configured"):
         return False
     direct = fb.get("direct") or {}
-    if direct.get("built") is not False and direct.get("key"):
-        return False
-    sel = next((a for a in fb.get("airports") or [] if a.get("id") == fb.get("airport")), {})
-    return sel.get("kind") == "builtin"
+    return direct.get("built") is False or not direct.get("key")
 
 
 def make_plan(ssnap, dsnap):
@@ -775,10 +818,10 @@ def make_plan(ssnap, dsnap):
     if (si.get("version"), si.get("build")) != (di.get("version"), di.get("build")):
         p.warnings.append(f"the panel runs {si.get('version')} ({si.get('build')}), the twin {di.get('version')} "
                           f"({di.get('build')}): a field only one of them has is listed below, not copied")
-    if asks_ha(dsnap):
+    if holds_no_ask(dsnap):
         p.warnings.append(f"the twin has an MQTT broker and no AeroAPI key, and its firmware {di.get('version')} has no "
-                          "fbAskHa (2.7.13): its flight board asks Home Assistant for a built-in airport's board, and HA "
-                          "pays for it with the owner's key - update the twin's firmware, or remove the broker from its settings")
+                          f"fbAskHa (2.7.13): its flight board is held on {NO_ASK['icao']} \"{NO_ASK['name']}\", which Home "
+                          "Assistant is never asked for, until it has a key of its own or a firmware with fbAskHa")
     car = p.src.get("carousel") or {}
     if car.get("enabled") and car.get("allStyles"):
         p.warnings.append("the panel's carousel walks the clock styles, so its clockStyle is the one on screen now, "
