@@ -1,0 +1,3 @@
+121a67578fb6f35f479063b6f27e48c6881ce26b77a1404836c6768e0e5d15f5  OTA_ONLY_firmware-v2.7.12-waveshare.bin
+a461a8641da1d68a2eaa12f1ba3ffc3794aa094acd6e15a6cd2d8066f70e6e9b  firmware-v2.7.12-waveshare.bin
+ede50a9222f1cd5474ef5d79056d62053159ab73ff9c2372e6227a5dd4006aac  pc_stats_monitor_v4.exe
