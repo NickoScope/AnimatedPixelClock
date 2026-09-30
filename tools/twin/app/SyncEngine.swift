@@ -998,8 +998,9 @@ final class SyncEngine {
     /// The person's switch (the window, the menu, `defaults write`): switched off, it also forgets the consent kept
     /// in sync-state.json - switching it on again asks both questions.
     func setEnabled(_ on: Bool) { locked { _enabled = on; if !on { _reset = true; _launchOn = false; _dropConsent = true } } }
-    /// Before start(): whether the switch is on as the app starts (a saved consent counts only then).
-    func markLaunch(on: Bool) { locked { _launchOn = on } }
+    /// Before start(): whether the switch is on as the app starts (a saved consent counts only then). Off, the consent
+    /// in the file is forgotten at once: it was switched off while the app was closed (`defaults write`).
+    func markLaunch(on: Bool) { locked { _launchOn = on; _dropConsent = !on } }
     /// The app quits: nothing more is written, as when switched off, but the consent stays for the next start.
     func quit() { locked { _enabled = false; _reset = true; _quitting = true } }
     func setTwin(address: String?, mac: String) { locked { _twinAddress = address; _twinMac = normMac(mac) } }
