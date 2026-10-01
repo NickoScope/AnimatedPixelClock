@@ -1109,9 +1109,10 @@ final class SyncEngine {
         locked { _twinAddress = address; _twinMac = normMac(mac); _twinUdp = udpForward }
     }
     /// A person at the twin's page in the app (main.swift, the page's message "twinInput": the knob turned or pressed,
-    /// a remote's button, BOOT, RESET): the screen round runs a moment later - the firmware acts on the gesture first -
-    /// unless the twin's own events (2.7.13) already tell of it. WHAT: "knob 1", "press", "ir", "boot", "reset".
-    func twinPageInput(_ what: String) { wakeFromTwin(after: what.hasPrefix("knob") ? 0.06 : 0.15) }
+    /// a remote's button, BOOT): the twin is read a moment later - the firmware acts on the gesture first - unless the
+    /// twin's own events (2.7.13) already tell of it. WHAT: "knob 1", "press", "ir", "boot"; "reset" asks for nothing (a
+    /// restart is seen by its uptime, and a read now would only find the twin away).
+    func twinPageInput(_ what: String) { if what != "reset" { wakeFromTwin(after: what.hasPrefix("knob") ? 0.06 : 0.15) } }
     /// A line of the twin's console (main.swift reads the engine's output): "[luafx] open <name>" - an effect opened
     /// there, by a person or by sync - asks for the screen round at once, under the same terms.
     func twinConsoleLine(_ line: String) { if line.contains("[luafx] open") { wakeFromTwin(after: 0.02) } }
