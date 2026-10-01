@@ -101,13 +101,13 @@
 //   failure   a device that does not answer, or a round that failed: the next screen round in 5 s, and
 //             nothing before it - no step read, no effects or settings round (backOff).
 //   long      the rounds that take a while - effects, settings, firmware, a script's SHA-256 - serve the instant events
-//             between any two of their requests (Device.before -> LongRounds.between; app 1.4.1), and a read of theirs
-//             under way when a person's change (or the carousel's step) comes from the side it reads gives way: it is
-//             cut off, the change is carried to the other side, and it is sent again (Device.yields, once at most; never
-//             a write, never the firmware image). A script's source read on its schedule gives way to a change from
-//             either side, and is made again 3 s later at the soonest (Yielded). A person's change waits for no round
-//             (1.4: 1.6-3.8 s in an effects round, 15 s in the 35 reads; GET /api/lua alone is 0.7 s on the panel,
-//             1.1 s on the twin).
+//             between any two of their requests (Device.before -> LongRounds.between; app 1.4.1). A request under way
+//             is never cut off: on the panel a response cut off mid-way (URLSession cancel, a FIN) held its loop()
+//             about 2 s (01.10 08:3x, 3 of 4 tries: loopMaxMs 1999, "web server"), while reading a script to the end
+//             takes 0.08-0.55 s - so Device.yields is off (yieldNow). A script's source read on its schedule is not
+//             started while a datagram waits: it is put off 3 s (hashRetry), and the change is carried first. A person's
+//             change waits at most for the one request under way (1.4: 1.6-3.8 s in an effects round, 15 s in the 35
+//             reads; GET /api/lua alone is 0.7 s on the panel, 1.1 s on the twin).
 //   events    (2.7.13) POST /api/sync/listen to each side every 25 s - a write that changes nothing on the screen;
 //             with the panel's events coming, its carousel's step is not read but told (followStep); GET /api/panel
 //             asks ?input=N (the gestures after N) in the same read; inside a page: /api/railboard of both before a
@@ -1892,6 +1892,12 @@ final class SyncEngine {
         let cache = (hashes[s] ?? [:]).mapValues { (bytes: $0.bytes, at: $0.at) }
         guard let due = SyncEngine.hashNext(scripts: scripts, cache: cache, noSource: noSource[s] ?? [:], last: hashLast[s] ?? .distantPast),
               Date() >= due.at else { return false }
+        // A datagram waits: the read is not started (it is never cut off once under way) - put off hashRetry, the change first.
+        if aligned && eventWaits(from: nil) {
+            hashLast[s] = Date().addingTimeInterval(SyncEngine.hashRetry - SyncEngine.hashGap)
+            try serveEvents()
+            return false
+        }
         hashLast[s] = Date()
         let h: String?
         do { h = try scriptHash(s, stem: due.stem, bytes: due.bytes, yielding: true) }
@@ -2925,7 +2931,10 @@ final class SyncEngine {
     }
     /// A read of side SIDE gives way now (Device.yields; nil: a read on the schedule, hashTick): inside a round that takes a
     /// while, not inside a serving, both confirmations given, and a datagram waits for it (eventWaits). From the worker only.
-    private func yieldNow(from side: Side?) -> Bool { rounds.depth > 0 && !rounds.serving && aligned && eventWaits(from: side) }
+    /// Never, since 1.4.1's live check: a request cut off mid-way holds the firmware's loop() about 2 s - longer than any
+    /// read it would save (the long note above). The mechanism stays in Device for a future cut that does not cost that
+    /// (an RST, 0.03-0.1 s on the panel).
+    private func yieldNow(from side: Side?) -> Bool { false }
     /// F as a round that takes a while: the instant events are served between any two of its requests (LongRounds).
     private func long<T>(_ f: () throws -> T) rethrows -> T { try rounds.run(f) }
     /// An effect written to side O (removed, uploaded, its walk switched) can renumber its list under its page: its screen
