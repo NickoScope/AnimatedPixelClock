@@ -187,8 +187,8 @@
 // network.cpp handleUDP) and asks for the datagrams on FWD (eventRoute; main.swift gives the twin's udpPort, the
 // test switch syncPanelUdpForTesting the test panel's). Where the twin's datagrams do not come, the twin's page in
 // the app tells of each gesture a person makes there (main.swift, "twinInput"), and its console of each effect that
-// opens ("[luafx] open"): the screen round runs a moment later (takeWake), at most one each 0.3 s, none while the
-// panel is under strain.
+// opens ("[luafx] open"): a moment later the twin alone is read and what changed there carried, the panel's last
+// reading standing for its own (twinRound; takeWake: at most one each 0.3 s, none while the panel is under strain).
 //
 // Inside a screen (the owner, 2026-09-30 20:53: a press of the knob in FLOW changed the scene on its own side only;
 // the design, workflow sync-inside-screen-research, tasks/w4kseii7h). Carried only while both sides show the same page:
@@ -1352,13 +1352,14 @@ final class SyncEngine {
             let now = Date()
             let forced = locked { () -> Bool in let f = _syncNow; _syncNow = false; return f }
             if forced { declined = []; carry = (0, .distantPast); retryPending() }
-            // The twin's page or console told of a person there, and its own events do not (takeWake): the round now.
+            // The twin's page or console told of a person there, and its own events do not (takeWake): the twin is read now.
             let woke = takeWake(now)
-            if now >= nextFast || forced || woke {
+            if now >= nextFast || forced {
                 try fastRound(); nextFast = Date().addingTimeInterval(strained ? SyncEngine.strainedFastEvery : SyncEngine.fastEvery)
                 needScreenRound = false
                 planStep()
-                if woke { lastWoken = Date() }
+            } else if woke {
+                try twinRound(); lastWoken = Date()
             } else if let at = stepAt, now >= at {
                 // The panel's events bring its carousel's step themselves (followStep): its moment stays planned only
                 // to keep the long rounds away from it.
@@ -2380,6 +2381,30 @@ final class SyncEngine {
         // hold, older, is renewed before it ends (twinMove), so the panel's carousel goes on first.
         try twinAct(hold: switchedOn)
         // Inside the page both show: the gestures this round's reads gave, the effect's clicks.
+        try insidePass()
+    }
+
+    /// The twin's page or console told of a person there (takeWake): the twin alone is read, and what a person changed
+    /// there is carried as the screen round carries it, the panel's last reading standing for its own (mirrorScreen
+    /// QUICK: read within fastEvery + 1 s, or kept by its events). Anything the screen round must judge - its effect list
+    /// renumbered or changed, the panel changed the same thing, no bases yet, a restart - goes to that round, now.
+    private func twinRound() throws {
+        guard !needScreenRound, let prev = screen[.twin], let b = base[.twin]?["screen"], let bp = base[.panel]?["screen"], let ps = screen[.panel] else {
+            nextFast = Date(); return
+        }
+        let t = try readScreen(.twin); screenAt[.twin] = Date()
+        try noRestartPending()
+        screen[.twin] = t
+        if SyncEngine.renumbered(prev: prev, now: t) { shifted[.twin] = t.shown }      // as the screen round would see it
+        if prev.luaSig != t.luaSig { fxDue = true; nextFast = Date(); return }
+        let r = SyncEngine.screenChanges(t, base: b, wrote: wrote[.twin])
+        wrote[.twin] = r.waiting
+        if !r.changed.isEmpty {
+            if !SyncEngine.screenChanges(ps, base: bp, wrote: wrote[.panel]).changed.isDisjoint(with: r.changed) { nextFast = Date(); return }
+            do { try mirrorScreen(from: .twin, fields: r.changed, quick: true); forgive("screen", .twin, Array(r.changed)) }
+            catch { if error is SyncStopped || error is SyncDown || error is SyncRestart || tryAgain("screen", .twin, Array(r.changed)) { throw error } }
+            rebaseScreen(.twin)
+        }
         try insidePass()
     }
 
