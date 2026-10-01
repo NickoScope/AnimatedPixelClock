@@ -46,7 +46,9 @@
 // switch turned off - the window, the menu, `defaults write` - forgets it: switching on asks both questions again.
 // So does a new pair, or a start with the switch off. The first start of 1.4 over app 1.3's state: 1.3 kept no
 // consent, so with the switch on and an aligned state of this very pair in the file (sync-state.json v2), the
-// consent counts as given (keptConsent). Where the Keychain gives no key, nothing is kept and each start asks both.
+// consent counts as given (keptConsent) - once: the file is made 1.4's (v3) there and then, with the consent in it or
+// without, and a switch-off makes a v2 file 1.4's without one too (consentDropped). Where the Keychain gives no key,
+// nothing is kept and each start asks both.
 //
 // Both devices are polled over HTTP, one request at a time: the firmware's WebServer serves a request inside
 // loop() and the panel stands still meanwhile (web_panel.cpp:1066-1068), and a burst of parallel requests once
@@ -96,8 +98,9 @@
 //             with the panel's events coming, its carousel's step is not read but told (followStep); GET /api/panel
 //             asks ?input=N (the gestures after N) in the same read; inside a page: /api/railboard of both before a
 //             rail board gesture is carried, the target's /api/panel while an effect it is to be clicked in has not
-//             opened, and - only with a firmware before 2.7.13 on either side, while both show one effect - /api/knob
-//             in each screen round.
+//             opened (0.4 s apart on the panel, openWait at most, once a run of the effect; never the panel under strain),
+//             and - only with a firmware before 2.7.13 on either side, while both show one effect - /api/knob in each
+//             screen round.
 //
 // Change, echo, who wins. Each side has a base: what it held after the last round, with what this
 // engine wrote to it included - after every write the target is read again and that reading becomes
@@ -194,13 +197,19 @@
 // the design, workflow sync-inside-screen-research, tasks/w4kseii7h). Carried only while both sides show the same page:
 //   an effect  (key lua) its clicks (px.button: the knob's click, the remote's OK, POST /api/lua {"click":true}). With
 //             2.7.13 on both, now.fx {id, open, run, clicks} - clicks since the effect was chosen - is compared
-//             (reconcileClicks): each side has a base, the clicks taken into account (sync's own, those carried, those
-//             there before sync saw the effect); clicks above it are a person's, and the other side is given as many
-//             by POST /api/lua {"click":true} (X-Twin-Sync: 1; it holds that side's carousel as the knob's click would,
-//             and clicks are never merged, unlike /api/ir/do), once its effect is open, keeping the person's spacing
-//             (a double press stays one); an effect reopened on one side only (run) is brought up to the other's count;
-//             a click whose answer was lost makes that side's next reading its base. So nothing is echoed, a lost
-//             datagram is made up from the counts within a round, and both end on the same fx.clicks. A firmware
+//             (reconcileClicks), and only where it is the page's own effect (fx.id is the page's: Screen.fxHere - right
+//             after a page change, until the device's next pass of loop(), it is still the effect before). Each side has a
+//             base, the clicks taken into account (sync's own, those carried, those there before sync saw the effect -
+//             and, of a run on a page sync or the carousel put there, those it had when first seen); clicks above it are
+//             a person's, and the other side is given as many by POST /api/lua {"click":true} (X-Twin-Sync: 1; it holds
+//             that side's carousel as the knob's click would, and clicks are never merged, unlike /api/ir/do), once its
+//             effect is open, keeping the person's spacing (a double press stays one). Nothing else is ever clicked on
+//             the panel: its effect reopened (an upload, a removal) is not brought up to the twin's count; the twin's,
+//             opened anew alone on the page sync put there (a restart, back from a person's page), is brought up to the
+//             panel's. A side whose effect does not open within openWait (a LUA ERROR) is read for it no longer: the
+//             clicks for that run are given up, said once, until it opens or reopens; the panel under strain is not read
+//             for it at all (its screen round tells). A click whose answer was lost makes that side's next reading its
+//             base. So nothing is echoed, and a lost datagram is made up from the counts within a round. A firmware
 //             without now.fx on either side: the knob's clicks (/api/knob stats click + long, read in each screen round
 //             only then) grown since the last read on that page are carried, clickGap apart (bridgeClicks).
 //   the world clock, the flight board (keys world, flights) their stop: a person's press that goes in is made on the
@@ -739,6 +748,17 @@ struct Screen {
             .map { "\($0.s("name") ?? "")=\($0.b("effectOn") ?? true)" }.joined(separator: ",")
     }
     func index(key: String, name: String) -> Int? { pages.first { $0.s("key") == key && $0.s("name") == name }?.i("i") }
+    /// The effect the page shown opens: the Lua pages are one run of indexes, each listed with key "lua", slots without a
+    /// script too, and page i opens effect i - PAGE_LUA_FIRST (main.cpp ctrlLuaEffect, panelPageKey). Nil off a Lua page.
+    var fxIndex: Int? {
+        guard key == "lua", let first = pages.filter({ $0.s("key") == "lua" }).compactMap({ $0.i("i") }).min() else { return nil }
+        return page - first
+    }
+    /// now.fx when it is the effect of the page shown (fx.id is that page's effect), else nil. The device selects a page's
+    /// effect in the pass of loop() after the page changed (main.cpp:1214 luaEffectsSelect): until then - the answer to POST
+    /// /api/panel {"show"}, the datagram of the page change - now.fx is still the effect before, its run and its clicks
+    /// (2026-10-01, the review's C5: page AUTUMN SLOW with fx {id 2 = AAA NEW, run 19, clicks 3}).
+    var fxHere: Fx? { fx.flatMap { $0.id >= 0 && $0.id == fxIndex ? $0 : nil } }
 }
 
 struct Effects {
@@ -1247,6 +1267,10 @@ final class SyncEngine {
     /// base is to be taken from its next reading (a click whose answer was lost), and a reconcile that is due.
     private var fxBase: [Side: (name: String, run: Int, base: Int)] = [:], fxFirst: [Side: String] = [:], fxRebase = Set<Side>()
     private var clicksDue = false
+    /// The page sync or a side's carousel put on that side, until a person's page there, or until the effect it opened is
+    /// taken into account (reconcileClicks: its clicks then are nobody's to carry). The run of a side's effect that did
+    /// not open within openWait: no click is sent to it, and it is not read for one, until its run or its open changes.
+    private var movedTo: [Side: String] = [:], fxGaveUp: [Side: Int] = [:]
     /// A person's presses on each side, with when they were made: the clicks carried keep their spacing (a double
     /// press is a gesture of its own on KINETIC DIGITS and OCEANARIUM: 0.45 s, sync_events.h).
     private var presses: [Side: [Date]] = [:]
@@ -1659,6 +1683,7 @@ final class SyncEngine {
             if s == .twin { twinTouch = nil; twinHoldSeen = nil }       // its carousel's hold starts from boot: no touch
             // It forgot its listeners, and its numbers and effect runs start again: subscribed again at once.
             ev[s] = nil; nextListen = Date(); fxBase[s] = nil; fxFirst[s] = ""; knobSeen[s] = nil; enteredExpect[s] = nil
+            fxGaveUp[s] = nil
             insideQ.removeAll { $0.to == s }
             let x = try readScreen(s); screenAt[s] = Date()
             restartSeen[s] = nil
@@ -2236,6 +2261,7 @@ final class SyncEngine {
         timeStep(x, sent: sent, received: got)
         if x.fields != before.fields {
             if x.running && SyncEngine.leader(panel: x) == .panel, try !twinChosen() {
+                if x.shown != before.shown { movedTo[.panel] = x.shown }
                 rebaseScreen(.panel)                                      // its walk: nobody's change
                 try twinAct(quick: true)
                 nextFast = max(nextFast, Date().addingTimeInterval(strained ? SyncEngine.strainedFastEvery : SyncEngine.fastEvery))
@@ -2317,7 +2343,8 @@ final class SyncEngine {
             if x.uptime > prev.uptime + Int(Date().timeIntervalSince(at)) + 30 { jumped = true }   // 30 s of slack: our choice
         }
         if jumped { try verifyIdentity() }
-        for s in sides { screen[s] = fresh[s]; screenAt[s] = Date() }
+        var prevShown: [Side: String] = [:]
+        for s in sides { prevShown[s] = screen[s]?.shown; screen[s] = fresh[s]; screenAt[s] = Date() }
         if base[.panel]?["screen"] == nil || base[.twin]?["screen"] == nil { rebaseScreen(.panel); rebaseScreen(.twin); return }
         // One carousel for both: its settings and the pages it visits, carried in this round; the side written
         // to is read again, and what it shows then is nobody's change (afterWrite). Not after a restart until the
@@ -2336,13 +2363,16 @@ final class SyncEngine {
         for s in sides {
             let r = SyncEngine.screenChanges(cur[s]!, base: base[s]!["screen"]!, wrote: wrote[s])
             changed[s] = r.changed; wrote[s] = r.waiting
+            // Who put the page there: a person (a change of the side's own) - or sync, its carousel, a renumbered list.
+            if r.changed.contains("page") { movedTo[s] = nil }
+            else if let ps = prevShown[s], ps != cur[s]!.shown { movedTo[s] = cur[s]!.shown }
         }
         // The twin's page moved by its effect list renumbered under it (an effect uploaded there by a person): nobody
         // chose it - not carried; the twin shows the panel's page again below. The panel's own screen, whatever moved
         // it, is what the twin shows.
         var backToPanel = false
         if let sh = shifted[.twin], sh == cur[.twin]!.shown, changed[.twin]!.contains("page") {
-            changed[.twin]!.remove("page")
+            changed[.twin]!.remove("page"); movedTo[.twin] = sh
             backToPanel = cur[.panel]!.shown != sh && cur[.twin]!.index(key: cur[.panel]!.key, name: cur[.panel]!.name) != nil
             log("note", "screen", M("the twin's effect list was renumbered and its page moved to \(cur[.twin]!.name) by itself: nobody chose it - not carried to the panel\(backToPanel ? "; the twin shows the panel's \(cur[.panel]!.name) again" : "")",
                                     "список эффектов двойника перенумеровался, и его страница сама сдвинулась на \(cur[.twin]!.name): это не выбор человека — на панель не переношу\(backToPanel ? "; двойнику возвращаю страницу панели \(cur[.panel]!.name)" : "")"))
@@ -2400,6 +2430,7 @@ final class SyncEngine {
         if prev.luaSig != t.luaSig { fxDue = true; nextFast = Date(); return }
         let r = SyncEngine.screenChanges(t, base: b, wrote: wrote[.twin])
         wrote[.twin] = r.waiting
+        if r.changed.contains("page") { movedTo[.twin] = nil } else if prev.shown != t.shown { movedTo[.twin] = t.shown }
         if !r.changed.isEmpty {
             if !SyncEngine.screenChanges(ps, base: bp, wrote: wrote[.panel]).changed.isDisjoint(with: r.changed) { nextFast = Date(); return }
             do { try mirrorScreen(from: .twin, fields: r.changed, quick: true); forgive("screen", .twin, Array(r.changed)) }
@@ -2457,6 +2488,7 @@ final class SyncEngine {
         log("note", "reboot", M("\(s.word.en) restarted (uptime \(x.uptime) s): " + m.en,
                                 (s == .panel ? "панель перезагрузилась" : "двойник перезагрузился") + " (uptime \(x.uptime) с): " + m.ru))
         screen[s] = x; rebaseScreen(s); wrote[s] = nil               // what it shows now is its reset screen
+        movedTo[s] = x.shown                                          // nobody chose it: its effect's clicks so far are history
         if s == .twin { twinTouch = nil; twinHoldSeen = nil }       // its carousel starts again
         // The settings round first (fastRound), after the screen round (needScreenRound): it compares everything,
         // and gives the twin back what its restart lost (twinLost, settingsChanges).
@@ -2497,6 +2529,7 @@ final class SyncEngine {
             if src.key == "cards" {
             } else if let i = dst.index(key: src.key, name: src.name) {
                 body["show"] = ["page": i]; expect["page"] = src.shown; did.append(M("page \(src.name)", "страница \(src.name)").text(lang))
+                movedTo[o] = src.shown                                 // its effect's clicks so far are nobody's (reconcileClicks)
             } else {
                 noteOnce("nopage-\(o)-\(src.shown)", M("\(o.word.en) has no page \(src.name)", "\(o.on) нет страницы \(src.name)"))
             }
@@ -2745,13 +2778,16 @@ final class SyncEngine {
     /// on/off, which the datagram gives with the schedule's - goes to the screen round, now.
     private func screenEvent(_ s: Side, _ o: J, at: Date) throws {
         guard let before = screen[s], base[s]?["screen"] != nil else { return }
+        let page = o.i("page") ?? before.page, key = o.s("key") ?? before.key, name = o.s("name") ?? before.name
         if let f = o.o("fx") {
             let id = f.i("id") ?? -1, run = f.i("run") ?? 0
             let fx = Fx(id: id, open: before.fx.map { $0.id == id && $0.run == run && $0.open } ?? false, run: run, clicks: f.i("clicks") ?? 0)
-            if fx != before.fx { screen[s]!.fx = fx; clicksDue = true }
+            // Taken only as the effect of the datagram's own page: the datagram of a page change may still carry the
+            // effect before it (Screen.fxHere), whose clicks are not this page's.
+            var probe = before; probe.page = page; probe.key = key; probe.fx = fx
+            if fx != before.fx, id < 0 || probe.fxHere != nil { screen[s]!.fx = fx; clicksDue = true }
         }
         if let en = o.b("entered"), en != before.entered { screen[s]!.entered = en; enteredExpect[s] = nil }
-        let page = o.i("page") ?? before.page, key = o.s("key") ?? before.key, name = o.s("name") ?? before.name
         let style = o.i("style") ?? before.style, bright = o.i("bright") ?? before.bright
         let moved = page != before.page || key != before.key || name != before.name || style != before.style || bright != before.bright
         let offMoved = (o.b("off") ?? before.off) != before.off
@@ -2765,6 +2801,7 @@ final class SyncEngine {
         }
         guard SyncEngine.person(by), !offMoved else { stale.insert(s); nextFast = Date(); return }
         if s == .twin { twinTouch = at }
+        if page != before.page || name != before.name { movedTo[s] = nil }      // a person's page
         if try !carryNow(s, page: page, key: key, name: name, style: style, bright: bright) { stale.insert(s); nextFast = Date() }
     }
 
@@ -2796,6 +2833,7 @@ final class SyncEngine {
         guard var x = screen[.panel] else { return }
         x.page = page; x.key = key; x.name = name; x.style = style
         x.running = true; x.pageS = 0; x.holdS = 0
+        if x.shown != screen[.panel]?.shown { movedTo[.panel] = x.shown }
         screen[.panel] = x
         stepAt = nil; stepWin = nil; stepTries = 0
         rebaseScreen(.panel)                                              // its walk: nobody's change
@@ -2913,20 +2951,28 @@ final class SyncEngine {
         case let .click(name, run):
             guard y.key == "lua", y.name == name, !y.notify else { dropClicks(o); clicksDue = true; return }
             if let run {
-                // Its effect reopened meanwhile: counted again. Its first frame not come yet: waited for, openWait at most.
-                guard var f = y.fx, f.run == run, f.id >= 0 else { dropClicks(o); clicksDue = true; return }
-                if !f.open {
+                // Its effect reopened meanwhile: counted again. Its first frame not come yet: waited for, openWait at most,
+                // once for its run (clickWait).
+                guard var f = y.fxHere, f.run == run else { dropClicks(o); clicksDue = true; return }
+                if SyncEngine.readsForOpen(open: f.open, gaveUp: fxGaveUp[o] == run, panel: o == .panel, strained: strained) {
                     let z = try readPanelOnly(o)
-                    guard z.key == "lua", z.name == name, let g = z.fx, g.run == run else { dropClicks(o); clicksDue = true; return }
+                    guard z.key == "lua", z.name == name, let g = z.fxHere, g.run == run else { dropClicks(o); clicksDue = true; return }
                     f = g
                 }
-                if !f.open {
-                    guard Date().timeIntervalSince(since) < SyncEngine.openWait else {
-                        dropClicks(o); clicksDue = true
-                        log("note", "inside", M("\(name): \(o.word.en)'s effect did not open in \(Int(SyncEngine.openWait)) s - its clicks wait for the next round", "\(name): эффект \(o.of) не открылся за \(Int(SyncEngine.openWait)) с — нажатия ждут следующего раунда"))
-                        return
-                    }
-                    let later = Date().addingTimeInterval(o == .panel ? 0.4 : 0.2)   // each look holds the panel's loop()
+                switch SyncEngine.clickWait(open: f.open, waited: Date().timeIntervalSince(since), gaveUp: fxGaveUp[o] == run, panel: o == .panel) {
+                case .send: break
+                case .drop:
+                    dropClicks(o); return                                    // given up for this run already: said once
+                case .giveUp:
+                    // Not asked for again: the counts are taken as they are (the source's are already), and nothing more
+                    // is sent to this run until it changes or opens (reconcileClicks) - no reading of it meanwhile.
+                    dropClicks(o); fxGaveUp[o] = run
+                    log("note", "inside", M("\(name): \(o.word.en)'s effect did not open in \(Int(SyncEngine.openWait)) s - these clicks are not carried, nor any more until it opens or reopens",
+                                            "\(name): эффект \(o.of) не открылся за \(Int(SyncEngine.openWait)) с — эти нажатия не переношу, и следующие тоже, пока он не откроется или не переоткроется"))
+                    return
+                case let .wait(after):
+                    // Under strain the panel is not read for it: its next screen round (every strainedFastEvery) tells.
+                    let later = max(Date().addingTimeInterval(after), o == .panel && strained ? nextFast.addingTimeInterval(0.2) : .distantPast)
                     for k in insideQ.indices where insideQ[k].to == o { insideQ[k].at = max(insideQ[k].at, later) }
                     insideQ.append((o, a, later, since)); insideQ.sort { $0.at < $1.at }
                     return
@@ -2973,15 +3019,39 @@ final class SyncEngine {
         return x
     }
 
-    /// How many clicks to send to each side so that both reach the same fx.clicks: C, a side's clicks now; B, those of
-    /// them taken into account (sync's own, carried, or there before sync saw the effect); Q, those queued for it. A
-    /// side's clicks above B are a person's; both end on the higher of B + Q, plus all of them - a click made on each
-    /// side at once counts twice, an effect reopened on one side only (its B 0 again) is brought up to the other's.
-    static func clickPlan(panel p: (c: Int, b: Int, q: Int), twin t: (c: Int, b: Int, q: Int)) -> (toPanel: Int, toTwin: Int) {
+    /// How many clicks to send to each side: C, a side's clicks now; B, those of them taken into account (sync's own,
+    /// carried, or there before sync saw the effect); Q, those queued for it. A side's clicks above B are a person's, and
+    /// the other side is given as many - a click made on each side at once counts twice. Nothing else ever goes to the
+    /// panel: a click there holds its carousel and is no person's (the review of 2026-10-01, C3: the panel's effect,
+    /// reopened by an upload sync carried, was given the twin's six). CATCHUP (the twin's effect alone opened anew, on the
+    /// page sync put there - reconcileClicks): the twin is also brought up to the panel's count, B + Q against B + Q.
+    static func clickPlan(panel p: (c: Int, b: Int, q: Int), twin t: (c: Int, b: Int, q: Int), catchUp: Bool = false) -> (toPanel: Int, toTwin: Int) {
         let pp = max(0, p.c - p.b), pt = max(0, t.c - t.b)
-        let f = max(p.b + p.q, t.b + t.q) + pp + pt
-        return (max(0, f - (max(p.c, p.b) + p.q)), max(0, f - (max(t.c, t.b) + t.q)))
+        return (pt, pp + (catchUp ? max(0, (p.b + p.q) - (t.b + t.q)) : 0))
     }
+    enum ClickWait: Equatable { case send, wait(TimeInterval), giveUp, drop }
+    /// A click queued WAITED seconds ago for a side whose effect is OPEN or not: sent once it is; else looked at again a
+    /// moment later - 0.4 s on the panel (each look holds its loop()), 0.2 s on the twin - for openWait at most, and then
+    /// given up for that run of the effect: the clicks queued are dropped, and so is every later one while it does not
+    /// open (GAVEUP) - never asked for again round after round (the review of 2026-10-01: GET /api/panel every 0.6 s for as
+    /// long as the panel's effect stayed shut, 142 requests a minute against 52).
+    static func clickWait(open: Bool, waited: TimeInterval, gaveUp: Bool, panel: Bool) -> ClickWait {
+        if open { return .send }
+        if gaveUp { return .drop }
+        if waited >= openWait { return .giveUp }
+        return .wait(panel ? 0.4 : 0.2)
+    }
+    /// Whether a side whose effect is not open (as last read) is read for it now: not once given up for its run, and the
+    /// panel not while it is under strain - its screen round every strainedFastEvery tells instead.
+    static func readsForOpen(open: Bool, gaveUp: Bool, panel: Bool, strained: Bool) -> Bool {
+        !open && !gaveUp && !(panel && strained)
+    }
+    /// The clicks of a side's effect taken into account when sync first sees its run on the page both show (a reading of
+    /// the page's own effect, Screen.fxHere): MOVED - the page was put there by sync or by its carousel, not by a person
+    /// there - all of them (pressed before the other side showed it, they are not carried, like any gesture on a page the
+    /// other side does not show); else none - a person chose the page, or its effect reopened under them (an upload, a
+    /// removal: luaEffectsReload), and every click since is theirs.
+    static func newRunBase(clicks: Int, moved: Bool) -> Int { moved ? clicks : 0 }
     /// When to send N clicks from NOW: with the gaps of the person's last N presses where they are known and recent (a
     /// double press stays one), else clickGap apart - single presses, past any effect's gesture window.
     static func clickTimes(_ n: Int, presses: [Date], now: Date) -> [Date] {
@@ -2997,27 +3067,45 @@ final class SyncEngine {
 
     /// Both sides on the same effect (2.7.13, now.fx): each side's clicks not yet taken into account are a person's,
     /// and the other side is given them (POST /api/lua {"click":true}, X-Twin-Sync: 1 - it holds that side's carousel
-    /// as the knob's click would), once its effect is open (fx.open).
+    /// as the knob's click would), once its effect is open (fx.open). Only a reading of the page's own effect counts
+    /// (Screen.fxHere): right after a page change a side still tells of the effect before it, whose clicks were taken for a
+    /// person's in the new one (the review of 2026-10-01, C5: each step of the carousel between two effects sent the clicks
+    /// left on the one before to both sides, and each of them held the panel's carousel - 17 s a slot instead of 8).
     private func reconcileClicks() throws {
         clicksDue = false
         guard let p = screen[.panel], let t = screen[.twin], p.key == "lua", t.key == "lua", p.name == t.name, !p.name.isEmpty,
-              let fp = p.fx, let ft = t.fx, fp.id >= 0, ft.id >= 0 else { return }
-        var b: [Side: Int] = [:]
+              let fp = p.fxHere, let ft = t.fxHere else { return }
+        var b: [Side: Int] = [:], fresh = Set<Side>(), moved = Set<Side>()
         let c: [Side: Int] = [.panel: fp.clicks, .twin: ft.clicks]
         for (s, f) in [(Side.panel, fp), (Side.twin, ft)] {
+            if let g = fxGaveUp[s], g != f.run || f.open { fxGaveUp[s] = nil }  // reopened, or open at last: clicks go again
             if fxRebase.remove(s) != nil || (fxBase[s] == nil && fxFirst[s] == "\(p.name)|\(f.run)") {
                 fxBase[s] = (p.name, f.run, f.clicks)                     // taken as they are: no person's to carry
             } else if let o = fxBase[s], o.name == p.name, o.run == f.run {
             } else {
-                fxBase[s] = (p.name, f.run, 0); dropClicks(s)               // opened anew: every click since is a person's
+                // Opened anew: on a page sync or a carousel put there, none of its clicks so far is a person's to carry;
+                // on a person's page, or reopened under them, every one (newRunBase).
+                let m = movedTo[s] == p.shown
+                fxBase[s] = (p.name, f.run, SyncEngine.newRunBase(clicks: f.clicks, moved: m)); dropClicks(s)
+                fresh.insert(s); if m { moved.insert(s) }
             }
+            if movedTo[s] == p.shown { movedTo[s] = nil }                  // its effect is taken into account now
             b[s] = fxBase[s]!.base
         }
-        let plan = SyncEngine.clickPlan(panel: (c[.panel]!, b[.panel]!, queuedClicks(.panel)), twin: (c[.twin]!, b[.twin]!, queuedClicks(.twin)))
+        // The twin's effect alone opened anew, on the page sync put there (it restarted, or came back to the panel's page
+        // after a person there): brought up to the panel's count. Not one reopened under a person (an upload there, which
+        // sync carries next, reopening the panel's too), and never the panel.
+        let catchUp = fresh == [.twin] && moved == [.twin]
+        let plan = SyncEngine.clickPlan(panel: (c[.panel]!, b[.panel]!, queuedClicks(.panel)), twin: (c[.twin]!, b[.twin]!, queuedClicks(.twin)), catchUp: catchUp)
         for s in sides { fxBase[s]!.base = max(b[s]!, c[s]!) }
         let now = Date()
         for (to, n) in [(Side.twin, plan.toTwin), (Side.panel, plan.toPanel)] where n > 0 {
             let run = (to == .panel ? fp : ft).run
+            if fxGaveUp[to] == run { continue }                            // its effect did not open: not sent, not read for
+            if to == .twin && catchUp {
+                log("panel→twin", "inside", M("\(p.name): the twin's effect opened anew - brought up to the panel's count (\(n) clicks)",
+                                              "\(p.name): эффект двойника открылся заново — довожу до счёта панели (нажатий: \(n))"))
+            }
             for at in SyncEngine.clickTimes(n, presses: presses[to.other] ?? [], now: now) {
                 enqueue(to, .click(name: p.name, run: run), gap: 0.06, at: at)
             }
@@ -3057,13 +3145,14 @@ final class SyncEngine {
 
     private func forgetInside() {
         insideQ = []; fxBase = [:]; fxFirst = [:]; fxRebase = []; clicksDue = false; presses = [:]; ringInputs = [:]; knobSeen = [:]
+        movedTo = [:]; fxGaveUp = [:]
         enteredExpect = [:]; insideDone = [:]; stale = []; lastWrite = [:]
     }
 
     /// Each read of a side's /api/panel: where its gestures are numbered (the first read: from there on), and those the
     /// ring gave (?input=), for the end of the round; the effect it showed at the first read (its clicks then are history).
     private func noteInputs(_ s: Side, _ x: Screen) {
-        if fxFirst[s] == nil { fxFirst[s] = x.fx.map { "\(x.name)|\($0.run)" } ?? "" }
+        if fxFirst[s] == nil { fxFirst[s] = x.fxHere.map { "\(x.name)|\($0.run)" } ?? "" }
         guard let q = x.inputSeq else { return }
         guard let last = ev[s]?.inputSeq, q >= last else { ev[s, default: Ev()].inputSeq = q; return }
         let new = x.inputs.filter { ($0.i("seq") ?? 0) > last }
@@ -4169,13 +4258,25 @@ final class SyncEngine {
     /// Sync switched off: the consent in sync-state.json is forgotten, whatever pair it is for - the next switch-on
     /// asks both questions. The rest of the state stays (a resume shows what changed meanwhile).
     private func dropSavedConsent() {
+        guard let d = try? Data(contentsOf: stateFile), let (out, v2) = SyncEngine.consentDropped(d) else { return }
+        try? out.write(to: stateFile, options: .atomic); lastSaved = out
+        log("note", "consent", v2 ? M("sync-state.json of app 1.3 is made 1.4's with no consent in it: switching sync on asks both questions",
+                                      "sync-state.json версии 1.3 переписан в формат 1.4 без согласия: при включении синхронизации задам оба вопроса")
+                                  : M("the consent kept in sync-state.json is forgotten: switching sync on asks both questions",
+                                      "согласие, сохранённое в sync-state.json, забыто: при включении синхронизации задам оба вопроса"))
+    }
+    /// The state file D with no consent in it - 1.4's token removed, and app 1.3's file (v2, whose aligned state is taken
+    /// for the consent at 1.4's first start with the switch on, keptConsent) made 1.4's (v3), the bases kept - and whether
+    /// it was 1.3's. Nil when D gives no consent already (or is not a state file). Without this a v2 file outlived the
+    /// switch turned off, and a later start with the switch on took it for the consent again: sync went on with no window
+    /// (the review of 2026-10-01, C1).
+    static func consentDropped(_ d: Data) -> (Data, Bool)? {
         let dec = JSONDecoder(); dec.dateDecodingStrategy = .iso8601
-        guard let d = try? Data(contentsOf: stateFile), var s = try? dec.decode(Saved.self, from: d), s.consent != nil else { return }
-        s.consent = nil
+        guard var s = try? dec.decode(Saved.self, from: d), s.consent != nil || s.v == 2 else { return nil }
+        let v2 = s.v == 2
+        s.consent = nil; s.v = 3
         let enc = JSONEncoder(); enc.outputFormatting = [.sortedKeys]; enc.dateEncodingStrategy = .iso8601
-        if let out = try? enc.encode(s) { try? out.write(to: stateFile, options: .atomic); lastSaved = out }
-        log("note", "consent", M("the consent kept in sync-state.json is forgotten: switching sync on asks both questions",
-                                 "согласие, сохранённое в sync-state.json, забыто: при включении синхронизации задам оба вопроса"))
+        return (try? enc.encode(s)).map { ($0, v2) }
     }
 
     private func loadState() {
@@ -4200,7 +4301,15 @@ final class SyncEngine {
         }
         wantPanel = s.wantPanel; wantTwin = s.wantTwin; inFlight = s.inFlight
         resumed = !(s.settings["panel"] ?? [:]).isEmpty
-        if SyncEngine.keptConsent(version: s.v, token: s.consent, pair: pairKey, launchOn: locked({ _launchOn }), aligned: resumed) {
+        let kept = SyncEngine.keptConsent(version: s.v, token: s.consent, pair: pairKey, launchOn: locked({ _launchOn }), aligned: resumed)
+        if s.v == 2 {
+            // App 1.3's file stands for the consent once at most, at this first start of 1.4: it is 1.4's from now on, with
+            // this pair's consent in it when it counted, else with none.
+            var u = s; u.v = 3; u.consent = kept ? SyncEngine.consentToken(pairKey) : nil
+            let enc = JSONEncoder(); enc.outputFormatting = [.sortedKeys]; enc.dateEncodingStrategy = .iso8601
+            if let out = try? enc.encode(u) { try? out.write(to: stateFile, options: .atomic); lastSaved = out }
+        }
+        if kept {
             consented = true; consentKept = true
             log("note", "consent", s.v == 2
                 ? M("the switch was on as the app started, and sync-state.json holds this pair's aligned state from app 1.3 (\(pairKey)): its consent counts as given - no \"Enable sync?\" window; the direction is asked only if the twin changed meanwhile",
