@@ -4,12 +4,14 @@
 -- ============================================================
 -- @name.en Reaction
 -- @name.ru Реакция
--- @about.en Living chemical patterns: spots that divide like cells, coral, a maze, worms. About once a
--- @about.en minute the pattern drifts slowly into the next, and new drops fall every 25 s.
--- @about.ru Живые химические узоры: пятна делятся как клетки, растут кораллы, лабиринт, черви. Примерно
--- @about.ru раз в минуту узор медленно перетекает в следующий, каждые 25 с падают новые капли.
--- @control.en knob press: Next pattern now (cells, coral, maze, worms) and fresh drops.
--- @control.ru knob press: Сразу следующий узор (клетки, кораллы, лабиринт, черви) и новые капли.
+-- @about.en Living chemical patterns: spots that divide like cells, coral, a maze, worms. Every minute
+-- @about.en by the clock the pattern drifts slowly into the next, at the same moment on every panel, and
+-- @about.en new drops fall every 30 s.
+-- @about.ru Живые химические узоры: пятна делятся как клетки, растут кораллы, лабиринт, черви. Каждую
+-- @about.ru минуту по часам узор медленно перетекает в следующий, на всех панелях в один и тот же момент,
+-- @about.ru каждые 30 с падают новые капли.
+-- @control.en knob press: Next pattern now (cells, coral, maze, worms) and fresh drops; it runs until the next change by the clock.
+-- @control.ru knob press: Сразу следующий узор (клетки, кораллы, лабиринт, черви) и новые капли; он идёт до ближайшей смены по часам.
 -- @function.en 4 patterns: 45 s each plus 15 s of change
 -- @function.en No clock
 -- @function.en Needs firmware 2.7.6 or later
@@ -25,16 +27,24 @@
 --
 -- It never settles because f and k do not stand still: they travel slowly
 -- from one of those regimes to the next (a minute each), so spots stretch
--- into worms and worms knot into a maze, and every 25 s a few new drops fall.
+-- into worms and worms knot into a maze, and every 30 s a few new drops fall.
 -- The colours come from a gradient that drifts too. The button moves to the
 -- next regime at once and drops new seeds.
+--
+-- The regime, the drops and the colours follow the wall clock, not the time
+-- since the page opened: px.t() is the phase of a 4-minute cycle aligned to
+-- the epoch, so two panels with NTP change regime at the same moment, and a
+-- panel opened late joins the cycle where it is. The button adds one regime
+-- to the clock's (px.button() counted from the opening), which then holds
+-- until the next minute the clock turns. The field itself is a simulation
+-- from a few drops: its pixels are each panel's own.
 --
 -- The model runs in the firmware (px.reaction): 8,192 cells, three steps a
 -- frame (about 10 ms each on the panel), in integers so the panel and luasim grow the same patterns.
 --
 -- Needs firmware 2.7.6 or later (px.reaction; px.palette, px.show 2.7.4).
 -- ============================================================
-PERIOD = 600.0
+PERIOD = 240.0                       -- the 4 regimes of a minute, by the wall clock
 FPS = 15
 
 local W, H = px.size()
@@ -49,9 +59,11 @@ local REGIMES = {
   { f = 0.0780, k = 0.0610, name = "WORMS" },
 }
 local STAY, MOVE = 45, 15            -- seconds in a regime, and moving to the next
-local regime, fromAt = 1, 0
-local T, tprev, seedAt = 0, nil, 0
-local lastClicks = rawget(px, "button") and px.button() or 0
+local SLOT = STAY + MOVE             -- a regime's minute; PERIOD holds #REGIMES of them
+local DROP = 30                      -- seconds between new drops; divides PERIOD
+local BTN = rawget(px, "button")
+local base = BTN and BTN() or 0      -- the presses before the page opened
+local lastClicks, dropAt = base, nil
 
 local seed = 0x5EED1234
 local function rnd()
@@ -73,8 +85,9 @@ if HAS then drops(14) end
 -- the colour: from the background through the chemical's body to its edge
 -- B rarely passes 0.5 (index 128), so the colours sit low in the palette
 local STOPS = { { 0, 0, 0, 0 }, { 30, 0, 0, 0 }, { 60, 0, 0, 0 }, { 95, 0, 0, 0 }, { 140, 0, 0, 0 } }
+-- t: seconds into PERIOD; 80 and 120 divide it, so the drift has no seam
 local function palette_at(t)
-  local a, b = 0.5 + 0.5 * sin(t * 2 * pi / 71), 0.5 + 0.5 * sin(t * 2 * pi / 113 + 1)
+  local a, b = 0.5 + 0.5 * sin(t * 2 * pi / 80), 0.5 + 0.5 * sin(t * 2 * pi / 120 + 1)
   STOPS[1][2], STOPS[1][3], STOPS[1][4] = floor(4 + 10 * a), floor(6 + 8 * b), floor(18 + 20 * a)
   STOPS[2][2], STOPS[2][3], STOPS[2][4] = floor(20 + 60 * b), floor(40 + 80 * a), floor(120 + 100 * b)
   STOPS[3][2], STOPS[3][3], STOPS[3][4] = floor(200 * a + 30), floor(90 + 60 * b), floor(220 - 120 * a)
@@ -84,16 +97,7 @@ local function palette_at(t)
 end
 
 function draw()
-  local t = px.t() * PERIOD
-  local dt = 1 / FPS
-  if tprev then
-    dt = t - tprev
-    if dt < 0 then dt = dt + PERIOD end
-    if dt > 0.5 then dt = 0.5 end
-  end
-  tprev = t
-  T = T + dt
-  if T > 3600 then T = T - 3600; fromAt = fromAt - 3600; seedAt = seedAt - 3600 end
+  local t = px.t() * PERIOD          -- seconds into the cycle, the same on every panel
 
   if not HAS then
     px.clear(0, 0, 0)
@@ -101,19 +105,26 @@ function draw()
     return
   end
 
-  local c = rawget(px, "button") and px.button() or 0
-  if c ~= lastClicks then lastClicks = c; regime = regime % #REGIMES + 1; fromAt = T - STAY; drops(10) end
-  if T - fromAt > STAY + MOVE then regime = regime % #REGIMES + 1; fromAt = T end
-  if T - seedAt > 25 then seedAt = T; drops(4) end
+  -- the regime: the clock's minute, plus one for every press since the page
+  -- opened; at the end of a minute b has become the next minute's a
+  local c = BTN and BTN() or 0
+  local slot = floor(t / SLOT)
+  local regime = (slot + c - base) % #REGIMES + 1
+  -- new drops: a press's, else the clock's every DROP s (not on the first
+  -- frame: the page's own have just fallen)
+  local d = floor(t / DROP)
+  if c ~= lastClicks then lastClicks = c; drops(10)
+  elseif dropAt and d ~= dropAt then drops(4) end
+  dropAt = d
 
   -- f and k: held, then eased toward the next regime
   local a, b = REGIMES[regime], REGIMES[regime % #REGIMES + 1]
-  local u = (T - fromAt - STAY) / MOVE
+  local u = (t - slot * SLOT - STAY) / MOVE
   u = u < 0 and 0 or u > 1 and 1 or u
   u = u * u * (3 - 2 * u)
   PARAMS.f, PARAMS.k = a.f + (b.f - a.f) * u, a.k + (b.k - a.k) * u
   R:params(PARAMS)
   R:step(3)
   R:show(L)
-  px.show(L, palette_at(T))
+  px.show(L, palette_at(t))
 end

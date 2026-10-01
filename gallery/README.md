@@ -327,7 +327,7 @@ How it works, with the tank running and the numbers from the panel: [in English]
 
 Night, the back wall of a house, and a small laser projector on the pavement in front of it. A thin beam, lit up by the dust in the air, carries one bright dot over the bricks. The dot writes on the wall stroke by stroke. The beam goes dark between strokes, and sparks fly where the dot burns. Once a text is written, the projector runs over it again and again, fast, the way a real one does. The lines shimmer as the scan comes round, and the beam in the air becomes a flickering fan.
 
-**Every 5 seconds the wall says the next thing:**
+**Every 5 seconds by the clock the wall says the next thing,** the same line at the same moment on every panel, unless only one of them has the weather:
 - the time;
 - the day of the week;
 - the date;
@@ -354,9 +354,9 @@ The panel pretends to be a mechanical flip board. Every digit is seven segments 
 - a turning cube;
 - on the dot board, a wire cube and a wire ball that fly, spin and bounce off the edges by physics, shimmering like the plasma, the ball with four laser beams.
 
-A change of scene flows: the new board starts at once and flips in from dark while the old picture dissolves over it in two seconds. A scene picked by hand flows in half a second, and its name shows for a second before the board fills. On firmware before 2.7.5 the board goes out as a wave first instead.
+The program runs by the clock: it is 266 seconds round, the scenes' lengths added up, so every panel shows the same scene and changes at the same moment, and a page opened late starts at the clock's scene. A change of scene flows: the new board starts at once and flips in from dark while the old picture dissolves over it in two seconds. A scene picked by hand flows in half a second, and its name shows for a second before the board fills. On firmware before 2.7.5 the board goes out as a wave first instead.
 
-**The button.** The knob's click or the remote's OK on this page picks a scene: one press the next scene, two the one before. A chosen scene stays until three presses hand the board back to the program.
+**The button.** The knob's click or the remote's OK on this page picks a scene: one press the next scene, two the one before. A chosen scene stays until three presses hand the board back to the program, at the scene the clock has reached.
 
 **How it is drawn.** A picture is never drawn in full. Each source is a function evaluated only at the points where a digit samples it: two samples across and two down for the upright segments, three down for the level ones. This sampling is Ksawery Kirklewski's idea, from his Flipdigits Player, and it is what makes the board affordable on this processor. The code was written from scratch. It needs firmware 2.7.3 or later for the button. On the panel it runs at about 15 fps.
 
@@ -370,7 +370,7 @@ A demoscene plasma folded into four mirrors, with colour that never plays the sa
 
 Two fields of sines (along x, along y, along the diagonal and in rings round a point) are held in two 8-bit layers. The fields themselves do not move. Colour moves through them: each layer is shown through a palette with its own offset, stepping at its own speed and in its own direction, and where the second is brighter it wins. The bands of the two run through each other, and that is the motion. It is the palette cycling of the 8-bit machines.
 
-The palette is Inigo Quilez's cosine palette, rebuilt every frame while its parameters drift on slow periods of 37, 59 and 83 seconds that do not divide into each other. Every 40 seconds the light dips, and a new mood with two new fields comes in. The fields are seeded from the date and the minute, so tonight's kaleidoscope is not this morning's. The button changes the mood at once.
+The palette is Inigo Quilez's cosine palette, rebuilt every frame while its parameters drift on slow periods of 37, 59 and 83 seconds that do not divide into each other. Every 40 seconds by the clock a new mood with two new fields flows in over 3 seconds (on firmware before 2.7.5 the light dips instead). A scene is numbered by the clock's 40-second steps since 1970 and its fields are seeded from that number, so every panel shows the same scene at the same moment, colours included, since their drift runs on the clock too; and tonight's kaleidoscope is not this morning's. The button changes the mood at once, unless a change is under way; the new mood holds until the clock's next change, anything up to 40 seconds.
 
 **How it is drawn.** Three native calls a frame make the picture: px.show twice and px.mirror. The next fields are built a few rows a frame while the current scene plays, so a change costs no frame. It needs firmware 2.7.4 or later. On the panel it runs at 15 fps, about 7 ms a frame.
 
@@ -382,7 +382,7 @@ The palette is Inigo Quilez's cosine palette, rebuilt every frame while its para
 
 Light poured into a whirlpool that never ends. A few bright shapes are drawn at the middle of the screen each frame: a ring of dots, a figure-of-eight, a star, spokes, or a spiral arm. Everything already on the screen streams outward in spirals and fades at the edges. One shape becomes a tunnel, a flower, a galaxy.
 
-It does not repeat. The zoom, the twist and the drift of the centre each follow their own slow wave, with periods of 17, 29, 43 and 61 seconds that do not divide into each other. The colours come from Inigo Quilez's cosine palette, drifting the same way. Every 30 seconds the shape at the middle changes, and the button changes it at once.
+It does not repeat. The zoom, the twist and the drift of the centre each follow their own slow wave, with periods of 17, 29, 43 and 61 seconds that do not divide into each other. The colours come from Inigo Quilez's cosine palette, drifting the same way. Every 30 seconds by the clock the shape at the middle changes, the same on every panel. The button changes it at once, and the new shape holds until the clock's next change, anything up to 30 seconds.
 
 **How it is drawn.** It is the trick behind MilkDrop. Each frame px.feedback resamples the whole picture a little larger, a little turned and a little darker, in one call of about 6.5 ms on the panel, and then the new shape is drawn over it. It needs firmware 2.7.5 or later for px.feedback; on older firmware it only leaves fading trails in place. On the panel it runs at 15 fps, about 9 ms a frame.
 
@@ -404,12 +404,12 @@ The button changes the mood: violet and rose, teal and ice, ember, aurora.
 
 ![Flow](preview/flow.png)
 
-Hundreds of particles on currents that never repeat. It has three scenes, 40 seconds each, and the button moves to the next:
+Hundreds of particles on currents that never repeat. It has three scenes, 40 seconds each by the clock, so every panel shows the same scene at the same moment. The button moves to the next at once, and that scene runs until the clock's next change, anything up to 40 seconds:
 - **flow:** seven hundred motes carried by a flow field, the curl of Perlin noise, so they swirl along its contour lines and never pool. They leave glowing trails in colours from a drifting palette;
 - **fountain:** sparks thrown up from the middle of the floor, falling back and bouncing off the walls;
 - **snow:** flakes falling slowly, blown about by a soft wind.
 
-The field drifts along time, so the currents change and the pictures they draw never come back the same.
+The field drifts along time, so the currents change and the pictures they draw never come back the same. The palette drifts by the clock, so two panels side by side also share their colours; the particles are each panel's own.
 
 **How it is drawn.** A particle system in the firmware, px.particles, does the moving and the drawing; the script only says where the particles come from and what pulls them. Trails are one px.fade a frame. It needs firmware 2.7.5 or later. On the panel it runs at 15 fps, about 7 ms a frame.
 
@@ -421,7 +421,7 @@ The field drifts along time, so the currents change and the pictures they draw n
 
 Living patterns that grow, split and never settle. Two chemicals spread over the screen and react, in the Gray-Scott model from Karl Sims's reaction-diffusion tutorial. From a few drops grow spots that divide like cells, then coral, a labyrinth, or worms; which of them depends on two numbers, the feed and the kill.
 
-It never settles because those two numbers keep moving: they travel slowly from one regime to the next, spending a minute on each, so spots stretch into worms and worms knot into a maze. Every 25 seconds a few new drops fall. The colours drift too. The button moves to the next regime at once and drops new seeds.
+It never settles because those two numbers keep moving: they travel slowly from one regime to the next, spending a minute on each, so spots stretch into worms and worms knot into a maze. The minutes are the clock's, so every panel moves to the same regime at the same moment. Every 30 seconds a few new drops fall. The colours drift too, on the clock. The button moves to the next regime at once and drops new seeds; that regime holds until the clock's next minute, anything up to a minute. The patterns themselves grow on each panel on their own.
 
 **How it is drawn.** The model runs in the firmware, px.reaction: 8,192 cells, three steps a frame of about 10 ms each on the panel, in integers so the panel and the simulator grow the same patterns. It needs firmware 2.7.6 or later. On the panel it runs at 15 fps, about 33 ms a frame.
 
@@ -433,7 +433,7 @@ It never settles because those two numbers keep moving: they travel slowly from 
 
 The Platonic solids turning among slow stars: a tetrahedron, a cube, an octahedron and an icosahedron, one at a time, each on a spin that wanders. They are shown as a lit solid, as a wireframe with anti-aliased edges, or as both.
 
-Every 20 seconds the solid on screen reshapes itself into the next one. All of them share one skin, a sphere of 162 points; for each solid every point is carried out along its ray to that solid's surface, with the corners kept sharp. At a change each point slides from the old shape to the new one, so a tetrahedron swells and settles into a cube, and when it has arrived the new solid takes on its own edges. Behind it a field of stars drifts at fractions of a pixel a frame, each star an anti-aliased dot, so it glides instead of stepping. The button brings the next solid at once.
+Every 20 seconds by the clock, the same on every panel, the solid on screen reshapes itself into the next one. All of them share one skin, a sphere of 162 points; for each solid every point is carried out along its ray to that solid's surface, with the corners kept sharp. At a change each point slides from the old shape to the new one, so a tetrahedron swells and settles into a cube, and when it has arrived the new solid takes on its own edges. Behind it a field of stars drifts at fractions of a pixel a frame, each star an anti-aliased dot, so it glides instead of stepping. The button brings the next solid at once, or right after the change already under way, and it holds until the clock's next change, anything up to 20 seconds.
 
 **How it is drawn.** The firmware turns, projects, depth-sorts, lights and draws each solid in one call (px.model once, px.mesh a frame); the script only decides where it points. It needs firmware 2.7.6 or later. On the panel it runs at 15 fps, about 6 ms a frame.
 
@@ -443,7 +443,7 @@ Every 20 seconds the solid on screen reshapes itself into the next one. All of t
 
 ![Warp](preview/warp.png)
 
-Four journeys, twenty seconds each, flowing into one another: down a tunnel of shifting plasma, round a planet of oceans and green land turning among twinkling stars, along a neon grid rushing toward a striped sunset, and into a whirlpool that draws its colours round and down. The button goes to the next one at once.
+Four journeys, twenty seconds each by the clock, the same on every panel, flowing into one another: down a tunnel of shifting plasma, round a planet of oceans and green land turning among twinkling stars, along a neon grid rushing toward a striped sunset, and into a whirlpool that draws its colours round and down. The button goes to the next one at once, and it runs until the clock's next change, anything up to twenty seconds.
 
 Each scene is a flat picture seen through a map: for every pixel of the screen the map says where in the picture its colour comes from and how bright it is. The maps are built once when the effect starts; after that, sliding the picture under the map a little each frame is what makes the tunnel fly, the planet turn and the road rush past, the demoscene's oldest trick. The tunnel's plasma and the whirlpool's clouds are recomputed every frame and coloured through a slowly drifting palette.
 
@@ -468,6 +468,14 @@ Every screen here must run on a real panel, not only in the simulator: under
 on the panel" has the limits and what each drawing call costs there. The panel
 refuses an upload that does not fit; `gallery.py sync` tries every screen on
 the panel before it brings it here.
+
+A screen with scenes shows the same scene on every panel at once, and on the
+twin. A scene, a mode, a palette or a choice is read off the wall clock,
+`px.t()` over `PERIOD`, plus the presses since the page opened (`px.button()`
+less its value at load); it is never counted from the opening and never drawn
+with `math.random`. A press brings the next scene at once, and it lasts until
+the clock's next boundary. `flow.lua` is the smallest example; AGENTS.md,
+"Scenes by the wall clock", has the rules.
 
 Then `python3 tools/agent/gallery.py add <name>` copies it here with a preview.
 

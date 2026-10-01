@@ -141,7 +141,8 @@ static void sendIrTable() {
   sendDocFromPsram(doc);
 }
 static void irBad(const char *why) {
-  server.send(400, "application/json", String("{\"success\":false,\"error\":\"") + why + "\"}");
+  server.send(strncmp(why, "refused", 7) == 0 ? 403 : 400, "application/json",
+              String("{\"success\":false,\"error\":\"") + why + "\"}");
 }
 #endif
 
@@ -285,7 +286,11 @@ void setupWebServer() {
  server.on("/api/ir/press", HTTP_GET, []() {
    uint8_t slot = 0;
    if (!ir::slotByNumber(server.arg("btn").c_str(), &slot)) { irBad("btn must be 1..10"); return; }
-   irSimulate(slot, (uint32_t)server.arg("hold").toInt());
+#if defined(SYNC_EVENTS_ENABLED)
+   syncNoteSimulated(syncHttpBy());
+#endif
+   const long hold = server.arg("hold").toInt();
+   irSimulate(slot, (uint32_t)(hold < 0 ? 0 : hold > 10000 ? 10000 : hold));   // a press is held seconds, not weeks
    sendIrTable();
  });
  server.on("/api/ir/do", HTTP_GET, []() {
@@ -296,7 +301,8 @@ void setupWebServer() {
 #if defined(SYNC_EVENTS_ENABLED)
    syncNoteSimulated(syncHttpBy());   // what it does next is this request's doing, the twin's own or not
 #endif
-   irSimulateFn(fn, (uint8_t)page, (uint32_t)server.arg("hold").toInt());
+   const long hold = server.arg("hold").toInt();
+   irSimulateFn(fn, (uint8_t)page, (uint32_t)(hold < 0 ? 0 : hold > 10000 ? 10000 : hold));
    sendIrTable();
  });
  server.on("/api/ir/fn", HTTP_GET, []() {
@@ -1021,7 +1027,7 @@ void handleAnimUploadDone() {
  if (animUpError) {
    lastAnimationError = animUpError;
    String msg = String("{\"success\":false,\"error\":\"") + animUpError + "\"}";
-   server.send(400, "application/json", msg);
+   server.send(strncmp(animUpError, "refused", 7) == 0 ? 403 : 400, "application/json", msg);
  } else {
    lastAnimationError = "";
    String msg = String("{\"success\":true,\"name\":\"") + animUpName + "\"}";
@@ -2528,7 +2534,7 @@ static bool hostIsPanels(const String &hostPort) {
   const int colon = hostPort.lastIndexOf(':');
   const String h = colon > 0 ? hostPort.substring(0, colon) : hostPort;
   if (!h.length()) return false;
-  if (h.endsWith(".local")) return true;
+  if (h.endsWith(".local") || h == "localhost") return true;   // the browser resolves localhost itself: no rebinding
   for (size_t i = 0; i < h.length(); i++)
     if (!(isdigit((unsigned char)h[i]) || h[i] == '.')) return false;
   return true;                          // an IPv4 literal

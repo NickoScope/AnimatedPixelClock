@@ -99,6 +99,12 @@ to 32 KB and measure the internal heap first.
   `tetris_clock` and `snake_clock` finish building the next time as it arrives.
   `room_radar` sets `PERIOD = STORY`, its 24 s scene. `px.t()` and `px.now()`
   come from one clock reading per frame.
+- Anything discrete - a scene, a mode, a palette, a choice - is worked out
+  from `px.t()` and from `px.button()` less its value at load (the count when
+  the effect was chosen, `lua_effects.cpp:346`), not from time summed since
+  the opening or from `math.random`: then two panels, or a panel and its twin,
+  show the same scene at the same moment. `gallery/flow.lua` is the example;
+  AGENTS.md, "Scenes by the wall clock", has the rules.
 - `px.now()` is local time, 0-based `yday`, and `utc` in hours (an integer for
   whole-hour zones, as in luasim; 5.5 for India).
 - The nslua whitelist: `base`, `table`, `string`, `math`; no `load`, `dofile`,

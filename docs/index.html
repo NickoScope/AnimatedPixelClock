@@ -12,7 +12,7 @@
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&family=Press+Start+2P&family=VT323&display=swap">
 
   <link rel="stylesheet" href="styles.css">
-  <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
+  <script type="module" src="https://unpkg.com/esp-web-tools@10.4.0/dist/web/install-button.js?module"></script>
 </head>
 <body>
   <div class="shell">
@@ -118,7 +118,7 @@
                 <div class="spec-row"><dt>board</dt><dd id="spec-board">…</dd></div>
                 <div class="spec-row"><dt>display</dt><dd id="spec-display">HUB75 · 128×64 RGB</dd></div>
                 <div class="spec-row"><dt>firmware</dt><dd id="spec-version">…</dd></div>
-                <div class="spec-row"><dt>flash</dt><dd>0x0 · full image (bootloader + app)</dd></div>
+                <div class="spec-row"><dt>flash</dt><dd>4 parts: bootloader 0x0 · partitions 0x8000 · OTA data 0xE000 · app 0x10000</dd></div>
               </dl>
             </div>
           </div>
@@ -127,7 +127,7 @@
 
           <div class="install-row">
             <div id="install-slot"></div>
-            <p class="hint">A dialog will ask which serial port to use - pick the one that appears when you plug the board in. The installer then asks whether to erase the device. For a new board, or a clean start, erase it. To reinstall on a board that already runs this firmware, don't: its settings, Wi-Fi, keys and uploaded effects stay, and only the firmware is written. It takes ~30 seconds. A board that is running and on your network is easier to update from its own portal, on the Maintenance page.</p>
+            <p class="hint">A dialog will ask which serial port to use - pick the one that appears when you plug the board in. The installer then asks whether to erase the device. For a new board, or a clean start, erase it. To reinstall on a board that already runs this firmware, don't: its settings, Wi-Fi and keys stay, and so do the uploaded effects on a board already on this firmware's 32MB layout; only the firmware is written. It takes ~30 seconds. A board that is running and on your network is easier to update from its own portal, on the Maintenance page.</p>
           </div>
         </section>
 

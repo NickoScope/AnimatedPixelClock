@@ -982,6 +982,63 @@ hook count and would escape the instruction budget
 `PERIOD=60` it is the second hand, and a clock effect lands its change exactly
 on the minute.
 
+**Scenes by the wall clock, so every panel shows the same one.** Two panels,
+or a panel and its virtual twin, open an effect at different moments and draw
+at different rates. So everything discrete - the scene, the mode, the palette,
+which shape, which match - is worked out each frame from `px.t()` and from the
+presses since the effect opened: never from seconds summed from `dt` since the
+opening, never from a random number drawn at load. `gallery/flow.lua`, three
+scenes of 40 s:
+
+```lua
+PERIOD = 120                                   -- 3 scenes x 40 s
+local SCENE = 40
+local base = rawget(px, "button") and px.button() or 0   -- the count when the effect was chosen
+function draw()
+  local t = px.t() * PERIOD                    -- seconds into the PERIOD: the same on every panel with NTP
+  local k = (rawget(px, "button") and px.button() or 0) - base
+  local scene = (math.floor(t / SCENE) + k) % 3 + 1
+  -- ...
+end
+```
+
+- A press moves one scene on at once, and that scene lasts until the clock's
+  next boundary, anything from 0 to 40 s. Pressed on both, two panels show the
+  same one.
+- `px.button()` counts from boot. Read at load it is the count when the effect
+  was chosen (`src/lua/lua_effects.cpp:346`): that is the base.
+- A choice that should look random - a shape, a palette, a match - is seeded
+  with xorshift from the slot's number since 1970, taken from `px.now()` and
+  its `utc` (`kaleidoscope.lua`, `football_clock.lua`), not from `math.random`.
+- Continuous motion (particles, waves, feedback) may run on the frame's `dt`:
+  its pixels differ from panel to panel anyway. What must agree is the scene.
+- A cross-fade starts when the computed scene differs from the last frame's,
+  and not on the first frame after opening. A gesture window (0.45 s in
+  `kinetic_digits_led.lua` and `oceanarium.lua`) and a change-in-progress
+  window (`solids.lua` queues a press made in it, `kaleidoscope.lua` ignores
+  it) are counted in clock seconds.
+- A press reaches two panels a little apart. What starts at the press and
+  runs fast differs by that gap times its speed: OCEANARIUM's demo day runs
+  288 times the clock, so presses 0.3 s apart leave its two tanks about a
+  minute and a half apart until three presses bring back the real time.
+- `PERIOD` is read once, at load (`src/lua/lua_fx.cpp:153`). Make it a whole
+  multiple of the cycle and keep it at 3600 or under: `lua_Number` is a float,
+  and `px.t() * 3600` still resolves 0.21 ms. Colour or motion taken from the
+  clock needs a whole number of its cycles in `PERIOD`, or it jumps at the wrap.
+- Without NTP a device's clock runs from its own boot and two panels disagree;
+  when the time arrives it jumps, and the scene changes once out of turn.
+  luasim ignores `PERIOD` (`px.t()` is frame over frames, `luasim.c:356`), so
+  a preview walks every scene of its run.
+
+Measured on pairs of twin engines with NTP, the second opened 4-6 s after the
+first: the twelve gallery effects reworked this way (2026-09-30, firmware
+2.7.13) changed scene within 0.005-0.15 s of each other, 0.23 s once under a
+host stall, and showed the same scene after a press on both. Three of them
+rechecked on 2.7.14 (LASER CLOCK, OCEANARIUM, SNOOKER CLOCK): changes by the
+clock within 0.05 s, a new snooker frame 0.04 s after the ten-minute mark on
+both. "About a frame at the boundary" is a reference figure from that one
+bench, not a limit anything is judged by.
+
 **The budgets are real and they are enforced** (`src/lua/lua_fx.h:39-45`):
 
 | | |

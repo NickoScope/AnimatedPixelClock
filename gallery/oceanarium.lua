@@ -146,16 +146,46 @@ local LAMP_TOP, LAMP_DEEP = { 60, 168, 222 }, { 10, 62, 112 }
 -- minutes while the animals keep their own pace. Two clicks again stop the
 -- run where it is; three bring the tank back to the time it really is. The
 -- time shown is the tank's.
-local CLK = { rate = 1, off = 0 }            -- off: hours the tank is ahead of the panel
+--
+-- Every hour of it is worked out from the wall clock, never added up frame by
+-- frame: a frame slower than 0.5 s used to leave the demo behind, and two
+-- panels drifted apart. The demo is the hour it started at (h0) plus the wall
+-- seconds since (w0), times the rate. A copy that opens in the demo takes the
+-- wall clock's own day: midnight in the tank at every multiple of DEMO_DAY
+-- seconds of the day, so every panel showing it shows the same hour.
+local CLK = { rate = 1, off = 0, w0 = 0, h0 = 0 }   -- off: hours the tank is ahead of the panel
 CLK.demo = 24 * 3600 / (rawget(_G, "DEMO_DAY") or 300)
 if rawget(_G, "DEMO_DAY") then CLK.rate = CLK.demo end
-local function clock_h()
+
+-- Seconds of the day on the wall clock, to the frame: px.now()'s whole seconds
+-- and the fraction from px.t(), whose period is a whole number of seconds (60
+-- while the script loads, PERIOD after). Both come from one reading a frame,
+-- taken once at the top of draw() and kept for the frame.
+local DRAWN = false
+local frame_w, frame_now = nil, nil
+local function read_wall()
   local now = px.now()
-  local h = now.hour + now.min / 60 + (now.sec or 0) / 3600
-  return (h + CLK.off) % 24, now
+  local f = (px.t() * (DRAWN and PERIOD or 60)) % 1
+  return now.hour * 3600 + now.min * 60 + (now.sec or 0) + f, now
 end
-local function clock_run(dt)
-  if CLK.rate ~= 1 then CLK.off = (CLK.off + dt * (CLK.rate - 1) / 3600) % 24 end
+-- b - a in wall seconds, across midnight
+local function since(b, a)
+  local d = b - a
+  if d < -43200 then d = d + 86400 elseif d > 43200 then d = d - 86400 end
+  return d
+end
+-- The tank's hour at wall second w.
+local function tank_h(w)
+  if CLK.rate ~= 1 then
+    local d = (w - CLK.w0) % 86400
+    return (CLK.h0 + d * CLK.rate / 3600) % 24
+  end
+  return (w / 3600 + CLK.off) % 24
+end
+local function clock_h()
+  local w, now = frame_w, frame_now
+  if not w then w, now = read_wall() end
+  return tank_h(w), now
 end
 
 local function sun_now()
@@ -283,15 +313,24 @@ end
 local IN = { hand = nil, handDay = nil, last = nil, n = 0, at = 0, said = nil, till = -1 }
 local MULTI = 0.45                          -- the owner's choice, 2026-09-24
 
-local function press(n, T)
+-- wg: the wall second the gesture ended - its last press plus the window -
+-- taken from the presses themselves, not from the frame that noticed the end.
+local function press(n, wg, T)
   local s
   if n == 1 then
     if IN.hand == nil then IN.hand = LIGHT.lampWant < 0.5 else IN.hand = not IN.hand end
     IN.handDay = LIGHT.day > 0.5
     s = IN.hand and "ПОДСВЕТКА ВКЛ" or "ПОДСВЕТКА ВЫКЛ"
   elseif n == 2 then
-    if CLK.rate > 1 then CLK.rate = 1; s = "ДЕМО ВЫКЛ"
-    else CLK.rate = CLK.demo; s = "ДЕМО: СУТКИ ЗА 5 МИН" end
+    local h = tank_h(wg)
+    if CLK.rate > 1 then
+      -- stopped where it is: the panel's pace from here, this far ahead of it
+      CLK.rate, CLK.off = 1, (h - wg / 3600) % 24
+      s = "ДЕМО ВЫКЛ"
+    else
+      CLK.rate, CLK.w0, CLK.h0 = CLK.demo, wg, h
+      s = "ДЕМО: СУТКИ ЗА 5 МИН"
+    end
   else
     CLK.rate, CLK.off, IN.hand = 1, 0, nil
     s = "ТЕКУЩЕЕ ВРЕМЯ"
@@ -299,15 +338,17 @@ local function press(n, T)
   IN.said, IN.till = s, T + 2.5
 end
 
+-- The presses are counted, and their window kept, in wall seconds.
 local function lamp_update(T)
+  local w = frame_w                         -- lamp_update runs in draw(), so it is set
   local btn = rawget(px, "button")
   if btn then
     local n = btn()
-    if IN.last and n ~= IN.last then IN.n, IN.at = IN.n + (n - IN.last), T end
+    if IN.last and n ~= IN.last then IN.n, IN.at = IN.n + (n - IN.last), w end
     IN.last = n
   end
-  if IN.n > 0 and T - IN.at > MULTI then
-    press(IN.n, T)
+  if IN.n > 0 and since(w, IN.at) > MULTI then
+    press(IN.n, IN.at + MULTI, T)
     IN.n = 0
   end
   local isDay = LIGHT.day > 0.5
@@ -2786,6 +2827,8 @@ function draw()
     text(4, 34, "NEEDS FIRMWARE 2.7.1+", 200, 220, 230)
     return
   end
+  DRAWN = true
+  frame_w, frame_now = read_wall()
   local t = px.t() * PERIOD
   local dt
   if tprev then
@@ -2799,7 +2842,6 @@ function draw()
   DT = dt
   T = T + dt
   if T > 7200 then T = T - 7200 end
-  clock_run(dt)
   frameNo = frameNo + 1
 
   light_update(dt, false)

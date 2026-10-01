@@ -207,7 +207,12 @@ if git diff --cached --name-only | grep -qE '^(src/|lib/|platformio\.ini|tools/r
     echo "pre-commit: pio (PlatformIO) not found - the static internal RAM check needs a build."
     exit 1
   }
-  "$PIO" run -e matrix-waveshare-rgb -s >/dev/null 2>&1 || {
+  # Without git's own variables: a hook runs with GIT_INDEX_FILE (and in a
+  # worktree GIT_DIR) set, and PlatformIO fetching a library with `git clone`
+  # inherited them and wrote that library's files into the commit's index -
+  # "Error building trees" in a fresh worktree, 2026-09-30.
+  env -u GIT_INDEX_FILE -u GIT_DIR -u GIT_WORK_TREE -u GIT_PREFIX -u GIT_OBJECT_DIRECTORY \
+    "$PIO" run -e matrix-waveshare-rgb -s >/dev/null 2>&1 || {
     echo "pre-commit: the Waveshare build failed - run  pio run -e matrix-waveshare-rgb  to see why."
     exit 1
   }

@@ -5,17 +5,17 @@
 -- @name.en Vortex
 -- @name.ru Водоворот
 -- @about.en Light poured into an endless whirlpool: a bright shape in the middle streams outward in
--- @about.en spirals and fades at the edges. Every 30 s the shape changes: a ring, a figure of eight, a
--- @about.en star, spokes, a spiral arm.
+-- @about.en spirals and fades at the edges. Every 30 s by the clock, the same on every panel, the shape
+-- @about.en changes: a ring, a figure of eight, a star, spokes, a spiral arm.
 -- @about.ru Свет, закрученный в бесконечный водоворот: яркая фигура в центре уходит спиралями наружу и
--- @about.ru гаснет у краёв. Каждые 30 с фигура меняется: кольцо, восьмёрка, звезда, спицы, спиральный
--- @about.ru рукав.
--- @control.en knob press: Next shape now.
--- @control.ru knob press: Сразу следующая фигура.
--- @function.en 5 shapes, 30 s each
+-- @about.ru гаснет у краёв. Каждые 30 с по часам, одинаково на всех панелях, фигура меняется: кольцо,
+-- @about.ru восьмёрка, звезда, спицы, спиральный рукав.
+-- @control.en knob press: Next shape now; it holds until the next change by the clock.
+-- @control.ru knob press: Сразу следующая фигура; она держится до ближайшей смены по часам.
+-- @function.en 5 shapes, 30 s each, by the clock: the same on every panel
 -- @function.en No clock
 -- @function.en Needs firmware 2.7.5 or later
--- @function.ru 5 фигур по 30 с
+-- @function.ru 5 фигур по 30 с, по часам: одинаково на всех панелях
 -- @function.ru Часов нет
 -- @function.ru Нужна прошивка 2.7.5 или новее
 --
@@ -32,10 +32,18 @@
 -- changes: a ring of dots, a figure-of-eight, a star, spokes, a spiral arm.
 -- The button changes the shape now.
 --
+-- The shape is read off the wall clock, so two panels (or a panel and its
+-- twin) show the same one at the same moment: px.t() is the phase of the
+-- 150 s PERIOD aligned to the epoch, and its 30 s fifths are the shapes. A
+-- press moves one shape on from the clock's (the presses are counted from
+-- the moment the effect opened); the shape it brings holds until the clock's
+-- next 30 s boundary, anything from 0 to 30 s. The whirl and the colours
+-- are each panel's own.
+--
 -- Needs firmware 2.7.5 or later for px.feedback (2.7.4 for px.palette);
 -- without it, it fades trails in place.
 -- ============================================================
-PERIOD = 600.0
+PERIOD = 150.0                -- 5 shapes x 30 s: the shape is read off the clock
 FPS = 15
 
 local W, H = px.size()
@@ -46,8 +54,9 @@ local HAS = rawget(px, "feedback") ~= nil
 local SHAPES = { "ring", "eight", "star", "spokes", "arm" }
 local shape = 1
 local SCENE = 30
-local T, tprev, sceneAt = 0, nil, 0
-local lastClicks = rawget(px, "button") and px.button() or 0
+local T, tprev = 0, nil
+-- px.button() counts from boot, not from here: the presses since the effect opened
+local base = rawget(px, "button") and px.button() or 0
 
 -- the palette, reused: iq's cosine palette with its phases drifting
 local A_, B_, C_, D_ = { 0.5, 0.5, 0.5 }, { 0.5, 0.5, 0.5 }, { 1, 1, 1 }, { 0, 0.33, 0.67 }
@@ -118,11 +127,12 @@ function draw()
   tprev = t
   T = T + dt
   -- a 32-bit float T outgrows a frame's step after days: held under an hour
-  if T > 3600 then T = T - 3600; sceneAt = sceneAt - 3600 end
+  if T > 3600 then T = T - 3600 end
 
-  local c = rawget(px, "button") and px.button() or 0
-  if c ~= lastClicks then lastClicks = c; shape = shape % #SHAPES + 1; sceneAt = T end
-  if T - sceneAt > SCENE then shape = shape % #SHAPES + 1; sceneAt = T end
+  -- the shape: the clock's 30 s fifth of the PERIOD, moved on by the presses
+  local k = (rawget(px, "button") and px.button() or 0) - base
+  local slot = floor(t / SCENE)                      -- 0..4, the same on every panel with NTP
+  shape = (slot + k) % #SHAPES + 1
 
   local w1, w2, w3, w4 = sin(T * 2 * pi / 17), sin(T * 2 * pi / 29), sin(T * 2 * pi / 43), sin(T * 2 * pi / 61)
   for i = 1, 3 do

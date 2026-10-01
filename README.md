@@ -444,8 +444,11 @@ after detecting its new uptime (checked every 10 seconds).
 
 Open **[nickoscope.github.io/AnimatedPixelClock](https://nickoscope.github.io/AnimatedPixelClock/)**
 in Chrome or Edge on a desktop, plug the board in over USB and press Install. It
-writes the full image at `0x0`, then hands your WiFi to the board over USB
-(Improv Serial) in the same tab. The page also has a serial log viewer, useful
+asks whether to erase the board first: erase a new board; don't, to reinstall on
+a board that already runs this firmware, and its Wi-Fi, settings and keys stay.
+It writes the firmware in its four parts at their own offsets and nothing in
+between, then, on a fresh board, hands your WiFi to it over USB (Improv Serial)
+in the same tab. The page also has a serial log viewer, useful
 if the panel stays dark after a flash, and the Windows companion download.
 
 The page carries one board, the Waveshare ESP32-S3-RGB-Matrix, because it is

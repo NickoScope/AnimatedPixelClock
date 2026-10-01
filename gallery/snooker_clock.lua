@@ -3,13 +3,19 @@
 -- @name.en Snooker clock
 -- @name.ru Снукер-часы
 -- @about.en A snooker table that plays frames by itself by the official rules: the break, the reds, the
--- @about.en colours in order. The time is in the corner, like in a game.
+-- @about.en colours in order. The time is in the corner, like in a game. A frame breaks off every ten
+-- @about.en minutes on the clock, the same frame on every panel.
 -- @about.ru Стол для снукера, на котором партии играются сами по официальным правилам: разбой, красные,
--- @about.ru цветные по порядку. Время в углу, как в игре.
+-- @about.ru цветные по порядку. Время в углу, как в игре. Партия начинается каждые десять минут по часам,
+-- @about.ru на всех панелях одна и та же.
 -- @control.en knob press: Nothing: this effect does not use the button.
 -- @control.ru knob press: Ничего: этот эффект кнопку не использует.
 -- @function.en Time in the corner
+-- @function.en A frame every ten minutes, on the clock; between frames, when the next starts
+-- @function.en Opened mid-frame, it catches up first (up to about 10 s)
 -- @function.ru Время в углу
+-- @function.ru Партия каждые десять минут, по часам; между партиями видно, когда следующая
+-- @function.ru Если открыть посреди партии, сначала догоняет её (до 10 с)
 --
 -- snooker_clock.lua - a snooker table that plays frames by itself, with the
 -- time in the corner like a game's HUD.
@@ -317,6 +323,13 @@ local function collide(a, b, nx, ny)
   end
 end
 
+-- The work a step did, roughly in Lua instructions, so a page catching up
+-- can stop a frame at a budget: steps cost from 300 instructions (aiming) to
+-- 60,000 (the break, every ball moving). The weights are fitted to fxhost's
+-- exact counts over 24,000 steps (tools/luasim, --exact): a substep 190 plus
+-- 550 a moving ball, a clear-path test 470, a position 240 a target ball.
+local work = 0
+
 local moving = {}
 local function substep(h)
   local n, nm = #balls, 0
@@ -341,6 +354,7 @@ local function substep(h)
       end
     end
   end
+  work = work + 190 + 550 * nm
   -- Only pairs with a moving ball in them, each pair once.
   for m = 1, nm do
     local ia = moving[m]
@@ -434,21 +448,21 @@ local function draw_cue(cx, cy, dx, dy, gap)
 end
 
 -- ---------------------------------------------------------------- time
--- Time comes from px.t(), a phase over 60 s, so the table moves at wall-clock
--- speed at any frame rate. A long gap (the page just opened, or luasim's
--- coarse frames) is capped: the game slows rather than jumps.
-local last_t
-local function frame_dt()
-  local t = px.t()
-  local dt = last_t and (t - last_t) or 0.05
-  if dt < 0 then dt = dt + 1 end
-  last_t = t
-  return min(0.1, dt * 60)
-end
+-- The frame is the wall clock's, not the page's: one starts on every ten
+-- minutes of the clock (PERIOD = 600, px.t() the phase within them), seeded
+-- by the number of that ten-minute slot since 1970, and plays in fixed steps
+-- of 1/20 s - so every panel with NTP plays the same frame, shot for shot, at
+-- the same moment, whatever its frame rate. A page opened in the middle plays
+-- the steps it missed first. A frame is over in 160-335 s (40 slots through
+-- this script on the host) and shows its result until the next begins; one
+-- still on at the end of its slot would be left there.
+PERIOD = 600
+local STEP = 1 / 20                         -- s of play a step
+local STEPS = PERIOD * 20                   -- steps in a slot
 
 -- ---------------------------------------------------------------- dice
--- xorshift32 on Lua's 32-bit integers. Seeded from the clock the page opened
--- at, so luasim with the same --start plays the same frames.
+-- xorshift32 on Lua's 32-bit integers. Seeded from the slot of the clock, so
+-- every panel, and luasim with the same --start, plays the same frames.
 local seed = 1
 local function rand()
   seed = seed ~ (seed << 13)
@@ -519,6 +533,7 @@ end
 
 -- ---------------------------------------------------------------- the player
 local function seg_clear(x1, y1, x2, y2, s1, s2)
+  work = work + 470
   local dx, dy = x2 - x1, y2 - y1
   local l2 = dx * dx + dy * dy
   if l2 < 1e-6 then return true end
@@ -600,6 +615,7 @@ end
 -- at a comfortable distance. No obstruction check - it is a guess about a
 -- position, and it has to be cheap.
 local function position_quality(qx, qy, targets, except)
+  work = work + 240 * #targets
   local best = 0
   for _, t in ipairs(targets) do
     if t ~= except then
@@ -678,6 +694,7 @@ end
 -- second to choose, which is about what it looks like it should take.
 local plan
 local function start_plan()
+  work = work + 1200
   local positions
   local cue = byname.white
   if game.in_hand then positions = d_positions() else positions = {{cue.x, cue.y}} end
@@ -956,7 +973,7 @@ local function draw_clock(t)
   local x, y = CLOCK_X + 2, 2
   seg_digit(x, y, n.hour // 10, 255, 255, 255)
   seg_digit(x + 5, y, n.hour % 10, 255, 255, 255)
-  if (t * 60) % 1 < 0.5 then
+  if (t * PERIOD) % 1 < 0.5 then
     px.rect(x + 10, y + 1, 1, 2, 255, 170, 0, true)
     px.rect(x + 10, y + 4, 1, 2, 255, 170, 0, true)
   end
@@ -987,7 +1004,7 @@ local function draw_score(t)
   local w = 7 + w1 + 3 + w2 + (extra and (3 + px.width(extra)) or 0) + 1
   plate(9, 0, w, 9)
   if game.on then
-    ball_dot(11, 3, game.on == "colour" and COLOURS[floor(t * 120) % 6 + 1] or game.on)
+    ball_dot(11, 3, game.on == "colour" and COLOURS[floor(t * PERIOD * 2) % 6 + 1] or game.on)
   end
   local x = 16
   local hot, cold = {255, 215, 0}, {185, 185, 185}
@@ -999,37 +1016,40 @@ local function draw_score(t)
   if extra then px.text(x + w2 + 3, 0, extra, er, eg, eb) end
 end
 
--- Between frames: the score of the frame just played and the frames won.
+-- Between frames: the score of the frame just played, and when the next one
+-- starts - on the next ten minutes, in the panel's own time.
+local slot_now, next_at = nil, ""
 local function draw_frame_over()
   local w = 58
   local x, y = (W - w) // 2, 21
   plate(x, y, w, 21)
   local l1 = "FRAME"
   local l2 = game.score[1] .. " - " .. game.score[2]
-  local l3 = "FRAMES " .. game.frames[1] .. "-" .. game.frames[2]
+  local l3 = next_at
   px.text(x + (w - px.width(l1)) // 2, y, l1, 255, 170, 0)
   px.text(x + (w - px.width(l2)) // 2, y + 6, l2, 255, 255, 255)
   px.text(x + (w - px.width(l3)) // 2, y + 12, l3, 185, 185, 185)
 end
 
--- ---------------------------------------------------------------- draw
-function draw()
-  local dt = frame_dt()
+-- ---------------------------------------------------------------- the wall clock's frame
+-- The ten-minute slot since 1970 (UTC) the clock is in, from px.now(): the
+-- local date and time less the zone's offset; and the offset, in minutes.
+local function slot_of(n)
+  local y = n.year or 2026
+  local days = 365 * (y - 1970) + (y - 1969) // 4 - (y - 1901) // 100 + (y - 1601) // 400 + (n.yday or 0)
+  local off = floor((n.utc or 0) * 60 + 0.5)
+  return (days * 1440 + n.hour * 60 + n.min - off) // 10, off
+end
+
+-- One step of the play: everything that happens at the table in 1/20 s.
+local function advance(dt)
+  work = work + 400
   ptime = ptime + dt
   if game.msg_t then
     game.msg_t = game.msg_t - dt
     if game.msg_t <= 0 then game.msg, game.msg_t = nil, nil end
   end
-
-  if phase == "start" then
-    local n = px.now()
-    seed = (n.hour * 60 + n.min) * 2654435 + n.yday * 97 + 12345
-    if seed == 0 then seed = 1 end
-    new_frame()
-    local s = plan_break()
-    aim_x, aim_y = s.dx, s.dy
-    begin_aim(s)
-  elseif phase == "think" then
+  if phase == "think" then
     if not plan then start_plan() end
     step_plan()
     if plan.stage == 3 and ptime > 0.6 then
@@ -1058,20 +1078,93 @@ function draw()
     end
   elseif phase == "pause" and ptime > 0.5 then
     if game.over then phase, ptime = "over", 0 else phase, ptime = "think", 0 end
-  elseif phase == "over" and ptime > 4.0 then
-    new_frame()
-    local s = plan_break()
-    begin_aim(s)
   end
+  -- "over": the result stays up until the next slot's break-off
+end
 
-  draw_static()
-  for _, b in ipairs(balls) do
+-- A new frame for a slot: the same one on every panel. The break alternates
+-- slot to slot (Section 3 Rule 3(b)).
+local function break_off(slot, off)
+  slot_now = slot
+  local m = ((slot + 1) * 10 + off) % 1440
+  next_at = string.format("NEXT %02d:%02d", m // 60, m % 60)
+  seed = (slot * 0x9E3779B1) ~ 0x6A09E667
+  if seed == 0 then seed = 1 end
+  for _ = 1, 8 do rand() end
+  game = {player = 1, score = {0, 0}, frames = {0, 0}, brk = 0, starter = slot % 2 + 1,
+          on = "red", in_hand = true, strokes = 0, over = false, msg = nil}
+  plan, stroke = nil, {first = nil, potted = {}, spin = 0}
+  new_frame()
+  local s = plan_break()
+  aim_x, aim_y = s.dx, s.dy
+  begin_aim(s)
+end
+
+-- Steps played in this slot. A frame plays steps until they are done or
+-- their work passes BUDGET (the last may take it over by one step's worth:
+-- 184 thousand instructions at most, fxhost --exact); while more than LAG are
+-- still owed the table says so rather than playing in fast forward. On the
+-- twin (cpi 2.45, fitted to the panel's Lua frames) such a frame took
+-- 122-138 ms against the 500 ms a draw may take.
+local BUDGET, LAG = 150000, 8
+local done = -1
+-- where each ball was before the last step, for drawing between steps
+local PREV_X, PREV_Y = {}, {}
+local function keep_prev()
+  for i = 1, #balls do local b = balls[i]; PREV_X[i], PREV_Y[i] = b.x, b.y end
+end
+
+local function draw_balls(a)
+  for i = 1, #balls do
+    local b = balls[i]
+    local x, y, x0, y0 = b.x, b.y, PREV_X[i], PREV_Y[i]
+    if x0 and abs(x - x0) + abs(y - y0) < 24 then x, y = x0 + (x - x0) * a, y0 + (y - y0) * a end
     if b.alive then
-      draw_sprite(SPRITES[b.kind][1], b.x, b.y)
+      draw_sprite(SPRITES[b.kind][1], x, y)
     elseif b.drop then
-      draw_sprite(SPRITES[b.kind][b.drop < 0.12 and 2 or 3], b.x, b.y)
+      draw_sprite(SPRITES[b.kind][b.drop < 0.12 and 2 or 3], x, y)
     end
   end
+end
+
+local function draw_catching_up(t)
+  draw_static()
+  local w = 58
+  local x, y = (W - w) // 2, 21
+  plate(x, y, w, 15)
+  px.text(x + (w - px.width("LIVE")) // 2, y, "LIVE", 255, 170, 0)
+  px.text(x + (w - px.width("CATCHING UP")) // 2, y + 6, "CATCHING UP", 255, 255, 255)
+  draw_score(t)
+  draw_clock(t)
+end
+
+-- ---------------------------------------------------------------- draw
+function draw()
+  local t = px.t()
+  local slot, off = slot_of(px.now())
+  local target = floor(t * STEPS)            -- steps since the slot began, on the wall clock
+  -- a new slot; or the clock stepped back more than a second: start it again
+  if slot ~= slot_now or done < 0 or target < done - 20 then
+    break_off(slot, off)
+    done = 0
+    keep_prev()
+  end
+  work = 0
+  local from, kept = done, false
+  while done < target and work < BUDGET do
+    if done + 1 == target then keep_prev(); kept = true end
+    advance(STEP)
+    done = done + 1
+  end
+  -- stopped short of the clock: nothing to draw between, so where they are
+  if done > from and not kept then keep_prev() end
+  if target - done > LAG then draw_catching_up(t); return end
+
+  draw_static()
+  -- drawn a step behind the clock, between the last two steps
+  local a = t * STEPS - done
+  if a < 0 then a = 0 elseif a > 1 then a = 1 end
+  draw_balls(a)
 
   local c = byname.white
   if c.alive and (phase == "aim" or phase == "draw" or phase == "strike") then
@@ -1088,7 +1181,6 @@ function draw()
   end
 
   -- the HUD, last of all, so nothing is ever drawn over it
-  local t = px.t()
   if phase == "over" then draw_frame_over() end
   draw_score(t)
   draw_clock(t)

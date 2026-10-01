@@ -43,13 +43,23 @@ overlapping parts, mismatched chip/flash sizes and images too large for OTA slot
 
 ## Outputs
 
-The web flasher reads `docs/firmware/latest/VERSION` and selects one of:
+The web flasher reads `docs/firmware/latest/VERSION` and writes, for the
+Waveshare board, four parts at their own offsets and nothing between them:
 
 ```text
-AnimatedPixelClock-supermini-v<version>-Full.bin
-AnimatedPixelClock-wroom-v<version>-Full.bin
+AnimatedPixelClock-waveshare-v<version>-bootloader.bin   0x0
+AnimatedPixelClock-waveshare-v<version>-partitions.bin   0x8000
+AnimatedPixelClock-waveshare-v<version>-otadata.bin      0xE000
+OTA_ONLY_firmware-v<version>-waveshare.bin               0x10000
+AnimatedPixelClock-waveshare-v<version>-Full.bin         (the merged image, for writing by hand)
 SHA256SUMS.txt
 ```
+
+The settings partition (NVS, 0x9000-0xE000) lies between the partition table
+and the OTA data. The merged Full.bin fills that gap with 0xFF, so writing it
+wipes the settings, the Wi-Fi and the keys even without an erase; the parts do
+not touch it (2026-09-30, tested on a board). The portal's Update now downloads
+the OTA_ONLY image from here too.
 
 These files are committed under `docs/` and published by GitHub Pages from
 `main:/docs`. The filename IDs match `BOARDS` in `docs/flasher.js`.
@@ -65,8 +75,10 @@ pc_stats_monitor_v4.exe
 SHA256SUMS.txt
 ```
 
-- **New device / USB installation:** flash the full `firmware-*.bin` at `0x0`,
-  or use the web flasher. Erasing removes saved settings and animations.
+- **New device / USB installation:** use the web flasher, or flash the full
+  `firmware-*.bin` at `0x0`. Writing the full image by hand wipes the saved
+  settings, the Wi-Fi and the keys even without an erase; the web flasher's
+  "don't erase" keeps them.
 - **Existing device / WiFi update:** upload the matching `OTA_ONLY_*.bin` through
   the clock's Firmware Update page. Do not upload a full image as an OTA update.
 - **Windows:** download and run the EXE. No Python installation is needed.
