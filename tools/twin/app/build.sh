@@ -49,7 +49,7 @@ INSTALL=1; [ "${1:-}" = "--no-install" ] && INSTALL=0
 
 VERSION="$(tr -d '[:space:]' < "$LATEST/VERSION")"                     # v2.7.13
 IMAGE="$LATEST/AnimatedPixelClock-waveshare-$VERSION-Full.bin"
-APP_VERSION="1.4"
+APP_VERSION="1.4.1"
 NAME="TWIN-NickoScopeMatrix-64x128"
 BUNDLE_ID="${TWIN_BUNDLE_ID:-com.nickoscope.TWIN-NickoScopeMatrix-64x128}"
 APP_OUT="${APP_OUT:-}"

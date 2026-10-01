@@ -73,10 +73,16 @@
 //   who       every 15 s  GET /api/info of both: the MAC must still be the pair's; also at once after a
 //                         device answered again and when its uptime jumped (an address changes hands)
 //   effects   when the Lua names or walk switches in /api/panel change, and every 60 s: GET /api/lua
-//                         (web_panel.cpp:968-1062; slow, about 0.5 s on the twin); where the firmware
-//                         gives out the scripts (GET /api/lua/source), each one's SHA-256, read again
-//                         when its size changes, or on the panel every 5 min, on the twin every round
-//                         (our choice: each read holds the panel's loop()). A script is asked for by its
+//                         (web_panel.cpp:968-1062; slow, about 0.5 s on the twin) - nothing more
+//   hashes    where the firmware gives out the scripts (GET /api/lua/source), each one's SHA-256, only to see an
+//                         edit that keeps its length (app 1.4.1; the owner, 2026-10-01): one script of a side at a
+//                         time, never two in a row - hashGap (8 s) between two reads of a side at least, each script
+//                         again about once in hashCircle (5.5 min: 35 scripts, one each 9.4 s); a script new to the
+//                         list or changed in size first, and it is not compared until its SHA-256 is read
+//                         (Effects.unknown). Both sides' are kept in sync-state.json: a start that asks nothing
+//                         reads none at once (the twin runs only while the app does: its scripts cannot change
+//                         meanwhile); a question, which lists what differs, reads all of both (settle). Each read holds the panel's loop() (35 in a row every 5 min held it up
+//                         to 3.8 s each; app 1.4, the owner's pair, 2026-10-01 05:44-06:06). A script is asked for by its
 //                         file's name, exactly as GET /api/lua lists it (uploaded.scripts[].name). One a
 //                         side lists but answers 404 for (NoSuchScript: the panel's LA_GIOCONDA, 30.09 21:23 -
 //                         22:58, a 404 in every round, which the round then failed on) is said once and not
@@ -94,6 +100,14 @@
 //             not held back by it (net_turns.h:47).
 //   failure   a device that does not answer, or a round that failed: the next screen round in 5 s, and
 //             nothing before it - no step read, no effects or settings round (backOff).
+//   long      the rounds that take a while - effects, settings, firmware, a script's SHA-256 - serve the instant events
+//             between any two of their requests (Device.before -> LongRounds.between; app 1.4.1), and a read of theirs
+//             under way when a person's change (or the carousel's step) comes from the side it reads gives way: it is
+//             cut off, the change is carried to the other side, and it is sent again (Device.yields, once at most; never
+//             a write, never the firmware image). A script's source read on its schedule gives way to a change from
+//             either side, and is made again 3 s later at the soonest (Yielded). A person's change waits for no round
+//             (1.4: 1.6-3.8 s in an effects round, 15 s in the 35 reads; GET /api/lua alone is 0.7 s on the panel,
+//             1.1 s on the twin).
 //   events    (2.7.13) POST /api/sync/listen to each side every 25 s - a write that changes nothing on the screen;
 //             with the panel's events coming, its carousel's step is not read but told (followStep); GET /api/panel
 //             asks ?input=N (the gestures after N) in the same read; inside a page: /api/railboard of both before a
@@ -299,8 +313,10 @@
 // owner's override on the twin: climateHa off (sync.py OVERRIDES), so the twin's indoor sensor is not a
 // second device in Home Assistant, and fbAskHa off (firmware 2.7.13), so a twin without an AeroAPI key never
 // has HA fetch a flight board with the owner's key; both are left out of what is compared and put back on
-// the twin whenever they drift. The overrides of 2026-09-29 that kept the trains and flights pages out of the twin's walk and
-// its flight board on ZZZZ "NO REQUESTS" are gone (the owner, 2026-09-30 19:35): while the twin still
+// the twin whenever they drift. fbAskHa is also put off at each start of the twin by the app, whatever the
+// switch says (app 1.4.1, the owner's item 16: askHaOffAtStart, main.swift holdAskHa). The overrides of
+// 2026-09-29 that kept the trains and flights pages out of the twin's walk and its flight board on ZZZZ
+// "NO REQUESTS" are gone (the owner, 2026-09-30 19:35): while the twin still
 // holds what they left (Settings.residue) and has never been compared on it since, the panel's value goes
 // to the twin, whichever way sync aligns, and the airport ZZZZ they added is removed from the twin.
 //
@@ -354,6 +370,9 @@ struct SyncDown: Error { let side: Side; let msg: Msg }
 struct SyncWait: Error { let msg: Msg; init(_ m: Msg) { msg = m } }
 /// Sync was switched off, or the pair is being changed, while something was to be written: nothing more is.
 struct SyncStopped: Error {}
+/// A script's SHA-256 read on its schedule was cut off: a person's change came meanwhile, and goes first. The read is
+/// made again a few seconds later (SyncEngine.hashTick), never at once.
+struct Yielded: Error {}
 /// A side restarted: a read of its uptime (/api/status or /api/info) came back smaller than the one before.
 /// Whatever the round was about to do was decided on the side as it was before, so the round stops there,
 /// and the restart is dealt with first (SyncEngine.restarts).
@@ -495,6 +514,17 @@ final class Device {
     /// Told before every request that writes is sent (the twin's: a write may hold its carousel - sync's
     /// hold, not a person's; SyncEngine.sawTwin).
     var willWrite: () -> Void = {}
+    /// Called before every request, before its pace is kept: inside a round that takes a while, what came meanwhile
+    /// (the instant events) is served here, between any two of its requests (LongRounds.between). What it throws
+    /// stops the request: nothing is sent.
+    var before: () throws -> Void = {}
+    /// A read of a round that takes a while gives way while this is true (SyncEngine.yieldNow: a person's change, or the
+    /// carousel's step, came from this very side - it goes to the other one, which is free): it is cut off, what came is
+    /// served (before), and it is sent again - maxYields times at most, then read whole. So a person's change waits for no
+    /// read of such a round (GET /api/lua: 0.7 s on the panel, 1.1 s on the twin). Never a write (it may have landed),
+    /// never the firmware image (one attempt: the whole transfer). Looked at every 50 ms while a read runs.
+    var yields: () -> Bool = { false }
+    static let maxYields = 1
 
     init(_ side: Side, _ address: String) { self.side = side; self.address = address; pace = side == .panel ? Device.panelPace : 0 }
     static let panelPace: TimeInterval = 0.15
@@ -539,16 +569,20 @@ final class Device {
     /// 503 without it is the answer. A transport fault is retried for a request that only reads, up to
     /// ATTEMPTS in all - a POST may have landed. QUIET: a write that changes nothing on the screen (the events'
     /// subscription) - willWrite is not told; UNSTOPPABLE: sent whatever the switch says (only the subscription's
-    /// end, POST /api/sync/listen {"stop":true}, which stops the device sending).
+    /// end, POST /api/sync/listen {"stop":true}, which stops the device sending). A read gives way (yields); YIELD, a read
+    /// on a schedule that gives way of its own: true cuts it off, and it is not sent again here (Yielded).
     func send(_ method: String, _ path: String, query: [(String, String)] = [], body: Data? = nil, type: String? = nil,
-              timeout: TimeInterval = 15, limit: Int = 2 << 20, attempts: Int = 3, quiet: Bool = false, unstoppable: Bool = false) throws -> Answer {
+              timeout: TimeInterval = 15, limit: Int = 2 << 20, attempts: Int = 3, quiet: Bool = false, unstoppable: Bool = false,
+              yield: (() -> Bool)? = nil) throws -> Answer {
         var c = URLComponents(string: "http://\(address)\(path)")!
         if !query.isEmpty { c.queryItems = query.map { URLQueryItem(name: $0.0, value: $0.1) } }
         guard let url = c.url else { throw SyncError(M("bad address \(address)", "неверный адрес \(address)")) }
         let write = writes(method, path), stop = !unstoppable && stoppable(method, path), allowed = mayWrite
-        var attempt = 0
+        let gives = !write && path != "/api/firmware/image", y = yields
+        var attempt = 0, yielded = 0
         while true {
             attempt += 1
+            try before()
             if stop && !allowed() { throw SyncStopped() }
             if write && !quiet { willWrite() }
             var req = URLRequest(url: url, timeoutInterval: timeout)
@@ -556,9 +590,16 @@ final class Device {
             if let type { req.setValue(type, forHTTPHeaderField: "Content-Type") }
             if write || Device.syncRoutes.contains(path) { req.setValue("1", forHTTPHeaderField: "X-Twin-Sync") }
             if pace > 0 { let wait = lastEnd.addingTimeInterval(pace).timeIntervalSinceNow; if wait > 0 { Thread.sleep(forTimeInterval: wait) } }
-            let (a, err, stopped) = Device.exchange(req, limit: limit, cancel: stop ? { !allowed() } : nil)
+            let mayYield = gives && (yield != nil || yielded < Device.maxYields)
+            let cut: () -> Bool = { yield?() ?? y() }
+            let cancel: (() -> Bool)? = stop || mayYield ? { (stop && !allowed()) || (mayYield && cut()) } : nil
+            let (a, err, stopped) = Device.exchange(req, limit: limit, cancel: cancel, every: mayYield ? 0.05 : 0.2)
             lastEnd = Date()
-            if stopped { throw SyncStopped() }
+            if stopped {
+                if stop && !allowed() { throw SyncStopped() }
+                if yield != nil { throw Yielded() }                  // a read on a schedule: made again later, not now
+                yielded += 1; attempt -= 1; continue                 // gave way: what came is served (before), and it goes again
+            }
             if let a, a.status == 503, let wait = a.retryAfter, attempt < 6 {
                 Thread.sleep(forTimeInterval: min(wait, 30) + 0.4 * Double(attempt)); continue
             }
@@ -569,8 +610,8 @@ final class Device {
         }
     }
 
-    /// The request, waited for in steps of 0.2 s: CANCEL true cuts it off (the third value says so).
-    static func exchange(_ req: URLRequest, limit: Int, cancel: (() -> Bool)? = nil) -> (Answer?, String?, Bool) {
+    /// The request, waited for in steps of EVERY seconds: CANCEL true cuts it off (the third value says so).
+    static func exchange(_ req: URLRequest, limit: Int, cancel: (() -> Bool)? = nil, every: TimeInterval = 0.2) -> (Answer?, String?, Bool) {
         let sem = DispatchSemaphore(value: 0)
         var out: (Answer?, String?) = (nil, "no answer")
         let task = session.dataTask(with: req) { d, r, e in
@@ -588,7 +629,7 @@ final class Device {
         }
         task.resume()
         var stopped = false
-        while sem.wait(timeout: .now() + 0.2) == .timedOut {
+        while sem.wait(timeout: .now() + every) == .timedOut {
             if !stopped, let cancel, cancel() { stopped = true; task.cancel() }
         }
         return stopped ? (nil, "stopped", true) : (out.0, out.1, false)
@@ -675,8 +716,9 @@ final class Device {
 
     /// A script's bytes by its file's name - exactly as GET /api/lua lists it (uploaded.scripts[].name), never
     /// the name its banner shows. A 404 for a script the list has (NoSuchScript): the device will not give it out.
-    func luaSource(_ stem: String) throws -> Data {
-        let a = try send("GET", "/api/lua/source", query: [("name", stem)], timeout: 30, limit: 1 << 20)
+    /// YIELD: a read on the schedule (SyncEngine.hashTick), cut off when it turns true (Yielded).
+    func luaSource(_ stem: String, yield: (() -> Bool)? = nil) throws -> Data {
+        let a = try send("GET", "/api/lua/source", query: [("name", stem)], timeout: 30, limit: 1 << 20, yield: yield)
         if a.status == 404 { throw NoSuchScript(side: side, stem: stem, why: a.why) }
         guard a.status == 200, a.header("X-Lua-Name") == stem else { throw refused("GET /api/lua/source?name=\(stem)", a) }
         return a.data
@@ -687,6 +729,21 @@ final class Device {
         let a = try send("GET", "/api/firmware/image", timeout: 180, limit: 8 << 20, attempts: 1)
         guard a.status == 200 else { throw refused("GET /api/firmware/image", a) }
         return a
+    }
+}
+
+/// The rounds that take a while (SyncEngine: effects, settings, firmware, a script's SHA-256 on its schedule) and what is
+/// served between any two of their requests: each Device's `before` calls between(), which, inside such a round (run) and
+/// not inside a serving itself, calls serve (SyncEngine.serveEvents: the instant events that came meanwhile, carried now).
+/// A serving's own requests go through between() too, and are not served again (no recursion).
+final class LongRounds {
+    private(set) var depth = 0, serving = false
+    var serve: () throws -> Void = {}
+    func run<T>(_ f: () throws -> T) rethrows -> T { depth += 1; defer { depth -= 1 }; return try f() }
+    func between() throws {
+        guard depth > 0, !serving else { return }
+        serving = true; defer { serving = false }
+        try serve()
     }
 }
 
@@ -766,11 +823,26 @@ struct Effects {
     var hash: [String: String] = [:]    // shown name -> SHA-256 of its bytes, where the device gives them out
     var stem: [String: String] = [:]    // shown name -> its file's stem on this device
     var names: [String] = []            // effects[], in order: the index for walk
+    var files: [String] = []            // uploaded.scripts[].name, in the device's order
     var walk: [String: Bool] = [:]
     var byHash = false                  // compared by content (GET /api/lua/source), else by size
+    /// Compared by content, and no SHA-256 known for the size it has now (new, or its size changed): its read is
+    /// due first (SyncEngine.hashNext); until then it is not compared (compared(base:)).
+    var unknown: Set<String> = []
     var fields: [String: String] {
         var f = ["mode": byHash ? "hash" : "size"]
         for (n, b) in bytes { f["s." + n] = hash[n].map { "h" + $0 } ?? "\(b)"; f["w." + n] = walk[n] == false ? "0" : "1" }
+        return f
+    }
+    /// The fields as compared with the base B: an effect whose content is not known yet keeps the base's value - not a
+    /// change yet, nor a removal; one new to the list is not there yet, its walk switch either. Once its SHA-256 is
+    /// read, it is compared as ever.
+    func compared(base b: [String: String]?) -> [String: String] {
+        var f = fields
+        for n in unknown {
+            f["s." + n] = b?["s." + n]
+            if b?["s." + n] == nil { f["w." + n] = nil }
+        }
         return f
     }
     /// Whether effect N is the same script on both: by content where both know it, else by size.
@@ -1050,9 +1122,15 @@ final class SyncEngine {
     // Under strain (webRefused or allocFails grew): the portal's own cadence, and more than
     // NET_TURN_QUIET_MS = 1500 between requests (net_turns.h:32, 47); for 10 min, our choice.
     static let strainedFastEvery: TimeInterval = 5, strainedPace: TimeInterval = 1.6, strainFor: TimeInterval = 600
-    // A script's SHA-256 is read again after this long (or when its size changes): the panel's every 5 min,
-    // since each read holds its loop(); the twin's every round. Our choice.
-    static let hashAge: [Side: TimeInterval] = [.panel: 300, .twin: 20]
+    // A script's SHA-256 (GET /api/lua/source) is read only to see an edit that keeps its length - a size that changed
+    // or a script new to the list is seen by GET /api/lua - one script of a side at a time, never two in a row: at
+    // least hashGap between two reads of a side, and each script read again about once in hashCircle (the slot,
+    // hashCircle over its scripts, hashGap at least). A script with no SHA-256 for its size goes first. Our choice:
+    // 35 reads in a row every 5 min held the panel's loop() up to 3.8 s each and a person's change waited 15 s, and its
+    // free heap fell 38184 -> 28128 B; the twin's 35 every minute (1.2 MB) loaded the engine (the owner's pair, app 1.4,
+    // 2026-10-01 05:44-06:06).
+    // A read cut off for a person's change is made again this long after at the soonest. Our choice.
+    static let hashGap: TimeInterval = 8, hashCircle: TimeInterval = 330, hashRetry: TimeInterval = 3
     static let fwWatchMax: TimeInterval = 300, confirmWithin: TimeInterval = 300
     // A failed transfer to the twin: tried again after these pauses, and after CARRY_TRIES failures in a row
     // not until "Sync now" - each one may read the whole image out of the panel. Our choice.
@@ -1165,6 +1243,8 @@ final class SyncEngine {
     /// An answer that waits for the effects of both sides to be known before it is checked and done.
     private var heldReply: (id: String, reply: Reply)?
     private var alignRetry = Date.distantPast, fxWaitSince: Date?
+    /// The last readAll read every script's content (settle): a question asked now lists them as they are.
+    private var fxFresh = false
     /// A side whose effects cannot be read at all with its firmware (no Lua, no script store, no filesystem):
     /// not waited for. The rest of "unknown" is the /api/lua/source probe without an answer, which is.
     private var fxAbsent: [Side: Bool] = [:]
@@ -1203,7 +1283,12 @@ final class SyncEngine {
     private var docs: [Side: [String: J]] = [:]
     private var fw: [Side: Firmware] = [:]
     private var caps: [Side: Caps] = [:]
-    private var hashes: [Side: [String: (bytes: Int, hash: String, at: Date)]] = [:]
+    /// Each side's scripts' SHA-256 (16 hex digits) by file name, with the size it was read for and when (kept in
+    /// sync-state.json, without when); the last read of a side on the schedule (hashNext, hashTick).
+    private var hashes: [Side: [String: (bytes: Int, hash: String, at: Date)]] = [:], hashLast: [Side: Date] = [:]
+    /// The rounds that take a while (effects, settings, firmware, a script's SHA-256): the instant events are served
+    /// before each of their requests (LongRounds.between, serveEvents).
+    private let rounds = LongRounds()
     private var pendingFx: [Side: [String: Int]] = [:]              // effects that could not be carried yet
     private var noted = Set<String>()
     private var nextFast = Date.distantPast, nextSlow = Date.distantPast, nextEffects = Date.distantPast, nextVerify = Date.distantPast
@@ -1286,7 +1371,10 @@ final class SyncEngine {
     /// not read since (nothing is clicked there until it has).
     private var insideDone: [Side: Date] = [:], stale = Set<Side>(), serving = false
 
-    init(dataDir: URL) { self.dataDir = dataDir }
+    init(dataDir: URL) {
+        self.dataDir = dataDir
+        rounds.serve = { [weak self] in try self?.serveEvents() }
+    }
 
     func start() {
         guard thread == nil else { return }
@@ -1312,9 +1400,11 @@ final class SyncEngine {
     private func phase(_ m: Msg) { if locked({ _status.phase.en != m.en }) { publish { $0.phase = m } } }
 
     /// One line in <dataDir>/sync.log and the status: "2026-09-30 12:00:01.234 panel→twin screen page WARP".
+    private let logLock = NSLock()
     private func log(_ dir: String, _ what: String, _ m: Msg, problem: Bool = false, sticky: Bool = false) {
         let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd HH:mm:ss.SSS"
         let line = "\(f.string(from: Date())) \(dir) \(what) \(T(m))\n"
+        logLock.lock(); defer { logLock.unlock() }                     // the worker, and the app's own lines (note)
         // A walking carousel writes a line a slot: past logKeep bytes the log becomes sync.log.1 (the one
         // before is dropped) and a new one starts.
         if let size = (try? FileManager.default.attributesOfItem(atPath: logFile.path))?[.size] as? Int, size > SyncEngine.logKeep {
@@ -1325,6 +1415,8 @@ final class SyncEngine {
         else { try? line.write(to: logFile, atomically: false, encoding: .utf8) }
         publish { if problem { $0.problem = (Date(), m); $0.sticky = sticky } else { $0.last = (Date(), m); $0.problem = nil } }
     }
+    /// A line of the app's own in sync.log (main.swift: the owner's override at the twin's start, holdAskHa), from any thread.
+    func note(_ what: String, _ m: Msg) { log("note", what, m) }
     /// A standing condition: logged once (until sync starts again).
     private func noteOnce(_ key: String, _ m: Msg) { if noted.insert(key).inserted { log("note", "-", m, problem: true, sticky: true) } }
 
@@ -1398,23 +1490,27 @@ final class SyncEngine {
             let near = !forced && (stepAt.map { $0.timeIntervalSince(now) < SyncEngine.stepQuiet } ?? false)
             quietSince = near ? (quietSince ?? now) : nil
             let quiet = needScreenRound || (near && now.timeIntervalSince(quietSince ?? now) < SyncEngine.stepQuietMax)
+            // The rounds that take a while serve the instant events between any two of their requests (long, between).
             if (fxDue || forced || now >= nextEffects) && !quiet {
                 fxDue = false
-                try effectsRound(); nextEffects = Date().addingTimeInterval(SyncEngine.effectsEvery)
+                try long { try effectsRound() }; nextEffects = Date().addingTimeInterval(SyncEngine.effectsEvery)
+            } else if !quiet {
+                // A script's SHA-256 on its schedule: one read of one side at most (hashNext).
+                try long { for s in sides { if try hashTick(s, effects[s]) { break } } }
             }
             guard aligned else { return }
             if (forced || now >= nextSlow) && !quiet {
                 fwWatch = nil
-                try slowRound(market: forced || slowRounds % 5 == 0); slowRounds += 1
+                try long { try slowRound(market: forced || slowRounds % 5 == 0) }; slowRounds += 1
                 nextSlow = Date().addingTimeInterval(settingsEvery)
             } else if let w = fwWatch, now >= w, !quiet {
                 fwWatch = Date().addingTimeInterval(15)                  // a new image: its /api/info only, again if this fails
-                for s in sides { try readDocs(s, ["/api/info"]) }
+                try long { for s in sides { try readDocs(s, ["/api/info"]) } }
                 fwWatch = nil
                 firmwareRound()
             }
             guard aligned else { return }
-            try firmwareDue()
+            try long { try firmwareDue() }
             saveState()
             phase(M("on", "включена"))
             if locked({ _status.problem != nil && !_status.sticky }) { publish { $0.problem = nil } }
@@ -1478,7 +1574,7 @@ final class SyncEngine {
         dev = [:]; pairKey = ""; consented = false; consentKept = false; aligned = false; resumed = false; needDirection = false; question = nil; holdWhy = nil
         heldReply = nil; alignRetry = .distantPast; fxWaitSince = nil; fxAbsent = [:]; fxAlignFrom = nil; imageCache = nil
         refusedFx = [:]; noSource = [:]; shifted = [:]; renameRefused = [:]
-        base = [:]; firmwareBase = [:]; screen = [:]; screenAt = [:]; pageReadAt = [:]; wrote = [:]; effects = [:]; docs = [:]; fw = [:]; caps = [:]; hashes = [:]
+        base = [:]; firmwareBase = [:]; screen = [:]; screenAt = [:]; pageReadAt = [:]; wrote = [:]; effects = [:]; docs = [:]; fw = [:]; caps = [:]; hashes = [:]; hashLast = [:]
         stepWin = nil; stepAt = nil; stepTries = 0; quietSince = nil; walkHeld = false; twinTouch = nil; twinHoldSeen = nil; twinWroteAt = .distantPast; personSaid = false
         uptimeSeen = [:]; restartSeen = [:]; needScreenRound = false; twinWrote = [:]; twinLost = nil
         forgetInside(); ev = [:]; nextListen = .distantPast
@@ -1521,6 +1617,8 @@ final class SyncEngine {
             guard f.mac == tMac else { throw SyncError(M("\(tAddr) answers with MAC \(f.mac), not this twin's \(tMac)", "\(tAddr) отвечает с MAC \(f.mac), а у этого двойника \(tMac)")) }
             d.mayWrite = { [weak self] in self?.writesAllowed ?? false }
             d.willWrite = { [weak self] in self?.twinWroteAt = Date(); self?.lastWrite[.twin] = Date() }
+            d.before = { [weak rounds] in try rounds?.between() }
+            d.yields = { [weak self] in self?.yieldNow(from: .twin) ?? false }
             dev[.twin] = d; fw[.twin] = f
             // A twin at another address, of the same pair: a restart is one, as ever (a new pair starts afresh).
             if "\(fw[.panel]?.mac ?? "")|\(f.mac)" == pairKey { try sawUptime(.twin, info.i("uptime"), at: Date()) }
@@ -1538,6 +1636,8 @@ final class SyncEngine {
             }
             d.mayWrite = { [weak self] in self?.writesAllowed ?? false }
             d.willWrite = { [weak self] in self?.lastWrite[.panel] = Date() }
+            d.before = { [weak rounds] in try rounds?.between() }
+            d.yields = { [weak self] in self?.yieldNow(from: .panel) ?? false }
             dev[.panel] = d; fw[.panel] = f
             publish { $0.peer = "\(f.name) (\(pAddr), \(f.mac))" }
             if "\(f.mac)|\(fw[.twin]!.mac)" == pairKey { try sawUptime(.panel, info.i("uptime"), at: Date()) }
@@ -1548,7 +1648,7 @@ final class SyncEngine {
             stepWin = nil; stepAt = nil; stepTries = 0; twinTouch = nil; twinHoldSeen = nil
             uptimeSeen = [:]; restartSeen = [:]; twinWrote = [:]; twinLost = nil
             wantPanel = nil; wantTwin = nil; inFlight = nil; heldReply = nil; fxAlignFrom = nil; imageCache = nil
-            refusedFx = [:]; noSource = [:]; shifted = [:]; renameRefused = [:]
+            refusedFx = [:]; noSource = [:]; shifted = [:]; renameRefused = [:]; hashes = [:]; hashLast = [:]   // another panel's scripts
             forgetInside(); ev = [:]; nextListen = .distantPast; locked { _subs = [:]; _datagrams = [] }
             pairKey = key; consented = false; consentKept = false; aligned = false; loadState()
             nextVerify = Date().addingTimeInterval(SyncEngine.verifyEvery)
@@ -1697,8 +1797,11 @@ final class SyncEngine {
     /// The uploaded scripts; nil when they cannot be known now - a build without Lua (404) or without the
     /// script store (no "uploaded"), a filesystem that did not mount (count 0 and fsFree 0:
     /// luaStoreFreeBytes, lua_store.cpp:126), or whether the scripts can be read is not known yet.
-    /// Unknown is never taken for "no effects".
-    private func readEffects(_ s: Side) throws -> Effects? {
+    /// Unknown is never taken for "no effects". Only GET /api/lua is read: each script's SHA-256 is the one read for the
+    /// size it has now (hashes), and a script with none - new, or its size changed - is unknown (Effects.unknown): its
+    /// read comes first on the schedule (hashNext), and it is compared once it is made. SETTLE: every script is read now,
+    /// one after another - for a question, which lists what differs (readAll), and for effects aligned late.
+    private func readEffects(_ s: Side, settle: Bool = false) throws -> Effects? {
         // Absent for good with this firmware, and not waited for; only the probe below can be "not now".
         guard let lua = try device(s).get("/api/lua"), let up = lua.o("uploaded") else { fxAbsent[s] = true; return nil }
         let scripts = (up["scripts"] as? [J]) ?? []
@@ -1710,33 +1813,112 @@ final class SyncEngine {
         for (i, n) in e.names.enumerated() { e.walk[n] = i < walk.count ? walk[i] : true }
         for sc in scripts {
             guard let stem = sc.s("name"), let b = sc.i("bytes") else { continue }
-            e.bytes[shownName(stem)] = b; e.stem[shownName(stem)] = stem
+            e.bytes[shownName(stem)] = b; e.stem[shownName(stem)] = stem; e.files.append(stem)
         }
         noSource[s] = noSource[s]?.filter { e.stem.values.contains($0.key) }            // left the list: asked again if it comes back
         guard let byHash = luaCap(s) else { return nil }
         e.byHash = byHash
-        if byHash { for (n, stem) in e.stem { try serveEvents(); e.hash[n] = try scriptHash(s, stem: stem, bytes: e.bytes[n]!) } }
+        guard byHash else { return e }
+        for stem in e.files {
+            let n = shownName(stem), b = e.bytes[n]!
+            if settle && noSource[s]?[stem] != b { e.hash[n] = try scriptHash(s, stem: stem, bytes: b) }
+            else if let c = hashes[s]?[stem], c.bytes == b { e.hash[n] = c.hash }
+            else if noSource[s]?[stem] == b { continue }                            // not given out: by size until it changes
+            else { e.unknown.insert(n) }
+        }
         return e
     }
 
-    /// A script's SHA-256 (16 hex digits), read again when its size changed or every hashAge. A script the side lists
-    /// and does not give out (NoSuchScript: the panel's LA_GIOCONDA, 30.09 21:23-22:58, a 404 in every round) is
-    /// asked for once: then its last hash of that size, or none - compared by size - until its size changes.
-    private func scriptHash(_ s: Side, stem: String, bytes: Int) throws -> String? {
+    /// Side S runs another firmware: what was read of its scripts stays known, and is read again first, one at a time on
+    /// the schedule (not all at once, as before 1.4.1).
+    private func ageHashes(_ s: Side) { hashes[s] = hashes[s]?.mapValues { ($0.bytes, $0.hash, Date.distantPast) } }
+
+    /// The SHA-256s known now, put into E: a read made since E was read (hashTick) makes its effect known.
+    private func knownNow(_ e: inout Effects, _ s: Side) {
+        for n in e.unknown {
+            guard let stem = e.stem[n], let c = hashes[s]?[stem], c.bytes == e.bytes[n] else { continue }
+            e.hash[n] = c.hash; e.unknown.remove(n)
+        }
+    }
+
+    /// A script's SHA-256 (16 hex digits), read now. A script the side lists and does not give out (NoSuchScript: the
+    /// panel's LA_GIOCONDA, 30.09 21:23-22:58, a 404 in every round) is asked for once: then its last hash of that size,
+    /// or none - compared by size - until its size changes. What is read is kept for the size it has, also when the list
+    /// said another (then this throws: the list is read again). YIELDING: the read on the schedule - a person's change
+    /// from either side cuts it off (Yielded): a big script's source holds the panel's loop() up to 3.8 s.
+    private func scriptHash(_ s: Side, stem: String, bytes: Int, yielding: Bool = false) throws -> String? {
         let c = hashes[s]?[stem], old = c?.bytes == bytes ? c?.hash : nil
-        if let c, c.bytes == bytes, Date().timeIntervalSince(c.at) < SyncEngine.hashAge[s]! { return c.hash }
         if noSource[s]?[stem] == bytes { return old }
         let d: Data
-        do { d = try device(s).luaSource(stem) } catch let e as NoSuchScript {
+        do { d = try device(s).luaSource(stem, yield: yielding ? { [weak self] in self?.yieldNow(from: nil) ?? false } : nil) }
+        catch let e as NoSuchScript {
             noSource[s, default: [:]][stem] = bytes
             noteOnce("nosrc-\(s)-\(stem)-\(bytes)", M("\(s.word.en) lists the script \(stem) (\(bytes) B), but GET /api/lua/source?name=\(stem) answers 404 (\(e.why)): it is compared by size, and not asked for again until its size changes",
                                                        "\(s.word.ru) перечисляет скрипт \(stem) (\(bytes) Б), но GET /api/lua/source?name=\(stem) отвечает 404 («\(e.why)»): сравниваю его по размеру и не запрашиваю снова, пока размер не изменится"))
             return old
         }
-        guard d.count == bytes else { throw SyncError(M("\(stem): \(d.count) bytes read, the list says \(bytes)", "\(stem): прочитано \(d.count) байт, в списке \(bytes)")) }
         let h = String(sha256Hex(d).prefix(16))
-        hashes[s, default: [:]][stem] = (bytes, h, Date())
+        hashes[s, default: [:]][stem] = (d.count, h, Date())
+        guard d.count == bytes else { throw SyncError(M("\(stem): \(d.count) bytes read, the list says \(bytes)", "\(stem): прочитано \(d.count) байт, в списке \(bytes)")) }
         return h
+    }
+
+    /// The slot of a side with N scripts read on the schedule: hashCircle over them, hashGap at least.
+    static func hashSlot(_ n: Int) -> TimeInterval { max(hashGap, hashCircle / Double(max(n, 1))) }
+    /// The next script's SHA-256 to read on a side, and from when: SCRIPTS its files in the device's order, with their
+    /// sizes; CACHE the size each one was read for and when; NOSOURCE the ones it does not give out (with their size
+    /// then: not read); LAST the side's last read. First a script with no SHA-256 for the size it has (new to the list,
+    /// or its size changed) - the first such in the list - hashGap after LAST; else the one read longest ago, a slot
+    /// (hashSlot) after LAST - so each is read again about once in hashCircle, one at a time. Nil: nothing to read.
+    static func hashNext(scripts: [(stem: String, bytes: Int)], cache: [String: (bytes: Int, at: Date)], noSource: [String: Int],
+                         last: Date) -> (stem: String, bytes: Int, at: Date)? {
+        let readable = scripts.filter { noSource[$0.stem] != $0.bytes }
+        if let f = readable.first(where: { cache[$0.stem]?.bytes != $0.bytes }) { return (f.stem, f.bytes, last.addingTimeInterval(hashGap)) }
+        guard let o = readable.min(by: { cache[$0.stem]!.at < cache[$1.stem]!.at }) else { return nil }
+        return (o.stem, o.bytes, last.addingTimeInterval(hashSlot(readable.count)))
+    }
+
+    /// The read due now on side S by its schedule (hashNext), one at most, of the scripts E lists: true when it was made.
+    /// The effects round is asked for only when the content read is not what the side's base holds for that effect (an
+    /// edit that kept the length, or a script new to the list) - a script read again as it was asks for nothing (GET
+    /// /api/lua is 0.7 s on the panel). Inside a round that takes a while, the read gives way to a datagram
+    /// A person's change cuts the read off (Yielded): it is made again hashRetry later. A list that changed meanwhile (the
+    /// size read is not the list's): the effects round reads it again. INROUND: made by the effects round itself, which
+    /// compares what it read at once.
+    @discardableResult
+    private func hashTick(_ s: Side, _ e: Effects?, inRound: Bool = false) throws -> Bool {
+        guard let e, e.byHash else { return false }
+        let scripts = e.files.compactMap { f in e.bytes[shownName(f)].map { (stem: f, bytes: $0) } }
+        let cache = (hashes[s] ?? [:]).mapValues { (bytes: $0.bytes, at: $0.at) }
+        guard let due = SyncEngine.hashNext(scripts: scripts, cache: cache, noSource: noSource[s] ?? [:], last: hashLast[s] ?? .distantPast),
+              Date() >= due.at else { return false }
+        hashLast[s] = Date()
+        let h: String?
+        do { h = try scriptHash(s, stem: due.stem, bytes: due.bytes, yielding: true) }
+        catch is Yielded {
+            // Cut off for a person's change: carried now. The read is made again hashRetry later at the soonest - after the
+            // side's screen round (every 3 s) - never two of them in a row.
+            hashLast[s] = Date().addingTimeInterval(SyncEngine.hashRetry - SyncEngine.hashGap)
+            try serveEvents()
+            return false
+        } catch is SyncError { hashLast[s] = Date(); fxDue = true; return true }
+        hashLast[s] = Date()                                             // the gap counts from the end of a read
+        if let h, !inRound, base[s]?["effects"]?["s." + shownName(due.stem)] != "h" + h { fxDue = true }
+        if var cur = effects[s] { knownNow(&cur, s); effects[s] = cur }
+        return true
+    }
+
+    /// Whether a datagram waits that a read gives way to: a person's change or gesture (by knob, ir, http) or the leading
+    /// carousel's step (by carousel) - from side SIDE, or from either (nil) - or the twin's page told of a person there.
+    /// Not sync's own write coming back, not "auto" or the night's schedule. Asked from the worker only (ev).
+    private func eventWaits(from side: Side?) -> Bool {
+        let (got, woke) = locked { (_datagrams, _wakeAt.map { $0 <= Date() } ?? false) }
+        if woke && side != .panel { return true }
+        return got.contains { g in
+            guard let o = (try? JSONSerialization.jsonObject(with: g.data)) as? J, let by = o.s("by"), SyncEngine.person(by) || by == "carousel" else { return false }
+            guard let side, let e = ev[side] else { return side == nil }
+            return e.since != nil && e.host == g.ip && (e.port == nil || e.port == g.port)
+        }
     }
 
     /// The effects of side S as they are now; an error when they cannot be known.
@@ -1750,7 +1932,6 @@ final class SyncEngine {
 
     private func readDocs(_ s: Side, _ routes: [String]) throws {
         for r in routes {
-            try serveEvents()                                              // it may read the screen too: kept as read
             let doc = try device(s).get(r)
             docs[s, default: [:]][r] = doc
             if r == "/api/info", let doc {
@@ -1771,12 +1952,17 @@ final class SyncEngine {
     private var holdingNoAsk: Bool { SyncEngine.holdsNoAsk(export: docs[.twin]?["/api/export"], board: docs[.twin]?["/api/flightboard"]) }
     private func digests(_ f: J) -> [String: String] { f.mapValues { digest($0) } }
 
-    private func readAll() throws {
+    /// Everything of both sides. SETTLE, for a question (it lists what differs): every script's content read now (readEffects).
+    /// Without it the scripts read before stand (kept in sync-state.json for a resume that asks nothing: the switch stayed
+    /// on, and the twin runs only while the app does, so neither side's scripts were read meanwhile), and one whose size
+    /// changed goes first on the schedule, as in any round.
+    private func readAll(settle: Bool = false) throws {
         for s in sides {
             screen[s] = try readScreen(s); screenAt[s] = Date()
             try readDocs(s, SyncEngine.settingsRoutes + ["/api/market"])
-            effects[s] = try readEffects(s)
+            effects[s] = try readEffects(s, settle: settle)
         }
+        fxFresh = settle
     }
 
     // MARK: the questions
@@ -1823,6 +2009,11 @@ final class SyncEngine {
     }
 
     private func askDirectionNow(_ why: Msg? = nil) {
+        // The question lists what differs: every script's content read now, unless this very pass did (fxFresh).
+        if !fxFresh {
+            for s in sides where effects[s] != nil { if let e = try? readEffects(s, settle: true) { effects[s] = e } }
+            fxFresh = true
+        }
         var sum = summary(); sum.id = UUID().uuidString; sum.why = why
         sum.pressReturnForTesting = testInt("syncEnableReturnForTesting") == 2
         question = Question(id: sum.id, kind: .direction, sig: sum.sig)
@@ -1896,11 +2087,13 @@ final class SyncEngine {
         }
         if question != nil { throw SyncWait(M("waiting for your answer", "жду ответа")) }
         // Waiting for the effects: they alone are read again, not the rest - then everything, for the question.
-        let waited = fxWaitSince != nil
-        if waited { for s in sides where effects[s] == nil && fxAbsent[s] == false { effects[s] = try readEffects(s) } }
-        else { try readAll() }
+        // A resume with the consent kept asks nothing: the scripts read before stand (no batch of reads at a start); any
+        // question reads them all (settle).
+        let waited = fxWaitSince != nil, settle = !(resumed && !needDirection && consentKept)
+        if waited { for s in sides where effects[s] == nil && fxAbsent[s] == false { effects[s] = try readEffects(s, settle: settle) } }
+        else { try readAll(settle: settle) }
         guard effectsReady() else { throw SyncWait(SyncEngine.waitingForEffects) }
-        if waited { try readAll() }
+        if waited { try readAll(); fxFresh = settle }                // the side waited for read just now, the other before
         if resumed && !needDirection {
             if let why = resumeNeedsDirection() { needDirection = true; holdWhy = why; askDirectionNow(why) } else { try resume() }
         } else { askDirectionNow(holdWhy) }
@@ -1911,7 +2104,7 @@ final class SyncEngine {
     /// of both, if a side's are not known just now (the answer is held until they are, fxWaitMax at most) -
     /// and if anything the question listed changed meanwhile, it is asked again with the fresh list.
     private func answered(_ q: Question, _ r: Reply) throws {
-        try readAll()
+        try readAll()                                                  // the scripts as the question read them a moment ago
         guard effectsReady() else { heldReply = (q.id, r); throw SyncWait(SyncEngine.waitingForEffects) }
         question = nil
         switch (q.kind, r) {
@@ -2709,14 +2902,25 @@ final class SyncEngine {
         wakeSem.signal()
     }
 
-    /// Between two reads of a round that takes a while (the settings', the effects'): what came meanwhile is carried now,
-    /// not after the round - its reads come before any of its writes, and what this carries is the screen's and the
-    /// clicks', which those rounds do not decide. Not inside itself, not before both confirmations.
+    /// Between any two requests of a round that takes a while (the effects', the settings', the firmware's, a script's
+    /// SHA-256 on its schedule; LongRounds): what came meanwhile is carried now, not after the round - what this carries is
+    /// the screen's and the clicks', which those rounds do not decide, and a side whose effect list such a round wrote is
+    /// read again before anything is carried to it (listMoved). Not inside itself, not before both confirmations. Not in
+    /// the screen round: it has read both screens and decides on them.
     private func serveEvents() throws {
         guard aligned, !serving, locked({ !_datagrams.isEmpty }) || insideQ.first.map({ $0.at <= Date() }) == true else { return }
         serving = true; defer { serving = false }
         try drainEvents(); try runInside()
     }
+    /// A read of side SIDE gives way now (Device.yields; nil: a read on the schedule, hashTick): inside a round that takes a
+    /// while, not inside a serving, both confirmations given, and a datagram waits for it (eventWaits). From the worker only.
+    private func yieldNow(from side: Side?) -> Bool { rounds.depth > 0 && !rounds.serving && aligned && eventWaits(from: side) }
+    /// F as a round that takes a while: the instant events are served between any two of its requests (LongRounds).
+    private func long<T>(_ f: () throws -> T) rethrows -> T { try rounds.run(f) }
+    /// An effect written to side O (removed, uploaded, its walk switched) can renumber its list under its page: its screen
+    /// as last read is not what it shows. Read again before anything is carried to it or done inside it (stale; mirrorScreen
+    /// reads a side whose page numbers are not known fresh).
+    private func listMoved(_ o: Side) { stale.insert(o); pageReadAt[o] = nil }
 
     /// The twin's page or console told of a person there: the screen round at AFTER from now.
     private func wakeFromTwin(after: TimeInterval) {
@@ -3174,7 +3378,7 @@ final class SyncEngine {
     private func effectChanges(_ cur: [Side: Effects]) -> FxChanges {
         var r = FxChanges()
         for s in sides {
-            let f = cur[s]!.fields, b = base[s]?["effects"] ?? [:]
+            let b = base[s]?["effects"] ?? [:], f = cur[s]!.compared(base: b)
             if b["mode"] != f["mode"] { r.changed[s] = []; continue }         // compared another way now: rebased, not a change
             // A walk switch of an effect that just came or went is part of that change.
             r.changed[s] = Set(f.keys).union(b.keys).filter { $0 != "mode" && f[$0] != b[$0] }
@@ -3186,14 +3390,18 @@ final class SyncEngine {
             r.changed[.twin]!.removeAll { $0 == k }                        // no clock for these: the panel's stands
             if differ { r.conflicts.append("effect " + n) }
         }
-        for s in sides { r.deletes[s] = r.changed[s]!.filter { $0.hasPrefix("s.") && cur[s]!.fields[$0] == nil }.count }
+        for s in sides { r.deletes[s] = r.changed[s]!.filter { $0.hasPrefix("s.") && cur[s]!.compared(base: base[s]?["effects"])[$0] == nil }.count }
         return r
     }
 
+    /// GET /api/lua of both sides, and their changes carried. A script new to a list or changed in size has its SHA-256
+    /// read first, when its side's schedule lets it (hashTick: one, hashGap after the last); the rest wait for their turn,
+    /// not compared meanwhile (Effects.compared). Effects aligned late have every script's content read first (settle).
     private func effectsRound() throws {
+        let settle = !(hasFxBase(.panel) && hasFxBase(.twin))
         var cur: [Side: Effects] = [:]
         for s in sides {
-            guard let e = try readEffects(s) else {
+            guard var e = try readEffects(s, settle: settle) else {
                 if fxAbsent[s] == true {
                     noteOnce("fx-absent-\(s)", M("the effects of \(s.word.en) cannot be read with its firmware (no /api/lua, no script store or no filesystem): not compared",
                                                  "эффекты \(s.of) не прочитать с этой прошивкой (нет /api/lua, хранилища скриптов или файловой системы): не сравниваю"))
@@ -3203,6 +3411,10 @@ final class SyncEngine {
                 }
                 return
             }
+            // Compared by content from now on (a firmware that gives the scripts out): all of them read once, so the
+            // base's sizes give way to the contents at once.
+            if !e.unknown.isEmpty, hasFxBase(s), base[s]?["effects"]?["mode"] != "hash" { e = try readEffects(s, settle: true) ?? e }
+            if !e.unknown.isEmpty, try hashTick(s, e, inRound: true) { knownNow(&e, s) }
             cur[s] = e
         }
         effects = cur
@@ -3231,7 +3443,7 @@ final class SyncEngine {
         let old: [Side: [String: String]] = [.panel: base[.panel]!["effects"]!, .twin: base[.twin]!["effects"]!]
         // Both bases first: a write to a side reads it again and makes that its base; a failed write puts
         // its source's old base back afterwards.
-        for s in sides { base[s, default: [:]]["effects"] = cur[s]!.fields }
+        for s in sides { base[s, default: [:]]["effects"] = cur[s]!.compared(base: old[s]) }
         var failed: [(Side, [String], Error)] = []
         for s in sides where !ch.changed[s]!.isEmpty {
             let keys = ch.changed[s]!
@@ -3297,7 +3509,7 @@ final class SyncEngine {
             pendingFx[s]?[name] = nil
             guard let stem = dst.stem[name] else { continue }
             try device(o).post("/api/lua", ["delete": stem])                  // puts the clock on (web_panel.cpp:1004-1005)
-            hashes[o]?[stem] = nil
+            hashes[o]?[stem] = nil; listMoved(o)
             wrote = true
             log(s.arrow, "effect", M("removed \(name)", "удалён эффект \(name)"))
         }
@@ -3312,6 +3524,12 @@ final class SyncEngine {
         }
         for k in keys where k.hasPrefix("s.") {
             let name = String(k.dropFirst(2))
+            // The target's script of the same size, its content not read yet on its schedule: read now, this one only - else
+            // it would be sent whether it holds the same bytes or not.
+            if dst.unknown.contains(name), dst.bytes[name] == src.bytes[name], let ts = dst.stem[name] {
+                if let h = try scriptHash(o, stem: ts, bytes: dst.bytes[name]!) { dst.hash[name] = h }
+                dst.unknown.remove(name)
+            }
             guard let bytes = src.bytes[name], let stem = src.stem[name], !knownSame(name) else { continue }
             // Refused before, and the source still holds what was refused: not sent again (said then, once).
             let content = src.fields["s." + name] ?? "\(bytes)"
@@ -3334,7 +3552,8 @@ final class SyncEngine {
                 continue
             }
             refusedFx[o]?[name] = nil
-            hashes[o]?[target] = nil
+            hashes[o, default: [:]][target] = (script.count, String(sha256Hex(script).prefix(16)), Date())   // what was sent is there now
+            listMoved(o)
             pendingFx[s]?[name] = nil
             wrote = true
             log(s.arrow, "effect", M("\(dst.bytes[name] == nil ? "new" : "replaced") \(name) (\(bytes) B)",
@@ -3342,6 +3561,7 @@ final class SyncEngine {
             dst = try again()
             if src.walk[name] == false, dst.walk[name] != false, let i = dst.names.firstIndex(of: name) {
                 try device(o).post("/api/lua", ["walk": ["i": i, "on": false, "name": name] as J])
+                listMoved(o)
                 dst = try again()
             }
         }
@@ -3349,12 +3569,13 @@ final class SyncEngine {
             let name = String(k.dropFirst(2))
             guard let want = src.walk[name], dst.walk[name] != nil, dst.walk[name] != want, let i = dst.names.firstIndex(of: name) else { continue }
             try device(o).post("/api/lua", ["walk": ["i": i, "on": want, "name": name] as J])   // 409 if the list moved meanwhile
+            listMoved(o)
             wrote = true
             log(s.arrow, "effect", M("\(name) \(want ? "in" : "out of") the walk", "\(name) \(want ? "в обходе" : "вне обхода")"))
         }
         guard wrote else { return }
         effects[o] = try again()
-        base[o, default: [:]]["effects"] = effects[o]!.fields
+        base[o, default: [:]]["effects"] = effects[o]!.compared(base: base[o]?["effects"])
         try afterWrite(o, from: s)
     }
 
@@ -3390,6 +3611,7 @@ final class SyncEngine {
             guard noSource[s]?[stem] != bytes else { break }
             do {
                 let d = try device(s).luaSource(stem)
+                hashes[s, default: [:]][stem] = (d.count, String(sha256Hex(d).prefix(16)), Date())     // read now: known
                 guard d.count == bytes, hash == nil || sha256Hex(d).hasPrefix(hash!) else {
                     throw SyncError(M("\(name) changed while it was read: carried next time", "\(name) изменился, пока читался: перенесу в следующий раз"))
                 }
@@ -3447,7 +3669,8 @@ final class SyncEngine {
     private func pruneRefusals() {
         for o in sides {
             guard let r = refusedFx[o], let src = effects[o.other], let dst = effects[o] else { continue }
-            let keep = r.filter { n, x in src.fields["s." + n] == x.content && !Effects.same(src, dst, n) }
+            // One whose content is not read yet on either side stands until it is.
+            let keep = r.filter { n, x in src.unknown.contains(n) || dst.unknown.contains(n) || (src.fields["s." + n] == x.content && !Effects.same(src, dst, n)) }
             if keep.count != r.count { refusedFx[o] = keep; stateDirty = true }
         }
     }
@@ -3498,14 +3721,17 @@ final class SyncEngine {
             }
             let walkOff = cur.walk[r.name] == false
             try device(.twin).post("/api/lua", ["delete": r.from])
-            hashes[.twin]?[r.from] = nil; hashes[.twin]?[r.to] = nil; wrote = true
+            hashes[.twin]?[r.from] = nil; hashes[.twin]?[r.to] = nil; wrote = true; listMoved(.twin)
             did.append(r.name)
+            let known = (bytes: data.count, hash: String(sha256Hex(data).prefix(16)), at: Date())   // its own bytes, under either name
             do {
                 try uploadEffect(.twin, stem: r.to, data: data)
+                hashes[.twin, default: [:]][r.to] = known
                 log("panel→twin", "effect", M("\(r.name): the twin's file \(r.from) is named \(r.to) now, as on the panel", "\(r.name): файл двойника \(r.from) теперь называется \(r.to), как на панели"))
             } catch let e as UploadRefused {
                 renameRefused[r.name] = cur.fields["s." + r.name]
                 let back = (try? uploadEffect(.twin, stem: r.from, data: data)) != nil
+                if back { hashes[.twin, default: [:]][r.from] = known }
                 log("panel→twin", "effect", M("\(r.name): the twin's file \(r.from) was not renamed \(r.to) - the twin refused the upload (\(e.why)); \(back ? "its old name is back" : "its old name could not be put back either: it is carried from the panel as a new effect")",
                                               "\(r.name): файл двойника \(r.from) не переименован в \(r.to) — двойник не принял загрузку (\(e.why)); \(back ? "прежнее имя возвращено" : "прежнее имя тоже вернуть не удалось: перенесу его с панели как новый эффект")"),
                     problem: true)
@@ -3513,6 +3739,7 @@ final class SyncEngine {
             cur = try readEffectsNow(.twin)
             if walkOff, cur.bytes[r.name] != nil, cur.walk[r.name] != false, let i = cur.names.firstIndex(of: r.name) {
                 try device(.twin).post("/api/lua", ["walk": ["i": i, "on": false, "name": r.name] as J])
+                listMoved(.twin)
                 cur = try readEffectsNow(.twin)
             }
         }
@@ -3888,6 +4115,25 @@ final class SyncEngine {
         log("override", "twin", M("the owner's override on the twin: " + did.joined(separator: ", "), "переопределение владельца на двойнике: " + did.joined(separator: ", ")))
     }
 
+    /// What a start of the twin by the app did about fbAskHa (main.swift holdAskHa).
+    enum AskHaAtStart: Equatable { case set, already, noSetting, notUp, notThisTwin(String), refused(String) }
+    /// The owner's override at each start of the twin by the app (item 16, 2026-10-01), whatever the switch of sync says:
+    /// fbAskHa off on the twin at D, whose MAC must be MAC, where its firmware has the setting (2.7.13: fbAskHa in
+    /// /api/export) and it is on - POST /api/import {"fbAskHa":false} with X-Twin-Sync: 1 (Device.post), as
+    /// enforceOverrides writes it while sync is on, then read back. NOTUP: its firmware's web server does not answer yet.
+    static func askHaOffAtStart(_ d: Device, mac: String) -> AskHaAtStart {
+        guard let info = try? d.get("/api/info") else { return .notUp }
+        let m = normMac(info.s("mac"))
+        guard m == normMac(mac) else { return .notThisTwin(m) }
+        guard let ex = try? d.get("/api/export") else { return .notUp }
+        guard isBool(ex["fbAskHa"]) else { return .noSetting }
+        if ex.b("fbAskHa") == false { return .already }
+        do { try d.post("/api/import", ["fbAskHa": false]) }                     // web.cpp handleImportConfig
+        catch { return .refused((error as? SyncError)?.msg.en ?? (error as? SyncDown)?.msg.en ?? "\(error)") }
+        guard (try? d.get("/api/export"))?.b("fbAskHa") == false else { return .refused("/api/export still says fbAskHa on") }
+        return .set
+    }
+
     /// Whether the twin's flight board is held on ZZZZ "NO REQUESTS" (the owner, 2026-09-30 22:40: a twin without a
     /// key of its own does not ask Home Assistant): its firmware has no fbAskHa to stop the asking (before 2.7.13:
     /// absent from /api/export), a broker is set (mqtt.configured: NVS fb/host, mqtt_bus.cpp:171-186), and it has no
@@ -3949,7 +4195,7 @@ final class SyncEngine {
             guard f.settled else { watch(s, f); continue }
             fwWatchSince[s] = nil
             firmwareBase[s] = f.id; stateDirty = true
-            caps[s] = nil; hashes[s] = [:]; noSource[s] = nil; imageCache = nil
+            caps[s] = nil; ageHashes(s); noSource[s] = nil; imageCache = nil
             log("note", "firmware", M("\(s.word.en) now runs \(f.id)", "\(s.on) теперь \(f.id)"))
             retryPending()
             // The later change wins: a new firmware on one side replaces what was waiting for the other.
@@ -3975,7 +4221,7 @@ final class SyncEngine {
             inFlight = nil; fwWatchSince[s] = nil
             firmwareBase[s] = n.id
             if fw[o]?.id == fl.fromId { firmwareBase[o] = fl.fromId }   // both sides now hold what they run: no echo
-            caps[s] = nil; hashes[s] = [:]; noSource[s] = nil; stateDirty = true
+            caps[s] = nil; ageHashes(s); noSource[s] = nil; stateDirty = true
             // What is wanted is let go only when it is what was confirmed: a newer build that came to the
             // source meanwhile (firmwareRound, the later change wins) is still wanted, and is carried next.
             if s == .twin { wantTwin = SyncEngine.stillWanted(wantTwin, confirmed: fl.fromId); carry = (0, .distantPast) }
@@ -4220,7 +4466,12 @@ final class SyncEngine {
         var inFlight: InFlight?
         var consent: String?                          // consentToken(pair): both windows answered, the switch not off since
         var refused: [String: [String: Refusal]]?     // effects a side refused, by that side (refusedFx)
+        var hashes: [String: [String: SavedHash]]?    // 1.4.1: each side's scripts' SHA-256, by file name (hashes)
     }
+    /// A script's SHA-256 as kept, with the size it was read for. When it was read is not kept: after a start each is read
+    /// again on the schedule, one at a time, the first ones first (hashNext) - so a file that changes only when a hash
+    /// does is not written every few seconds.
+    private struct SavedHash: Codable { var bytes: Int; var hash: String }
 
     /// The consent kept for PAIR: an HMAC under StateKey, like the settings' digests - so it cannot be written into
     /// the file for another pair, or by anything without the Keychain's key.
@@ -4242,7 +4493,8 @@ final class SyncEngine {
         guard StateKey.kept, aligned, !pairKey.isEmpty else { return }
         var s = Saved(v: 3, key: StateKey.tag, pair: pairKey, settings: [:], effects: [:], firmware: [:], pending: [:],
                       wantPanel: wantPanel, wantTwin: wantTwin, inFlight: inFlight,
-                      consent: consented ? SyncEngine.consentToken(pairKey) : nil, refused: [:])
+                      consent: consented ? SyncEngine.consentToken(pairKey) : nil, refused: [:],
+                      hashes: Dictionary(uniqueKeysWithValues: sides.map { ($0.rawValue, (hashes[$0] ?? [:]).mapValues { SavedHash(bytes: $0.bytes, hash: $0.hash) }) }))
         for side in sides {
             s.settings[side.rawValue] = base[side]?["settings"] ?? [:]
             s.effects[side.rawValue] = base[side]?["effects"] ?? [:]
@@ -4300,6 +4552,10 @@ final class SyncEngine {
             if let r = s.refused?[side.rawValue], !r.isEmpty { refusedFx[side] = r }
         }
         wantPanel = s.wantPanel; wantTwin = s.wantTwin; inFlight = s.inFlight
+        // The scripts as read before (1.4.1): no batch of reads holds the panel's loop() or loads the twin's engine at a
+        // start - a script whose size is the same is taken as read, and read again on the schedule; one whose size changed
+        // meanwhile goes first. A question reads them all (readAll settle).
+        for side in sides { if let h = s.hashes?[side.rawValue], !h.isEmpty { hashes[side] = h.mapValues { ($0.bytes, $0.hash, Date.distantPast) } } }
         resumed = !(s.settings["panel"] ?? [:]).isEmpty
         let kept = SyncEngine.keptConsent(version: s.v, token: s.consent, pair: pairKey, launchOn: locked({ _launchOn }), aligned: resumed)
         if s.v == 2 {

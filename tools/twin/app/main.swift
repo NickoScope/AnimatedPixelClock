@@ -37,6 +37,9 @@
 // without the home network sends them through the engine's forwarded UDP port (udpPort). Where they do not come, the
 // twin's page tells the app of each gesture a person makes there (the message "twinInput" from panel.html) and its
 // console of each effect that opens ("[luafx] open"): the screen round runs at once (SyncEngine.swift, "Instant events").
+// App 1.4.1 (the owner's pair, 2026-10-01): a script's SHA-256 is read one at a time on a schedule, never in a batch, and
+// the rounds that take a while serve the events between their requests (SyncEngine.swift: hashes, long); at each start of
+// the twin fbAskHa is put off on it, whatever the switch says (holdAskHa, the owner's item 16).
 //
 // Settings (defaults write com.nickoscope.TWIN-NickoScopeMatrix-64x128 KEY VALUE, or -KEY VALUE on the
 // command line): lang "en"|"ru",
@@ -462,6 +465,8 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNav
     var buttons: [(NSButton, () -> String)] = []
     var twin: Twin!
     var shown = false, polls = 0
+    /// Each start of the twin: the run of holdAskHa that is current (an older one stops).
+    var askHaRun = 0
     var lastStatus: () -> String = { "" }
     // Sync with panel
     var sync: SyncEngine!
@@ -668,7 +673,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNav
         twin.answers { [weak self] up in DispatchQueue.main.async {
             guard let self else { return }
             if up {
-                if !self.shown { self.shown = true; self.showPanel(); self.afterStart() }
+                if !self.shown { self.shown = true; self.showPanel(); self.afterStart(); self.holdAskHa() }
                 self.refresh(); return
             }
             self.polls += 1
@@ -694,6 +699,39 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNav
             } }
         }
         tryName(36)    // the firmware's web server comes up after Wi-Fi and Improv: up to three minutes
+    }
+
+    /// Each start of the twin by this app (the owner's item 16, 2026-10-01): fbAskHa off on it, whatever the switch of
+    /// Sync with panel says (SyncEngine.askHaOffAtStart) - so a twin without an AeroAPI key of its own never has Home
+    /// Assistant fetch a flight board with the owner's key, also while sync is off (sync keeps it off only while it is on:
+    /// enforceOverrides). Only where its firmware has the setting (2.7.13: fbAskHa in /api/export). Like the name
+    /// (afterStart), once its firmware's web server answers: every 5 s, three minutes at most; a restart starts it again.
+    func holdAskHa() {
+        askHaRun += 1
+        let run = askHaRun
+        func again(_ left: Int) { if left > 0 { DispatchQueue.main.asyncAfter(deadline: .now() + 5) { attempt(left - 1) } } }
+        func attempt(_ left: Int) {
+            guard run == askHaRun, twin.ours else { return }
+            guard let addr = twin.apiAddress else { again(left); return }          // on the home network: its address not known yet
+            let mac = (read(twin.p.mac) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            DispatchQueue.global(qos: .utility).async { [weak self] in
+                let r = SyncEngine.askHaOffAtStart(Device(.twin, addr), mac: mac)
+                DispatchQueue.main.async {
+                    guard let self, run == self.askHaRun else { return }
+                    switch r {
+                    case .notUp: again(left)
+                    case .set: self.sync.note("override", M("the twin started: fbAskHa off on it - the owner's override, whatever the switch of sync",
+                                                            "двойник запущен: fbAskHa на нём выключен — переопределение владельца, независимо от синхронизации"))
+                    case .already: self.sync.note("override", M("the twin started: fbAskHa is off on it already", "двойник запущен: fbAskHa на нём уже выключен"))
+                    case .noSetting: self.sync.note("override", M("the twin started: its firmware has no fbAskHa (before 2.7.13) - nothing to set", "двойник запущен: в его прошивке нет fbAskHa (до 2.7.13) — выключать нечего"))
+                    case .notThisTwin where left > 0: again(left)                    // an address not settled yet: looked at again
+                    case .notThisTwin(let m): self.sync.note("override", M("\(addr) answers with MAC \(m), not this twin's \(mac): fbAskHa not written", "\(addr) отвечает с MAC \(m), а не этого двойника \(mac): fbAskHa не пишу"))
+                    case .refused(let why): self.sync.note("override", M("the twin started: fbAskHa could not be switched off - \(why)", "двойник запущен: fbAskHa выключить не удалось — \(why)"))
+                    }
+                }
+            }
+        }
+        attempt(36)
     }
 
     func refresh() {
