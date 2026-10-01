@@ -2778,6 +2778,17 @@ final class SyncEngine {
     /// A person's doing ("by", sync_events.h): the knob, the remote, a request without X-Twin-Sync (the portal, Home
     /// Assistant). Not "sync" (its own write coming back), "carousel", "schedule" (the night) or "auto" (no cause noted).
     static func person(_ by: String) -> Bool { by == "knob" || by == "ir" || by == "http" }
+    /// Whether a screen datagram numbered SEQ was sent before the side's screen was read last, at READ (now.seq of GET
+    /// or POST /api/panel): a state gets its number when it is first sent, and a read gives the last number sent
+    /// (sync_events.cpp syncEventsLoop, syncPanelJson) - so a datagram numbered READ or less holds what the read holds,
+    /// or older, and is nothing to carry. Without this, one drained after a screen round carried back a page the side
+    /// had left (the stand, 2026-10-01 07:49:59: the twin's seq 4, FLIP DOT CLOCK by http, drained after the round had
+    /// read it on FLOW at seq 5 - the panel written FLOW, FLIP DOT CLOCK, FLOW in 0.6 s, with nobody at it). A device
+    /// that restarted numbers afresh (far below: event) - not stale then.
+    static func staleScreen(seq q: Int?, read r: Int?) -> Bool {
+        guard let q, let r else { return false }
+        return q <= r && q + 100 >= r
+    }
 
     /// The IPv4 address of HOST ("192.168.4.89", "panel.local", "localhost"), nil when it has none.
     static func ipv4(of host: String) -> String? {
@@ -2979,9 +2990,12 @@ final class SyncEngine {
     /// A screen datagram: the page, the style, the brightness, on/off, the stop inside a page, the effect's clicks.
     /// A person's change is carried at once (carryNow); the leading panel's carousel step is given to the twin
     /// (followStep); sync's own write coming back and the night schedule change nothing; anything else - "auto", or
-    /// on/off, which the datagram gives with the schedule's - goes to the screen round, now.
+    /// on/off, which the datagram gives with the schedule's - goes to the screen round, now. One sent before the side's
+    /// screen was last read changes nothing (staleScreen).
     private func screenEvent(_ s: Side, _ o: J, at: Date) throws {
         guard let before = screen[s], base[s]?["screen"] != nil else { return }
+        if SyncEngine.staleScreen(seq: o.i("seq"), read: before.seq) { return }
+        if let q = o.i("seq") { screen[s]!.seq = q }                        // the state known now is this datagram's
         let page = o.i("page") ?? before.page, key = o.s("key") ?? before.key, name = o.s("name") ?? before.name
         if let f = o.o("fx") {
             let id = f.i("id") ?? -1, run = f.i("run") ?? 0
