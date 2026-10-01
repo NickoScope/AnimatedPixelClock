@@ -33,6 +33,11 @@
 // each is opened from the run loop (Controller.later), so the switch, SIGTERM and the status line are
 // served while it is open.
 //
+// Instant (app 1.4, firmware 2.7.13): sync subscribes to both devices' events (UDP, one socket of the app); a twin
+// without the home network sends them through the engine's forwarded UDP port (udpPort). Where they do not come, the
+// twin's page tells the app of each gesture a person makes there (the message "twinInput" from panel.html) and its
+// console of each effect that opens ("[luafx] open"): the screen round runs at once (SyncEngine.swift, "Instant events").
+//
 // Settings (defaults write com.nickoscope.TWIN-NickoScopeMatrix-64x128 KEY VALUE, or -KEY VALUE on the
 // command line): lang "en"|"ru",
 // port 8790, httpPort 8080, udpPort 4210, serialPort 4000, cpi "2.45", lanSocket, dataDir, migrate
@@ -170,6 +175,9 @@ final class Twin {
     private(set) var why = ""            // why the twin is not on the home network, if it is not
     private var logHandle: FileHandle?
     var onChange: (() -> Void)?
+    /// Each whole line of the twin's console, on the pipe's own queue (Sync with panel: "[luafx] open <name>").
+    var onConsoleLine: ((String) -> Void)?
+    private var partial = ""
 
     init(paths: Paths, defaults d: UserDefaults) {
         p = paths
@@ -271,11 +279,18 @@ final class Twin {
         let proc = Process()
         proc.executableURL = p.engine; proc.arguments = args
         let pipe = Pipe(); proc.standardOutput = pipe; proc.standardError = pipe
+        partial = ""
         pipe.fileHandleForReading.readabilityHandler = { [weak self] h in
             let d = h.availableData
             guard !d.isEmpty else { return }
             self?.logHandle?.write(d)
             let s = String(decoding: d, as: UTF8.self)
+            if let self, let tell = self.onConsoleLine {
+                // Whole lines only: a chunk ends anywhere. The rest waits for the next chunk (4 KB at most).
+                let lines = (self.partial + s).split(separator: "\n", omittingEmptySubsequences: false)
+                self.partial = String(lines.last ?? "").suffix(4096).description
+                for l in lines.dropLast() { tell(String(l)) }
+            }
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.tail += s
@@ -429,6 +444,16 @@ enum GitHub {
 
 // MARK: - the window
 
+/// The panel page's message "twinInput" (a person's gesture there): its text, to SyncEngine.twinPageInput.
+final class PageInput: NSObject, WKScriptMessageHandler {
+    let tell: (String) -> Void
+    init(_ tell: @escaping (String) -> Void) { self.tell = tell }
+    func userContentController(_ c: WKUserContentController, didReceive m: WKScriptMessage) {
+        guard let what = m.body as? String, what.count <= 16 else { return }
+        tell(what)
+    }
+}
+
 final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate {
     var window: NSWindow!
     var web: WKWebView!
@@ -467,6 +492,10 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNav
         twin = Twin(paths: paths, defaults: d)
         twin.onChange = { [weak self] in self?.refresh() }
         sync = SyncEngine(dataDir: paths.data)
+        // A person at the twin, told at once: an effect opening in its console, a gesture on its page (twinInput) - the
+        // screen round runs then rather than within 3 s, where the twin's own instant events do not come.
+        let engine = sync!
+        twin.onConsoleLine = { line in engine.twinConsoleLine(line) }
         sync.setLanguage(LANG)
         sync.onStatus = { [weak self] in self?.showSyncStatus() }
         // A question is a modal alert. It is opened from the run loop, not from a block on the main dispatch
@@ -515,7 +544,12 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNav
         window.title = standard ? APP_NAME : "\(APP_NAME) — TEST \(Bundle.main.bundleIdentifier ?? "?") · \(twin.p.data.path)"
         window.setFrameAutosaveName("TwinPanelWindow")
         window.delegate = self
-        web = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
+        let config = WKWebViewConfiguration()
+        // The panel page posts "twinInput" for each gesture a person makes there (the knob turned or pressed, a remote's
+        // button, BOOT, RESET: ~/twin/esp32sim web/panel.html tellApp). A proxy holds the handler: the content
+        // controller keeps it strongly.
+        config.userContentController.add(PageInput { [weak self] what in self?.sync.twinPageInput(what) }, name: "twinInput")
+        web = WKWebView(frame: .zero, configuration: config)
         web.navigationDelegate = self; web.uiDelegate = self
         web.setValue(false, forKey: "drawsBackground")
         func button(_ label: @escaping () -> String, _ a: Selector) -> NSButton {
@@ -666,7 +700,9 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNav
         // Sync talks to the twin only when this app runs it and its page is up (the engine checks the rest:
         // the TWIN- name and this twin's MAC).
         if twinMac.isEmpty { twinMac = (read(twin.p.mac) ?? "").trimmingCharacters(in: .whitespacesAndNewlines) }
-        sync?.setTwin(address: shown && twin.ours ? twin.apiAddress : nil, mac: twinMac)
+        // Without the home network the twin's UDP port 4210 is forwarded from udpPort (Twin.start): its instant events
+        // reach the app only as answers there (SyncEngine eventRoute).
+        sync?.setTwin(address: shown && twin.ours ? twin.apiAddress : nil, mac: twinMac, udpForward: twin.ours && !twin.onLan ? twin.udpPort : nil)
         guard shown || twin.ours else { return }
         if let p = twin.process, !p.isRunning, shown { say { L("The twin is stopped", "Двойник остановлен") }; return }
         say { [twin] in
@@ -1031,6 +1067,8 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNav
                              "Эффект, который другая сторона не принимает (проверки или пробный прогон, например слишком медленный), пропускается: одна запись в журнале и строка «Не переносится»; снова он отправится, когда изменится. Файлы эффектов, отличающиеся только регистром, на двойнике получают имена как на панели.")
               + "\n\n" + L("How often: the screen every 3 s (5 s while the panel is under strain), and while the panel's carousel walks, once more just after each of its steps (not under strain); effects when their list changes and every 60 s, settings every \(every) s. A device that does not answer, or a round that failed: the next look in 5 s.",
                              "Как часто: экран — раз в 3 с (5 с, когда панель под нагрузкой), а пока карусель панели идёт — ещё раз сразу после каждого её шага (не под нагрузкой); эффекты — при изменении их списка и раз в 60 с, настройки — раз в \(every) с. Устройство не ответило или раунд не удался — следующий взгляд через 5 с.")
+              + "\n\n" + L("With firmware 2.7.13 on a side, it tells of each change and gesture at once (UDP): a person's page, style or brightness is carried within a fraction of a second, so are the panel's carousel steps; the polling stays under it. Inside a page: an effect's clicks (both end on the same count), the world clock's and the flight board's stop (in, turns, out), the rail board's while both show the same list. Not the media player (each gesture would reach Home Assistant twice), the yachts or the markets' inner steps.",
+                             "С прошивкой 2.7.13 сторона сразу сообщает о каждом изменении и жесте (UDP): страница, стиль или яркость, выбранные человеком, переносятся за доли секунды, шаги карусели панели тоже; опрос остаётся как запасной путь. Внутри страницы: нажатия эффекта (на обеих одно и то же число), вход, повороты и выход в мировых часах и табло рейсов, в табло поездов — если на обеих один список. Не переносятся медиа (каждое действие ушло бы в Home Assistant дважды), яхты и внутренний шаг рынков.")
               + "\n\n" + L("Changes at the same time: the devices keep no time of a change, so two changes of one thing within one of these periods - up to \(every) s for a setting - count as simultaneous, and the panel's is kept (the log says \"conflict: the panel's taken - <key>\"). Only the page has its own clock: the one changed later wins.",
                              "Одновременные изменения: устройства не хранят время изменения, поэтому два изменения одного и того же в пределах одного такого периода — до \(every) с для настройки — считаются одновременными, и остаётся значение панели (в журнале: «конфликт: взята панель — <ключ>»). Только у страницы есть свои часы: побеждает изменённая позже.")
               + "\n\n" + L("The carousel is one for both: switched on or off, its settings and the pages it visits, on either side, are the same on the other a moment later. While it is on, the panel leads and the twin shows the same screens in step, within about a second; nothing of the twin's walk is written to the panel. What a person chooses (the knob, the remote, the portal) is carried as before, and both carousels wait the idle time. A restart shows its reset screen, which is nobody's choice and is not carried.",

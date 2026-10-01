@@ -48,12 +48,12 @@
 // consent, so with the switch on and an aligned state of this very pair in the file (sync-state.json v2), the
 // consent counts as given (keptConsent). Where the Keychain gives no key, nothing is kept and each start asks both.
 //
-// The firmware has no push channel - no WebSocket, no event stream, no MQTT topic with the screen's
-// state - so both devices are polled over HTTP, one request at a time: the firmware's WebServer serves
-// a request inside loop() and the panel stands still meanwhile (web_panel.cpp:1066-1068), and a burst
-// of parallel requests once drained the radio's memory (web_heap_backoff.h:4-12). Every request here
-// comes from one worker thread, and requests to the panel are paced. A 503 is asked again only when it
-// carries Retry-After: that is the firmware standing aside before doing anything (webRefuseBig,
+// Both devices are polled over HTTP, one request at a time: the firmware's WebServer serves a request inside
+// loop() and the panel stands still meanwhile (web_panel.cpp:1066-1068), and a burst of parallel requests once
+// drained the radio's memory (web_heap_backoff.h:4-12). Every request here comes from one worker thread, and
+// requests to the panel are paced. Since firmware 2.7.13 a device also pushes what changes, as UDP datagrams
+// ("Instant events" below): what a person does is carried at once, and the polling stays as the net under it.
+// A 503 is asked again only when it carries Retry-After: that is the firmware standing aside before doing anything (webRefuseBig,
 // web.cpp:1421-1456). The Panel group's 503 "out of memory" comes after the work was done, with no
 // Retry-After (failOom, web_panel.cpp:138-152; sendDocFromPsram, web.cpp:99-104): a POST that got it is
 // not sent again - the round fails, and the next one reads the target again and decides from that.
@@ -92,6 +92,12 @@
 //             not held back by it (net_turns.h:47).
 //   failure   a device that does not answer, or a round that failed: the next screen round in 5 s, and
 //             nothing before it - no step read, no effects or settings round (backOff).
+//   events    (2.7.13) POST /api/sync/listen to each side every 25 s - a write that changes nothing on the screen;
+//             with the panel's events coming, its carousel's step is not read but told (followStep); GET /api/panel
+//             asks ?input=N (the gestures after N) in the same read; inside a page: /api/railboard of both before a
+//             rail board gesture is carried, the target's /api/panel while an effect it is to be clicked in has not
+//             opened, and - only with a firmware before 2.7.13 on either side, while both show one effect - /api/knob
+//             in each screen round.
 //
 // Change, echo, who wins. Each side has a base: what it held after the last round, with what this
 // engine wrote to it included - after every write the target is read again and that reading becomes
@@ -156,6 +162,58 @@
 // the name its effect's banner shows, never by its number: an effect uploaded on the twin by a person renumbers
 // its list, and the index it shows then names another effect - that move is nobody's choice, is not carried to
 // the panel, and the twin shows the panel's page again (renumbered, shifted).
+//
+// Instant events (firmware 2.7.13, src/sync/sync_events.cpp; the owner's items 5, 6 and 12, 2026-09-30). Once both
+// confirmations are given, sync asks each side for its events - POST /api/sync/listen {"port"} every listenEvery,
+// the firmware keeps a listener 60 s and two at most (409 when both places are taken; 404 on a firmware before
+// 2.7.13) - and ends the subscription ({"stop":true}) when it is switched off and when the app quits. One UDP socket
+// of the app takes the datagrams of both: {"seq","t":"screen","page","key","name","style","entered","off","bright",
+// "fx":{"id","run","clicks"},"by"} on every change of the screen (at most one a 100 ms), {"seq","t":"input","kind":
+// "press"|"cw"|"ccw","by","page","entered"} on every gesture. "by" says who: a person (knob, ir, http - a request
+// without X-Twin-Sync: the portal, Home Assistant), sync (its own write coming back: nothing is done), carousel,
+// schedule (the night's off: not compared, forcedOff is), auto (nothing noted). A person's page, style or brightness
+// is carried at once, without reading that side - the datagram is its screen - and only the other side is written
+// and read back from the answer (carryNow); within crossWindow of sync's own write to that side, or when the other
+// side changed the same thing, or for on/off (the datagram gives it with the night's), the screen round runs at once
+// instead and judges as ever. The leading panel's carousel step is given to the twin as it comes (followStep: no step
+// read of the panel). "auto" runs the screen round at once. A gap in seq is a lost datagram: both sides are read at
+// once, with ?input=N - the firmware's ring of 8 gestures - so a lost gesture is taken from there; the polling every
+// 3 s goes on whatever comes, and a side with no events (404, 409, a datagram that never arrives) is polled as before.
+// Where a device sends from: on the network, its own address, port 4210. Behind the engine's NAT (a twin without the
+// home network, a test's "panel" on 127.0.0.1) the device sees this Mac as 10.0.2.2, and a datagram it sends there
+// reaches the Mac only as the answer on its forwarded UDP port: the engine sends a guest's datagram from 4210 to the
+// gateway's port FWD of a rule --hostfwd udp:FWD-4210 to the host peer that sent to FWD last (esp-soc/src/nat.rs
+// udp_out) - so sync sends an empty datagram there from its socket first (the firmware takes nothing from it:
+// network.cpp handleUDP) and asks for the datagrams on FWD (eventRoute; main.swift gives the twin's udpPort, the
+// test switch syncPanelUdpForTesting the test panel's). Where the twin's datagrams do not come, the twin's page in
+// the app tells of each gesture a person makes there (main.swift, "twinInput"), and its console of each effect that
+// opens ("[luafx] open"): the screen round runs a moment later (takeWake), at most one each 0.3 s, none while the
+// panel is under strain.
+//
+// Inside a screen (the owner, 2026-09-30 20:53: a press of the knob in FLOW changed the scene on its own side only;
+// the design, workflow sync-inside-screen-research, tasks/w4kseii7h). Carried only while both sides show the same page:
+//   an effect  (key lua) its clicks (px.button: the knob's click, the remote's OK, POST /api/lua {"click":true}). With
+//             2.7.13 on both, now.fx {id, open, run, clicks} - clicks since the effect was chosen - is compared
+//             (reconcileClicks): each side has a base, the clicks taken into account (sync's own, those carried, those
+//             there before sync saw the effect); clicks above it are a person's, and the other side is given as many
+//             by POST /api/lua {"click":true} (X-Twin-Sync: 1; it holds that side's carousel as the knob's click would,
+//             and clicks are never merged, unlike /api/ir/do), once its effect is open, keeping the person's spacing
+//             (a double press stays one); an effect reopened on one side only (run) is brought up to the other's count;
+//             a click whose answer was lost makes that side's next reading its base. So nothing is echoed, a lost
+//             datagram is made up from the counts within a round, and both end on the same fx.clicks. A firmware
+//             without now.fx on either side: the knob's clicks (/api/knob stats click + long, read in each screen round
+//             only then) grown since the last read on that page are carried, clickGap apart (bridgeClicks).
+//   the world clock, the flight board (keys world, flights) their stop: a person's press that goes in is made on the
+//             other side by GET /api/ir/do?fn=ok, a turn inside by fn=cw|ccw, gestureGap apart (the firmware merges
+//             closer ones), with X-Twin-Sync: 1 (its gestures are "sync"'s); the press that comes out by a show of the
+//             same page (POST /api/panel), which leaves the stop (main.cpp panelShowPage). Each turn there changes a
+//             setting (the home city, the airport), compared by the settings round as ever. Not the flight board
+//             while the twin holds ZZZZ.
+//   the rail board (trains) the same, only while both boards show the same list and knob view (/api/railboard).
+//   the media player, the yacht radar, the markets' inner steps: not carried - the player's gestures go to Home
+//             Assistant, and would twice; the others keep their own state on each device - said once in the log.
+//             Notifications and the 3D scene take the gesture before it is counted (main.cpp): nothing to carry.
+// A gesture whose page the other side does not show is not carried (said in the log).
 //
 // How each thing is written:
 //   page      POST /api/panel {"show":{"page":i}}, i looked up by key and name on the target
@@ -308,6 +366,7 @@ enum Side: String, Codable {
     var at: String { self == .panel ? "у панели" : "у двойника" }
     var of: String { self == .panel ? "панели" : "двойника" }
     var to: String { self == .panel ? "панель" : "двойника" }
+    var its: String { self == .panel ? "её" : "его" }
     var arrow: String { self == .panel ? "panel→twin" : "twin→panel" }
 }
 let sides: [Side] = [.panel, .twin]
@@ -444,10 +503,11 @@ final class Device {
     static let reads: Set<String> = ["/api/info", "/api/status", "/api/panel", "/api/portal", "/api/export", "/api/knob", "/api/lua",
                                      "/api/worldclock", "/api/railboard", "/api/flightboard", "/api/market", "/api/media", "/api/ir"]
     static let posts: Set<String> = ["/save", "/api/import", "/api/panel", "/api/knob", "/api/lua", "/api/worldclock", "/api/railboard",
-                                     "/api/flightboard", "/api/market", "/api/media"]
-    // The GETs that change something, each with the only parameters it may carry.
+                                     "/api/flightboard", "/api/market", "/api/media", "/api/sync/listen"]
+    // The GETs that change something, each with the only parameters it may carry. /api/ir/do: a gesture inside a page
+    // (fn ok, cw, ccw), as the remote's button would make it - a person's, carried (SyncEngine.replay).
     static let actions: [String: Set<String>] = ["/api/display/on": [], "/api/display/off": [], "/api/display/brightness": ["value"],
-                                                 "/api/ir/fn": ["btn", "fn", "page"], "/api/log": ["on"]]
+                                                 "/api/ir/fn": ["btn", "fn", "page"], "/api/log": ["on"], "/api/ir/do": ["fn"]]
     /// The sync routes (feat/sync-routes). GET|HEAD /api/firmware/image answers only a request with
     /// X-Twin-Sync: 1, else 403 before the image is touched (web.cpp handleFirmwareImage) - a header no web
     /// page can send to another address without a preflight, which the firmware does not answer. GET
@@ -468,18 +528,20 @@ final class Device {
 
     /// One request. 503 with Retry-After is asked again (the firmware stood aside before doing anything);
     /// 503 without it is the answer. A transport fault is retried for a request that only reads, up to
-    /// ATTEMPTS in all - a POST may have landed.
+    /// ATTEMPTS in all - a POST may have landed. QUIET: a write that changes nothing on the screen (the events'
+    /// subscription) - willWrite is not told; UNSTOPPABLE: sent whatever the switch says (only the subscription's
+    /// end, POST /api/sync/listen {"stop":true}, which stops the device sending).
     func send(_ method: String, _ path: String, query: [(String, String)] = [], body: Data? = nil, type: String? = nil,
-              timeout: TimeInterval = 15, limit: Int = 2 << 20, attempts: Int = 3) throws -> Answer {
+              timeout: TimeInterval = 15, limit: Int = 2 << 20, attempts: Int = 3, quiet: Bool = false, unstoppable: Bool = false) throws -> Answer {
         var c = URLComponents(string: "http://\(address)\(path)")!
         if !query.isEmpty { c.queryItems = query.map { URLQueryItem(name: $0.0, value: $0.1) } }
         guard let url = c.url else { throw SyncError(M("bad address \(address)", "неверный адрес \(address)")) }
-        let write = writes(method, path), stop = stoppable(method, path), allowed = mayWrite
+        let write = writes(method, path), stop = !unstoppable && stoppable(method, path), allowed = mayWrite
         var attempt = 0
         while true {
             attempt += 1
             if stop && !allowed() { throw SyncStopped() }
-            if write { willWrite() }
+            if write && !quiet { willWrite() }
             var req = URLRequest(url: url, timeoutInterval: timeout)
             req.httpMethod = method; req.httpBody = body
             if let type { req.setValue(type, forHTTPHeaderField: "Content-Type") }
@@ -534,6 +596,16 @@ final class Device {
         if a.status == 404 { return nil }
         guard a.status == 200 else { throw refused("GET \(path)", a) }
         guard let o = a.object else { throw SyncError(M("\(side.word.en): GET \(path): not JSON", "\(side.word.ru): GET \(path): не JSON")) }
+        return o
+    }
+
+    /// GET /api/panel, with ?input=N where the firmware keeps the gestures (2.7.13: now.inputSeq; the ones after
+    /// seq N come in "input", web_panel.cpp buildPanel -> syncPanelJson). nil: no such route.
+    func panelDoc(input: Int?) throws -> J? {
+        let a = try send("GET", "/api/panel", query: input.map { [("input", "\($0)")] } ?? [])
+        if a.status == 404 { return nil }
+        guard a.status == 200 else { throw refused("GET /api/panel", a) }
+        guard let o = a.object else { throw SyncError(M("\(side.word.en): GET /api/panel: not JSON", "\(side.word.ru): GET /api/panel: не JSON")) }
         return o
     }
 
@@ -611,6 +683,12 @@ final class Device {
 
 // MARK: - what a device holds
 
+/// now.fx (firmware 2.7.13, sync_events.cpp syncPanelJson; lua_effects.cpp luaEffectsFx): the Lua effect selected on
+/// this device - its index here, -1 for none - whether its first frame has come (open), how many times an effect was
+/// chosen or reopened (run), and the clicks it has had since it was chosen (clicks: its button, px.button - the knob's
+/// click, the remote's OK, POST /api/lua {"click":true}).
+struct Fx: Equatable { var id = -1, open = false, run = 0, clicks = 0 }
+
 struct Screen {
     var key = "", name = "", page = 0, style = 0, bright = 0, off = false, uptime = 0
     var running = false, allStyles = false, pageS = 0
@@ -620,6 +698,10 @@ struct Screen {
     /// knob (now.entered).
     var enabled = false, idleS = 0, holdS = 0, nextS: Int? = nil, entered = false
     var pages: [J] = [], styles: Set<Int> = []
+    /// Firmware 2.7.13: the effect on screen (nil where the firmware has no now.fx), the number of its last event
+    /// (now.seq) and of its last gesture (now.inputSeq), a notification over the page (now.notify), and the gestures
+    /// GET /api/panel?input=N gave (oldest first: seq, epochMs, kind, by, page, entered).
+    var fx: Fx?, seq: Int?, inputSeq: Int?, notify = false, inputs: [J] = []
     /// What GET /api/panel says - and the answer to POST /api/panel, the same document (handlePanel,
     /// web_panel.cpp:476-484): the page, the style and the carousel. Brightness, on/off and uptime come
     /// from /api/status and are left as they are.
@@ -630,6 +712,13 @@ struct Screen {
         running = car.b("running") ?? false; allStyles = car.b("allStyles") ?? false; pageS = car.i("pageS") ?? 0
         enabled = car.b("enabled") ?? false; idleS = car.i("idleS") ?? 0; holdS = car.i("holdS") ?? 0; nextS = car.i("nextS")
         pages = pn.a("pages"); styles = Set(pn.a("styles").compactMap { $0.i("id") })
+        notify = now.b("notify") ?? false
+        fx = now.o("fx").map { Fx(id: $0.i("id") ?? -1, open: $0.b("open") ?? false, run: $0.i("run") ?? 0, clicks: $0.i("clicks") ?? 0) }
+        seq = now.i("seq"); inputSeq = now.i("inputSeq"); inputs = pn.a("input")
+    }
+    /// The page with this index, as key and name.
+    func page(_ i: Int) -> (key: String, name: String)? {
+        pages.first { $0.i("i") == i }.map { ($0.s("key") ?? "", $0.s("name") ?? "") }
     }
     /// What is mirrored as "the page": its key and name (indexes differ per device). Cards are this
     /// device's own notifications and stay out.
@@ -977,6 +1066,11 @@ final class SyncEngine {
     /// then does a saved consent count (keptConsent). A switch-off forgets the consent (_dropConsent); quitting
     /// the app does not (quit).
     private var _launchOn = false, _dropConsent = false, _quitting = false
+    /// The instant events: the datagrams the listener's thread got, waiting for the worker; when the twin's page or its
+    /// console told of a person there (wakeFromTwin), the round it asks for; the twin's UDP port forwarded by the
+    /// engine's NAT (nil on the home network); where each side is subscribed (quit() ends it from the main thread).
+    private var _datagrams: [(data: Data, ip: String, port: UInt16, at: Date)] = [], _wakeAt: Date?, _twinUdp: Int?
+    private var _subs: [Side: (address: String, port: Int)] = [:]
     private var _reply: (id: String, reply: Reply)?, _fwReply: (id: String, go: Bool)?
     private var _status = Status()
     /// Called on the main thread when the status changed.
@@ -1002,8 +1096,27 @@ final class SyncEngine {
     /// in the file is forgotten at once: it was switched off while the app was closed (`defaults write`).
     func markLaunch(on: Bool) { locked { _launchOn = on; _dropConsent = !on } }
     /// The app quits: nothing more is written, as when switched off, but the consent stays for the next start.
-    func quit() { locked { _enabled = false; _reset = true; _quitting = true } }
-    func setTwin(address: String?, mac: String) { locked { _twinAddress = address; _twinMac = normMac(mac) } }
+    func quit() {
+        let subs = locked { () -> [Side: (address: String, port: Int)] in _enabled = false; _reset = true; _quitting = true; let s = _subs; _subs = [:]; return s }
+        // The devices stop sending to this app now, not when the subscription lapses (60 s): the worker may not
+        // run again before the app is gone.
+        for (side, sub) in subs { SyncEngine.unlisten(Device(side, sub.address), port: sub.port) }
+        wakeSem.signal()
+    }
+    /// The twin: where its API answers, its MAC, and - without the home network - the host port its UDP port 4210 is
+    /// forwarded from (main.swift Twin.start: --hostfwd udp:<udpPort>-4210), the only way its events reach this Mac.
+    func setTwin(address: String?, mac: String, udpForward: Int? = nil) {
+        locked { _twinAddress = address; _twinMac = normMac(mac); _twinUdp = udpForward }
+    }
+    /// A person at the twin's page in the app (main.swift, the page's message "twinInput": the knob turned or pressed,
+    /// a remote's button, BOOT, RESET): the screen round runs a moment later - the firmware acts on the gesture first -
+    /// unless the twin's own events (2.7.13) already tell of it. WHAT: "knob 1", "press", "ir", "boot", "reset".
+    func twinPageInput(_ what: String) { wakeFromTwin(after: what.hasPrefix("knob") ? 0.06 : 0.15) }
+    /// A line of the twin's console (main.swift reads the engine's output): "[luafx] open <name>" - an effect opened
+    /// there, by a person or by sync - asks for the screen round at once, under the same terms.
+    func twinConsoleLine(_ line: String) { if line.contains("[luafx] open") { wakeFromTwin(after: 0.02) } }
+    /// Tests only: false drops a datagram, as if it were lost on the way (the stand's loss test).
+    var eventFilter: ((Side, J) -> Bool)?
     func setFound(_ f: [PanelFinder.Found]) { locked { _found = f } }
     func setLanguage(_ l: String) { locked { _lang = l } }
     func syncNow() { locked { _syncNow = true } }
@@ -1109,6 +1222,45 @@ final class SyncEngine {
     /// style holds its carousel, and so does a world clock's new home: web_panel.cpp:764-771).
     private var twinTouch: Date?, twinHoldSeen: (hold: Int, at: Date, on: Bool)?, twinWroteAt = Date.distantPast, personSaid = false
 
+    // The instant events (firmware 2.7.13; "Instant events" in the header).
+    /// Wakes the worker: a datagram came, the twin's page or console told of a person, the app quits.
+    private let wakeSem = DispatchSemaphore(value: 0)
+    private var listener: EventListener?, listenerFailed = false
+    /// Each side's subscription: where its datagrams come from (HOST, and PORT behind the engine's NAT), the port it is
+    /// asked to send to (SAY), since when this run of subscriptions holds (SINCE) and when it was renewed (RENEWED), the
+    /// last datagram heard; the number of its last event (SEQ) and of the last gesture taken (INPUTSEQ: nil until the
+    /// first read of /api/panel says where the firmware's numbers are - the gestures before it are history).
+    struct Ev { var host = "", port: UInt16?, say = 0, since: Date?, renewed: Date?, heard: Date?, seq = 0, inputSeq: Int?, noRoute = Date.distantPast }
+    private var ev: [Side: Ev] = [:]
+    private var nextListen = Date.distantPast, lastWoken = Date.distantPast
+    /// When sync last wrote to each side: a person's datagram within crossWindow of it may predate the write, and the
+    /// screen round judges it instead (carryNow).
+    private var lastWrite: [Side: Date] = [:]
+    /// Inside a page ("Inside a screen" in the header): what waits to be done on a side, in order, each not before its
+    /// time - an effect's click, a gesture on a page with a stop inside, the leaving of that stop.
+    enum InsideAct: Equatable { case click(name: String, run: Int?), gesture(fn: String, key: String, name: String), leave(key: String, name: String) }
+    private var insideQ: [(to: Side, act: InsideAct, at: Date, since: Date)] = []
+    /// The clicks of each side's effect taken into account (accounted): its run on this device, the clicks it had
+    /// then that are no person's to carry (sync's own, carried ones, or those before sync saw it) - fx.clicks above it
+    /// are a person's. The session each side showed at the first read (its clicks then are history), a side whose
+    /// base is to be taken from its next reading (a click whose answer was lost), and a reconcile that is due.
+    private var fxBase: [Side: (name: String, run: Int, base: Int)] = [:], fxFirst: [Side: String] = [:], fxRebase = Set<Side>()
+    private var clicksDue = false
+    /// A person's presses on each side, with when they were made: the clicks carried keep their spacing (a double
+    /// press is a gesture of its own on KINETIC DIGITS and OCEANARIUM: 0.45 s, sync_events.h).
+    private var presses: [Side: [Date]] = [:]
+    /// The gestures the last read of /api/panel?input= gave, taken at the end of the screen round.
+    private var ringInputs: [Side: [J]] = [:]
+    /// A firmware without now.fx (before 2.7.13): the knob's clicks (/api/knob stats click + long) on the page shown,
+    /// as last read - the bridge of the design (w4kseii7h, plan step 2).
+    private var knobSeen: [Side: (page: String, n: Int)] = [:]
+    /// What a side's stop inside a page is expected to be after the gestures sync sent it, until its own events or a
+    /// read say.
+    private var enteredExpect: [Side: (value: Bool, until: Date)] = [:]
+    /// When sync last did something inside a page on each side; the sides a datagram moved that the screen round has
+    /// not read since (nothing is clicked there until it has).
+    private var insideDone: [Side: Date] = [:], stale = Set<Side>(), serving = false
+
     init(dataDir: URL) { self.dataDir = dataDir }
 
     func start() {
@@ -1116,7 +1268,7 @@ final class SyncEngine {
         let t = Thread { [weak self] in
             while let self {
                 self.step()
-                Thread.sleep(forTimeInterval: self.pause)
+                _ = self.wakeSem.wait(timeout: .now() + self.pause)
             }
         }
         t.name = "twin-sync"; t.qualityOfService = .utility
@@ -1178,11 +1330,12 @@ final class SyncEngine {
                                                    "синхронизацию выключили до ответа на оба вопроса: ничего не записано"))
                 }
                 if drop { consented = false }                          // not kept in the state saved now
+                unlistenAll()                                          // the devices stop sending at once
                 forget()
             }
             if drop { dropSavedConsent() }                             // whatever the file holds: a switch-off forgets it
         }
-        guard on else { phase(M("off", "выключена")); return }
+        guard on else { phase(M("off", "выключена")); locked { _datagrams = []; _wakeAt = nil }; return }
         stopLogged = false
         do {
             try connect()
@@ -1192,16 +1345,26 @@ final class SyncEngine {
             guard consented else { try consentFirst(); return }
             guard aligned else { try align(); return }
             if let (id, go) = locked({ () -> (String, Bool)? in let a = _fwReply; _fwReply = nil; return a }) { try answeredFirmware(id: id, go: go) }
+            // The instant events: what came carried at once (a datagram may ask for the screen round now), then the
+            // subscriptions renewed.
+            try drainEvents()
+            listenIfDue()
             let now = Date()
             let forced = locked { () -> Bool in let f = _syncNow; _syncNow = false; return f }
             if forced { declined = []; carry = (0, .distantPast); retryPending() }
-            if now >= nextFast || forced {
+            // The twin's page or console told of a person there, and its own events do not (takeWake): the round now.
+            let woke = takeWake(now)
+            if now >= nextFast || forced || woke {
                 try fastRound(); nextFast = Date().addingTimeInterval(strained ? SyncEngine.strainedFastEvery : SyncEngine.fastEvery)
                 needScreenRound = false
                 planStep()
+                if woke { lastWoken = Date() }
             } else if let at = stepAt, now >= at {
-                try stepRead()
+                // The panel's events bring its carousel's step themselves (followStep): its moment stays planned only
+                // to keep the long rounds away from it.
+                if live(.panel) { if now.timeIntervalSince(at) > 1.5 { stepAt = nil } } else { try stepRead() }
             }
+            try runInside()
             guard aligned else { return }
             // The leader's next step is near: the rounds that take a while (effects, settings) wait until it
             // is carried, stepQuietMax at most - with a short slot a step is always near. After a failure, a
@@ -1265,13 +1428,17 @@ final class SyncEngine {
     /// The panel under strain (its refused requests or failed allocations grew, watchLoad): read less.
     private var strained: Bool { strainedUntil.map { Date() < $0 } ?? false }
 
-    /// How long the worker sleeps between two steps: until the next screen round or the read that looks for
-    /// the leader's carousel step, 0.5 s at most.
+    /// How long the worker sleeps between two steps: until the next screen round, the read that looks for the
+    /// leader's carousel step, the next thing to do inside a page or the round the twin's page asked for, 0.5 s at
+    /// most - or until a datagram wakes it.
     private var pause: TimeInterval {
         guard aligned else { return 0.5 }
         var next = nextFast
-        if let s = stepAt, s < next { next = s }
-        return min(0.5, max(0.02, next.timeIntervalSinceNow))
+        // With the panel's events the step's moment only keeps the long rounds away: looked at again when it lapses.
+        if let s = stepAt { let t = live(.panel) ? s.addingTimeInterval(1.6) : s; if t < next { next = t } }
+        if let q = insideQ.first?.at, q < next { next = q }
+        if let w = locked({ _wakeAt }), w < next { next = w }
+        return min(0.5, max(0.01, next.timeIntervalSinceNow))
     }
 
     private var settingsEvery: TimeInterval {
@@ -1288,6 +1455,8 @@ final class SyncEngine {
         base = [:]; firmwareBase = [:]; screen = [:]; screenAt = [:]; pageReadAt = [:]; wrote = [:]; effects = [:]; docs = [:]; fw = [:]; caps = [:]; hashes = [:]
         stepWin = nil; stepAt = nil; stepTries = 0; quietSince = nil; walkHeld = false; twinTouch = nil; twinHoldSeen = nil; twinWroteAt = .distantPast; personSaid = false
         uptimeSeen = [:]; restartSeen = [:]; needScreenRound = false; twinWrote = [:]; twinLost = nil
+        forgetInside(); ev = [:]; nextListen = .distantPast
+        locked { _subs = [:]; _datagrams = []; _wakeAt = nil }
         pendingFx = [:]; noted = []; offer = nil; declined = []; wantPanel = nil; wantTwin = nil; inFlight = nil
         carry = (0, .distantPast); fwWatch = nil; fwWatchSince = [:]; slowRounds = 0; down = []; failures = [:]; load = nil; strainedUntil = nil
         nextFast = .distantPast; nextSlow = .distantPast; nextEffects = .distantPast; nextVerify = .distantPast; verifyNow = false
@@ -1325,7 +1494,7 @@ final class SyncEngine {
             guard f.name.hasPrefix("TWIN-") else { throw SyncWait(M("waiting for the twin to be named TWIN-…", "жду, пока двойник получит имя TWIN-…")) }
             guard f.mac == tMac else { throw SyncError(M("\(tAddr) answers with MAC \(f.mac), not this twin's \(tMac)", "\(tAddr) отвечает с MAC \(f.mac), а у этого двойника \(tMac)")) }
             d.mayWrite = { [weak self] in self?.writesAllowed ?? false }
-            d.willWrite = { [weak self] in self?.twinWroteAt = Date() }
+            d.willWrite = { [weak self] in self?.twinWroteAt = Date(); self?.lastWrite[.twin] = Date() }
             dev[.twin] = d; fw[.twin] = f
             // A twin at another address, of the same pair: a restart is one, as ever (a new pair starts afresh).
             if "\(fw[.panel]?.mac ?? "")|\(f.mac)" == pairKey { try sawUptime(.twin, info.i("uptime"), at: Date()) }
@@ -1342,6 +1511,7 @@ final class SyncEngine {
                 throw SyncWait(why)
             }
             d.mayWrite = { [weak self] in self?.writesAllowed ?? false }
+            d.willWrite = { [weak self] in self?.lastWrite[.panel] = Date() }
             dev[.panel] = d; fw[.panel] = f
             publish { $0.peer = "\(f.name) (\(pAddr), \(f.mac))" }
             if "\(f.mac)|\(fw[.twin]!.mac)" == pairKey { try sawUptime(.panel, info.i("uptime"), at: Date()) }
@@ -1353,6 +1523,7 @@ final class SyncEngine {
             uptimeSeen = [:]; restartSeen = [:]; twinWrote = [:]; twinLost = nil
             wantPanel = nil; wantTwin = nil; inFlight = nil; heldReply = nil; fxAlignFrom = nil; imageCache = nil
             refusedFx = [:]; noSource = [:]; shifted = [:]; renameRefused = [:]
+            forgetInside(); ev = [:]; nextListen = .distantPast; locked { _subs = [:]; _datagrams = [] }
             pairKey = key; consented = false; consentKept = false; aligned = false; loadState()
             nextVerify = Date().addingTimeInterval(SyncEngine.verifyEvery)
         }
@@ -1424,7 +1595,7 @@ final class SyncEngine {
     private func readScreen(_ s: Side) throws -> Screen {
         let d = device(s)
         let sent = Date()
-        guard let pn = try d.get("/api/panel") else {
+        guard let pn = try d.panelDoc(input: screen[s]?.inputSeq != nil ? ev[s]?.inputSeq : nil) else {
             throw SyncError(M("\(s.word.en) has no /api/panel: its firmware is too old for sync", "\(s.at) нет /api/panel: прошивка слишком старая для синхронизации"))
         }
         let got = Date()
@@ -1439,6 +1610,7 @@ final class SyncEngine {
         x.bright = st.i("brightness") ?? 0; x.off = st.b("forcedOff") ?? false; x.uptime = st.i("uptime") ?? 0
         docs[s, default: [:]]["/api/panel"] = pn; pageReadAt[s] = got
         if s == .panel { timeStep(x, sent: sent, received: got) } else { sawTwin(x, at: got) }
+        noteInputs(s, x); stale.remove(s)
         return x
     }
 
@@ -1483,6 +1655,9 @@ final class SyncEngine {
         for s in sides {
             guard restartSeen[s] != nil else { continue }
             if s == .twin { twinTouch = nil; twinHoldSeen = nil }       // its carousel's hold starts from boot: no touch
+            // It forgot its listeners, and its numbers and effect runs start again: subscribed again at once.
+            ev[s] = nil; nextListen = Date(); fxBase[s] = nil; fxFirst[s] = ""; knobSeen[s] = nil; enteredExpect[s] = nil
+            insideQ.removeAll { $0.to == s }
             let x = try readScreen(s); screenAt[s] = Date()
             restartSeen[s] = nil
             rebooted(s, x)
@@ -1513,7 +1688,7 @@ final class SyncEngine {
         noSource[s] = noSource[s]?.filter { e.stem.values.contains($0.key) }            // left the list: asked again if it comes back
         guard let byHash = luaCap(s) else { return nil }
         e.byHash = byHash
-        if byHash { for (n, stem) in e.stem { e.hash[n] = try scriptHash(s, stem: stem, bytes: e.bytes[n]!) } }
+        if byHash { for (n, stem) in e.stem { try serveEvents(); e.hash[n] = try scriptHash(s, stem: stem, bytes: e.bytes[n]!) } }
         return e
     }
 
@@ -1547,15 +1722,15 @@ final class SyncEngine {
                                          "/api/railboard", "/api/flightboard", "/api/media", "/api/ir"]
 
     private func readDocs(_ s: Side, _ routes: [String]) throws {
-        var d = docs[s] ?? [:]
         for r in routes {
-            if let doc = try device(s).get(r) { d[r] = doc } else { d[r] = nil }
-            if r == "/api/info", let doc = d[r] {
-                fw[s] = Firmware(doc); docs[s] = d
+            try serveEvents()                                              // it may read the screen too: kept as read
+            let doc = try device(s).get(r)
+            docs[s, default: [:]][r] = doc
+            if r == "/api/info", let doc {
+                fw[s] = Firmware(doc)
                 try sawUptime(s, doc.i("uptime"), at: Date())               // restarted: the rest is not read now
             }
         }
-        docs[s] = d
     }
 
     /// A side's settings as compared. While the twin holds its flight board on ZZZZ (holdsNoAsk), the airport selected
@@ -2181,15 +2356,17 @@ final class SyncEngine {
                 log("panel→twin", "conflict", M("conflict: the panel's taken - screen \(f)", "конфликт: взята панель — экран, \(f)"))
             }
         }
+        // The other side was read a moment ago, in this round: it stands for the read before the write (quick), and the
+        // answer to the write for the read after it - two reads fewer on the panel for each change carried to it.
         for s in sides {
             let c = changed[s]!
             if !c.isEmpty {
-                do { try mirrorScreen(from: s, fields: c); forgive("screen", s, Array(c)) }
+                do { try mirrorScreen(from: s, fields: c, quick: true); forgive("screen", s, Array(c)) }
                 catch { if error is SyncStopped || error is SyncDown || error is SyncRestart || tryAgain("screen", s, Array(c)) { throw error } }   // the base stays: seen again
             }
             rebaseScreen(s)
         }
-        if backToPanel { try mirrorScreen(from: .panel, fields: ["page"]) }
+        if backToPanel { try mirrorScreen(from: .panel, fields: ["page"], quick: true) }
         // Said once a round has read the twin's uptime too: a restart also starts its carousel's hold afresh.
         if personAtTwin != personSaid {
             personSaid = personAtTwin
@@ -2202,6 +2379,8 @@ final class SyncEngine {
         // A person's page or style from the twin went to the panel just now and holds it from now: the twin's
         // hold, older, is renewed before it ends (twinMove), so the panel's carousel goes on first.
         try twinAct(hold: switchedOn)
+        // Inside the page both show: the gestures this round's reads gave, the effect's clicks.
+        try insidePass()
     }
 
     /// The screen fields side CUR changed since its BASE, as a person's change to carry: not the page or the
@@ -2272,9 +2451,9 @@ final class SyncEngine {
 
     /// Makes the other side's screen show FIELDS of side S's, then reads it again as its base. The panel's
     /// carousel walk is written only while the panel leads (leader), the twin's never; what is written is kept
-    /// in `wrote` until it is read back. QUICK (the panel's step, page and style only): the other side's
-    /// /api/panel read within fastEvery + 1 s stands for a read before the write - its page numbers - and the
-    /// answer to the write, the same document as GET /api/panel, for the read after it.
+    /// in `wrote` until it is read back. QUICK (the panel's step, a datagram's change, the screen round that has just read
+    /// both; page and style only): the other side's /api/panel read within fastEvery + 1 s stands for a read before the
+    /// write - its page numbers - and the answer to the write, the same document as GET /api/panel, for the read after it.
     private func mirrorScreen(from s: Side, fields asked: Set<String>, quick: Bool = false) throws {
         try noRestartPending()
         let o = s.other
@@ -2282,7 +2461,10 @@ final class SyncEngine {
         let leads = SyncEngine.leader(panel: screen[.panel]) == s
         let fields = SyncEngine.writable(asked, from: s, src, panel: screen[.panel])
         guard !fields.isEmpty else { return }
-        let fresh = quick && fields.isSubset(of: ["page", "style"]) && pageReadAt[o].map { Date().timeIntervalSince($0) < SyncEngine.fastEvery + 1 } == true
+        // Read within fastEvery + 1 s - or, while its own events come and none moved it since, within freshLive (a long
+        // round reads no screen meanwhile).
+        let age = pageReadAt[o].map { Date().timeIntervalSince($0) } ?? .infinity
+        let fresh = quick && fields.isSubset(of: ["page", "style"]) && (age < SyncEngine.fastEvery + 1 || (age < SyncEngine.freshLive && live(o) && !stale.contains(o)))
         var dst = fresh ? screen[o]! : try readScreen(o)
         var body: J = [:], did: [String] = [], expect: [String: String] = [:]
         if fields.contains("page"), src.shown != dst.shown {
@@ -2328,6 +2510,538 @@ final class SyncEngine {
         } else { dst = try readScreen(o); screenAt[o] = Date() }
         screen[o] = dst; rebaseScreen(o); wrote[o] = nil
         log(s.arrow, leads && !asked.isDisjoint(with: src.walked) ? "walk" : "screen", M(did.joined(separator: ", "), did.joined(separator: ", ")))
+    }
+
+    // MARK: instant events ("Instant events" in the header)
+
+    // Our choice, not measured: the subscription is renewed every listenEvery (the firmware keeps it 60 s); a person's
+    // datagram within crossWindow of sync's write to that side goes to the screen round; gestures inside a page go
+    // gestureGap apart (the firmware merges /api/ir/do presses closer than about 0.3 s: the design's E4, E6); clicks
+    // with no person's spacing to keep go clickGap apart (past the 0.45 s of a double press); an effect's first frame
+    // is waited for openWait at most; a side whose own events come, none of which moved it, is taken as read for a
+    // carry for freshLive (mirrorScreen QUICK; the screen round reads it every fastEvery anyway, a long round not).
+    static let listenEvery: TimeInterval = 25, crossWindow: TimeInterval = 1, gestureGap: TimeInterval = 0.35
+    static let clickGap: TimeInterval = 0.5, openWait: TimeInterval = 6, freshLive: TimeInterval = 12
+
+    /// A person's doing ("by", sync_events.h): the knob, the remote, a request without X-Twin-Sync (the portal, Home
+    /// Assistant). Not "sync" (its own write coming back), "carousel", "schedule" (the night) or "auto" (no cause noted).
+    static func person(_ by: String) -> Bool { by == "knob" || by == "ir" || by == "http" }
+
+    /// The IPv4 address of HOST ("192.168.4.89", "panel.local", "localhost"), nil when it has none.
+    static func ipv4(of host: String) -> String? {
+        var a = in_addr()
+        if inet_pton(AF_INET, host, &a) == 1 { return host }
+        var hints = addrinfo(); hints.ai_family = AF_INET; hints.ai_socktype = SOCK_DGRAM
+        var res: UnsafeMutablePointer<addrinfo>?
+        guard getaddrinfo(host, nil, &hints, &res) == 0, let r = res, let sa = r.pointee.ai_addr else { return nil }
+        defer { freeaddrinfo(res) }
+        return sa.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { p -> String? in
+            var x = p.pointee.sin_addr; var buf = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
+            return inet_ntop(AF_INET, &x, &buf, socklen_t(INET_ADDRSTRLEN)).map { _ in String(cString: buf) }
+        }
+    }
+
+    /// Where SIDE's datagrams come from and the port it is asked to send them to. A device on the network sends from
+    /// its own address (port 4210) to this app's port. A device behind the engine's NAT (127.0.0.1: the twin without the
+    /// home network; a test's "panel") sees this Mac as 10.0.2.2, and a datagram it sends there reaches the Mac only as
+    /// an answer on its forwarded UDP port FWD (--hostfwd udp:FWD-4210): the engine sends a guest's datagram from 4210 to
+    /// the gateway's port FWD to the host peer that sent to FWD last (esp-soc/src/nat.rs udp_out). So it is asked to send
+    /// to FWD, and this app's socket sends an empty datagram to FWD first (EventListener.prime).
+    private func eventRoute(_ s: Side) -> (host: String, port: UInt16?, say: Int)? {
+        guard let mine = listener?.port, mine > 0, let d = dev[s] else { return nil }
+        let host = String(d.address.split(separator: ":").first ?? "")
+        // A name (panel.local) is looked up when a run of subscriptions starts, not at each renewal.
+        let known = ev[s].flatMap { $0.since != nil && !$0.host.isEmpty ? $0.host : nil }
+        guard let ip = known ?? SyncEngine.ipv4(of: host) else { return nil }
+        guard ip.hasPrefix("127.") else { return (ip, nil, Int(mine)) }
+        let fwd: Int? = s == .twin ? locked({ _twinUdp }) : testInt("syncPanelUdpForTesting")
+        guard let fwd, (1024...65535).contains(fwd) else { return nil }
+        return ("127.0.0.1", UInt16(fwd), fwd)
+    }
+
+    private func sayOnce(_ key: String, _ m: Msg) { if noted.insert(key).inserted { log("note", "events", m) } }
+
+    /// Both sides asked for their events (POST /api/sync/listen {"port"}), every listenEvery - only once both of the
+    /// person's confirmations are given: before them sync writes nothing, a subscription included.
+    private func listenIfDue() {
+        guard Date() >= nextListen else { return }
+        nextListen = Date().addingTimeInterval(SyncEngine.listenEvery)
+        if listener == nil && !listenerFailed {
+            listener = EventListener { [weak self] d, ip, port in self?.received(d, ip, port) }
+            if listener == nil {
+                listenerFailed = true
+                log("note", "events", M("no UDP socket for the instant events: both sides are read every 3 s", "нет UDP-сокета для мгновенных событий: обе стороны читаю раз в 3 с"))
+            }
+        }
+        guard listener != nil else { return }
+        for s in sides { listen(s) }
+    }
+
+    /// One side's subscription, renewed. A run of them starts with its end ({"stop":true}) and a new one, so the
+    /// firmware sends the screen as it is at once (sync_events.cpp syncListen: a renewal sends nothing) - the datagram
+    /// that tells they reach this app (live). 404: a firmware before 2.7.13 - asked again in 5 min; 409: both places
+    /// taken - asked again at the next renewal. Either way its screen is read every 3 s, as before.
+    private func listen(_ s: Side) {
+        var e = ev[s] ?? Ev()
+        guard Date() >= e.noRoute else { return }
+        guard let r = eventRoute(s) else {
+            sayOnce("ev-route-\(s)", M("\(s.word.en): its instant events cannot reach this app (behind the engine's NAT with no forwarded UDP port): it is read every 3 s" + (s == .twin ? ", and the twin's page and console tell of a person there" : ""),
+                                       "\(s.word.ru): \(s.its) мгновенные события сюда не дойдут (за NAT движка без проброшенного UDP-порта): читаю раз в 3 с" + (s == .twin ? ", а о человеке у двойника говорят его страница и консоль" : "")))
+            return
+        }
+        if e.host != r.host || e.port != r.port || e.say != r.say { e = Ev(inputSeq: e.inputSeq); e.host = r.host; e.port = r.port; e.say = r.say }
+        // Every renewal: whoever sent there last gets the answers. The engine takes the empty datagram on its next pass:
+        // the first of a run, sent the moment the subscription is taken, was lost to a NAT with no peer yet (2026-10-01,
+        // the stand) - a moment before asking.
+        if let p = r.port { listener?.prime(p); if e.since == nil { Thread.sleep(forTimeInterval: 0.1) } }
+        do {
+            let d = device(s), asked = Date()                         // its first datagram may come before the answer
+            if e.since == nil { _ = try d.send("POST", "/api/sync/listen", body: try jsonData(["port": r.say, "stop": true]), type: "application/json", timeout: 5, attempts: 1, quiet: true) }
+            let a = try d.send("POST", "/api/sync/listen", body: try jsonData(["port": r.say]), type: "application/json", timeout: 5, attempts: 1, quiet: true)
+            switch a.status {
+            case 200:
+                if e.since == nil {
+                    e.since = asked; e.seq = a.object?.i("seq") ?? 0
+                    log("note", "events", M("\(s.word.en): subscribed to its instant events (UDP port \(r.say)): its changes are carried at once",
+                                            "\(s.word.ru): подписался на \(s.its) мгновенные события (UDP-порт \(r.say)): \(s.its) изменения переношу сразу"))
+                }
+                e.renewed = Date()
+                let sub = (d.address, r.say)
+                locked { _subs[s] = sub }
+            case 404:
+                e.since = nil; e.renewed = nil; e.noRoute = Date().addingTimeInterval(300)
+                sayOnce("ev-404-\(s)", M("\(s.word.en): no instant events (a firmware before 2.7.13, no /api/sync/listen): its screen is read every 3 s",
+                                         "\(s.word.ru): мгновенных событий нет (прошивка до 2.7.13, нет /api/sync/listen): \(s.its) экран читаю раз в 3 с"))
+            default:
+                e.since = nil; e.renewed = nil
+                sayOnce("ev-\(a.status)-\(s)", M("\(s.word.en): POST /api/sync/listen: HTTP \(a.status) \(a.why): it is read every 3 s, and asked again every \(Int(SyncEngine.listenEvery)) s",
+                                                 "\(s.word.ru): POST /api/sync/listen: HTTP \(a.status) «\(a.why)»: читаю раз в 3 с и прошу снова каждые \(Int(SyncEngine.listenEvery)) с"))
+            }
+        } catch {
+            e.since = nil; e.renewed = nil                            // switched off, or no answer: the next renewal starts afresh
+        }
+        ev[s] = e
+    }
+
+    /// Whether SIDE's datagrams reach this app now: subscribed within the firmware's 60 s, and heard since this run of
+    /// subscriptions began.
+    private func live(_ s: Side) -> Bool {
+        guard let e = ev[s], let since = e.since, let r = e.renewed, Date().timeIntervalSince(r) < 60, let h = e.heard else { return false }
+        return h >= since
+    }
+
+    /// The end of a subscription: sent whatever the switch says, one try - it only stops the device sending.
+    static func unlisten(_ d: Device, port: Int) {
+        guard let body = try? jsonData(["port": port, "stop": true]) else { return }
+        _ = try? d.send("POST", "/api/sync/listen", body: body, type: "application/json", timeout: 1.5, attempts: 1, quiet: true, unstoppable: true)
+    }
+    private func unlistenAll() {
+        for s in sides { if let e = ev[s], e.since != nil, let d = dev[s] { SyncEngine.unlisten(d, port: e.say) } }
+        locked { _subs = [:] }
+        ev = [:]
+    }
+
+    /// The listener's thread: a datagram, kept for the worker, which is woken.
+    private func received(_ d: Data, _ ip: String, _ port: UInt16) {
+        locked {
+            _datagrams.append((d, ip, port, Date()))
+            if _datagrams.count > 256 { _datagrams.removeFirst(_datagrams.count - 256) }
+        }
+        wakeSem.signal()
+    }
+
+    /// Between two reads of a round that takes a while (the settings', the effects'): what came meanwhile is carried now,
+    /// not after the round - its reads come before any of its writes, and what this carries is the screen's and the
+    /// clicks', which those rounds do not decide. Not inside itself, not before both confirmations.
+    private func serveEvents() throws {
+        guard aligned, !serving, locked({ !_datagrams.isEmpty }) || insideQ.first.map({ $0.at <= Date() }) == true else { return }
+        serving = true; defer { serving = false }
+        try drainEvents(); try runInside()
+    }
+
+    /// The twin's page or console told of a person there: the screen round at AFTER from now.
+    private func wakeFromTwin(after: TimeInterval) {
+        let t = Date().addingTimeInterval(after)
+        locked { if _wakeAt.map({ t < $0 }) ?? true { _wakeAt = t } }
+        wakeSem.signal()
+    }
+    /// Whether that round is due now: not while the twin's own events tell of it (they come first), not more than
+    /// one in 0.3 s, none while the panel is under strain (it is read every strainedFastEvery then).
+    private func takeWake(_ now: Date) -> Bool {
+        guard let w = locked({ _wakeAt }), now >= w else { return false }
+        locked { _wakeAt = nil }
+        guard !live(.twin), !strained else { return false }
+        if now.timeIntervalSince(lastWoken) < 0.3 { let t = lastWoken.addingTimeInterval(0.3); locked { _wakeAt = t }; return false }
+        return true
+    }
+
+    /// The datagrams that came, in order, each from the side it came from. Older than 5 s: left to the rounds.
+    private func drainEvents() throws {
+        let got = locked { () -> [(data: Data, ip: String, port: UInt16, at: Date)] in let g = _datagrams; _datagrams = []; return g }
+        let now = Date()
+        for g in got where now.timeIntervalSince(g.at) < 5 {
+            guard let s = sides.first(where: { ev[$0]?.since != nil && ev[$0]?.host == g.ip && (ev[$0]?.port == nil || ev[$0]?.port == g.port) }),
+                  let o = (try? JSONSerialization.jsonObject(with: g.data)) as? J else { continue }
+            if let f = eventFilter, !f(s, o) { continue }
+            try event(s, o, at: g.at)
+        }
+        for s in sides {
+            guard let e = ev[s], let since = e.since, (e.heard ?? .distantPast) < since, now.timeIntervalSince(since) > 3 else { continue }
+            sayOnce("ev-deaf-\(s)", M("\(s.word.en) took the subscription, but its datagrams do not reach this app: it is read every 3 s" + (s == .twin ? ", and the twin's page and console tell of a person there" : ""),
+                                      "\(s.word.ru) \(s == .panel ? "приняла" : "принял") подписку, но \(s.its) датаграммы сюда не доходят: читаю раз в 3 с" + (s == .twin ? ", а о человеке у двойника говорят его страница и консоль" : "")))
+        }
+        if clicksDue, stale.isEmpty { try reconcileClicks() }
+    }
+
+    /// One datagram. A gap in seq: one was lost - both sides are read now, the gestures with them (?input=). A seq far
+    /// below the last: numbered afresh, the device restarted (its uptime tells the rounds).
+    private func event(_ s: Side, _ o: J, at: Date) throws {
+        var e = ev[s]!
+        e.heard = at
+        if let q = o.i("seq") {
+            if q + 100 < e.seq { e.seq = q; e.inputSeq = nil }
+            else {
+                if e.seq > 0, q > e.seq + 1 { nextFast = Date() }
+                e.seq = max(e.seq, q)
+            }
+        }
+        ev[s] = e
+        switch o.s("t") {
+        case "screen": try screenEvent(s, o, at: at)
+        case "input": try inputEvent(s, o, at: at)
+        default: break
+        }
+    }
+
+    /// A screen datagram: the page, the style, the brightness, on/off, the stop inside a page, the effect's clicks.
+    /// A person's change is carried at once (carryNow); the leading panel's carousel step is given to the twin
+    /// (followStep); sync's own write coming back and the night schedule change nothing; anything else - "auto", or
+    /// on/off, which the datagram gives with the schedule's - goes to the screen round, now.
+    private func screenEvent(_ s: Side, _ o: J, at: Date) throws {
+        guard let before = screen[s], base[s]?["screen"] != nil else { return }
+        if let f = o.o("fx") {
+            let id = f.i("id") ?? -1, run = f.i("run") ?? 0
+            let fx = Fx(id: id, open: before.fx.map { $0.id == id && $0.run == run && $0.open } ?? false, run: run, clicks: f.i("clicks") ?? 0)
+            if fx != before.fx { screen[s]!.fx = fx; clicksDue = true }
+        }
+        if let en = o.b("entered"), en != before.entered { screen[s]!.entered = en; enteredExpect[s] = nil }
+        let page = o.i("page") ?? before.page, key = o.s("key") ?? before.key, name = o.s("name") ?? before.name
+        let style = o.i("style") ?? before.style, bright = o.i("bright") ?? before.bright
+        let moved = page != before.page || key != before.key || name != before.name || style != before.style || bright != before.bright
+        let offMoved = (o.b("off") ?? before.off) != before.off
+        guard moved || offMoved else { return }
+        let by = o.s("by") ?? ""
+        if by == "sync" || by == "schedule" { return }
+        if by == "carousel" {
+            if s == .panel, !offMoved, bright == before.bright, SyncEngine.leader(panel: before) == .panel { try followStep(page: page, key: key, name: name, style: style) }
+            else { stale.insert(s); nextFast = Date() }
+            return
+        }
+        guard SyncEngine.person(by), !offMoved else { stale.insert(s); nextFast = Date(); return }
+        if s == .twin { twinTouch = at }
+        if try !carryNow(s, page: page, key: key, name: name, style: style, bright: bright) { stale.insert(s); nextFast = Date() }
+    }
+
+    /// A person's page, style or brightness from SIDE's datagram, carried at once. The datagram is the side's screen,
+    /// so the side is not read; the other side is written as the screen round would write it (mirrorScreen, its answer
+    /// read as its screen). False: the screen round decides instead - a write to this side within crossWindow (the
+    /// datagram may come from before it), the other side changed the same thing, the page is not where this side's
+    /// list has it, a failure or a restart waits for that round.
+    private func carryNow(_ s: Side, page: Int, key: String, name: String, style: Int, bright: Int) throws -> Bool {
+        let o = s.other
+        guard !needScreenRound, restartSeen.isEmpty, var x = screen[s], let b = base[s]?["screen"], let bo = base[o]?["screen"], let y = screen[o],
+              Date().timeIntervalSince(lastWrite[s] ?? .distantPast) > SyncEngine.crossWindow, x.index(key: key, name: name) == page else { return false }
+        x.page = page; x.key = key; x.name = name; x.style = style; x.bright = bright
+        x.running = false; x.pageS = 0                                  // a person's gesture holds its carousel (carouselNote)
+        if x.enabled { x.holdS = max(x.holdS, x.idleS) }
+        let changed = Set(x.fields.keys.filter { x.fields[$0] != b[$0] })
+        if !SyncEngine.screenChanges(y, base: bo, wrote: wrote[o]).changed.isDisjoint(with: changed) { return false }
+        screen[s] = x
+        guard !changed.isEmpty else { return true }
+        do { try mirrorScreen(from: s, fields: changed, quick: true) }
+        catch { if error is SyncStopped || error is SyncDown || error is SyncRestart { throw error }; return false }   // the base stays: seen again
+        rebaseScreen(s)
+        return true
+    }
+
+    /// The leading panel's carousel stepped (its datagram, "carousel"): the step is given to the twin at once, as
+    /// stepRead gives it - nothing is read of the panel; of the twin only where its own events do not come.
+    private func followStep(page: Int, key: String, name: String, style: Int) throws {
+        guard var x = screen[.panel] else { return }
+        x.page = page; x.key = key; x.name = name; x.style = style
+        x.running = true; x.pageS = 0; x.holdS = 0
+        screen[.panel] = x
+        stepAt = nil; stepWin = nil; stepTries = 0
+        rebaseScreen(.panel)                                              // its walk: nobody's change
+        if !live(.twin), try twinChosen() { nextFast = Date(); return }   // a person's choice there goes first
+        try twinAct(quick: true)
+    }
+
+    /// A gesture (an input datagram, or one of the gestures GET /api/panel?input= gave), taken once by its seq. A
+    /// person's press on an effect is counted by now.fx (reconcileClicks); on a page with a stop inside, the gesture is
+    /// made on the other side (gesture).
+    private func inputEvent(_ s: Side, _ o: J, at: Date) throws {
+        guard let q = o.i("seq") else { return }
+        if let last = ev[s]?.inputSeq, q <= last { return }
+        ev[s, default: Ev()].inputSeq = q
+        let by = o.s("by") ?? "", kind = o.s("kind") ?? "", entered = o.b("entered") ?? false
+        guard SyncEngine.person(by), let i = o.i("page"), let pg = screen[s]?.page(i) else { return }
+        if pg.key == "lua" {
+            if kind == "press" { presses[s, default: []].append(at); presses[s] = Array(presses[s]!.suffix(8)); clicksDue = true }
+            return
+        }
+        try gesture(s, kind: kind, key: pg.key, name: pg.name, entered: entered)
+    }
+
+    /// What is carried inside a page, by its key: an effect's clicks; the stops of the world clock and the flight board
+    /// (in, turns, out); the rail board's, only while both boards show the same list; nothing of the media player (each
+    /// gesture would reach Home Assistant twice), the yacht radar or the markets' inner steps; the clock and the cards
+    /// have nothing inside.
+    enum Inside: Equatable { case clicks, stops, trains, notCarried, nothing }
+    static func inside(key: String) -> Inside {
+        switch key {
+        case "lua": return .clicks
+        case "world", "flights": return .stops
+        case "trains": return .trains
+        case "media", "yachts", "market": return .notCarried
+        default: return .nothing
+        }
+    }
+
+    enum Replay: Equatable { case none, fn(String), leave }
+    /// What a person's gesture on a page with a stop inside asks of the other side, which shows the same page and is
+    /// in its stop or not (OTHER). ENTERED: the source was in its stop when the gesture came (the firmware takes it
+    /// before it acts). A press goes in (/api/ir/do?fn=ok), or out - by a show of the page, which leaves the stop
+    /// (main.cpp panelShowPage) - except on the rail board, whose press steps its stops (lists, station, out); a turn
+    /// inside turns there (fn=cw|ccw); a turn outside is a page change, the screen's.
+    static func replay(kind: String, entered: Bool, other: Bool, trains: Bool) -> Replay {
+        switch kind {
+        case "press":
+            if !entered { return other ? .none : .fn("ok") }
+            if trains { return other ? .fn("ok") : .none }
+            return other ? .leave : .none
+        case "cw", "ccw": return entered && other ? .fn(kind) : .none
+        default: return .none
+        }
+    }
+
+    private func gesture(_ s: Side, kind: String, key: String, name: String, entered: Bool) throws {
+        let o = s.other, inside = SyncEngine.inside(key: key)
+        guard inside != .nothing, kind == "press" || entered else { return }
+        if inside == .notCarried {
+            sayOnce("inside-\(key)", M("inside \(name): not carried (\(key == "media" ? "each gesture would reach Home Assistant twice" : "its own state on each device"))",
+                                       "внутри экрана «\(name)» не синхронизируется (\(key == "media" ? "каждое действие ушло бы в Home Assistant дважды" : "у каждого устройства своё состояние"))"))
+            return
+        }
+        guard let y = screen[o], y.key == key, y.name == name else {
+            log("note", "inside", M("\(s.word.en): \(kind) inside \(name) not carried: \(o.word.en) shows another page", "\(s.word.ru): \(kind) внутри «\(name)» не переношу: \(o.on) другая страница"))
+            return
+        }
+        if key == "flights", holdingNoAsk {
+            sayOnce("inside-noask", M("inside the flight board: not carried while the twin holds ZZZZ", "внутри табло рейсов: не переношу, пока двойник держит ZZZZ")); return
+        }
+        let other = enteredExpect[o].flatMap { $0.until > Date() ? $0.value : nil } ?? y.entered
+        let r = SyncEngine.replay(kind: kind, entered: entered, other: other, trains: inside == .trains)
+        guard r != .none else { return }
+        if inside == .trains {
+            let a = try device(s).get("/api/railboard"), b = try device(o).get("/api/railboard")
+            guard let a, let b, a.s("list") == b.s("list"), a.s("knob") == b.s("knob") else {
+                log("note", "inside", M("\(name): the two boards show different lists - \(kind) not carried", "\(name): табло на сторонах показывают разное — \(kind) не переношу")); return
+            }
+        }
+        switch r {
+        case .leave: enqueue(o, .leave(key: key, name: name), gap: SyncEngine.gestureGap); enteredExpect[o] = (false, Date().addingTimeInterval(2))
+        case let .fn(f):
+            enqueue(o, .gesture(fn: f, key: key, name: name), gap: SyncEngine.gestureGap)
+            if f == "ok", inside == .stops { enteredExpect[o] = (true, Date().addingTimeInterval(2)) }
+        case .none: break
+        }
+    }
+
+    /// Queued for side O, GAP after the last thing queued for it, not before AT.
+    private func enqueue(_ o: Side, _ a: InsideAct, gap: TimeInterval, at wanted: Date = Date()) {
+        let last = insideQ.filter { $0.to == o }.map(\.at).max() ?? insideDone[o] ?? .distantPast
+        insideQ.append((o, a, max(wanted, last.addingTimeInterval(gap)), Date()))
+        insideQ.sort { $0.at < $1.at }
+    }
+    private func queuedClicks(_ s: Side) -> Int { insideQ.filter { if $0.to == s, case .click = $0.act { return true }; return false }.count }
+    private func dropClicks(_ s: Side) { insideQ.removeAll { if $0.to == s, case .click = $0.act { return true }; return false } }
+
+    /// What is due of the queue, in order.
+    private func runInside() throws {
+        while let i = insideQ.firstIndex(where: { $0.at <= Date() }) {
+            let q = insideQ.remove(at: i)
+            try perform(q.to, q.act, since: q.since)
+        }
+    }
+
+    private func perform(_ o: Side, _ a: InsideAct, since: Date) throws {
+        guard let y = screen[o] else { return }
+        // A datagram moved that side and the screen round has not read it since: done once it has.
+        if stale.contains(o) {
+            if Date().timeIntervalSince(since) < SyncEngine.openWait { insideQ.append((o, a, Date().addingTimeInterval(0.2), since)); insideQ.sort { $0.at < $1.at } }
+            return
+        }
+        let arrow = o.other.arrow
+        switch a {
+        case let .click(name, run):
+            guard y.key == "lua", y.name == name, !y.notify else { dropClicks(o); clicksDue = true; return }
+            if let run {
+                // Its effect reopened meanwhile: counted again. Its first frame not come yet: waited for, openWait at most.
+                guard var f = y.fx, f.run == run, f.id >= 0 else { dropClicks(o); clicksDue = true; return }
+                if !f.open {
+                    let z = try readPanelOnly(o)
+                    guard z.key == "lua", z.name == name, let g = z.fx, g.run == run else { dropClicks(o); clicksDue = true; return }
+                    f = g
+                }
+                if !f.open {
+                    guard Date().timeIntervalSince(since) < SyncEngine.openWait else {
+                        dropClicks(o); clicksDue = true
+                        log("note", "inside", M("\(name): \(o.word.en)'s effect did not open in \(Int(SyncEngine.openWait)) s - its clicks wait for the next round", "\(name): эффект \(o.of) не открылся за \(Int(SyncEngine.openWait)) с — нажатия ждут следующего раунда"))
+                        return
+                    }
+                    let later = Date().addingTimeInterval(o == .panel ? 0.4 : 0.2)   // each look holds the panel's loop()
+                    for k in insideQ.indices where insideQ[k].to == o { insideQ[k].at = max(insideQ[k].at, later) }
+                    insideQ.append((o, a, later, since)); insideQ.sort { $0.at < $1.at }
+                    return
+                }
+            }
+            do {
+                try device(o).post("/api/lua", ["click": true])
+                if let run, let b = fxBase[o], b.run == run { fxBase[o]!.base += 1 }      // sync's own: no person's to carry back
+                insideDone[o] = Date()
+                log(arrow, "inside", M("\(name): a click", "\(name): нажатие"))
+            } catch {
+                // Landed or not, the answer is lost: the side's next reading is its base, and the counts are compared again.
+                dropClicks(o); fxRebase.insert(o); clicksDue = true
+                if error is SyncStopped || error is SyncDown || error is SyncRestart { throw error }
+                log("error", "inside", M("\(name): the click to \(o.word.en) failed: " + describe(error).en, "\(name): нажатие \(o == .panel ? "на панель" : "на двойника") не прошло: " + describe(error).ru))
+            }
+        case let .gesture(fn, key, name):
+            guard y.key == key, y.name == name else { return }
+            try device(o).action("/api/ir/do", [("fn", fn)])
+            insideDone[o] = Date()
+            let what = fn == "ok" ? M("press (OK)", "нажатие (OK)") : fn == "cw" ? M("a turn right", "поворот вправо") : M("a turn left", "поворот влево")
+            log(arrow, "inside", M("\(name): " + what.en, "\(name): " + what.ru))
+        case let .leave(key, name):
+            guard y.key == key, y.name == name, !y.notify else { return }
+            let ans = try device(o).post("/api/panel", ["show": ["page": y.page]])
+            var z = y; z.apply(panel: ans); screen[o] = z; pageReadAt[o] = Date()
+            if o == .twin { sawTwin(z, at: Date()) }
+            insideDone[o] = Date()
+            log(arrow, "inside", M("\(name): out of its stop", "\(name): выход из страницы"))
+        }
+    }
+
+    /// A side's /api/panel alone (an effect's first frame waited for); whatever moved there besides goes to the screen
+    /// round, now.
+    private func readPanelOnly(_ s: Side) throws -> Screen {
+        guard var x = screen[s], let pn = try device(s).panelDoc(input: nil) else { throw SyncError(M("\(s.word.en): GET /api/panel failed", "\(s.word.ru): GET /api/panel не прочитан")) }
+        let prev = x
+        x.apply(panel: pn)
+        docs[s, default: [:]]["/api/panel"] = pn; pageReadAt[s] = Date()
+        if SyncEngine.renumbered(prev: prev, now: x) { shifted[s] = x.shown }
+        screen[s] = x
+        if s == .twin { sawTwin(x, at: Date()) }
+        if x.fields != prev.fields { stale.insert(s); nextFast = Date() }
+        return x
+    }
+
+    /// How many clicks to send to each side so that both reach the same fx.clicks: C, a side's clicks now; B, those of
+    /// them taken into account (sync's own, carried, or there before sync saw the effect); Q, those queued for it. A
+    /// side's clicks above B are a person's; both end on the higher of B + Q, plus all of them - a click made on each
+    /// side at once counts twice, an effect reopened on one side only (its B 0 again) is brought up to the other's.
+    static func clickPlan(panel p: (c: Int, b: Int, q: Int), twin t: (c: Int, b: Int, q: Int)) -> (toPanel: Int, toTwin: Int) {
+        let pp = max(0, p.c - p.b), pt = max(0, t.c - t.b)
+        let f = max(p.b + p.q, t.b + t.q) + pp + pt
+        return (max(0, f - (max(p.c, p.b) + p.q)), max(0, f - (max(t.c, t.b) + t.q)))
+    }
+    /// When to send N clicks from NOW: with the gaps of the person's last N presses where they are known and recent (a
+    /// double press stays one), else clickGap apart - single presses, past any effect's gesture window.
+    static func clickTimes(_ n: Int, presses: [Date], now: Date) -> [Date] {
+        guard n > 0 else { return [] }
+        let recent = Array(presses.filter { now.timeIntervalSince($0) < 10 }.suffix(n))
+        var out = [now]
+        for i in 1..<n {
+            let gap = recent.count == n ? min(max(recent[i].timeIntervalSince(recent[i - 1]), 0.06), 1.0) : clickGap
+            out.append(out[i - 1].addingTimeInterval(gap))
+        }
+        return out
+    }
+
+    /// Both sides on the same effect (2.7.13, now.fx): each side's clicks not yet taken into account are a person's,
+    /// and the other side is given them (POST /api/lua {"click":true}, X-Twin-Sync: 1 - it holds that side's carousel
+    /// as the knob's click would), once its effect is open (fx.open).
+    private func reconcileClicks() throws {
+        clicksDue = false
+        guard let p = screen[.panel], let t = screen[.twin], p.key == "lua", t.key == "lua", p.name == t.name, !p.name.isEmpty,
+              let fp = p.fx, let ft = t.fx, fp.id >= 0, ft.id >= 0 else { return }
+        var b: [Side: Int] = [:]
+        let c: [Side: Int] = [.panel: fp.clicks, .twin: ft.clicks]
+        for (s, f) in [(Side.panel, fp), (Side.twin, ft)] {
+            if fxRebase.remove(s) != nil || (fxBase[s] == nil && fxFirst[s] == "\(p.name)|\(f.run)") {
+                fxBase[s] = (p.name, f.run, f.clicks)                     // taken as they are: no person's to carry
+            } else if let o = fxBase[s], o.name == p.name, o.run == f.run {
+            } else {
+                fxBase[s] = (p.name, f.run, 0); dropClicks(s)               // opened anew: every click since is a person's
+            }
+            b[s] = fxBase[s]!.base
+        }
+        let plan = SyncEngine.clickPlan(panel: (c[.panel]!, b[.panel]!, queuedClicks(.panel)), twin: (c[.twin]!, b[.twin]!, queuedClicks(.twin)))
+        for s in sides { fxBase[s]!.base = max(b[s]!, c[s]!) }
+        let now = Date()
+        for (to, n) in [(Side.twin, plan.toTwin), (Side.panel, plan.toPanel)] where n > 0 {
+            let run = (to == .panel ? fp : ft).run
+            for at in SyncEngine.clickTimes(n, presses: presses[to.other] ?? [], now: now) {
+                enqueue(to, .click(name: p.name, run: run), gap: 0.06, at: at)
+            }
+        }
+    }
+
+    /// A firmware without now.fx (before 2.7.13) on either side: the bridge of the design - while both show the same
+    /// effect, each side's knob clicks (/api/knob stats click + long, read only then) that grew since the last read on
+    /// that page are a person's, and the other side is given as many, clickGap apart and not before clickGap after sync
+    /// wrote a page to it. Sync's own clicks (/api/lua) are not the knob's: no echo (the design's E2).
+    private func bridgeClicks() throws {
+        guard let p = screen[.panel], let t = screen[.twin], p.key == "lua", t.key == "lua", p.name == t.name, !p.name.isEmpty,
+              p.fx == nil || t.fx == nil else { knobSeen = [:]; return }
+        for s in sides {
+            guard let k = try device(s).get("/api/knob"), let st = k.o("stats") else { knobSeen[s] = nil; continue }
+            let n = (st.i("click") ?? 0) + (st.i("long") ?? 0), prev = knobSeen[s]
+            knobSeen[s] = (p.shown, n)
+            guard let prev, prev.page == p.shown, n > prev.n else { continue }
+            let o = s.other
+            guard screen[o]?.notify != true else { continue }
+            let first = max(Date(), (lastWrite[o] ?? .distantPast).addingTimeInterval(SyncEngine.clickGap))
+            for i in 0..<min(n - prev.n, 10) { enqueue(o, .click(name: p.name, run: nil), gap: SyncEngine.clickGap, at: first.addingTimeInterval(Double(i) * SyncEngine.clickGap)) }
+        }
+    }
+
+    /// The end of a screen round: the gestures its reads gave, then the effects' clicks.
+    private func insidePass() throws {
+        for s in sides {
+            let r = ringInputs[s] ?? []; ringInputs[s] = nil
+            for j in r {
+                let ms = (j["epochMs"] as? NSNumber)?.doubleValue ?? 0
+                try inputEvent(s, j, at: ms > 0 ? Date(timeIntervalSince1970: ms / 1000) : Date())
+            }
+        }
+        if screen[.panel]?.fx != nil && screen[.twin]?.fx != nil { try reconcileClicks() } else { try bridgeClicks() }
+    }
+
+    private func forgetInside() {
+        insideQ = []; fxBase = [:]; fxFirst = [:]; fxRebase = []; clicksDue = false; presses = [:]; ringInputs = [:]; knobSeen = [:]
+        enteredExpect = [:]; insideDone = [:]; stale = []; lastWrite = [:]
+    }
+
+    /// Each read of a side's /api/panel: where its gestures are numbered (the first read: from there on), and those the
+    /// ring gave (?input=), for the end of the round; the effect it showed at the first read (its clicks then are history).
+    private func noteInputs(_ s: Side, _ x: Screen) {
+        if fxFirst[s] == nil { fxFirst[s] = x.fx.map { "\(x.name)|\($0.run)" } ?? "" }
+        guard let q = x.inputSeq else { return }
+        guard let last = ev[s]?.inputSeq, q >= last else { ev[s, default: Ev()].inputSeq = q; return }
+        let new = x.inputs.filter { ($0.i("seq") ?? 0) > last }
+        if !new.isEmpty { ringInputs[s, default: []] += new }
     }
 
     // MARK: effects
@@ -3481,4 +4195,59 @@ func checkImage(_ d: Data) throws {
     guard b[23] == 1 else { throw SyncError(M("the image carries no SHA-256 of its own: not taken", "у образа нет собственного SHA-256: не беру")) }
     let body = Data(b[0 ..< b.count - 32]), tail = Data(b[(b.count - 32)...])
     guard Data(SHA256.hash(data: body)) == tail else { throw SyncError(M("the image's own SHA-256 does not match: damaged", "собственный SHA-256 образа не сходится: образ повреждён")) }
+}
+
+/// The instant events of firmware 2.7.13 (src/sync/sync_events.cpp): a side asked by POST /api/sync/listen sends a small
+/// JSON datagram from its UDP port 4210 on every change of its screen and every gesture. One socket for both sides, the
+/// same port every run (47261, else any) - an app started again renews its place on a device rather than taking the
+/// second one. Each datagram goes to the engine's worker as it is (SyncEngine.received); nothing here judges it.
+final class EventListener {
+    private(set) var port: UInt16 = 0
+    private let fd: Int32
+    private let onDatagram: (Data, String, UInt16) -> Void
+
+    init?(port wanted: UInt16 = 47261, onDatagram: @escaping (Data, String, UInt16) -> Void) {
+        let sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
+        guard sock >= 0 else { return nil }
+        func bindTo(_ p: UInt16) -> Bool {
+            var a = sockaddr_in()
+            a.sin_len = UInt8(MemoryLayout<sockaddr_in>.size); a.sin_family = sa_family_t(AF_INET)
+            a.sin_port = p.bigEndian; a.sin_addr.s_addr = INADDR_ANY
+            return withUnsafePointer(to: &a) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                bind(sock, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } } == 0
+        }
+        if !bindTo(wanted) && !bindTo(0) { close(sock); return nil }
+        var a = sockaddr_in(); var len = socklen_t(MemoryLayout<sockaddr_in>.size)
+        _ = withUnsafeMutablePointer(to: &a) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(sock, $0, &len) } }
+        fd = sock; self.onDatagram = onDatagram; port = UInt16(bigEndian: a.sin_port)
+        let t = Thread { [weak self] in self?.loop() }
+        t.name = "twin-sync-events"; t.qualityOfService = .userInitiated; t.start()
+    }
+
+    /// An empty datagram to 127.0.0.1:PORT, a device's UDP port forwarded by the engine's NAT (--hostfwd udp:PORT-4210):
+    /// the engine sends what the device sends to the gateway's PORT from 4210 to whoever sent to PORT last (esp-soc/src/
+    /// nat.rs udp_out). The firmware takes nothing from an empty datagram (network.cpp handleUDP: parsePacket() is 0).
+    func prime(_ to: UInt16) {
+        var a = sockaddr_in()
+        a.sin_len = UInt8(MemoryLayout<sockaddr_in>.size); a.sin_family = sa_family_t(AF_INET)
+        a.sin_port = to.bigEndian; a.sin_addr.s_addr = inet_addr("127.0.0.1")
+        var none: UInt8 = 0
+        _ = withUnsafePointer(to: &a) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+            sendto(fd, &none, 0, 0, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
+    }
+
+    private func loop() {
+        var buf = [UInt8](repeating: 0, count: 1500)
+        var from = sockaddr_in()
+        while true {
+            var len = socklen_t(MemoryLayout<sockaddr_in>.size)
+            let n = withUnsafeMutablePointer(to: &from) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                recvfrom(fd, &buf, buf.count, 0, $0, &len) } }
+            if n < 0 { if errno == EINTR { continue }; return }
+            guard n > 0 else { continue }
+            var ip = from.sin_addr; var text = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
+            guard inet_ntop(AF_INET, &ip, &text, socklen_t(INET_ADDRSTRLEN)) != nil else { continue }
+            onDatagram(Data(buf[0..<n]), String(cString: text), UInt16(bigEndian: from.sin_port))
+        }
+    }
 }
